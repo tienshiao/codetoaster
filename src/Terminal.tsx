@@ -1,147 +1,144 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
+export interface TerminalSize {
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalHandle {
+  handleMessage: (message: any) => void;
+  send: (msg: object) => void;
+  getSize: () => TerminalSize;
+  resetAttached: () => void;
+}
+
 interface XTerminalProps {
-  sessionId?: string;
+  onSizeChange: (size: TerminalSize) => void;
+  onReady: () => void;
+  sendMessage: (msg: object) => void;
 }
 
-type ServerMessage =
-  | { type: "attached"; sessionId: string }
-  | { type: "restore"; data: string; size: { cols: number; rows: number }; cursor: { x: number; y: number } }
-  | { type: "data"; data: string }
-  | { type: "resize"; cols: number; rows: number }
-  | { type: "exit"; code: number }
-  | { type: "error"; message: string }
-  | { type: "sessions"; list: unknown[] };
+export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
+  function XTerminal({ onSizeChange, onReady, sendMessage }, ref) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const termRef = useRef<Terminal | null>(null);
+    const fitAddonRef = useRef<FitAddon | null>(null);
+    const attachedRef = useRef(false);
 
-export function XTerminal({ sessionId = "default" }: XTerminalProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+    // Store callbacks in refs
+    const onSizeChangeRef = useRef(onSizeChange);
+    const sendMessageRef = useRef(sendMessage);
+    onSizeChangeRef.current = onSizeChange;
+    sendMessageRef.current = sendMessage;
 
-  useEffect(() => {
-    const term = new Terminal({ cursorBlink: true });
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(containerRef.current!);
-    fitAddon.fit();
+    // Expose methods to parent
+    useImperativeHandle(ref, () => ({
+      handleMessage: (message: any) => {
+        const term = termRef.current;
+        if (!term) return;
 
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${location.host}/terminal`);
+        switch (message.type) {
+          case "attached":
+            attachedRef.current = true;
+            term.focus();
+            break;
 
-    let attached = false;
-    let pendingResize: { cols: number; rows: number } | null = null;
+          case "restore":
+            term.clear();
+            term.reset();
+            term.resize(message.size.cols, message.size.rows);
+            if (message.data) {
+              term.write(message.data);
+            }
+            term.write(`\x1b[${message.cursor.y + 1};${message.cursor.x + 1}H`);
+            break;
 
-    const send = (msg: object) => ws.send(JSON.stringify(msg));
-
-    ws.onopen = () => {
-      // Try to attach to existing session first, if that fails we'll create
-      send({
-        type: "attach",
-        sessionId,
-        cols: term.cols,
-        rows: term.rows,
-      });
-    };
-
-    ws.onmessage = (e) => {
-      let message: ServerMessage;
-      try {
-        message = JSON.parse(e.data);
-      } catch {
-        return;
-      }
-
-      switch (message.type) {
-        case "attached":
-          attached = true;
-          // Send any pending resize that occurred before attachment
-          if (pendingResize) {
-            send({ type: "resize", cols: pendingResize.cols, rows: pendingResize.rows });
-            pendingResize = null;
-          }
-          break;
-
-        case "restore":
-          // Apply server-dictated size (serialized content is formatted for this size)
-          term.resize(message.size.cols, message.size.rows);
-          // Write serialized content
-          if (message.data) {
+          case "data":
             term.write(message.data);
-          }
-          // CRITICAL: Explicitly position cursor using absolute coordinates
-          // The serialize content may include relative cursor movements from
-          // shell prompts (like fish) that don't work correctly when replayed
-          // CSI row;col H is 1-indexed
-          term.write(`\x1b[${message.cursor.y + 1};${message.cursor.x + 1}H`);
-          break;
+            break;
 
-        case "data":
-          term.write(message.data);
-          break;
+          case "resize":
+            term.resize(message.cols, message.rows);
+            break;
 
-        case "resize":
-          // Server dictates terminal size (smallest-wins among all clients)
-          term.resize(message.cols, message.rows);
-          break;
+          case "exit":
+            term.write(`\r\n[Process exited with code ${message.code}]\r\n`);
+            attachedRef.current = false;
+            break;
 
-        case "exit":
-          term.write(`\r\n[Process exited with code ${message.code}]\r\n`);
-          attached = false;
-          break;
-
-        case "error":
-          // If attach failed, try to create the session
-          if (message.message.includes("not found")) {
-            send({
-              type: "create",
-              sessionId,
-              cols: term.cols,
-              rows: term.rows,
-            });
-          } else {
+          case "error":
             term.write(`\r\n[Error: ${message.message}]\r\n`);
-          }
-          break;
-      }
-    };
-
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN && attached) {
-        send({ type: "input", data });
-      }
-    });
-
-    // Map shift-enter to ctrl-j for Claude Code compatibility
-    term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
-      if (ev.key === "Enter" && ev.shiftKey) {
-        if (ev.type === "keydown" && ws.readyState === WebSocket.OPEN && attached) {
-          send({ type: "input", data: String.fromCharCode(10) });
+            break;
         }
-        return false;
-      }
-      return true;
-    });
+      },
+      send: (msg: object) => {
+        if (attachedRef.current) {
+          sendMessageRef.current(msg);
+        }
+      },
+      getSize: () => {
+        const term = termRef.current;
+        return term ? { cols: term.cols, rows: term.rows } : { cols: 80, rows: 24 };
+      },
+      resetAttached: () => {
+        attachedRef.current = false;
+      },
+    }), []);
 
-    const resizeObserver = new ResizeObserver(() => {
+    // Initialize terminal - runs once
+    useEffect(() => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const term = new Terminal({ cursorBlink: true });
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(container);
       fitAddon.fit();
-      if (ws.readyState === WebSocket.OPEN) {
-        if (attached) {
-          send({ type: "resize", cols: term.cols, rows: term.rows });
-        } else {
-          // Store pending resize to send after attachment
-          pendingResize = { cols: term.cols, rows: term.rows };
+
+      termRef.current = term;
+      fitAddonRef.current = fitAddon;
+
+      // Handle terminal input
+      const dataDisposable = term.onData((data) => {
+        if (attachedRef.current) {
+          sendMessageRef.current({ type: "input", data });
         }
-      }
-    });
-    resizeObserver.observe(containerRef.current!);
+      });
 
-    return () => {
-      ws.close();
-      term.dispose();
-      resizeObserver.disconnect();
-    };
-  }, [sessionId]);
+      // Handle shift-enter
+      term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
+        if (ev.key === "Enter" && ev.shiftKey) {
+          if (ev.type === "keydown" && attachedRef.current) {
+            sendMessageRef.current({ type: "input", data: String.fromCharCode(10) });
+          }
+          return false;
+        }
+        return true;
+      });
 
-  return <div ref={containerRef} className="terminal-container" />;
-}
+      // Handle resize
+      const resizeObserver = new ResizeObserver(() => {
+        fitAddon.fit();
+        onSizeChangeRef.current({ cols: term.cols, rows: term.rows });
+      });
+      resizeObserver.observe(container);
+
+      // Report ready
+      onReady();
+
+      return () => {
+        dataDisposable.dispose();
+        resizeObserver.disconnect();
+        term.dispose();
+        termRef.current = null;
+        fitAddonRef.current = null;
+      };
+    }, [onReady]);
+
+    return <div ref={containerRef} className="terminal-container" />;
+  }
+);
