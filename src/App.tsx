@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Sidebar, SessionInfo } from "./Sidebar";
-import { XTerminal, TerminalHandle, TerminalSize } from "./Terminal";
+import { Sidebar, type SessionInfo } from "./Sidebar";
+import { XTerminal, type TerminalHandle, type TerminalSize } from "./Terminal";
 import "./index.css";
 
 function generateSessionId(): string {
@@ -12,7 +12,7 @@ function generateSessionName(existingSessions: SessionInfo[]): string {
   for (const s of existingSessions) {
     const match = s.name.match(/^session-(\d+)$/);
     if (match) {
-      max = Math.max(max, parseInt(match[1], 10));
+      max = Math.max(max, parseInt(match[1]!, 10));
     }
   }
   return `session-${max + 1}`;
@@ -84,7 +84,7 @@ export function App() {
 
         const currentId = currentSessionIdRef.current;
         if (list.length > 0 && !currentId) {
-          const sessionId = list[0].id;
+          const sessionId = list[0]!.id;
           setCurrentSessionId(sessionId);
           const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
           socket.send(JSON.stringify({ type: "attach", sessionId, cols: size.cols, rows: size.rows }));
@@ -196,7 +196,7 @@ export function App() {
 
     if (id === currentSessionIdRef.current) {
       if (remaining.length > 0) {
-        const nextSession = remaining[0];
+        const nextSession = remaining[0]!;
         const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
         send({ type: "attach", sessionId: nextSession.id, cols: size.cols, rows: size.rows });
         setCurrentSessionId(nextSession.id);
