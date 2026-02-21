@@ -1,9 +1,9 @@
 import { serve } from "bun";
-import index from "./index.html";
+import index from "./frontend/index.html";
 import { sessionManager } from "./lib/xtmux/session-manager";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 
-const PORT = parseInt(process.env.PORT || "3000", 10);
+const PORT = parseInt(process.env.PORT || "4000", 10);
 
 let clientIdCounter = 0;
 
@@ -20,28 +20,6 @@ const server = serve<WebSocketData>({
   routes: {
     // Serve index.html for all unmatched routes.
     "/*": index,
-
-    "/api/hello": {
-      async GET() {
-        return Response.json({
-          message: "Hello, world!",
-          method: "GET",
-        });
-      },
-      async PUT() {
-        return Response.json({
-          message: "Hello, world!",
-          method: "PUT",
-        });
-      },
-    },
-
-    "/api/hello/:name": async (req: Request & { params: { name: string } }) => {
-      const name = req.params.name;
-      return Response.json({
-        message: `Hello, ${name}!`,
-      });
-    },
 
     "/api/sessions": {
       GET() {
