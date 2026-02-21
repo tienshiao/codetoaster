@@ -32,6 +32,14 @@ export function App() {
     }
   }, []);
 
+  // Try to kick off session list request - called from both onopen and onReady
+  const requestSessionList = useCallback(() => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN && terminalReadyRef.current) {
+      ws.send(JSON.stringify({ type: "list" }));
+    }
+  }, []);
+
   // Connect WebSocket
   useEffect(() => {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -39,14 +47,15 @@ export function App() {
     wsRef.current = socket;
 
     socket.onopen = () => {
+      // Guard against stale socket (React Strict Mode runs effects twice)
+      if (wsRef.current !== socket) return;
       setIsConnected(true);
-      // Request session list if terminal is ready
-      if (terminalReadyRef.current) {
-        socket.send(JSON.stringify({ type: "list" }));
-      }
+      requestSessionList();
     };
 
     socket.onmessage = (e) => {
+      if (wsRef.current !== socket) return;
+
       let message;
       try {
         message = JSON.parse(e.data);
@@ -88,20 +97,22 @@ export function App() {
       if (terminalRef.current) {
         terminalRef.current.handleMessage(message);
       } else {
-        // Queue message for when terminal is ready
         messageQueueRef.current.push(message);
       }
     };
 
     socket.onclose = () => {
-      setIsConnected(false);
-      wsRef.current = null;
+      // Only reset if this is still the active socket
+      if (wsRef.current === socket) {
+        setIsConnected(false);
+        wsRef.current = null;
+      }
     };
 
     return () => {
       socket.close();
     };
-  }, []);
+  }, [requestSessionList]);
 
   const handleTerminalReady = useCallback(() => {
     terminalReadyRef.current = true;
@@ -114,12 +125,8 @@ export function App() {
       messageQueueRef.current = [];
     }
 
-    // If WS is already open, request session list
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "list" }));
-    }
-  }, []);
+    requestSessionList();
+  }, [requestSessionList]);
 
   const handleSizeChange = useCallback((size: TerminalSize) => {
     if (currentSessionIdRef.current) {
@@ -134,7 +141,6 @@ export function App() {
   const handleSelectTab = useCallback((id: string) => {
     if (id === currentSessionIdRef.current) return;
 
-    // Reset terminal attached state before switching
     terminalRef.current?.resetAttached();
 
     if (currentSessionIdRef.current) {
@@ -147,7 +153,6 @@ export function App() {
   }, [send]);
 
   const handleNewTab = useCallback(() => {
-    // Reset terminal attached state before switching
     terminalRef.current?.resetAttached();
 
     if (currentSessionIdRef.current) {

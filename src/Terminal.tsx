@@ -93,7 +93,10 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       const container = containerRef.current;
       if (!container) return;
 
-      const term = new Terminal({ cursorBlink: true });
+      const term = new Terminal({
+        cursorBlink: true,
+        allowProposedApi: true,
+      });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
       term.open(container);
