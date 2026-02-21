@@ -47,6 +47,19 @@ function generateSessionName(existingSessions: SessionInfo[]): string {
   return `session-${max + 1}`;
 }
 
+function fireWebNotification(title: string, body: string, tag: string) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "granted") {
+    const n = new Notification(title || "Terminal notification", {
+      body: body || undefined,
+      tag,
+    });
+    setTimeout(() => n.close(), 5000);
+  } else if (Notification.permission !== "denied") {
+    Notification.requestPermission();
+  }
+}
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -119,6 +132,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (message.type === "notification") {
+        if (!document.hasFocus()) {
+          fireWebNotification(message.title, message.body, `codetoaster-${message.sessionId}`);
+        }
+        return;
+      }
+
       // Forward terminal-related messages to terminal
       if (terminalRef.current) {
         terminalRef.current.handleMessage(message);
@@ -170,7 +190,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const attachSession = useCallback(
     (id: string) => {
-      if (id === currentSessionIdRef.current) return;
+      if (id === currentSessionIdRef.current) {
+        send({ type: "acknowledge", sessionId: id });
+        return;
+      }
 
       terminalRef.current?.resetAttached();
 
@@ -180,6 +203,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
       send({ type: "attach", sessionId: id, cols: size.cols, rows: size.rows });
+      send({ type: "acknowledge", sessionId: id });
       setCurrentSessionId(id);
     },
     [send],

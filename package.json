@@ -18,7 +18,8 @@
     "bun-plugin-tailwind": "^0.1.2",
     "react": "^19",
     "react-dom": "^19",
-    "tailwindcss": "^4.2.0"
+    "tailwindcss": "^4.2.0",
+    "use-debounce": "^10.1.0"
   },
   "devDependencies": {
     "@tanstack/router-cli": "^1.161.4",

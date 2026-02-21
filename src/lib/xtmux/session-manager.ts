@@ -41,6 +41,10 @@ export class SessionManager {
     session.onActivityChange((sessionId, active) => {
       this.broadcastToAll({ type: "activity", sessionId, active });
     });
+    session.onNotification((sessionId, title, body) => {
+      this.broadcastToAll({ type: "notification", sessionId, title, body });
+      this.broadcastSessionList();
+    });
     this.sessions.set(id, session);
     return session;
   }
@@ -111,6 +115,14 @@ export class SessionManager {
     return true;
   }
 
+  acknowledgeSession(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session && session.hasNotification) {
+      session.acknowledge();
+      this.broadcastSessionList();
+    }
+  }
+
   listSessions(): SessionInfo[] {
     return Array.from(this.sessions.values()).map((session) => ({
       id: session.id,
@@ -120,6 +132,7 @@ export class SessionManager {
       size: session.getSize(),
       createdAt: session.createdAt,
       exited: session.exited,
+      hasNotification: session.hasNotification,
     }));
   }
 }

@@ -23,6 +23,9 @@ export class Session {
   private onExitCallback?: (code: number) => void;
   private onTitleChangeCallback?: () => void;
   private onActivityChangeCallback?: (sessionId: string, active: boolean) => void;
+  public hasNotification = false;
+  private onNotificationCallback?: (sessionId: string, title: string, body: string) => void;
+  private pendingOsc99: Map<string, { title: string; body: string }> = new Map();
 
   constructor(id: string, name: string, cols: number, rows: number) {
     this.id = id;
@@ -43,6 +46,57 @@ export class Session {
     this.terminal.onTitleChange((title) => {
       this.title = title;
       this.onTitleChangeCallback?.();
+    });
+
+    // OSC 777: notify;title;body
+    this.terminal.parser.registerOscHandler(777, (data: string) => {
+      const parts = data.split(";");
+      if (parts.length >= 2 && parts[0] === "notify") {
+        const title = parts[1] || "";
+        const body = parts.slice(2).join(";");
+        this.emitNotification(title, body);
+      }
+      return true;
+    });
+
+    // OSC 9: message (iTerm2/ConEmu style)
+    this.terminal.parser.registerOscHandler(9, (data: string) => {
+      this.emitNotification(data || "Notification", "");
+      return true;
+    });
+
+    // OSC 99: Kitty desktop notification protocol (basic support)
+    this.terminal.parser.registerOscHandler(99, (data: string) => {
+      const semiIdx = data.indexOf(";");
+      if (semiIdx === -1) return true;
+      const metaStr = data.substring(0, semiIdx);
+      const payload = data.substring(semiIdx + 1);
+
+      const meta: Record<string, string> = {};
+      if (metaStr) {
+        for (const part of metaStr.split(":")) {
+          const eqIdx = part.indexOf("=");
+          if (eqIdx !== -1) {
+            meta[part[0]!] = part.substring(eqIdx + 1);
+          }
+        }
+      }
+
+      const id = meta.i || "_default";
+      const payloadType = meta.p || "title";
+      const done = meta.d !== "0";
+
+      let pending = this.pendingOsc99.get(id) || { title: "", body: "" };
+      if (payloadType === "title") pending.title = payload;
+      else if (payloadType === "body") pending.body = payload;
+
+      if (done) {
+        this.pendingOsc99.delete(id);
+        this.emitNotification(pending.title || "Notification", pending.body);
+      } else {
+        this.pendingOsc99.set(id, pending);
+      }
+      return true;
     });
 
     // Spawn PTY
@@ -88,6 +142,19 @@ export class Session {
 
   onActivityChange(callback: (sessionId: string, active: boolean) => void): void {
     this.onActivityChangeCallback = callback;
+  }
+
+  onNotification(callback: (sessionId: string, title: string, body: string) => void): void {
+    this.onNotificationCallback = callback;
+  }
+
+  acknowledge(): void {
+    this.hasNotification = false;
+  }
+
+  private emitNotification(title: string, body: string): void {
+    this.hasNotification = true;
+    this.onNotificationCallback?.(this.id, title, body);
   }
 
   addClient(client: ClientInfo): void {

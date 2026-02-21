@@ -10,6 +10,7 @@ export interface SessionInfo {
   size: { cols: number; rows: number };
   clientCount: number;
   exited?: boolean;
+  hasNotification?: boolean;
 }
 
 interface SidebarProps {
@@ -19,6 +20,7 @@ interface SidebarProps {
   sessionActivity: Record<string, boolean>;
   onNewTab: () => void;
   onCloseTab: (id: string) => void;
+  onAcknowledge: (id: string) => void;
 }
 
 export function Sidebar({
@@ -28,6 +30,7 @@ export function Sidebar({
   sessionActivity,
   onNewTab,
   onCloseTab,
+  onAcknowledge,
 }: SidebarProps) {
   return (
     <div className="w-[200px] min-w-[200px] h-full bg-[#1a1a1a] border-r border-zinc-700 flex flex-col">
@@ -44,6 +47,11 @@ export function Sidebar({
             activeProps={{
               className: "group flex items-center justify-between px-4 py-2.5 cursor-pointer border-b border-zinc-800 transition-colors duration-150 no-underline text-inherit hover:bg-zinc-800 bg-zinc-700 border-l-[3px] border-l-[#4a9eff] pl-[13px]",
             }}
+            onClick={() => {
+              if (session.id === currentSessionId) {
+                onAcknowledge?.(session.id);
+              }
+            }}
           >
             <span className="flex flex-col overflow-hidden flex-1">
               <span className="text-[13px] overflow-hidden text-ellipsis whitespace-nowrap">
@@ -59,6 +67,7 @@ export function Sidebar({
               isConnected={isConnected}
               isExited={!!session.exited}
               isActive={sessionActivity[session.id] ?? false}
+              hasNotification={session.hasNotification ?? false}
               className="ml-2 group-hover:hidden"
             />
             <button

@@ -130,6 +130,11 @@ const server = serve<WebSocketData>({
           break;
         }
 
+        case "acknowledge": {
+          sessionManager.acknowledgeSession(parsed.sessionId);
+          break;
+        }
+
         default:
           sendError(ws, `Unknown message type`);
       }

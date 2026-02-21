@@ -61,12 +61,15 @@ export function SessionLayout() {
         sessionActivity={sessionActivity}
         onNewTab={handleNewTab}
         onCloseTab={handleCloseTab}
+        onAcknowledge={(id) => handleSendMessage({ type: "acknowledge", sessionId: id })}
       />
       <div className="flex-1 h-full overflow-hidden flex flex-col">
         <TopBar
           isConnected={isConnected}
           isExited={!!currentSession?.exited}
           isActive={isActive}
+          hasNotification={currentSession?.hasNotification ?? false}
+          hasSession={!!currentSession}
           title={currentSession?.title ?? currentSession?.name}
         />
         <div className="flex-1 relative overflow-hidden">
