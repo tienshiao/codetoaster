@@ -54,6 +54,7 @@ const server = serve<WebSocketData>({
         const id = req.params.id;
         const killed = sessionManager.killSession(id);
         if (killed) {
+          sessionManager.broadcastSessionList();
           return Response.json({ success: true });
         }
         return Response.json({ error: "Session not found" }, { status: 404 });
@@ -62,8 +63,8 @@ const server = serve<WebSocketData>({
   },
 
   websocket: {
-    open(_ws) {
-      // Data is set during upgrade in fetch handler
+    open(ws) {
+      sessionManager.registerClient(ws.data.clientId, ws);
     },
 
     message(ws, message) {
@@ -89,6 +90,7 @@ const server = serve<WebSocketData>({
             const session = sessionManager.createSession(sessionId, name || sessionId, cols, rows);
             sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
             ws.data.sessionId = sessionId;
+            sessionManager.broadcastSessionList();
           } catch (e: any) {
             sendError(ws, e.message);
           }
@@ -142,7 +144,9 @@ const server = serve<WebSocketData>({
 
         case "kill": {
           const killed = sessionManager.killSession(parsed.sessionId);
-          if (!killed) {
+          if (killed) {
+            sessionManager.broadcastSessionList();
+          } else {
             sendError(ws, `Session "${parsed.sessionId}" not found`);
           }
           break;
@@ -155,6 +159,7 @@ const server = serve<WebSocketData>({
 
     close(ws) {
       sessionManager.detachClient(ws.data.clientId);
+      sessionManager.unregisterClient(ws.data.clientId);
     },
   },
 

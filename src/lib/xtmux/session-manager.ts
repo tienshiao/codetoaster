@@ -5,6 +5,26 @@ import type { ClientInfo, SessionInfo, WebSocketData } from "./types";
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private clientToSession: Map<string, string> = new Map();
+  private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
+
+  registerClient(clientId: string, ws: ServerWebSocket<WebSocketData>): void {
+    this.connectedClients.set(clientId, ws);
+  }
+
+  unregisterClient(clientId: string): void {
+    this.connectedClients.delete(clientId);
+  }
+
+  broadcastToAll(message: object): void {
+    const data = JSON.stringify(message);
+    for (const ws of this.connectedClients.values()) {
+      ws.send(data);
+    }
+  }
+
+  broadcastSessionList(): void {
+    this.broadcastToAll({ type: "sessions", list: this.listSessions() });
+  }
 
   createSession(id: string, name: string, cols: number, rows: number): Session {
     if (this.sessions.has(id)) {
@@ -14,6 +34,7 @@ export class SessionManager {
     const session = new Session(id, name, cols, rows);
     session.onExit(() => {
       this.sessions.delete(id);
+      this.broadcastSessionList();
     });
     this.sessions.set(id, session);
     return session;

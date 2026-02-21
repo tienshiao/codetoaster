@@ -28,6 +28,7 @@ export function App() {
   const currentSessionIdRef = useRef<string | null>(null);
   const sessionsRef = useRef<SessionInfo[]>([]);
   const messageQueueRef = useRef<any[]>([]);
+  const hasInitializedRef = useRef(false);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -82,25 +83,32 @@ export function App() {
         const list = message.list as SessionInfo[];
         setSessions(list);
 
-        const currentId = currentSessionIdRef.current;
-        if (list.length > 0 && !currentId) {
-          const sessionId = list[0]!.id;
-          setCurrentSessionId(sessionId);
-          const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-          socket.send(JSON.stringify({ type: "attach", sessionId, cols: size.cols, rows: size.rows }));
-        } else if (list.length === 0 && !currentId) {
-          const sessionId = generateSessionId();
-          const name = generateSessionName(list);
-          const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-          socket.send(JSON.stringify({ type: "create", sessionId, name, cols: size.cols, rows: size.rows }));
-          setSessions([{
-            id: sessionId,
-            name,
-            createdAt: Date.now(),
-            size: { cols: size.cols, rows: size.rows },
-            clientCount: 1,
-          }]);
-          setCurrentSessionId(sessionId);
+        if (!hasInitializedRef.current) {
+          // First session list after connecting: auto-attach if sessions exist
+          hasInitializedRef.current = true;
+          if (list.length > 0) {
+            const sessionId = list[0]!.id;
+            setCurrentSessionId(sessionId);
+            const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
+            socket.send(JSON.stringify({ type: "attach", sessionId, cols: size.cols, rows: size.rows }));
+          } else {
+            setCurrentSessionId(null);
+          }
+        } else {
+          // Subsequent broadcast: check if our current session was removed
+          const currentId = currentSessionIdRef.current;
+          if (currentId && !list.find(s => s.id === currentId)) {
+            terminalRef.current?.resetAttached();
+            if (list.length > 0) {
+              // Switch to first available session
+              const nextSession = list[0]!;
+              const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
+              socket.send(JSON.stringify({ type: "attach", sessionId: nextSession.id, cols: size.cols, rows: size.rows }));
+              setCurrentSessionId(nextSession.id);
+            } else {
+              setCurrentSessionId(null);
+            }
+          }
         }
         return;
       }
@@ -122,6 +130,7 @@ export function App() {
       if (wsRef.current === socket) {
         setIsConnected(false);
         wsRef.current = null;
+        hasInitializedRef.current = false;
       }
     };
 
@@ -195,26 +204,16 @@ export function App() {
     const remaining = sessionsRef.current.filter(s => s.id !== id);
 
     if (id === currentSessionIdRef.current) {
+      terminalRef.current?.resetAttached();
       if (remaining.length > 0) {
         const nextSession = remaining[0]!;
         const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
         send({ type: "attach", sessionId: nextSession.id, cols: size.cols, rows: size.rows });
         setCurrentSessionId(nextSession.id);
-        setSessions(remaining);
       } else {
-        const sessionId = generateSessionId();
-        const name = generateSessionName(remaining);
-        const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-        send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows });
-        setCurrentSessionId(sessionId);
-        setSessions([{
-          id: sessionId,
-          name,
-          createdAt: Date.now(),
-          size: { cols: size.cols, rows: size.rows },
-          clientCount: 1,
-        }]);
+        setCurrentSessionId(null);
       }
+      setSessions(remaining);
     } else {
       setSessions(remaining);
     }
@@ -238,6 +237,16 @@ export function App() {
         />
         {!isConnected && (
           <div className="terminal-overlay">Connecting...</div>
+        )}
+        {isConnected && !currentSessionId && (
+          <div className="terminal-overlay">
+            <div className="empty-state">
+              <p>No active sessions</p>
+              <button className="empty-state-btn" onClick={handleNewTab}>
+                + New Session
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>
