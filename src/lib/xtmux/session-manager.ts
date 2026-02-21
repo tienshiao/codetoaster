@@ -6,12 +6,12 @@ export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private clientToSession: Map<string, string> = new Map();
 
-  createSession(id: string, cols: number, rows: number): Session {
+  createSession(id: string, name: string, cols: number, rows: number): Session {
     if (this.sessions.has(id)) {
       throw new Error(`Session "${id}" already exists`);
     }
 
-    const session = new Session(id, cols, rows);
+    const session = new Session(id, name, cols, rows);
     session.onExit(() => {
       this.sessions.delete(id);
     });
@@ -88,6 +88,7 @@ export class SessionManager {
   listSessions(): SessionInfo[] {
     return Array.from(this.sessions.values()).map((session) => ({
       id: session.id,
+      name: session.name,
       clientCount: session.getClientCount(),
       size: session.getSize(),
       createdAt: session.createdAt,

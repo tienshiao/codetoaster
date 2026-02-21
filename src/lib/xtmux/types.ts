@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 
 // Client -> Server messages
 export type ClientMessage =
-  | { type: "create"; sessionId: string; cols: number; rows: number }
+  | { type: "create"; sessionId: string; name?: string; cols: number; rows: number }
   | { type: "attach"; sessionId: string; cols: number; rows: number }
   | { type: "detach" }
   | { type: "input"; data: string }
@@ -22,6 +22,7 @@ export type ServerMessage =
 
 export interface SessionInfo {
   id: string;
+  name: string;
   clientCount: number;
   size: { cols: number; rows: number };
   createdAt: number;

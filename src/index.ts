@@ -84,9 +84,9 @@ const server = serve<WebSocketData>({
 
       switch (parsed.type) {
         case "create": {
-          const { sessionId, cols, rows } = parsed;
+          const { sessionId, name, cols, rows } = parsed;
           try {
-            const session = sessionManager.createSession(sessionId, cols, rows);
+            const session = sessionManager.createSession(sessionId, name || sessionId, cols, rows);
             sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
             ws.data.sessionId = sessionId;
           } catch (e: any) {

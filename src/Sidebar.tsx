@@ -1,5 +1,6 @@
 export interface SessionInfo {
   id: string;
+  name: string;
   createdAt: number;
   size: { cols: number; rows: number };
   clientCount: number;
@@ -30,7 +31,7 @@ export function Sidebar({
             className={`tab-item ${session.id === currentSessionId ? "active" : ""}`}
             onClick={() => onSelectTab(session.id)}
           >
-            <span className="tab-item-label">{session.id}</span>
+            <span className="tab-item-label">{session.name}</span>
             <button
               className="tab-close-btn"
               onClick={(e) => {

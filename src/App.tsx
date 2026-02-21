@@ -3,10 +3,19 @@ import { Sidebar, SessionInfo } from "./Sidebar";
 import { XTerminal, TerminalHandle, TerminalSize } from "./Terminal";
 import "./index.css";
 
-let sessionCounter = 0;
-
 function generateSessionId(): string {
-  return `session-${++sessionCounter}`;
+  return crypto.randomUUID();
+}
+
+function generateSessionName(existingSessions: SessionInfo[]): string {
+  let max = 0;
+  for (const s of existingSessions) {
+    const match = s.name.match(/^session-(\d+)$/);
+    if (match) {
+      max = Math.max(max, parseInt(match[1], 10));
+    }
+  }
+  return `session-${max + 1}`;
 }
 
 export function App() {
@@ -17,12 +26,17 @@ export function App() {
   const terminalRef = useRef<TerminalHandle | null>(null);
   const terminalReadyRef = useRef(false);
   const currentSessionIdRef = useRef<string | null>(null);
+  const sessionsRef = useRef<SessionInfo[]>([]);
   const messageQueueRef = useRef<any[]>([]);
 
-  // Keep ref in sync with state
+  // Keep refs in sync with state
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   // Send helper
   const send = useCallback((msg: object) => {
@@ -76,10 +90,12 @@ export function App() {
           socket.send(JSON.stringify({ type: "attach", sessionId, cols: size.cols, rows: size.rows }));
         } else if (list.length === 0 && !currentId) {
           const sessionId = generateSessionId();
+          const name = generateSessionName(list);
           const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-          socket.send(JSON.stringify({ type: "create", sessionId, cols: size.cols, rows: size.rows }));
+          socket.send(JSON.stringify({ type: "create", sessionId, name, cols: size.cols, rows: size.rows }));
           setSessions([{
             id: sessionId,
+            name,
             createdAt: Date.now(),
             size: { cols: size.cols, rows: size.rows },
             clientCount: 1,
@@ -160,46 +176,48 @@ export function App() {
     }
 
     const sessionId = generateSessionId();
+    const name = generateSessionName(sessionsRef.current);
     const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-    send({ type: "create", sessionId, cols: size.cols, rows: size.rows });
-
+    send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows });
+    setCurrentSessionId(sessionId);
     setSessions(prev => [...prev, {
       id: sessionId,
+      name,
       createdAt: Date.now(),
       size: { cols: size.cols, rows: size.rows },
       clientCount: 1,
     }]);
-    setCurrentSessionId(sessionId);
   }, [send]);
 
   const handleCloseTab = useCallback((id: string) => {
     send({ type: "kill", sessionId: id });
 
-    setSessions(prev => {
-      const newList = prev.filter(s => s.id !== id);
+    const remaining = sessionsRef.current.filter(s => s.id !== id);
 
-      if (id === currentSessionIdRef.current) {
-        if (newList.length > 0) {
-          const nextSession = newList[0];
-          const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-          send({ type: "attach", sessionId: nextSession.id, cols: size.cols, rows: size.rows });
-          setCurrentSessionId(nextSession.id);
-        } else {
-          const sessionId = generateSessionId();
-          const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-          send({ type: "create", sessionId, cols: size.cols, rows: size.rows });
-          setCurrentSessionId(sessionId);
-          return [{
-            id: sessionId,
-            createdAt: Date.now(),
-            size: { cols: size.cols, rows: size.rows },
-            clientCount: 1,
-          }];
-        }
+    if (id === currentSessionIdRef.current) {
+      if (remaining.length > 0) {
+        const nextSession = remaining[0];
+        const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
+        send({ type: "attach", sessionId: nextSession.id, cols: size.cols, rows: size.rows });
+        setCurrentSessionId(nextSession.id);
+        setSessions(remaining);
+      } else {
+        const sessionId = generateSessionId();
+        const name = generateSessionName(remaining);
+        const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
+        send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows });
+        setCurrentSessionId(sessionId);
+        setSessions([{
+          id: sessionId,
+          name,
+          createdAt: Date.now(),
+          size: { cols: size.cols, rows: size.rows },
+          clientCount: 1,
+        }]);
       }
-
-      return newList;
-    });
+    } else {
+      setSessions(remaining);
+    }
   }, [send]);
 
   return (

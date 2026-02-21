@@ -8,6 +8,7 @@ const MIN_ROWS = 24;
 
 export class Session {
   public readonly id: string;
+  public readonly name: string;
   public readonly createdAt: number;
   private proc: Subprocess;
   private terminal: Terminal;
@@ -16,8 +17,9 @@ export class Session {
   private size: { cols: number; rows: number };
   private onExitCallback?: (code: number) => void;
 
-  constructor(id: string, cols: number, rows: number) {
+  constructor(id: string, name: string, cols: number, rows: number) {
     this.id = id;
+    this.name = name;
     this.createdAt = Date.now();
     this.size = { cols: Math.max(cols, MIN_COLS), rows: Math.max(rows, MIN_ROWS) };
 
