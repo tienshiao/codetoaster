@@ -15,6 +15,8 @@ export class Session {
   private serializeAddon: SerializeAddon;
   private clients: Map<string, ClientInfo> = new Map();
   private size: { cols: number; rows: number };
+  public exited = false;
+  private exitCode: number | null = null;
   private onExitCallback?: (code: number) => void;
 
   constructor(id: string, name: string, cols: number, rows: number) {
@@ -48,8 +50,10 @@ export class Session {
         },
       },
       onExit: (_proc, exitCode) => {
-        this.onExitCallback?.(exitCode ?? 0);
-        this.broadcast({ type: "exit", code: exitCode ?? 0 });
+        this.exited = true;
+        this.exitCode = exitCode ?? 0;
+        this.onExitCallback?.(this.exitCode);
+        this.broadcast({ type: "exit", code: this.exitCode });
       },
     });
   }
@@ -73,6 +77,11 @@ export class Session {
     });
     this.send(client, { type: "attached", sessionId: this.id });
 
+    // If session already exited, inform the new client
+    if (this.exited) {
+      this.send(client, { type: "exit", code: this.exitCode ?? 0 });
+    }
+
     // Add client to broadcast list
     this.clients.set(client.id, client);
 
@@ -95,12 +104,15 @@ export class Session {
   }
 
   write(data: string): void {
+    if (this.exited) return;
     this.proc.terminal?.write(data);
   }
 
   kill(): void {
-    this.proc.terminal?.close();
-    this.proc.kill();
+    if (!this.exited) {
+      this.proc.terminal?.close();
+      this.proc.kill();
+    }
     this.terminal.dispose();
   }
 
@@ -113,7 +125,7 @@ export class Session {
   }
 
   private recalculateSize(): void {
-    if (this.clients.size === 0) {
+    if (this.clients.size === 0 || this.exited) {
       return;
     }
 

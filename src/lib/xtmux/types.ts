@@ -26,6 +26,7 @@ export interface SessionInfo {
   clientCount: number;
   size: { cols: number; rows: number };
   createdAt: number;
+  exited: boolean;
 }
 
 export interface ClientInfo {

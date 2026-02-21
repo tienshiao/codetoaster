@@ -4,6 +4,7 @@ export interface SessionInfo {
   createdAt: number;
   size: { cols: number; rows: number };
   clientCount: number;
+  exited?: boolean;
 }
 
 interface SidebarProps {
@@ -28,10 +29,13 @@ export function Sidebar({
         {sessions.map((session) => (
           <div
             key={session.id}
-            className={`tab-item ${session.id === currentSessionId ? "active" : ""}`}
+            className={`tab-item ${session.id === currentSessionId ? "active" : ""} ${session.exited ? "exited" : ""}`}
             onClick={() => onSelectTab(session.id)}
           >
-            <span className="tab-item-label">{session.name}</span>
+            <span className="tab-item-label">
+              {session.name}
+              {session.exited && <span className="tab-exited-badge">(exited)</span>}
+            </span>
             <button
               className="tab-close-btn"
               onClick={(e) => {

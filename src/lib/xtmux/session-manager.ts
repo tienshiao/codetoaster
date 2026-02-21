@@ -33,7 +33,6 @@ export class SessionManager {
 
     const session = new Session(id, name, cols, rows);
     session.onExit(() => {
-      this.sessions.delete(id);
       this.broadcastSessionList();
     });
     this.sessions.set(id, session);
@@ -113,6 +112,7 @@ export class SessionManager {
       clientCount: session.getClientCount(),
       size: session.getSize(),
       createdAt: session.createdAt,
+      exited: session.exited,
     }));
   }
 }

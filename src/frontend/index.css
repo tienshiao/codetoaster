@@ -104,6 +104,16 @@ html, body, #root {
   justify-content: center;
 }
 
+.tab-item.exited {
+  opacity: 0.5;
+}
+
+.tab-exited-badge {
+  margin-left: 4px;
+  font-size: 11px;
+  color: #888;
+}
+
 .new-tab-btn {
   display: flex;
   align-items: center;
