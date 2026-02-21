@@ -1,5 +1,12 @@
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 export function buildSessionSlug(session: { name: string; id: string }): string {
-  return `${session.name}-${session.id}`;
+  return `${slugify(session.name)}-${session.id}`;
 }
 
 export function parseSessionSlug(slug: string): { name: string; id: string } {
