@@ -15,8 +15,10 @@
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
+    "bun-plugin-tailwind": "^0.1.2",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "tailwindcss": "^4.2.0"
   },
   "devDependencies": {
     "@tanstack/router-cli": "^1.161.4",

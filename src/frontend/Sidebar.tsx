@@ -25,26 +25,38 @@ export function Sidebar({
   onCloseTab,
 }: SidebarProps) {
   return (
-    <div className="sidebar">
-      <div className="sidebar-header">CodeToaster</div>
-      <div className="tab-list">
+    <div className="w-[200px] min-w-[200px] h-full bg-[#1a1a1a] border-r border-zinc-700 flex flex-col">
+      <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-500 border-b border-zinc-700">
+        CodeToaster
+      </div>
+      <div className="flex-1 overflow-y-auto">
         {sessions.map((session) => (
           <Link
             key={session.id}
             to="/sessions/$slug"
             params={{ slug: buildSessionSlug(session) }}
-            className={`tab-item ${session.exited ? "exited" : ""}`}
-            activeProps={{ className: `tab-item active ${session.exited ? "exited" : ""}` }}
+            className={`group flex items-center justify-between px-4 py-2.5 cursor-pointer border-b border-zinc-800 transition-colors duration-150 no-underline text-inherit hover:bg-zinc-800 ${session.exited ? "opacity-50" : ""}`}
+            activeProps={{
+              className: `group flex items-center justify-between px-4 py-2.5 cursor-pointer border-b border-zinc-800 transition-colors duration-150 no-underline text-inherit hover:bg-zinc-800 bg-zinc-700 border-l-[3px] border-l-[#4a9eff] pl-[13px] ${session.exited ? "opacity-50" : ""}`,
+            }}
           >
-            <span className="tab-item-label">
-              <span className="tab-item-name">
+            <span className="flex flex-col overflow-hidden flex-1">
+              <span className="text-[13px] overflow-hidden text-ellipsis whitespace-nowrap">
                 {session.name}
-                {session.exited && <span className="tab-exited-badge">(exited)</span>}
+                {session.exited && (
+                  <span className="ml-1 text-[11px] text-zinc-500">
+                    (exited)
+                  </span>
+                )}
               </span>
-              {session.title && <span className="tab-item-title">{session.title}</span>}
+              {session.title && (
+                <span className="text-[11px] text-zinc-500 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {session.title}
+                </span>
+              )}
             </span>
             <button
-              className="tab-close-btn"
+              className="hidden group-hover:flex items-center justify-center w-5 h-5 border-none bg-transparent text-zinc-500 cursor-pointer rounded text-sm leading-none p-0 ml-2 hover:bg-zinc-600 hover:text-white"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -57,7 +69,10 @@ export function Sidebar({
           </Link>
         ))}
       </div>
-      <button className="new-tab-btn" onClick={onNewTab}>
+      <button
+        className="flex items-center justify-center gap-1.5 px-4 py-3 bg-transparent border-none border-t border-zinc-700 text-zinc-500 cursor-pointer text-[13px] transition-all duration-150 hover:bg-zinc-800 hover:text-white"
+        onClick={onNewTab}
+      >
         + New Tab
       </button>
     </div>

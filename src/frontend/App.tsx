@@ -49,14 +49,14 @@ export function SessionLayout() {
   );
 
   return (
-    <div className="app-container">
+    <div className="flex w-full h-full">
       <Sidebar
         sessions={sessions}
         currentSessionId={currentSessionId}
         onNewTab={handleNewTab}
         onCloseTab={handleCloseTab}
       />
-      <div className="terminal-area">
+      <div className="flex-1 h-full overflow-hidden relative">
         <XTerminal
           ref={terminalRef}
           onSizeChange={handleSizeChange}
@@ -64,13 +64,18 @@ export function SessionLayout() {
           sendMessage={handleSendMessage}
         />
         {!isConnected && (
-          <div className="terminal-overlay">Connecting...</div>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-zinc-500 text-sm z-10">
+            Connecting...
+          </div>
         )}
         {isConnected && !currentSessionId && (
-          <div className="terminal-overlay">
-            <div className="empty-state">
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-zinc-500 text-sm z-10">
+            <div className="flex flex-col items-center gap-4">
               <p>No active sessions</p>
-              <button className="empty-state-btn" onClick={handleNewTab}>
+              <button
+                className="px-5 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-zinc-300 text-[13px] cursor-pointer transition-all duration-150 hover:bg-zinc-700 hover:text-white hover:border-zinc-600"
+                onClick={handleNewTab}
+              >
                 + New Session
               </button>
             </div>

@@ -26,9 +26,8 @@ const platforms = [
   },
 ];
 
-// Generate route tree and public file manifest before building
+// Generate route tree
 await $`bunx tsr generate`;
-await $`bun run scripts/generate-public-manifest.ts`;
 
 // Get version info
 const packageJson = await Bun.file("./package.json").json();
