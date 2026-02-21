@@ -142,6 +142,10 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       };
     }, [onReady]);
 
-    return <div ref={containerRef} className="w-full h-full bg-black" />;
+    return (
+      <div className="w-full h-full bg-black p-2">
+        <div ref={containerRef} className="w-full h-full" />
+      </div>
+    );
   }
 );
