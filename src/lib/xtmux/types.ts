@@ -23,6 +23,7 @@ export type ServerMessage =
 export interface SessionInfo {
   id: string;
   name: string;
+  title: string;
   clientCount: number;
   size: { cols: number; rows: number };
   createdAt: number;

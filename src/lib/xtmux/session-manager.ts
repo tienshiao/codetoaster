@@ -35,6 +35,9 @@ export class SessionManager {
     session.onExit(() => {
       this.broadcastSessionList();
     });
+    session.onTitleChange(() => {
+      this.broadcastSessionList();
+    });
     this.sessions.set(id, session);
     return session;
   }
@@ -109,6 +112,7 @@ export class SessionManager {
     return Array.from(this.sessions.values()).map((session) => ({
       id: session.id,
       name: session.name,
+      title: session.title,
       clientCount: session.getClientCount(),
       size: session.getSize(),
       createdAt: session.createdAt,

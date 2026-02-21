@@ -1,6 +1,7 @@
 export interface SessionInfo {
   id: string;
   name: string;
+  title?: string;
   createdAt: number;
   size: { cols: number; rows: number };
   clientCount: number;
@@ -24,7 +25,7 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <div className="sidebar">
-      <div className="sidebar-header">Sessions</div>
+      <div className="sidebar-header">CodeToaster</div>
       <div className="tab-list">
         {sessions.map((session) => (
           <div
@@ -33,8 +34,11 @@ export function Sidebar({
             onClick={() => onSelectTab(session.id)}
           >
             <span className="tab-item-label">
-              {session.name}
-              {session.exited && <span className="tab-exited-badge">(exited)</span>}
+              <span className="tab-item-name">
+                {session.name}
+                {session.exited && <span className="tab-exited-badge">(exited)</span>}
+              </span>
+              {session.title && <span className="tab-item-title">{session.title}</span>}
             </span>
             <button
               className="tab-close-btn"

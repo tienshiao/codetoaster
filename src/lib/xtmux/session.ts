@@ -15,9 +15,11 @@ export class Session {
   private serializeAddon: SerializeAddon;
   private clients: Map<string, ClientInfo> = new Map();
   private size: { cols: number; rows: number };
+  public title: string = "";
   public exited = false;
   private exitCode: number | null = null;
   private onExitCallback?: (code: number) => void;
+  private onTitleChangeCallback?: () => void;
 
   constructor(id: string, name: string, cols: number, rows: number) {
     this.id = id;
@@ -34,6 +36,11 @@ export class Session {
     });
     this.serializeAddon = new SerializeAddon();
     this.terminal.loadAddon(this.serializeAddon);
+
+    this.terminal.onTitleChange((title) => {
+      this.title = title;
+      this.onTitleChangeCallback?.();
+    });
 
     // Spawn PTY
     this.proc = Bun.spawn([process.env.SHELL || "bash"], {
@@ -60,6 +67,10 @@ export class Session {
 
   onExit(callback: (code: number) => void): void {
     this.onExitCallback = callback;
+  }
+
+  onTitleChange(callback: () => void): void {
+    this.onTitleChangeCallback = callback;
   }
 
   addClient(client: ClientInfo): void {
