@@ -14,6 +14,7 @@ interface SessionContextValue {
   sessions: SessionInfo[];
   currentSessionId: string | null;
   isConnected: boolean;
+  sessionActivity: Record<string, boolean>;
   terminalRef: React.RefObject<TerminalHandle | null>;
   attachSession: (id: string) => void;
   createSession: () => { id: string; name: string };
@@ -50,6 +51,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [sessionActivity, setSessionActivity] = useState<Record<string, boolean>>({});
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalHandle | null>(null);
   const terminalReadyRef = useRef(false);
@@ -105,12 +107,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (message.type === "sessions") {
         const list = message.list as SessionInfo[];
         setSessions(list);
-        // No auto-attach or auto-switch here — route components drive that
         return;
       }
 
       if (message.type === "attached") {
         setCurrentSessionId(message.sessionId);
+      }
+
+      if (message.type === "activity") {
+        setSessionActivity(prev => ({ ...prev, [message.sessionId]: message.active }));
+        return;
       }
 
       // Forward terminal-related messages to terminal
@@ -224,6 +230,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sessions,
         currentSessionId,
         isConnected,
+        sessionActivity,
         terminalRef,
         attachSession,
         createSession,

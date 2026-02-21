@@ -17,9 +17,12 @@ export class Session {
   private size: { cols: number; rows: number };
   public title: string = "";
   public exited = false;
+  public isActive = false;
   private exitCode: number | null = null;
+  private activityTimeout: Timer | null = null;
   private onExitCallback?: (code: number) => void;
   private onTitleChangeCallback?: () => void;
+  private onActivityChangeCallback?: (sessionId: string, active: boolean) => void;
 
   constructor(id: string, name: string, cols: number, rows: number) {
     this.id = id;
@@ -54,6 +57,16 @@ export class Session {
           this.terminal.write(str);
           // Broadcast to all connected clients
           this.broadcast({ type: "data", data: str });
+          // Track activity
+          if (!this.isActive) {
+            this.isActive = true;
+            this.onActivityChangeCallback?.(this.id, true);
+          }
+          if (this.activityTimeout) clearTimeout(this.activityTimeout);
+          this.activityTimeout = setTimeout(() => {
+            this.isActive = false;
+            this.onActivityChangeCallback?.(this.id, false);
+          }, 300);
         },
       },
       onExit: (_proc, exitCode) => {
@@ -71,6 +84,10 @@ export class Session {
 
   onTitleChange(callback: () => void): void {
     this.onTitleChangeCallback = callback;
+  }
+
+  onActivityChange(callback: (sessionId: string, active: boolean) => void): void {
+    this.onActivityChangeCallback = callback;
   }
 
   addClient(client: ClientInfo): void {
@@ -120,6 +137,8 @@ export class Session {
   }
 
   kill(): void {
+    if (this.activityTimeout) clearTimeout(this.activityTimeout);
+    this.isActive = false;
     if (!this.exited) {
       this.proc.terminal?.close();
       this.proc.kill();

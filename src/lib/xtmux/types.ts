@@ -18,7 +18,8 @@ export type ServerMessage =
   | { type: "resize"; cols: number; rows: number }
   | { type: "exit"; code: number }
   | { type: "error"; message: string }
-  | { type: "sessions"; list: SessionInfo[] };
+  | { type: "sessions"; list: SessionInfo[] }
+  | { type: "activity"; sessionId: string; active: boolean };
 
 export interface SessionInfo {
   id: string;

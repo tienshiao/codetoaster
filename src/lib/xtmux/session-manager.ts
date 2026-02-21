@@ -38,6 +38,9 @@ export class SessionManager {
     session.onTitleChange(() => {
       this.broadcastSessionList();
     });
+    session.onActivityChange((sessionId, active) => {
+      this.broadcastToAll({ type: "activity", sessionId, active });
+    });
     this.sessions.set(id, session);
     return session;
   }
