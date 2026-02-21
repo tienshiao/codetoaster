@@ -15,6 +15,13 @@ function SessionComponent() {
   const navigate = useNavigate();
   const lastSlugRef = useRef<string | null>(null);
 
+  // Update page title based on current session
+  const currentSession = sessions.find((s) => s.id === currentSessionId);
+  useEffect(() => {
+    const label = currentSession?.title || currentSession?.name;
+    document.title = label ? `${label} — CodeToaster` : "CodeToaster";
+  }, [currentSession?.title, currentSession?.name]);
+
   // Attach to session when slug changes
   useEffect(() => {
     if (!isConnected) return;
