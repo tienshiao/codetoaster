@@ -1,3 +1,6 @@
+import { Link } from "@tanstack/react-router";
+import { buildSessionSlug } from "./utils/slug";
+
 export interface SessionInfo {
   id: string;
   name: string;
@@ -11,7 +14,6 @@ export interface SessionInfo {
 interface SidebarProps {
   sessions: SessionInfo[];
   currentSessionId: string | null;
-  onSelectTab: (id: string) => void;
   onNewTab: () => void;
   onCloseTab: (id: string) => void;
 }
@@ -19,7 +21,6 @@ interface SidebarProps {
 export function Sidebar({
   sessions,
   currentSessionId,
-  onSelectTab,
   onNewTab,
   onCloseTab,
 }: SidebarProps) {
@@ -28,10 +29,12 @@ export function Sidebar({
       <div className="sidebar-header">CodeToaster</div>
       <div className="tab-list">
         {sessions.map((session) => (
-          <div
+          <Link
             key={session.id}
-            className={`tab-item ${session.id === currentSessionId ? "active" : ""} ${session.exited ? "exited" : ""}`}
-            onClick={() => onSelectTab(session.id)}
+            to="/sessions/$slug"
+            params={{ slug: buildSessionSlug(session) }}
+            className={`tab-item ${session.exited ? "exited" : ""}`}
+            activeProps={{ className: `tab-item active ${session.exited ? "exited" : ""}` }}
           >
             <span className="tab-item-label">
               <span className="tab-item-name">
@@ -43,6 +46,7 @@ export function Sidebar({
             <button
               className="tab-close-btn"
               onClick={(e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 onCloseTab(session.id);
               }}
@@ -50,7 +54,7 @@ export function Sidebar({
             >
               x
             </button>
-          </div>
+          </Link>
         ))}
       </div>
       <button className="new-tab-btn" onClick={onNewTab}>
