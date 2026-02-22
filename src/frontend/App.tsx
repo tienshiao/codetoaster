@@ -20,7 +20,7 @@ import { Button } from "./components/ui/button";
 import { Plus } from "lucide-react";
 import "./index.css";
 
-export function SessionLayout() {
+export function SessionLayout({ showNotFound = false }: { showNotFound?: boolean }) {
   const {
     sessions,
     folders,
@@ -160,7 +160,17 @@ export function SessionLayout() {
               Connecting...
             </div>
           )}
-          {isConnected && !currentSessionId && (
+          {isConnected && showNotFound && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-zinc-500 text-sm z-10">
+              <div className="flex flex-col items-center gap-4">
+                <p>Session not found</p>
+                <Button variant="outline" onClick={() => handleNewTab()}>
+                  <Plus /> New Session
+                </Button>
+              </div>
+            </div>
+          )}
+          {isConnected && !showNotFound && !currentSessionId && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-zinc-500 text-sm z-10">
               <div className="flex flex-col items-center gap-4">
                 <p>No active sessions</p>

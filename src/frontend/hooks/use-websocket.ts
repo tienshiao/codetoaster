@@ -3,16 +3,19 @@ import { useState, useRef, useCallback, useEffect } from "react";
 interface UseWebSocketOptions {
   onMessage: (message: any) => void;
   onConnect: () => void;
+  onDisconnect?: () => void;
 }
 
-export function useWebSocket({ onMessage, onConnect }: UseWebSocketOptions) {
+export function useWebSocket({ onMessage, onConnect, onDisconnect }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const onMessageRef = useRef(onMessage);
   const onConnectRef = useRef(onConnect);
+  const onDisconnectRef = useRef(onDisconnect);
 
   onMessageRef.current = onMessage;
   onConnectRef.current = onConnect;
+  onDisconnectRef.current = onDisconnect;
 
   const send = useCallback((msg: object) => {
     const ws = wsRef.current;
@@ -47,6 +50,7 @@ export function useWebSocket({ onMessage, onConnect }: UseWebSocketOptions) {
       if (wsRef.current === socket) {
         setIsConnected(false);
         wsRef.current = null;
+        onDisconnectRef.current?.();
       }
     };
 

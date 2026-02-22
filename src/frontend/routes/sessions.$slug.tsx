@@ -1,7 +1,7 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { useSession } from "../SessionContext";
-import { parseSessionSlug, buildSessionSlug } from "../utils/slug";
+import { parseSessionSlug } from "../utils/slug";
 import { SessionLayout } from "../App";
 
 export const Route = createFileRoute("/sessions/$slug")({
@@ -10,9 +10,8 @@ export const Route = createFileRoute("/sessions/$slug")({
 
 function SessionComponent() {
   const { slug } = Route.useParams();
-  const { sessions, currentSessionId, attachSession, isConnected } =
+  const { sessions, currentSessionId, attachSession, isConnected, sessionsLoaded } =
     useSession();
-  const navigate = useNavigate();
   const lastSlugRef = useRef<string | null>(null);
 
   // Update page title based on current session
@@ -22,34 +21,27 @@ function SessionComponent() {
     document.title = label ? `${label} — CodeToaster` : "CodeToaster";
   }, [currentSession?.title, currentSession?.name]);
 
-  // Attach to session when slug changes
+  // Attach to session when slug changes (only if session exists)
   useEffect(() => {
-    if (!isConnected) return;
+    if (!isConnected || !sessionsLoaded) return;
     if (slug === lastSlugRef.current) return;
-    lastSlugRef.current = slug;
-
-    const { id } = parseSessionSlug(slug);
-    attachSession(id);
-  }, [slug, isConnected, attachSession]);
-
-  // When current session is removed, navigate to next session or /
-  useEffect(() => {
-    if (!isConnected) return;
 
     const { id } = parseSessionSlug(slug);
     const sessionExists = sessions.some((s) => s.id === id);
+    if (!sessionExists) return;
 
-    if (!sessionExists && sessions.length > 0) {
-      const next = sessions[0]!;
-      navigate({
-        to: "/sessions/$slug",
-        params: { slug: buildSessionSlug(next) },
-        replace: true,
-      });
-    } else if (!sessionExists && sessions.length === 0) {
-      navigate({ to: "/", replace: true });
-    }
-  }, [sessions, slug, isConnected, navigate]);
+    lastSlugRef.current = slug;
+    attachSession(id);
+  }, [slug, isConnected, sessionsLoaded, sessions, attachSession]);
 
-  return <SessionLayout />;
+  // Reset lastSlugRef when slug changes so re-attach works after navigating away and back
+  useEffect(() => {
+    lastSlugRef.current = null;
+  }, [slug]);
+
+  const { id } = parseSessionSlug(slug);
+  const sessionExists = sessions.some((s) => s.id === id);
+  const showNotFound = isConnected && sessionsLoaded && !sessionExists;
+
+  return <SessionLayout showNotFound={showNotFound} />;
 }

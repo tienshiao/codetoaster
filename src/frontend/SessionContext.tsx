@@ -32,6 +32,7 @@ interface SessionContextValue {
   folders: FolderInfo[];
   currentSessionId: string | null;
   isConnected: boolean;
+  sessionsLoaded: boolean;
   sessionActivity: Record<string, boolean>;
   terminalRef: React.RefObject<TerminalHandle | null>;
   attachSession: (id: string) => void;
@@ -98,6 +99,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [folders, setFolders] = useState<FolderInfo[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessionActivity, setSessionActivity] = useState<Record<string, boolean>>({});
   const terminalRef = useRef<TerminalHandle | null>(null);
   const terminalReadyRef = useRef(false);
@@ -127,6 +129,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (message.folders) {
         setFolders(message.folders as FolderInfo[]);
       }
+      setSessionsLoaded(true);
       return;
     }
 
@@ -164,6 +167,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (terminalReadyRef.current) {
         send({ type: "list" });
       }
+    },
+    onDisconnect: () => {
+      setSessionsLoaded(false);
     },
   });
   sendRef.current = send;
@@ -382,6 +388,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         folders,
         currentSessionId,
         isConnected,
+        sessionsLoaded,
         sessionActivity,
         terminalRef,
         attachSession,
