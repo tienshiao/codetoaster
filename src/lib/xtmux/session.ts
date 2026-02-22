@@ -61,8 +61,22 @@ export class Session {
     });
 
     // OSC 9: message (iTerm2/ConEmu style)
+    // ConEmu sub-commands: "1;msg" = notification, "4;st;pr" = progress indicator
+    // iTerm2: plain text = notification
     this.terminal.parser.registerOscHandler(9, (data: string) => {
-      this.emitNotification(data || "Notification", "");
+      const semiIdx = data.indexOf(";");
+      if (semiIdx !== -1) {
+        const sub = data.substring(0, semiIdx);
+        if (sub === "1") {
+          // ConEmu notification sub-command
+          const msg = data.substring(semiIdx + 1);
+          this.emitNotification(msg || "Notification", "");
+        }
+        // Ignore other sub-commands (4=progress, 2=tab title, 3=cwd, etc.)
+      } else if (data) {
+        // Plain text: iTerm2-style notification
+        this.emitNotification(data, "");
+      }
       return true;
     });
 

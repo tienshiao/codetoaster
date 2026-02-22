@@ -105,6 +105,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const sessionsRef = useRef<SessionInfo[]>([]);
   const foldersRef = useRef<FolderInfo[]>([]);
   const messageQueueRef = useRef<any[]>([]);
+  const sendRef = useRef<(msg: object) => void>(() => {});
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -139,6 +140,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     if (message.type === "notification") {
+      // Auto-acknowledge if we're already viewing this session
+      if (message.sessionId === currentSessionIdRef.current) {
+        sendRef.current({ type: "acknowledge", sessionId: message.sessionId });
+      }
       if (!document.hasFocus()) {
         fireWebNotification(message.title, message.body, `codetoaster-${message.sessionId}`);
       }
@@ -161,6 +166,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     },
   });
+  sendRef.current = send;
 
   const handleTerminalReady = useCallback(() => {
     terminalReadyRef.current = true;
