@@ -215,7 +215,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const createSession = useCallback((folderId?: string): { id: string; name: string } => {
     terminalRef.current?.resetAttached();
 
-    const afterSessionId = currentSessionIdRef.current || undefined;
+    // Only inherit position/cwd when no explicit folder is targeted (e.g. Cmd+T)
+    const afterSessionId = folderId ? undefined : (currentSessionIdRef.current || undefined);
 
     if (currentSessionIdRef.current) {
       send({ type: "detach" });
