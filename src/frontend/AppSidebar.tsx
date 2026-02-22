@@ -1,11 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { EllipsisVertical, X } from "lucide-react";
+import { EllipsisVertical, Plus, X } from "lucide-react";
 import { buildSessionSlug } from "./utils/slug";
 import { StatusDot } from "./components/StatusDot";
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
@@ -56,8 +55,11 @@ export function AppSidebar({
 
   return (
     <Sidebar>
-      <SidebarHeader className="px-4 py-3 h-10 text-xs font-semibold uppercase tracking-wide text-zinc-500 border-b border-sidebar-border">
+      <SidebarHeader className="flex-row items-center justify-between px-4 py-3 h-10 text-xs font-semibold uppercase tracking-wide text-zinc-500 border-b border-sidebar-border">
         CodeToaster
+        <Button variant="ghost" size="icon" className="size-6 text-zinc-500" onClick={onNewTab} title="New Session">
+          <Plus className="size-4" />
+        </Button>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup className="p-0">
@@ -122,15 +124,6 @@ export function AppSidebar({
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-0">
-        <Button
-          variant="ghost"
-          className="w-full rounded-none text-zinc-500 text-[13px] justify-center"
-          onClick={onNewTab}
-        >
-          + New Tab
-        </Button>
-      </SidebarFooter>
     </Sidebar>
   );
 }
