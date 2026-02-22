@@ -135,6 +135,7 @@ export function SessionLayout() {
         onNewFolder={handleNewFolder}
         onRenameFolder={renameFolder}
         onDeleteFolder={deleteFolder}
+        onFocusTerminal={() => terminalRef.current?.focus()}
       />
       <div className="flex-1 h-full overflow-hidden flex flex-col">
         <TopBar

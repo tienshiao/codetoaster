@@ -15,6 +15,7 @@ export interface TerminalHandle {
   send: (msg: object) => void;
   getSize: () => TerminalSize;
   resetAttached: () => void;
+  focus: () => void;
 }
 
 interface XTerminalProps {
@@ -99,6 +100,9 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       },
       resetAttached: () => {
         attachedRef.current = false;
+      },
+      focus: () => {
+        termRef.current?.focus();
       },
     }), []);
 

@@ -54,6 +54,7 @@ interface AppSidebarProps {
   onNewFolder: () => void;
   onRenameFolder: (id: string, name: string) => void;
   onDeleteFolder: (id: string) => void;
+  onFocusTerminal: () => void;
 }
 
 export function AppSidebar({
@@ -70,6 +71,7 @@ export function AppSidebar({
   onNewFolder,
   onRenameFolder,
   onDeleteFolder,
+  onFocusTerminal,
 }: AppSidebarProps) {
   const { setOpenMobile, isMobile } = useSidebar();
   const [renameTarget, setRenameTarget] = useState<{ type: "session" | "folder"; id: string } | null>(null);
@@ -206,6 +208,7 @@ export function AppSidebar({
                                   if (isMobile) {
                                     setOpenMobile(false);
                                   }
+                                  onFocusTerminal();
                                 }}
                               >
                                 <StatusDot
