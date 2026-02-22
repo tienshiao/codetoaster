@@ -127,23 +127,26 @@ export function AppSidebar({
               >
                 <SidebarGroup className={`p-0 ${isFolderDropTarget(folder.id) ? "ring-1 ring-blue-500 rounded-md" : ""}`}>
                   <div
-                    className="group/folder flex items-center gap-1 h-8 px-2 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent cursor-pointer select-none"
+                    className="group/folder flex items-center gap-1 h-8 px-2 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none"
                     {...getFolderDragProps(folder.id, folderIndex)}
-                    onClick={() => toggleFolder(folder.id)}
                   >
-                    <ChevronRight className={`size-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
-                    <span className="flex-1 truncate">{folder.name}</span>
+                    <button
+                      className="flex items-center gap-1 flex-1 min-w-0 cursor-pointer text-left"
+                      onClick={() => toggleFolder(folder.id)}
+                    >
+                      <ChevronRight className={`size-3.5 shrink-0 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+                      <span className="flex-1 truncate">{folder.name}</span>
+                    </button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
                           className="p-0.5 rounded opacity-0 group-hover/folder:opacity-100 hover:bg-sidebar-accent"
-                          onClick={(e) => e.stopPropagation()}
                           draggable={false}
                         >
                           <EllipsisVertical className="size-3.5" />
                         </button>
                       </DropdownMenuTrigger>
-                        <DropdownMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
+                        <DropdownMenuContent>
                           <DropdownMenuItem onClick={() => onNewTab(folder.id)}>
                             <Plus />
                             New Session
