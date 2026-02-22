@@ -19,6 +19,7 @@ interface SessionContextValue {
   attachSession: (id: string) => void;
   createSession: () => { id: string; name: string };
   closeSession: (id: string) => void;
+  renameSession: (id: string, name: string) => void;
   handleTerminalReady: () => void;
   handleSizeChange: (size: TerminalSize) => void;
   handleSendMessage: (msg: object) => void;
@@ -234,6 +235,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return { id: sessionId, name };
   }, [send]);
 
+  const renameSession = useCallback(
+    (id: string, name: string) => {
+      send({ type: "rename", sessionId: id, name });
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, name } : s))
+      );
+    },
+    [send],
+  );
+
   const closeSession = useCallback(
     (id: string) => {
       send({ type: "kill", sessionId: id });
@@ -259,6 +270,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         attachSession,
         createSession,
         closeSession,
+        renameSession,
         handleTerminalReady,
         handleSizeChange,
         handleSendMessage,

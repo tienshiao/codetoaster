@@ -8,7 +8,7 @@ const MIN_ROWS = 24;
 
 export class Session {
   public readonly id: string;
-  public readonly name: string;
+  public name: string;
   public readonly createdAt: number;
   private proc: Subprocess;
   private terminal: Terminal;

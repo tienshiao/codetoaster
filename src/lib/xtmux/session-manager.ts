@@ -115,6 +115,14 @@ export class SessionManager {
     return true;
   }
 
+  renameSession(id: string, name: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    session.name = name;
+    this.broadcastSessionList();
+    return true;
+  }
+
   acknowledgeSession(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session && session.hasNotification) {

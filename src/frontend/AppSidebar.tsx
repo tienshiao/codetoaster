@@ -1,5 +1,6 @@
+import { useState, useRef, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
-import { EllipsisVertical, Plus, X } from "lucide-react";
+import { EllipsisVertical, Pencil, Plus, X } from "lucide-react";
 import { buildSessionSlug } from "./utils/slug";
 import { StatusDot } from "./components/StatusDot";
 import {
@@ -20,6 +21,14 @@ import {
   DropdownMenuTrigger,
 } from "./components/ui/dropdown-menu";
 import { Button } from "./components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./components/ui/dialog";
+import { Input } from "./components/ui/input";
 
 export interface SessionInfo {
   id: string;
@@ -39,6 +48,7 @@ interface AppSidebarProps {
   sessionActivity: Record<string, boolean>;
   onNewTab: () => void;
   onCloseTab: (id: string) => void;
+  onRenameSession: (id: string, name: string) => void;
   onAcknowledge: (id: string) => void;
 }
 
@@ -49,9 +59,32 @@ export function AppSidebar({
   sessionActivity,
   onNewTab,
   onCloseTab,
+  onRenameSession,
   onAcknowledge,
 }: AppSidebarProps) {
   const { setOpenMobile, isMobile } = useSidebar();
+  const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  const renameSession = renameSessionId
+    ? sessions.find((s) => s.id === renameSessionId)
+    : null;
+
+  useEffect(() => {
+    if (renameSessionId) {
+      // Focus after dialog animation
+      setTimeout(() => renameInputRef.current?.select(), 0);
+    }
+  }, [renameSessionId]);
+
+  const handleRenameSubmit = () => {
+    const trimmed = renameName.trim();
+    if (renameSessionId && trimmed && trimmed !== renameSession?.name) {
+      onRenameSession(renameSessionId, trimmed);
+    }
+    setRenameSessionId(null);
+  };
 
   return (
     <Sidebar>
@@ -111,6 +144,15 @@ export function AppSidebar({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>
                       <DropdownMenuItem
+                        onClick={() => {
+                          setRenameName(session.name);
+                          setRenameSessionId(session.id);
+                        }}
+                      >
+                        <Pencil />
+                        Rename Session
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
                         onClick={() => onCloseTab(session.id)}
                       >
                         <X />
@@ -124,6 +166,38 @@ export function AppSidebar({
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
+
+      <Dialog
+        open={renameSessionId !== null}
+        onOpenChange={(open) => { if (!open) setRenameSessionId(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename Session</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleRenameSubmit();
+            }}
+          >
+            <Input
+              ref={renameInputRef}
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              placeholder="Session name"
+            />
+            <DialogFooter className="mt-4">
+              <Button type="button" variant="outline" onClick={() => setRenameSessionId(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!renameName.trim()}>
+                Rename
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Sidebar>
   );
 }

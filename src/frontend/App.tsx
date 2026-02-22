@@ -29,6 +29,7 @@ export function SessionLayout() {
     terminalRef,
     createSession,
     closeSession,
+    renameSession,
     handleTerminalReady,
     handleSizeChange,
     handleSendMessage,
@@ -70,6 +71,20 @@ export function SessionLayout() {
     [sessions, currentSessionId, closeSession, navigate],
   );
 
+  const handleRenameSession = useCallback(
+    (id: string, newName: string) => {
+      renameSession(id, newName);
+      if (id === currentSessionId) {
+        navigate({
+          to: "/sessions/$slug",
+          params: { slug: buildSessionSlug({ id, name: newName }) },
+          replace: true,
+        });
+      }
+    },
+    [currentSessionId, renameSession, navigate],
+  );
+
   const handleCloseTab = useCallback(
     (id: string) => {
       const session = sessions.find((s) => s.id === id);
@@ -91,6 +106,7 @@ export function SessionLayout() {
         sessionActivity={sessionActivity}
         onNewTab={handleNewTab}
         onCloseTab={handleCloseTab}
+        onRenameSession={handleRenameSession}
         onAcknowledge={(id) => handleSendMessage({ type: "acknowledge", sessionId: id })}
       />
       <div className="flex-1 h-full overflow-hidden flex flex-col">

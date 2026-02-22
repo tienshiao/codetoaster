@@ -130,6 +130,14 @@ const server = serve<WebSocketData>({
           break;
         }
 
+        case "rename": {
+          const renamed = sessionManager.renameSession(parsed.sessionId, parsed.name);
+          if (!renamed) {
+            sendError(ws, `Session "${parsed.sessionId}" not found`);
+          }
+          break;
+        }
+
         case "acknowledge": {
           sessionManager.acknowledgeSession(parsed.sessionId);
           break;

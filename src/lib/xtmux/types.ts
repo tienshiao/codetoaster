@@ -9,6 +9,7 @@ export type ClientMessage =
   | { type: "resize"; cols: number; rows: number }
   | { type: "list" }
   | { type: "kill"; sessionId: string }
+  | { type: "rename"; sessionId: string; name: string }
   | { type: "acknowledge"; sessionId: string };
 
 // Server -> Client messages
