@@ -85,9 +85,9 @@ const server = serve<WebSocketData>({
 
       switch (parsed.type) {
         case "create": {
-          const { sessionId, name, cols, rows } = parsed;
+          const { sessionId, name, cols, rows, folderId } = parsed;
           try {
-            const session = sessionManager.createSession(sessionId, name || sessionId, cols, rows);
+            const session = sessionManager.createSession(sessionId, name || sessionId, cols, rows, folderId);
             sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
             ws.data.sessionId = sessionId;
             sessionManager.broadcastSessionList();
@@ -137,6 +137,7 @@ const server = serve<WebSocketData>({
             JSON.stringify({
               type: "sessions",
               list: sessionManager.listSessions(),
+              folders: sessionManager.getFolders(),
             })
           );
           break;
@@ -166,7 +167,32 @@ const server = serve<WebSocketData>({
         }
 
         case "reorder": {
-          sessionManager.reorderSessions(parsed.sessionIds);
+          sessionManager.reorderFolders(parsed.folders);
+          break;
+        }
+
+        case "createFolder": {
+          try {
+            sessionManager.createFolder(parsed.id, parsed.name);
+          } catch (e: any) {
+            sendError(ws, e.message);
+          }
+          break;
+        }
+
+        case "renameFolder": {
+          const renamed = sessionManager.renameFolder(parsed.id, parsed.name);
+          if (!renamed) {
+            sendError(ws, `Folder "${parsed.id}" not found`);
+          }
+          break;
+        }
+
+        case "deleteFolder": {
+          const deleted = sessionManager.deleteFolder(parsed.id);
+          if (!deleted) {
+            sendError(ws, `Cannot delete folder "${parsed.id}"`);
+          }
           break;
         }
 

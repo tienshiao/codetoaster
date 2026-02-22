@@ -23,6 +23,7 @@ import "./index.css";
 export function SessionLayout() {
   const {
     sessions,
+    folders,
     currentSessionId,
     isConnected,
     sessionActivity,
@@ -31,6 +32,9 @@ export function SessionLayout() {
     closeSession,
     renameSession,
     reorderSessions,
+    createFolder,
+    renameFolder,
+    deleteFolder,
     handleTerminalReady,
     handleSizeChange,
     handleSendMessage,
@@ -44,13 +48,17 @@ export function SessionLayout() {
     ? sessions.find((s) => s.id === closeConfirmSessionId)
     : null;
 
-  const handleNewTab = useCallback(() => {
-    const { id, name } = createSession();
+  const handleNewTab = useCallback((folderId?: string) => {
+    const { id, name } = createSession(folderId);
     navigate({
       to: "/sessions/$slug",
       params: { slug: buildSessionSlug({ id, name }) },
     });
   }, [createSession, navigate]);
+
+  const handleNewFolder = useCallback(() => {
+    createFolder();
+  }, [createFolder]);
 
   const performClose = useCallback(
     (id: string) => {
@@ -115,6 +123,7 @@ export function SessionLayout() {
     <SidebarProvider className="h-svh">
       <AppSidebar
         sessions={sessions}
+        folders={folders}
         currentSessionId={currentSessionId}
         isConnected={isConnected}
         sessionActivity={sessionActivity}
@@ -123,6 +132,9 @@ export function SessionLayout() {
         onRenameSession={handleRenameSession}
         onReorder={reorderSessions}
         onAcknowledge={(id) => handleSendMessage({ type: "acknowledge", sessionId: id })}
+        onNewFolder={handleNewFolder}
+        onRenameFolder={renameFolder}
+        onDeleteFolder={deleteFolder}
       />
       <div className="flex-1 h-full overflow-hidden flex flex-col">
         <TopBar
@@ -151,7 +163,7 @@ export function SessionLayout() {
             <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-zinc-500 text-sm z-10">
               <div className="flex flex-col items-center gap-4">
                 <p>No active sessions</p>
-                <Button variant="outline" onClick={handleNewTab}>
+                <Button variant="outline" onClick={() => handleNewTab()}>
                   <Plus /> New Session
                 </Button>
               </div>

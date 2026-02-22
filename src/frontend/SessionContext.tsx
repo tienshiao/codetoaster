@@ -21,17 +21,27 @@ export interface SessionInfo {
   hasNotification?: boolean;
 }
 
+export interface FolderInfo {
+  id: string;
+  name: string;
+  sessionIds: string[];
+}
+
 interface SessionContextValue {
   sessions: SessionInfo[];
+  folders: FolderInfo[];
   currentSessionId: string | null;
   isConnected: boolean;
   sessionActivity: Record<string, boolean>;
   terminalRef: React.RefObject<TerminalHandle | null>;
   attachSession: (id: string) => void;
-  createSession: () => { id: string; name: string };
+  createSession: (folderId?: string) => { id: string; name: string };
   closeSession: (id: string) => void;
   renameSession: (id: string, name: string) => void;
-  reorderSessions: (sessionIds: string[]) => void;
+  reorderSessions: (folders: Array<{ id: string; sessionIds: string[] }>) => void;
+  createFolder: () => { id: string; name: string };
+  renameFolder: (id: string, name: string) => void;
+  deleteFolder: (id: string) => void;
   handleTerminalReady: () => void;
   handleSizeChange: (size: TerminalSize) => void;
   handleSendMessage: (msg: object) => void;
@@ -60,6 +70,17 @@ function generateSessionName(existingSessions: SessionInfo[]): string {
   return `session-${max + 1}`;
 }
 
+function generateFolderName(existingFolders: FolderInfo[]): string {
+  let max = 0;
+  for (const f of existingFolders) {
+    const match = f.name.match(/^folder-(\d+)$/);
+    if (match) {
+      max = Math.max(max, parseInt(match[1]!, 10));
+    }
+  }
+  return `folder-${max + 1}`;
+}
+
 function fireWebNotification(title: string, body: string, tag: string) {
   if (!("Notification" in window)) return;
   if (Notification.permission === "granted") {
@@ -75,12 +96,14 @@ function fireWebNotification(title: string, body: string, tag: string) {
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [folders, setFolders] = useState<FolderInfo[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sessionActivity, setSessionActivity] = useState<Record<string, boolean>>({});
   const terminalRef = useRef<TerminalHandle | null>(null);
   const terminalReadyRef = useRef(false);
   const currentSessionIdRef = useRef<string | null>(null);
   const sessionsRef = useRef<SessionInfo[]>([]);
+  const foldersRef = useRef<FolderInfo[]>([]);
   const messageQueueRef = useRef<any[]>([]);
 
   // Keep refs in sync with state
@@ -92,10 +115,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sessionsRef.current = sessions;
   }, [sessions]);
 
+  useEffect(() => {
+    foldersRef.current = folders;
+  }, [folders]);
+
   const onMessage = useCallback((message: any) => {
     if (message.type === "sessions") {
       const list = message.list as SessionInfo[];
       setSessions(list);
+      if (message.folders) {
+        setFolders(message.folders as FolderInfo[]);
+      }
       return;
     }
 
@@ -182,7 +212,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
-  const createSession = useCallback((): { id: string; name: string } => {
+  const createSession = useCallback((folderId?: string): { id: string; name: string } => {
     terminalRef.current?.resetAttached();
 
     if (currentSessionIdRef.current) {
@@ -192,7 +222,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const sessionId = generateSessionId();
     const name = generateSessionName(sessionsRef.current);
     const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-    send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows });
+    send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows, folderId });
     setCurrentSessionId(sessionId);
     setSessions((prev) => [
       ...prev,
@@ -204,6 +234,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         clientCount: 1,
       },
     ]);
+    // Optimistically add to folder
+    const targetFolderId = folderId || "general";
+    setFolders((prev) =>
+      prev.map((f) =>
+        f.id === targetFolderId
+          ? { ...f, sessionIds: [...f.sessionIds, sessionId] }
+          : f
+      )
+    );
     return { id: sessionId, name };
   }, [send]);
 
@@ -218,21 +257,81 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
 
   const reorderSessions = useCallback(
-    (sessionIds: string[]) => {
+    (orderedFolders: Array<{ id: string; sessionIds: string[] }>) => {
+      // Optimistically update folders
+      setFolders((prev) => {
+        const folderMap = new Map(prev.map((f) => [f.id, f]));
+        const result: FolderInfo[] = [];
+        const seen = new Set<string>();
+        for (const { id, sessionIds } of orderedFolders) {
+          const existing = folderMap.get(id);
+          if (existing && !seen.has(id)) {
+            result.push({ ...existing, sessionIds });
+            seen.add(id);
+          }
+        }
+        // Append missing folders
+        for (const f of prev) {
+          if (!seen.has(f.id)) result.push(f);
+        }
+        return result;
+      });
+      // Optimistically reorder sessions to match folder order
       setSessions((prev) => {
         const map = new Map(prev.map((s) => [s.id, s]));
         const reordered: SessionInfo[] = [];
-        for (const id of sessionIds) {
-          const s = map.get(id);
-          if (s) reordered.push(s);
+        const seen = new Set<string>();
+        for (const { sessionIds } of orderedFolders) {
+          for (const id of sessionIds) {
+            const s = map.get(id);
+            if (s && !seen.has(id)) {
+              reordered.push(s);
+              seen.add(id);
+            }
+          }
         }
-        // Append any sessions not in sessionIds
         for (const s of prev) {
-          if (!sessionIds.includes(s.id)) reordered.push(s);
+          if (!seen.has(s.id)) reordered.push(s);
         }
         return reordered;
       });
-      send({ type: "reorder", sessionIds });
+      send({ type: "reorder", folders: orderedFolders });
+    },
+    [send],
+  );
+
+  const createFolder = useCallback((): { id: string; name: string } => {
+    const id = crypto.randomUUID();
+    const name = generateFolderName(foldersRef.current);
+    setFolders((prev) => [...prev, { id, name, sessionIds: [] }]);
+    send({ type: "createFolder", id, name });
+    return { id, name };
+  }, [send]);
+
+  const renameFolder = useCallback(
+    (id: string, name: string) => {
+      setFolders((prev) =>
+        prev.map((f) => (f.id === id ? { ...f, name } : f))
+      );
+      send({ type: "renameFolder", id, name });
+    },
+    [send],
+  );
+
+  const deleteFolder = useCallback(
+    (id: string) => {
+      setFolders((prev) => {
+        const folder = prev.find((f) => f.id === id);
+        if (!folder || id === "general") return prev;
+        return prev
+          .filter((f) => f.id !== id)
+          .map((f) =>
+            f.id === "general"
+              ? { ...f, sessionIds: [...f.sessionIds, ...folder.sessionIds] }
+              : f
+          );
+      });
+      send({ type: "deleteFolder", id });
     },
     [send],
   );
@@ -255,6 +354,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     <SessionContext.Provider
       value={{
         sessions,
+        folders,
         currentSessionId,
         isConnected,
         sessionActivity,
@@ -264,6 +364,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         closeSession,
         renameSession,
         reorderSessions,
+        createFolder,
+        renameFolder,
+        deleteFolder,
         handleTerminalReady,
         handleSizeChange,
         handleSendMessage,
