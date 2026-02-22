@@ -28,6 +28,16 @@ import {
   DropdownMenuTrigger,
 } from "./components/ui/dropdown-menu";
 import { Button } from "./components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./components/ui/alert-dialog";
 import type { SessionInfo, FolderInfo } from "./SessionContext";
 
 interface AppSidebarProps {
@@ -63,6 +73,7 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const { setOpenMobile, isMobile } = useSidebar();
   const [renameTarget, setRenameTarget] = useState<{ type: "session" | "folder"; id: string } | null>(null);
+  const [deleteFolderTarget, setDeleteFolderTarget] = useState<string | null>(null);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const {
     getFolderDragProps,
@@ -156,7 +167,7 @@ export function AppSidebar({
                             Rename Folder
                           </DropdownMenuItem>
                           {folder.id !== "general" && (
-                            <DropdownMenuItem onClick={() => onDeleteFolder(folder.id)}>
+                            <DropdownMenuItem onClick={() => setDeleteFolderTarget(folder.id)}>
                               <Trash2 />
                               Delete Folder
                             </DropdownMenuItem>
@@ -255,6 +266,34 @@ export function AppSidebar({
       </SidebarContent>
 
       <SettingsFooter />
+
+      <AlertDialog
+        open={deleteFolderTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteFolderTarget(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete folder?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{folders.find((f) => f.id === deleteFolderTarget)?.name ?? "Folder"}" will be deleted and its sessions will be moved to General.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (deleteFolderTarget) {
+                  onDeleteFolder(deleteFolderTarget);
+                }
+                setDeleteFolderTarget(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <RenameDialog
         item={renameItem}
