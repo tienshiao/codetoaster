@@ -102,6 +102,7 @@ export class Session {
     // Spawn PTY
     this.proc = Bun.spawn([process.env.SHELL || "bash"], {
       cwd: cwd || undefined,
+      env: { ...process.env, TERM: "xterm-256color" },
       terminal: {
         cols: this.size.cols,
         rows: this.size.rows,
