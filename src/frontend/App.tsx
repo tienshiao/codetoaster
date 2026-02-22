@@ -180,7 +180,7 @@ export function SessionLayout() {
           <AlertDialogHeader>
             <AlertDialogTitle>Close session?</AlertDialogTitle>
             <AlertDialogDescription>
-              "{closeConfirmSession?.title ?? closeConfirmSession?.name ?? "Session"}" is still running. Closing it will terminate the process.
+              "{closeConfirmSession?.name ?? "Session"}{closeConfirmSession?.title ? ` — ${closeConfirmSession.title}` : ""}" is still running. Closing it will terminate the process.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
