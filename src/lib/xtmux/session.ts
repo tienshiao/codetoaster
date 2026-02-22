@@ -26,6 +26,7 @@ export class Session {
   public hasNotification = false;
   private onNotificationCallback?: (sessionId: string, title: string, body: string) => void;
   private pendingOsc99: Map<string, { title: string; body: string }> = new Map();
+  private decoder = new TextDecoder();
 
   constructor(id: string, name: string, cols: number, rows: number, cwd?: string) {
     this.id = id;
@@ -107,8 +108,8 @@ export class Session {
         cols: this.size.cols,
         rows: this.size.rows,
         data: (_terminal, data) => {
-          // Convert Uint8Array to string
-          const str = new TextDecoder().decode(data);
+          // Convert Uint8Array to string (stream: true buffers incomplete multi-byte sequences)
+          const str = this.decoder.decode(data, { stream: true });
           // Write to headless terminal (authoritative state)
           this.terminal.write(str);
           // Broadcast to all connected clients
