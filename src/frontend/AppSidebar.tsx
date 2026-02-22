@@ -109,7 +109,7 @@ export function AppSidebar({
                         <EllipsisVertical />
                       </SidebarMenuAction>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start">
+                    <DropdownMenuContent>
                       <DropdownMenuItem
                         onClick={() => onCloseTab(session.id)}
                       >
