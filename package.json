@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsr watch & bun --hot src/index.ts",
+    "dev": "tsr watch & bun --hot src/index.ts foreground",
     "build:server": "bun run build-single.ts",
     "build:server:all": "bun run build-all.ts",
-    "start": "NODE_ENV=production bun src/index.ts"
+    "start": "NODE_ENV=production bun src/index.ts foreground"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.15",

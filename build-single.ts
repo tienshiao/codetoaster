@@ -5,7 +5,7 @@ import * as fs from "fs";
 
 const entrypoint = "./src/index.ts";
 const outdir = "./dist-executables";
-const outfile = "server";
+const outfile = "codetoaster";
 
 // Generate route tree
 await $`bunx tsr generate`;

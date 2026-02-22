@@ -234,6 +234,17 @@ export class SessionManager {
     return result;
   }
 
+  getConnections(): Array<{ clientId: string; sessionId: string | null }> {
+    const result: Array<{ clientId: string; sessionId: string | null }> = [];
+    for (const clientId of this.connectedClients.keys()) {
+      result.push({
+        clientId,
+        sessionId: this.clientToSession.get(clientId) ?? null,
+      });
+    }
+    return result;
+  }
+
   reorderFolders(orderedFolders: Array<{ id: string; sessionIds: string[] }>): void {
     const validSessionIds = new Set(this.sessions.keys());
     const existingFolderMap = new Map(this.folders.map((f) => [f.id, f]));

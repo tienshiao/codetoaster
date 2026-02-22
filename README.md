@@ -4,12 +4,43 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 
 ## Features
 
+### Sessions
 - Multiple named shell sessions with sidebar navigation
 - Multi-client support: share a session across browser tabs/devices
 - Server-side terminal state via `@xterm/headless` — reconnect without losing output
+- New sessions inherit the working directory of the current shell
+- Session renaming and close confirmation with session name/title
+
+### Folders
+- Organize sessions into collapsible folders
+- Drag-and-drop reordering of sessions and folders
+- Default "General" folder for ungrouped sessions
+
+### Terminal
+- Full terminal emulation with `@xterm/xterm` and 10,000-line scrollback
 - Terminal size negotiation (smallest-wins across connected clients)
-- Drag-and-drop and paste-to-upload for files and images
-- Activity indicators per session
+- `TERM=xterm-256color` for proper color and Nerd Font support
+
+### Customization
+- 100+ terminal color schemes with palette preview
+- 5 font families: JetBrains Mono, Fira Code, Hack, MesloLGS, Cascadia Code (all Nerd Font Mono)
+- Adjustable font size (12–24px)
+- App theme: system, light, or dark mode
+- All preferences persisted to localStorage
+
+### File Upload
+- Drag-and-drop files onto the terminal to upload
+- Paste images/files from clipboard
+- Uploaded file paths are injected into the shell
+
+### Notifications
+- Desktop notifications via OSC 777, OSC 9, and OSC 99 (Kitty protocol)
+- Browser notifications when the window is not focused
+- Amber indicator dot for unacknowledged notifications
+
+### Activity Tracking
+- Animated activity indicator per session (300ms debounce)
+- Color-coded status dots: active, inactive, notification pending, exited
 
 ## Tech Stack
 
@@ -31,7 +62,7 @@ bun install
 bun run dev
 ```
 
-Starts the TanStack Router watcher and Bun dev server with hot reload on port 4000.
+Starts the TanStack Router watcher and Bun dev server in foreground with hot reload on port 4000.
 
 ### Production
 
@@ -44,3 +75,53 @@ bun run start
 ```bash
 bun run build:server
 ```
+
+Produces a `codetoaster` binary in `dist-executables/`.
+
+## CLI
+
+CodeToaster includes a tmux-like CLI. The default command starts a background daemon; subcommands communicate with it over HTTP.
+
+```
+Usage: codetoaster [command] [options]
+
+Commands:
+  (default)       Start daemon in background
+  foreground, fg  Run server in foreground (no detach)
+  list, ls        List sessions
+  kill <session>  Kill a session by name or ID prefix
+  connections     List connected WebSocket clients
+  open            Open web UI in default browser
+  stop            Stop the daemon
+  status          Check if daemon is running
+  help            Show this help message
+
+Options:
+  --port <port>   Server port (default: 4000, or PORT env)
+  --version       Show version
+  --help          Show this help message
+```
+
+### Examples
+
+```bash
+# Start the daemon
+codetoaster
+
+# Check status
+codetoaster status
+
+# List sessions with CWD, client count, and age
+codetoaster ls
+
+# Kill a session by name or ID prefix
+codetoaster kill my-session
+
+# Open the web UI
+codetoaster open
+
+# Stop the daemon
+codetoaster stop
+```
+
+The daemon stores its PID file and logs in `~/.codetoaster/`.

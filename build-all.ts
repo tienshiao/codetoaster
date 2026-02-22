@@ -7,7 +7,7 @@ import * as path from "path";
 
 const entrypoint = "./src/index.ts";
 const outdir = "./dist-executables";
-const outfile = "server";
+const outfile = "codetoaster";
 
 const platforms = [
   { platform: "darwin", arch: "x64", target: "bun-darwin-x64", outfile: `${outfile}-macos-x64` },
