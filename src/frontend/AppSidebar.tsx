@@ -152,7 +152,7 @@ export function AppSidebar({
                           <EllipsisVertical className="size-3.5" />
                         </button>
                       </DropdownMenuTrigger>
-                        <DropdownMenuContent>
+                        <DropdownMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
                           <DropdownMenuItem onClick={() => onNewTab(folder.id)}>
                             <Plus />
                             New Session
