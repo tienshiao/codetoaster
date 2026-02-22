@@ -7,7 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import type { SessionInfo } from "./Sidebar";
+import type { SessionInfo } from "./AppSidebar";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
 
 interface SessionContextValue {
