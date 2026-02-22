@@ -77,8 +77,11 @@ export function startServer(options?: ServerOptions) {
 
       "/api/ping": {
         GET() {
+          const version = typeof __VERSION__ !== "undefined" ? __VERSION__ : "dev";
+          const gitHash = typeof __GIT_HASH__ !== "undefined" ? __GIT_HASH__ : "";
           return Response.json({
             status: "ok",
+            version: version + (gitHash ? ` (${gitHash})` : ""),
             pid: process.pid,
             uptime: Math.floor((Date.now() - startTime) / 1000),
             sessions: sessionManager.listSessions().length,

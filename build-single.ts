@@ -34,6 +34,7 @@ await build({
   },
   plugins: [tailwind],
   minify: true,
+  bytecode: true,
 });
 
 console.log(`Built ${outdir}/${outfile}`);

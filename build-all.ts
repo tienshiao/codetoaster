@@ -62,6 +62,7 @@ for (const platform of platforms) {
       },
       plugins: [tailwind],
       minify: true,
+      bytecode: true,
       outdir,
     });
     console.log(`✅ Successfully built for ${platform.target}`);

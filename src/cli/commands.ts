@@ -254,11 +254,13 @@ export async function cmdStatus(port: number): Promise<void> {
     const res = await fetch(`${getBaseUrl(pidInfo.port)}/api/ping`);
     const info = (await res.json()) as {
       status: string;
+      version: string;
       pid: number;
       uptime: number;
       sessions: number;
     };
     console.log(`Running`);
+    console.log(`  Version:  ${info.version}`);
     console.log(`  PID:      ${info.pid}`);
     console.log(`  Port:     ${pidInfo.port}`);
     console.log(`  Uptime:   ${formatAge(Date.now() - info.uptime * 1000)}`);
