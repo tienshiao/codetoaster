@@ -85,6 +85,19 @@ export function SessionLayout() {
     [currentSessionId, renameSession, navigate],
   );
 
+  const handleFileDrop = useCallback(
+    async (files: File[]) => {
+      if (!currentSessionId) return;
+      const formData = new FormData();
+      for (const file of files) formData.append("files", file);
+      await fetch(`/api/sessions/${currentSessionId}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+    },
+    [currentSessionId],
+  );
+
   const handleCloseTab = useCallback(
     (id: string) => {
       const session = sessions.find((s) => s.id === id);
@@ -125,6 +138,7 @@ export function SessionLayout() {
             onSizeChange={handleSizeChange}
             onReady={handleTerminalReady}
             sendMessage={handleSendMessage}
+            onFileDrop={handleFileDrop}
           />
           {!isConnected && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-zinc-500 text-sm z-10">

@@ -38,6 +38,28 @@ const server = serve<WebSocketData>({
         return Response.json({ error: "Session not found" }, { status: 404 });
       },
     },
+
+    "/api/sessions/:id/upload": {
+      async POST(req: Request & { params: { id: string } }) {
+        const session = sessionManager.getSession(req.params.id);
+        if (!session) {
+          return Response.json({ error: "Session not found" }, { status: 404 });
+        }
+        const formData = await req.formData();
+        const files = formData.getAll("files") as File[];
+        if (files.length === 0) {
+          return Response.json({ error: "No files" }, { status: 400 });
+        }
+        const paths: string[] = [];
+        for (const file of files) {
+          const tmpPath = `/tmp/${crypto.randomUUID()}-${file.name}`;
+          await Bun.write(tmpPath, file);
+          paths.push(tmpPath);
+        }
+        session.write(paths.join(" "));
+        return Response.json({ paths });
+      },
+    },
   },
 
   websocket: {

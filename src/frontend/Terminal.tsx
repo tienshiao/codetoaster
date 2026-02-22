@@ -1,6 +1,7 @@
-import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
+import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { Upload } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalSize {
@@ -19,20 +20,25 @@ interface XTerminalProps {
   onSizeChange: (size: TerminalSize) => void;
   onReady: () => void;
   sendMessage: (msg: object) => void;
+  onFileDrop?: (files: File[]) => void;
 }
 
 export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
-  function XTerminal({ onSizeChange, onReady, sendMessage }, ref) {
+  function XTerminal({ onSizeChange, onReady, sendMessage, onFileDrop }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const attachedRef = useRef(false);
+    const [isDragOver, setIsDragOver] = useState(false);
+    const dragCounterRef = useRef(0);
 
     // Store callbacks in refs
     const onSizeChangeRef = useRef(onSizeChange);
     const sendMessageRef = useRef(sendMessage);
+    const onFileDropRef = useRef(onFileDrop);
     onSizeChangeRef.current = onSizeChange;
     sendMessageRef.current = sendMessage;
+    onFileDropRef.current = onFileDrop;
 
     // Expose methods to parent
     useImperativeHandle(ref, () => ({
@@ -130,12 +136,22 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       });
       resizeObserver.observe(container);
 
+      // Handle paste with files (screenshots, copied files)
+      const handlePaste = (e: ClipboardEvent) => {
+        if (e.clipboardData && e.clipboardData.files.length > 0) {
+          e.preventDefault();
+          onFileDropRef.current?.(Array.from(e.clipboardData.files));
+        }
+      };
+      container.addEventListener("paste", handlePaste, true);
+
       // Report ready
       onReady();
 
       return () => {
         dataDisposable.dispose();
         resizeObserver.disconnect();
+        container.removeEventListener("paste", handlePaste, true);
         term.dispose();
         termRef.current = null;
         fitAddonRef.current = null;
@@ -143,8 +159,36 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     }, [onReady]);
 
     return (
-      <div className="w-full h-full bg-black p-2">
+      <div
+        className="relative w-full h-full bg-black p-2"
+        onDragEnter={(e) => {
+          e.preventDefault();
+          dragCounterRef.current++;
+          if (e.dataTransfer.types.includes("Files")) setIsDragOver(true);
+        }}
+        onDragOver={(e) => e.preventDefault()}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          dragCounterRef.current--;
+          if (dragCounterRef.current === 0) setIsDragOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          dragCounterRef.current = 0;
+          setIsDragOver(false);
+          const files = Array.from(e.dataTransfer.files);
+          if (files.length > 0) onFileDropRef.current?.(files);
+        }}
+      >
         <div ref={containerRef} className="w-full h-full" />
+        {isDragOver && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/80 pointer-events-none">
+            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-zinc-500 bg-zinc-900/80 px-10 py-8">
+              <Upload className="size-8 text-zinc-400" />
+              <span className="text-sm text-zinc-300">Drop files to upload</span>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
