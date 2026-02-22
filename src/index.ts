@@ -85,15 +85,17 @@ const server = serve<WebSocketData>({
 
       switch (parsed.type) {
         case "create": {
-          const { sessionId, name, cols, rows, folderId } = parsed;
-          try {
-            const session = sessionManager.createSession(sessionId, name || sessionId, cols, rows, folderId);
-            sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
-            ws.data.sessionId = sessionId;
-            sessionManager.broadcastSessionList();
-          } catch (e: any) {
-            sendError(ws, e.message);
-          }
+          const { sessionId, name, cols, rows, folderId, afterSessionId } = parsed;
+          sessionManager.createSession(sessionId, name || sessionId, cols, rows, folderId, afterSessionId).then(
+            (session) => {
+              sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
+              ws.data.sessionId = sessionId;
+              sessionManager.broadcastSessionList();
+            },
+            (e: any) => {
+              sendError(ws, e.message);
+            }
+          );
           break;
         }
 

@@ -27,7 +27,7 @@ export class Session {
   private onNotificationCallback?: (sessionId: string, title: string, body: string) => void;
   private pendingOsc99: Map<string, { title: string; body: string }> = new Map();
 
-  constructor(id: string, name: string, cols: number, rows: number) {
+  constructor(id: string, name: string, cols: number, rows: number, cwd?: string) {
     this.id = id;
     this.name = name;
     this.createdAt = Date.now();
@@ -101,6 +101,7 @@ export class Session {
 
     // Spawn PTY
     this.proc = Bun.spawn([process.env.SHELL || "bash"], {
+      cwd: cwd || undefined,
       terminal: {
         cols: this.size.cols,
         rows: this.size.rows,
@@ -211,6 +212,27 @@ export class Session {
       this.proc.kill();
     }
     this.terminal.dispose();
+  }
+
+  async getCwd(): Promise<string | undefined> {
+    if (this.exited) return undefined;
+    const pid = this.proc.pid;
+    try {
+      if (process.platform === "darwin") {
+        const result = Bun.spawnSync(["lsof", "-a", "-d", "cwd", "-Fn", "-p", String(pid)]);
+        const output = result.stdout.toString();
+        for (const line of output.split("\n")) {
+          if (line.startsWith("n")) return line.slice(1);
+        }
+      } else {
+        const result = Bun.spawnSync(["readlink", `/proc/${pid}/cwd`]);
+        const cwd = result.stdout.toString().trim();
+        if (cwd) return cwd;
+      }
+    } catch {
+      // ignore
+    }
+    return undefined;
   }
 
   getClientCount(): number {

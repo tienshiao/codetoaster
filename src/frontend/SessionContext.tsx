@@ -215,6 +215,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const createSession = useCallback((folderId?: string): { id: string; name: string } => {
     terminalRef.current?.resetAttached();
 
+    const afterSessionId = currentSessionIdRef.current || undefined;
+
     if (currentSessionIdRef.current) {
       send({ type: "detach" });
     }
@@ -222,7 +224,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const sessionId = generateSessionId();
     const name = generateSessionName(sessionsRef.current);
     const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-    send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows, folderId });
+
+    // Derive folder from current session if not explicitly provided
+    let resolvedFolderId = folderId;
+    if (!resolvedFolderId && afterSessionId) {
+      const currentFolder = foldersRef.current.find((f) => f.sessionIds.includes(afterSessionId));
+      if (currentFolder) resolvedFolderId = currentFolder.id;
+    }
+
+    send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows, folderId: resolvedFolderId, afterSessionId });
     setCurrentSessionId(sessionId);
     setSessions((prev) => [
       ...prev,
@@ -234,14 +244,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         clientCount: 1,
       },
     ]);
-    // Optimistically add to folder
-    const targetFolderId = folderId || "general";
+    // Optimistically add to folder at correct position
+    const targetFolderId = resolvedFolderId || "general";
     setFolders((prev) =>
-      prev.map((f) =>
-        f.id === targetFolderId
-          ? { ...f, sessionIds: [...f.sessionIds, sessionId] }
-          : f
-      )
+      prev.map((f) => {
+        if (f.id !== targetFolderId) return f;
+        const newSessionIds = [...f.sessionIds];
+        if (afterSessionId && (!folderId || folderId === f.id)) {
+          const afterIndex = newSessionIds.indexOf(afterSessionId);
+          if (afterIndex >= 0) {
+            newSessionIds.splice(afterIndex + 1, 0, sessionId);
+            return { ...f, sessionIds: newSessionIds };
+          }
+        }
+        newSessionIds.push(sessionId);
+        return { ...f, sessionIds: newSessionIds };
+      })
     );
     return { id: sessionId, name };
   }, [send]);

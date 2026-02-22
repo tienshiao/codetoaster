@@ -8,7 +8,7 @@ export interface FolderInfo {
 
 // Client -> Server messages
 export type ClientMessage =
-  | { type: "create"; sessionId: string; name?: string; cols: number; rows: number; folderId?: string }
+  | { type: "create"; sessionId: string; name?: string; cols: number; rows: number; folderId?: string; afterSessionId?: string }
   | { type: "attach"; sessionId: string; cols: number; rows: number }
   | { type: "detach" }
   | { type: "input"; data: string }

@@ -59,12 +59,21 @@ export class SessionManager {
     return true;
   }
 
-  createSession(id: string, name: string, cols: number, rows: number, folderId?: string): Session {
+  async createSession(id: string, name: string, cols: number, rows: number, folderId?: string, afterSessionId?: string): Promise<Session> {
     if (this.sessions.has(id)) {
       throw new Error(`Session "${id}" already exists`);
     }
 
-    const session = new Session(id, name, cols, rows);
+    // Inherit cwd from afterSessionId's session
+    let cwd: string | undefined;
+    if (afterSessionId) {
+      const afterSession = this.sessions.get(afterSessionId);
+      if (afterSession) {
+        cwd = await afterSession.getCwd();
+      }
+    }
+
+    const session = new Session(id, name, cols, rows, cwd);
     session.onExit(() => {
       this.broadcastSessionList();
     });
@@ -80,9 +89,32 @@ export class SessionManager {
     });
     this.sessions.set(id, session);
 
-    const targetFolder = (folderId && this.folders.find((f) => f.id === folderId))
-      || this.folders.find((f) => f.id === "general")!;
-    targetFolder.sessionIds.push(id);
+    // Determine target folder and insertion position
+    let targetFolder: FolderInfo | undefined;
+    let insertAfterIndex = -1;
+
+    if (afterSessionId) {
+      // Find the folder containing afterSessionId
+      const afterFolder = this.folders.find((f) => f.sessionIds.includes(afterSessionId));
+      if (afterFolder) {
+        if (!folderId || folderId === afterFolder.id) {
+          // Insert after the session in the same folder
+          targetFolder = afterFolder;
+          insertAfterIndex = afterFolder.sessionIds.indexOf(afterSessionId);
+        }
+      }
+    }
+
+    if (!targetFolder) {
+      targetFolder = (folderId && this.folders.find((f) => f.id === folderId))
+        || this.folders.find((f) => f.id === "general")!;
+    }
+
+    if (insertAfterIndex >= 0) {
+      targetFolder.sessionIds.splice(insertAfterIndex + 1, 0, id);
+    } else {
+      targetFolder.sessionIds.push(id);
+    }
 
     return session;
   }
