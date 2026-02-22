@@ -4,6 +4,7 @@ import { ChevronRight, EllipsisVertical, FolderPlus, Pencil, Plus, Trash2, X } f
 import { buildSessionSlug } from "./utils/slug";
 import { StatusDot } from "./components/StatusDot";
 import { RenameDialog } from "./components/RenameDialog";
+import { SettingsFooter } from "./components/SettingsDialog";
 import { useSidebarDrag } from "./hooks/use-sidebar-drag";
 import {
   Sidebar,
@@ -259,6 +260,8 @@ export function AppSidebar({
         })}
       </SidebarContent>
 
+      <SettingsFooter />
+
       <RenameDialog
         item={renameItem}
         title={renameTarget?.type === "folder" ? "Rename Folder" : "Rename Session"}
@@ -274,3 +277,4 @@ export function AppSidebar({
     </Sidebar>
   );
 }
+

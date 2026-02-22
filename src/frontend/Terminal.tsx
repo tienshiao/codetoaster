@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from "re
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Upload } from "lucide-react";
+import { useTerminalTheme } from "./hooks/use-terminal-theme";
 import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalSize {
@@ -31,6 +32,9 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     const attachedRef = useRef(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const dragCounterRef = useRef(0);
+    const { theme: terminalTheme } = useTerminalTheme();
+    const terminalThemeRef = useRef(terminalTheme);
+    terminalThemeRef.current = terminalTheme;
 
     // Store callbacks in refs
     const onSizeChangeRef = useRef(onSizeChange);
@@ -102,6 +106,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       const term = new Terminal({
         cursorBlink: true,
         allowProposedApi: true,
+        theme: terminalThemeRef.current,
       });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
@@ -158,9 +163,17 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       };
     }, [onReady]);
 
+    // Apply terminal theme changes reactively
+    useEffect(() => {
+      if (termRef.current) {
+        termRef.current.options.theme = terminalTheme ?? {};
+      }
+    }, [terminalTheme]);
+
     return (
       <div
-        className="relative w-full h-full bg-black p-2"
+        className="relative w-full h-full p-2"
+        style={{ backgroundColor: terminalTheme?.background ?? '#000' }}
         onDragEnter={(e) => {
           e.preventDefault();
           dragCounterRef.current++;
