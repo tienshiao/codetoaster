@@ -105,23 +105,14 @@ export function AppSidebar({
     <Sidebar>
       <SidebarHeader className="flex-row items-center justify-between px-4 py-3 h-10 text-xs font-semibold uppercase tracking-wide text-zinc-500 border-b border-sidebar-border">
         CodeToaster
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="size-6 text-zinc-500" title="New...">
-              <Plus className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={onNewFolder}>
-              <FolderPlus />
-              New Folder
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onNewTab()}>
-              <Plus />
-              New Session
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" className="size-6 text-zinc-500" title="New Folder" onClick={onNewFolder}>
+            <FolderPlus className="size-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="size-6 text-zinc-500" title="New Session" onClick={() => onNewTab()}>
+            <Plus className="size-4" />
+          </Button>
+        </div>
       </SidebarHeader>
       <SidebarContent>
         {folders.map((folder, folderIndex) => {
