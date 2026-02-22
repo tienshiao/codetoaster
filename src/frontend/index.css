@@ -1,6 +1,83 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Nerd Font Mono variants — Regular (400) + Bold (700) */
+
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: url("./fonts/JetBrainsMonoNerdFontMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: url("./fonts/JetBrainsMonoNerdFontMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "FiraCode Nerd Font Mono";
+  src: url("./fonts/FiraCodeNerdFontMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "FiraCode Nerd Font Mono";
+  src: url("./fonts/FiraCodeNerdFontMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Hack Nerd Font Mono";
+  src: url("./fonts/HackNerdFontMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Hack Nerd Font Mono";
+  src: url("./fonts/HackNerdFontMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "MesloLGS Nerd Font Mono";
+  src: url("./fonts/MesloLGSNerdFontMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "MesloLGS Nerd Font Mono";
+  src: url("./fonts/MesloLGSNerdFontMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "CaskaydiaCove Nerd Font Mono";
+  src: url("./fonts/CaskaydiaCoveNerdFontMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "CaskaydiaCove Nerd Font Mono";
+  src: url("./fonts/CaskaydiaCoveNerdFontMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

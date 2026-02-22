@@ -32,9 +32,13 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     const attachedRef = useRef(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const dragCounterRef = useRef(0);
-    const { theme: terminalTheme } = useTerminalTheme();
+    const { theme: terminalTheme, cssFontFamily, fontSize } = useTerminalTheme();
     const terminalThemeRef = useRef(terminalTheme);
     terminalThemeRef.current = terminalTheme;
+    const cssFontFamilyRef = useRef(cssFontFamily);
+    cssFontFamilyRef.current = cssFontFamily;
+    const fontSizeRef = useRef(fontSize);
+    fontSizeRef.current = fontSize;
 
     // Store callbacks in refs
     const onSizeChangeRef = useRef(onSizeChange);
@@ -107,6 +111,8 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         cursorBlink: true,
         allowProposedApi: true,
         theme: terminalThemeRef.current,
+        fontFamily: cssFontFamilyRef.current,
+        ...(fontSizeRef.current ? { fontSize: fontSizeRef.current } : {}),
       });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
@@ -169,6 +175,28 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         termRef.current.options.theme = terminalTheme ?? {};
       }
     }, [terminalTheme]);
+
+    // Apply font changes reactively
+    useEffect(() => {
+      const term = termRef.current;
+      const fitAddon = fitAddonRef.current;
+      if (!term || !fitAddon) return;
+      term.options.fontFamily = cssFontFamily;
+      document.fonts.load(`16px ${cssFontFamily}`).then(() => {
+        fitAddon.fit();
+        onSizeChangeRef.current({ cols: term.cols, rows: term.rows });
+      });
+    }, [cssFontFamily]);
+
+    // Apply font size changes reactively
+    useEffect(() => {
+      const term = termRef.current;
+      const fitAddon = fitAddonRef.current;
+      if (!term || !fitAddon) return;
+      term.options.fontSize = fontSize || 15;
+      fitAddon.fit();
+      onSizeChangeRef.current({ cols: term.cols, rows: term.rows });
+    }, [fontSize]);
 
     return (
       <div

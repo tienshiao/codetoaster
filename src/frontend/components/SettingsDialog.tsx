@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Monitor, Moon, Settings, Sun } from "lucide-react";
 import { useTheme } from "../hooks/use-theme";
-import { useTerminalTheme, terminalThemeNames } from "../hooks/use-terminal-theme";
+import { useTerminalTheme, terminalThemeNames, terminalFontOptions } from "../hooks/use-terminal-theme";
 import { SidebarFooter } from "./ui/sidebar";
 import {
   Dialog,
@@ -27,7 +27,7 @@ const themeOptions = [
 export function SettingsFooter() {
   const [open, setOpen] = useState(false);
   const { theme, setTheme } = useTheme();
-  const { themeName, setThemeName, theme: terminalTheme } = useTerminalTheme();
+  const { themeName, setThemeName, theme: terminalTheme, fontFamily, setFontFamily, fontSize, setFontSize } = useTerminalTheme();
 
   return (
     <SidebarFooter className="border-t border-sidebar-border p-2">
@@ -111,6 +111,54 @@ export function SettingsFooter() {
                   </div>
                 )}
               </div>
+            </div>
+            <div className="grid sm:grid-cols-[1fr_1.5fr] gap-x-6 gap-y-2 items-start">
+              <div>
+                <label className="text-sm font-medium">Terminal Font</label>
+                <p className="text-xs text-muted-foreground">Font family for the terminal emulator</p>
+              </div>
+              <Select value={fontFamily || "default"} onValueChange={(v) => setFontFamily(v === "default" ? "" : v)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Default (monospace)</SelectItem>
+                  {terminalFontOptions.map((font) => (
+                    <SelectItem key={font.value} value={font.value}>
+                      {font.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid sm:grid-cols-[1fr_1.5fr] gap-x-6 gap-y-2 items-start">
+              <div>
+                <label className="text-sm font-medium">Font Size</label>
+                <p className="text-xs text-muted-foreground">Text size in the terminal emulator</p>
+              </div>
+              <Select value={String(fontSize || 0)} onValueChange={(v) => setFontSize(Number(v))}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[
+                    { value: "0", label: "Default (15)" },
+                    { value: "12", label: "12" },
+                    { value: "13", label: "13" },
+                    { value: "14", label: "14" },
+                    { value: "15", label: "15" },
+                    { value: "16", label: "16" },
+                    { value: "18", label: "18" },
+                    { value: "20", label: "20" },
+                    { value: "22", label: "22" },
+                    { value: "24", label: "24" },
+                  ].map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </DialogContent>
