@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { EllipsisVertical, Pencil, Plus, X } from "lucide-react";
 import { buildSessionSlug } from "./utils/slug";
 import { StatusDot } from "./components/StatusDot";
+import { SessionRenameDialog } from "./components/SessionRenameDialog";
+import { useDragReorder } from "./hooks/use-drag-reorder";
 import {
   Sidebar,
   SidebarContent,
@@ -21,25 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "./components/ui/dropdown-menu";
 import { Button } from "./components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "./components/ui/dialog";
-import { Input } from "./components/ui/input";
-
-export interface SessionInfo {
-  id: string;
-  name: string;
-  title?: string;
-  createdAt: number;
-  size: { cols: number; rows: number };
-  clientCount: number;
-  exited?: boolean;
-  hasNotification?: boolean;
-}
+import type { SessionInfo } from "./SessionContext";
 
 interface AppSidebarProps {
   sessions: SessionInfo[];
@@ -66,37 +50,11 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const { setOpenMobile, isMobile } = useSidebar();
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
-  const [renameName, setRenameName] = useState("");
-  const renameInputRef = useRef<HTMLInputElement>(null);
-  const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [dropIndex, setDropIndex] = useState<number | null>(null);
-  const dragImageRef = useRef<HTMLDivElement | null>(null);
-
-  const cleanupDragImage = useCallback(() => {
-    if (dragImageRef.current) {
-      dragImageRef.current.remove();
-      dragImageRef.current = null;
-    }
-  }, []);
+  const { getDragProps, isDropTarget, isDropTargetAfterLast } = useDragReorder(sessions, onReorder);
 
   const renameSession = renameSessionId
-    ? sessions.find((s) => s.id === renameSessionId)
+    ? sessions.find((s) => s.id === renameSessionId) ?? null
     : null;
-
-  useEffect(() => {
-    if (renameSessionId) {
-      // Focus after dialog animation
-      setTimeout(() => renameInputRef.current?.select(), 0);
-    }
-  }, [renameSessionId]);
-
-  const handleRenameSubmit = () => {
-    const trimmed = renameName.trim();
-    if (renameSessionId && trimmed && trimmed !== renameSession?.name) {
-      onRenameSession(renameSessionId, trimmed);
-    }
-    setRenameSessionId(null);
-  };
 
   return (
     <Sidebar>
@@ -114,62 +72,9 @@ export function AppSidebar({
               return (
                 <SidebarMenuItem
                   key={session.id}
-                  draggable
-                  onDragStart={(e) => {
-                    setDraggedId(session.id);
-                    e.dataTransfer.effectAllowed = "move";
-
-                    cleanupDragImage();
-                    const clone = e.currentTarget.cloneNode(true) as HTMLDivElement;
-                    Object.assign(clone.style, {
-                      position: "fixed",
-                      top: "-1000px",
-                      left: "-1000px",
-                      width: `${e.currentTarget.offsetWidth}px`,
-                      background: "hsl(240 6% 20%)",
-                      borderRadius: "6px",
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-                      pointerEvents: "none",
-                      opacity: "1",
-                    });
-                    document.body.appendChild(clone);
-                    dragImageRef.current = clone;
-
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const offsetX = e.clientX - rect.left;
-                    const offsetY = e.clientY - rect.top;
-                    e.dataTransfer.setDragImage(clone, offsetX, offsetY);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const midY = rect.top + rect.height / 2;
-                    setDropIndex(e.clientY < midY ? index : index + 1);
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (draggedId && dropIndex !== null) {
-                      const fromIndex = sessions.findIndex((s) => s.id === draggedId);
-                      if (fromIndex !== -1 && fromIndex !== dropIndex && fromIndex !== dropIndex - 1) {
-                        const newOrder = sessions.map((s) => s.id);
-                        newOrder.splice(fromIndex, 1);
-                        const insertAt = dropIndex > fromIndex ? dropIndex - 1 : dropIndex;
-                        newOrder.splice(insertAt, 0, draggedId);
-                        onReorder(newOrder);
-                      }
-                    }
-                    setDraggedId(null);
-                    setDropIndex(null);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedId(null);
-                    setDropIndex(null);
-                    cleanupDragImage();
-                  }}
-                  style={{ opacity: draggedId === session.id ? 0.4 : undefined }}
+                  {...getDragProps(session, index)}
                 >
-                  {dropIndex === index && draggedId && draggedId !== session.id && (
+                  {isDropTarget(index, session.id) && (
                     <div className="h-0.5 bg-blue-500 rounded mx-2" />
                   )}
                   <SidebarMenuButton
@@ -216,10 +121,7 @@ export function AppSidebar({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>
                       <DropdownMenuItem
-                        onClick={() => {
-                          setRenameName(session.name);
-                          setRenameSessionId(session.id);
-                        }}
+                        onClick={() => setRenameSessionId(session.id)}
                       >
                         <Pencil />
                         Rename Session
@@ -232,7 +134,7 @@ export function AppSidebar({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
-                  {dropIndex === sessions.length && index === sessions.length - 1 && draggedId && draggedId !== session.id && (
+                  {isDropTargetAfterLast(index, session.id) && (
                     <div className="h-0.5 bg-blue-500 rounded mx-2" />
                   )}
                 </SidebarMenuItem>
@@ -242,37 +144,11 @@ export function AppSidebar({
         </SidebarGroup>
       </SidebarContent>
 
-      <Dialog
-        open={renameSessionId !== null}
-        onOpenChange={(open) => { if (!open) setRenameSessionId(null); }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rename Session</DialogTitle>
-          </DialogHeader>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleRenameSubmit();
-            }}
-          >
-            <Input
-              ref={renameInputRef}
-              value={renameName}
-              onChange={(e) => setRenameName(e.target.value)}
-              placeholder="Session name"
-            />
-            <DialogFooter className="mt-4">
-              <Button type="button" variant="outline" onClick={() => setRenameSessionId(null)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={!renameName.trim()}>
-                Rename
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <SessionRenameDialog
+        session={renameSession}
+        onRename={onRenameSession}
+        onClose={() => setRenameSessionId(null)}
+      />
     </Sidebar>
   );
 }

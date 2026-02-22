@@ -7,8 +7,19 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import type { SessionInfo } from "./AppSidebar";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
+import { useWebSocket } from "./hooks/use-websocket";
+
+export interface SessionInfo {
+  id: string;
+  name: string;
+  title?: string;
+  createdAt: number;
+  size: { cols: number; rows: number };
+  clientCount: number;
+  exited?: boolean;
+  hasNotification?: boolean;
+}
 
 interface SessionContextValue {
   sessions: SessionInfo[];
@@ -65,9 +76,7 @@ function fireWebNotification(title: string, body: string, tag: string) {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
   const [sessionActivity, setSessionActivity] = useState<Record<string, boolean>>({});
-  const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalHandle | null>(null);
   const terminalReadyRef = useRef(false);
   const currentSessionIdRef = useRef<string | null>(null);
@@ -83,83 +92,45 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sessionsRef.current = sessions;
   }, [sessions]);
 
-  const send = useCallback((msg: object) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msg));
+  const onMessage = useCallback((message: any) => {
+    if (message.type === "sessions") {
+      const list = message.list as SessionInfo[];
+      setSessions(list);
+      return;
+    }
+
+    if (message.type === "attached") {
+      setCurrentSessionId(message.sessionId);
+    }
+
+    if (message.type === "activity") {
+      setSessionActivity(prev => ({ ...prev, [message.sessionId]: message.active }));
+      return;
+    }
+
+    if (message.type === "notification") {
+      if (!document.hasFocus()) {
+        fireWebNotification(message.title, message.body, `codetoaster-${message.sessionId}`);
+      }
+      return;
+    }
+
+    // Forward terminal-related messages to terminal
+    if (terminalRef.current) {
+      terminalRef.current.handleMessage(message);
+    } else {
+      messageQueueRef.current.push(message);
     }
   }, []);
 
-  const requestSessionList = useCallback(() => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN && terminalReadyRef.current) {
-      ws.send(JSON.stringify({ type: "list" }));
-    }
-  }, []);
-
-  // Connect WebSocket
-  useEffect(() => {
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(`${protocol}//${location.host}/terminal`);
-    wsRef.current = socket;
-
-    socket.onopen = () => {
-      if (wsRef.current !== socket) return;
-      setIsConnected(true);
-      requestSessionList();
-    };
-
-    socket.onmessage = (e) => {
-      if (wsRef.current !== socket) return;
-
-      let message;
-      try {
-        message = JSON.parse(e.data);
-      } catch {
-        return;
+  const { send, isConnected } = useWebSocket({
+    onMessage,
+    onConnect: () => {
+      if (terminalReadyRef.current) {
+        send({ type: "list" });
       }
-
-      if (message.type === "sessions") {
-        const list = message.list as SessionInfo[];
-        setSessions(list);
-        return;
-      }
-
-      if (message.type === "attached") {
-        setCurrentSessionId(message.sessionId);
-      }
-
-      if (message.type === "activity") {
-        setSessionActivity(prev => ({ ...prev, [message.sessionId]: message.active }));
-        return;
-      }
-
-      if (message.type === "notification") {
-        if (!document.hasFocus()) {
-          fireWebNotification(message.title, message.body, `codetoaster-${message.sessionId}`);
-        }
-        return;
-      }
-
-      // Forward terminal-related messages to terminal
-      if (terminalRef.current) {
-        terminalRef.current.handleMessage(message);
-      } else {
-        messageQueueRef.current.push(message);
-      }
-    };
-
-    socket.onclose = () => {
-      if (wsRef.current === socket) {
-        setIsConnected(false);
-        wsRef.current = null;
-      }
-    };
-
-    return () => {
-      socket.close();
-    };
-  }, [requestSessionList]);
+    },
+  });
 
   const handleTerminalReady = useCallback(() => {
     terminalReadyRef.current = true;
@@ -171,8 +142,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       messageQueueRef.current = [];
     }
 
-    requestSessionList();
-  }, [requestSessionList]);
+    send({ type: "list" });
+  }, [send]);
 
   const handleSizeChange = useCallback(
     (size: TerminalSize) => {
