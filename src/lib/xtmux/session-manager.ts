@@ -4,6 +4,7 @@ import type { ClientInfo, SessionInfo, WebSocketData } from "./types";
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
+  private sessionOrder: string[] = [];
   private clientToSession: Map<string, string> = new Map();
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
 
@@ -46,6 +47,7 @@ export class SessionManager {
       this.broadcastSessionList();
     });
     this.sessions.set(id, session);
+    this.sessionOrder.push(id);
     return session;
   }
 
@@ -104,6 +106,7 @@ export class SessionManager {
 
     session.kill();
     this.sessions.delete(id);
+    this.sessionOrder = this.sessionOrder.filter((sid) => sid !== id);
 
     // Remove all client mappings for this session
     for (const [clientId, sessionId] of this.clientToSession) {
@@ -131,8 +134,8 @@ export class SessionManager {
     }
   }
 
-  listSessions(): SessionInfo[] {
-    return Array.from(this.sessions.values()).map((session) => ({
+  private sessionToInfo(session: Session): SessionInfo {
+    return {
       id: session.id,
       name: session.name,
       title: session.title,
@@ -141,7 +144,39 @@ export class SessionManager {
       createdAt: session.createdAt,
       exited: session.exited,
       hasNotification: session.hasNotification,
-    }));
+    };
+  }
+
+  listSessions(): SessionInfo[] {
+    const result: SessionInfo[] = [];
+    for (const id of this.sessionOrder) {
+      const session = this.sessions.get(id);
+      if (session) result.push(this.sessionToInfo(session));
+    }
+    return result;
+  }
+
+  reorderSessions(orderedIds: string[]): void {
+    const validIds = new Set(this.sessions.keys());
+    const seen = new Set<string>();
+    const newOrder: string[] = [];
+
+    for (const id of orderedIds) {
+      if (validIds.has(id) && !seen.has(id)) {
+        newOrder.push(id);
+        seen.add(id);
+      }
+    }
+
+    // Append any sessions not in the provided order
+    for (const id of this.sessionOrder) {
+      if (!seen.has(id) && validIds.has(id)) {
+        newOrder.push(id);
+      }
+    }
+
+    this.sessionOrder = newOrder;
+    this.broadcastSessionList();
   }
 }
 

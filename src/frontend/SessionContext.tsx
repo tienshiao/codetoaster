@@ -20,6 +20,7 @@ interface SessionContextValue {
   createSession: () => { id: string; name: string };
   closeSession: (id: string) => void;
   renameSession: (id: string, name: string) => void;
+  reorderSessions: (sessionIds: string[]) => void;
   handleTerminalReady: () => void;
   handleSizeChange: (size: TerminalSize) => void;
   handleSendMessage: (msg: object) => void;
@@ -245,6 +246,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
+  const reorderSessions = useCallback(
+    (sessionIds: string[]) => {
+      setSessions((prev) => {
+        const map = new Map(prev.map((s) => [s.id, s]));
+        const reordered: SessionInfo[] = [];
+        for (const id of sessionIds) {
+          const s = map.get(id);
+          if (s) reordered.push(s);
+        }
+        // Append any sessions not in sessionIds
+        for (const s of prev) {
+          if (!sessionIds.includes(s.id)) reordered.push(s);
+        }
+        return reordered;
+      });
+      send({ type: "reorder", sessionIds });
+    },
+    [send],
+  );
+
   const closeSession = useCallback(
     (id: string) => {
       send({ type: "kill", sessionId: id });
@@ -271,6 +292,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         createSession,
         closeSession,
         renameSession,
+        reorderSessions,
         handleTerminalReady,
         handleSizeChange,
         handleSendMessage,

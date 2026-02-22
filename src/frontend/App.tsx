@@ -30,6 +30,7 @@ export function SessionLayout() {
     createSession,
     closeSession,
     renameSession,
+    reorderSessions,
     handleTerminalReady,
     handleSizeChange,
     handleSendMessage,
@@ -120,6 +121,7 @@ export function SessionLayout() {
         onNewTab={handleNewTab}
         onCloseTab={handleCloseTab}
         onRenameSession={handleRenameSession}
+        onReorder={reorderSessions}
         onAcknowledge={(id) => handleSendMessage({ type: "acknowledge", sessionId: id })}
       />
       <div className="flex-1 h-full overflow-hidden flex flex-col">

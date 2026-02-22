@@ -10,7 +10,8 @@ export type ClientMessage =
   | { type: "list" }
   | { type: "kill"; sessionId: string }
   | { type: "rename"; sessionId: string; name: string }
-  | { type: "acknowledge"; sessionId: string };
+  | { type: "acknowledge"; sessionId: string }
+  | { type: "reorder"; sessionIds: string[] };
 
 // Server -> Client messages
 export type ServerMessage =

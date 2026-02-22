@@ -165,6 +165,11 @@ const server = serve<WebSocketData>({
           break;
         }
 
+        case "reorder": {
+          sessionManager.reorderSessions(parsed.sessionIds);
+          break;
+        }
+
         default:
           sendError(ws, `Unknown message type`);
       }

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Link } from "@tanstack/react-router";
 import { EllipsisVertical, Pencil, Plus, X } from "lucide-react";
 import { buildSessionSlug } from "./utils/slug";
@@ -49,6 +49,7 @@ interface AppSidebarProps {
   onNewTab: () => void;
   onCloseTab: (id: string) => void;
   onRenameSession: (id: string, name: string) => void;
+  onReorder: (sessionIds: string[]) => void;
   onAcknowledge: (id: string) => void;
 }
 
@@ -60,12 +61,23 @@ export function AppSidebar({
   onNewTab,
   onCloseTab,
   onRenameSession,
+  onReorder,
   onAcknowledge,
 }: AppSidebarProps) {
   const { setOpenMobile, isMobile } = useSidebar();
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
   const [renameName, setRenameName] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const dragImageRef = useRef<HTMLDivElement | null>(null);
+
+  const cleanupDragImage = useCallback(() => {
+    if (dragImageRef.current) {
+      dragImageRef.current.remove();
+      dragImageRef.current = null;
+    }
+  }, []);
 
   const renameSession = renameSessionId
     ? sessions.find((s) => s.id === renameSessionId)
@@ -97,10 +109,69 @@ export function AppSidebar({
       <SidebarContent>
         <SidebarGroup className="p-0">
           <SidebarMenu className="gap-0">
-            {sessions.map((session) => {
+            {sessions.map((session, index) => {
               const isActive = session.id === currentSessionId;
               return (
-                <SidebarMenuItem key={session.id}>
+                <SidebarMenuItem
+                  key={session.id}
+                  draggable
+                  onDragStart={(e) => {
+                    setDraggedId(session.id);
+                    e.dataTransfer.effectAllowed = "move";
+
+                    cleanupDragImage();
+                    const clone = e.currentTarget.cloneNode(true) as HTMLDivElement;
+                    Object.assign(clone.style, {
+                      position: "fixed",
+                      top: "-1000px",
+                      left: "-1000px",
+                      width: `${e.currentTarget.offsetWidth}px`,
+                      background: "hsl(240 6% 20%)",
+                      borderRadius: "6px",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+                      pointerEvents: "none",
+                      opacity: "1",
+                    });
+                    document.body.appendChild(clone);
+                    dragImageRef.current = clone;
+
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const offsetX = e.clientX - rect.left;
+                    const offsetY = e.clientY - rect.top;
+                    e.dataTransfer.setDragImage(clone, offsetX, offsetY);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const midY = rect.top + rect.height / 2;
+                    setDropIndex(e.clientY < midY ? index : index + 1);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggedId && dropIndex !== null) {
+                      const fromIndex = sessions.findIndex((s) => s.id === draggedId);
+                      if (fromIndex !== -1 && fromIndex !== dropIndex && fromIndex !== dropIndex - 1) {
+                        const newOrder = sessions.map((s) => s.id);
+                        newOrder.splice(fromIndex, 1);
+                        const insertAt = dropIndex > fromIndex ? dropIndex - 1 : dropIndex;
+                        newOrder.splice(insertAt, 0, draggedId);
+                        onReorder(newOrder);
+                      }
+                    }
+                    setDraggedId(null);
+                    setDropIndex(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedId(null);
+                    setDropIndex(null);
+                    cleanupDragImage();
+                  }}
+                  style={{ opacity: draggedId === session.id ? 0.4 : undefined }}
+                >
+                  {dropIndex === index && draggedId && draggedId !== session.id && (
+                    <div className="h-0.5 bg-blue-500 rounded mx-2" />
+                  )}
                   <SidebarMenuButton
                     asChild
                     isActive={isActive}
@@ -108,6 +179,7 @@ export function AppSidebar({
                     tooltip={session.name}
                   >
                     <Link
+                      draggable={false}
                       to="/sessions/$slug"
                       params={{ slug: buildSessionSlug(session) }}
                       onClick={() => {
@@ -138,7 +210,7 @@ export function AppSidebar({
                   </SidebarMenuButton>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <SidebarMenuAction showOnHover>
+                      <SidebarMenuAction showOnHover draggable={false}>
                         <EllipsisVertical />
                       </SidebarMenuAction>
                     </DropdownMenuTrigger>
@@ -160,6 +232,9 @@ export function AppSidebar({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  {dropIndex === sessions.length && index === sessions.length - 1 && draggedId && draggedId !== session.id && (
+                    <div className="h-0.5 bg-blue-500 rounded mx-2" />
+                  )}
                 </SidebarMenuItem>
               );
             })}
