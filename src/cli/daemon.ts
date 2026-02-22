@@ -52,17 +52,11 @@ export function spawnDaemon(port: number): void {
   ensureConfigDir();
 
   // Build the command to run the server in foreground mode.
-  // Handle both `bun src/index.ts` and compiled binary cases.
-  const argv = process.argv;
-  let cmd: string[];
-
-  if (argv[0]?.endsWith("bun") || argv[0]?.endsWith("bun.exe")) {
-    // Running as `bun src/index.ts` — respawn with same entrypoint
-    cmd = [argv[0]!, argv[1]!, "foreground"];
-  } else {
-    // Compiled binary — just add foreground arg
-    cmd = [argv[0]!, "foreground"];
-  }
+  // Bun.main starts with /$bunfs/ in compiled binaries.
+  const isCompiled = Bun.main.startsWith("/$bunfs/");
+  const cmd: string[] = isCompiled
+    ? [process.execPath, "foreground"]
+    : [process.execPath, Bun.main, "foreground"];
 
   if (port !== 4000) {
     cmd.push("--port", String(port));

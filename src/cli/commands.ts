@@ -38,10 +38,10 @@ export async function cmdStart(port: number): Promise<void> {
 
   spawnDaemon(port);
 
-  // Wait for daemon to become reachable
-  const maxAttempts = 10;
+  // Wait for daemon to become reachable (first attempt after longer delay for HTML bundling)
+  const maxAttempts = 15;
   for (let i = 0; i < maxAttempts; i++) {
-    await Bun.sleep(300);
+    await Bun.sleep(i === 0 ? 1000 : 300);
     if (await isDaemonReachable(port)) {
       const info = readPidFile();
       console.log(`Started (pid ${info?.pid ?? "?"}, port ${port})`);
