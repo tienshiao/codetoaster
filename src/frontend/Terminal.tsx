@@ -144,8 +144,9 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         return true;
       });
 
-      // Handle resize
+      // Handle resize (skip when container is hidden/zero-sized to avoid corruption)
       const resizeObserver = new ResizeObserver(() => {
+        if (container.clientWidth === 0 || container.clientHeight === 0) return;
         fitAddon.fit();
         onSizeChangeRef.current({ cols: term.cols, rows: term.rows });
       });
