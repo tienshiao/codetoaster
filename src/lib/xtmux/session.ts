@@ -3,9 +3,6 @@ import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import type { ClientInfo, ServerMessage, WebSocketData } from "./types";
 
-const MIN_COLS = 80;
-const MIN_ROWS = 24;
-
 export class Session {
   public readonly id: string;
   public name: string;
@@ -32,7 +29,7 @@ export class Session {
     this.id = id;
     this.name = name;
     this.createdAt = Date.now();
-    this.size = { cols: Math.max(cols, MIN_COLS), rows: Math.max(rows, MIN_ROWS) };
+    this.size = { cols, rows };
 
     // Create xterm-headless instance
     this.terminal = new Terminal({
@@ -264,7 +261,7 @@ export class Session {
       return;
     }
 
-    // Smallest-wins strategy with floor of MIN_COLS x MIN_ROWS
+    // Smallest-wins strategy
     let cols = Infinity;
     let rows = Infinity;
 
@@ -272,9 +269,6 @@ export class Session {
       cols = Math.min(cols, client.size.cols);
       rows = Math.min(rows, client.size.rows);
     }
-
-    cols = Math.max(cols, MIN_COLS);
-    rows = Math.max(rows, MIN_ROWS);
 
     // Only resize if changed
     if (cols !== this.size.cols || rows !== this.size.rows) {
