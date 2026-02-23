@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { useSession } from "../SessionContext";
 import { parseSessionSlug } from "../utils/slug";
@@ -43,5 +43,9 @@ function SessionComponent() {
   const sessionExists = sessions.some((s) => s.id === id);
   const showNotFound = isConnected && sessionsLoaded && !sessionExists;
 
-  return <SessionLayout showNotFound={showNotFound} />;
+  return (
+    <SessionLayout showNotFound={showNotFound}>
+      <Outlet />
+    </SessionLayout>
+  );
 }

@@ -3,6 +3,7 @@ import index from "./frontend/index.html";
 import { sessionManager } from "./lib/xtmux/session-manager";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
+import { diffRoutes } from "./api/diff";
 
 let clientIdCounter = 0;
 const startTime = Date.now();
@@ -74,6 +75,8 @@ export function startServer(options?: ServerOptions) {
           return Response.json({ paths });
         },
       },
+
+      ...diffRoutes,
 
       "/api/ping": {
         GET() {

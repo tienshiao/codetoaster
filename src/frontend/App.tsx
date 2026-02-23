@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useCallback, useState, type ReactNode } from "react";
+import { useNavigate, useMatches } from "@tanstack/react-router";
 import { AppSidebar } from "./AppSidebar";
 import { TopBar } from "./TopBar";
 import { SidebarProvider } from "./components/ui/sidebar";
@@ -20,7 +20,7 @@ import { Button } from "./components/ui/button";
 import { Plus } from "lucide-react";
 import "./index.css";
 
-export function SessionLayout({ showNotFound = false }: { showNotFound?: boolean }) {
+export function SessionLayout({ showNotFound = false, children }: { showNotFound?: boolean; children?: ReactNode }) {
   const {
     sessions,
     folders,
@@ -42,6 +42,10 @@ export function SessionLayout({ showNotFound = false }: { showNotFound?: boolean
   const currentSession = sessions.find((s) => s.id === currentSessionId);
   const isActive = currentSessionId ? (sessionActivity[currentSessionId] ?? false) : false;
   const navigate = useNavigate();
+  const matches = useMatches();
+
+  // Detect if we're on the diff route
+  const isDiff = matches.some((m) => m.routeId === "/sessions/$slug/diff");
 
   const [closeConfirmSessionId, setCloseConfirmSessionId] = useState<string | null>(null);
   const closeConfirmSession = closeConfirmSessionId
@@ -119,6 +123,20 @@ export function SessionLayout({ showNotFound = false }: { showNotFound?: boolean
     [sessions, performClose],
   );
 
+  const handleTabChange = useCallback(
+    (tab: "terminal" | "diff") => {
+      if (!currentSession) return;
+      const slug = buildSessionSlug(currentSession);
+      if (tab === "diff") {
+        navigate({ to: "/sessions/$slug/diff", params: { slug } });
+      } else {
+        navigate({ to: "/sessions/$slug", params: { slug } });
+        setTimeout(() => terminalRef.current?.focus(), 100);
+      }
+    },
+    [currentSession, navigate, terminalRef],
+  );
+
   return (
     <SidebarProvider className="h-svh">
       <AppSidebar
@@ -148,15 +166,28 @@ export function SessionLayout({ showNotFound = false }: { showNotFound?: boolean
           title={currentSession?.title}
           onUpload={handleFileDrop}
           onFocusTerminal={() => terminalRef.current?.focus()}
+          activeTab={isDiff ? "diff" : "terminal"}
+          onTabChange={handleTabChange}
         />
         <div className="flex-1 relative overflow-hidden">
-          <XTerminal
-            ref={terminalRef}
-            onSizeChange={handleSizeChange}
-            onReady={handleTerminalReady}
-            sendMessage={handleSendMessage}
-            onFileDrop={handleFileDrop}
-          />
+          {/* Terminal stays mounted, hidden when diff is active */}
+          <div className={isDiff ? 'hidden' : 'h-full'}>
+            <XTerminal
+              ref={terminalRef}
+              onSizeChange={handleSizeChange}
+              onReady={handleTerminalReady}
+              sendMessage={handleSendMessage}
+              onFileDrop={handleFileDrop}
+            />
+          </div>
+
+          {/* Diff view rendered via child route */}
+          {isDiff && (
+            <div className="h-full overflow-hidden">
+              {children}
+            </div>
+          )}
+
           {!isConnected && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-zinc-500 text-sm z-10">
               Connecting...

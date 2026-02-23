@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SessionsSlugRouteImport } from './routes/sessions.$slug'
+import { Route as SessionsSlugIndexRouteImport } from './routes/sessions.$slug.index'
+import { Route as SessionsSlugDiffRouteImport } from './routes/sessions.$slug.diff'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +24,55 @@ const SessionsSlugRoute = SessionsSlugRouteImport.update({
   path: '/sessions/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SessionsSlugIndexRoute = SessionsSlugIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SessionsSlugRoute,
+} as any)
+const SessionsSlugDiffRoute = SessionsSlugDiffRouteImport.update({
+  id: '/diff',
+  path: '/diff',
+  getParentRoute: () => SessionsSlugRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/sessions/$slug': typeof SessionsSlugRoute
+  '/sessions/$slug': typeof SessionsSlugRouteWithChildren
+  '/sessions/$slug/diff': typeof SessionsSlugDiffRoute
+  '/sessions/$slug/': typeof SessionsSlugIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/sessions/$slug': typeof SessionsSlugRoute
+  '/sessions/$slug/diff': typeof SessionsSlugDiffRoute
+  '/sessions/$slug': typeof SessionsSlugIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/sessions/$slug': typeof SessionsSlugRoute
+  '/sessions/$slug': typeof SessionsSlugRouteWithChildren
+  '/sessions/$slug/diff': typeof SessionsSlugDiffRoute
+  '/sessions/$slug/': typeof SessionsSlugIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/sessions/$slug'
+  fullPaths:
+    | '/'
+    | '/sessions/$slug'
+    | '/sessions/$slug/diff'
+    | '/sessions/$slug/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/sessions/$slug'
-  id: '__root__' | '/' | '/sessions/$slug'
+  to: '/' | '/sessions/$slug/diff' | '/sessions/$slug'
+  id:
+    | '__root__'
+    | '/'
+    | '/sessions/$slug'
+    | '/sessions/$slug/diff'
+    | '/sessions/$slug/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  SessionsSlugRoute: typeof SessionsSlugRoute
+  SessionsSlugRoute: typeof SessionsSlugRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +91,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SessionsSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sessions/$slug/': {
+      id: '/sessions/$slug/'
+      path: '/'
+      fullPath: '/sessions/$slug/'
+      preLoaderRoute: typeof SessionsSlugIndexRouteImport
+      parentRoute: typeof SessionsSlugRoute
+    }
+    '/sessions/$slug/diff': {
+      id: '/sessions/$slug/diff'
+      path: '/diff'
+      fullPath: '/sessions/$slug/diff'
+      preLoaderRoute: typeof SessionsSlugDiffRouteImport
+      parentRoute: typeof SessionsSlugRoute
+    }
   }
 }
 
+interface SessionsSlugRouteChildren {
+  SessionsSlugDiffRoute: typeof SessionsSlugDiffRoute
+  SessionsSlugIndexRoute: typeof SessionsSlugIndexRoute
+}
+
+const SessionsSlugRouteChildren: SessionsSlugRouteChildren = {
+  SessionsSlugDiffRoute: SessionsSlugDiffRoute,
+  SessionsSlugIndexRoute: SessionsSlugIndexRoute,
+}
+
+const SessionsSlugRouteWithChildren = SessionsSlugRoute._addFileChildren(
+  SessionsSlugRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  SessionsSlugRoute: SessionsSlugRoute,
+  SessionsSlugRoute: SessionsSlugRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
