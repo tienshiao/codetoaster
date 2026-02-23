@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useState, useMemo, type ReactNode } from "react";
 import { useNavigate, useMatches } from "@tanstack/react-router";
 import { AppSidebar } from "./AppSidebar";
 import { TopBar } from "./TopBar";
@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
 import { Button } from "./components/ui/button";
+import { TerminalSearchBar } from "./components/TerminalSearchBar";
 import { Plus } from "lucide-react";
 import "./index.css";
 
@@ -46,6 +47,19 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
 
   // Detect if we're on the diff route
   const isDiff = matches.some((m) => m.routeId === "/sessions/$slug/diff");
+
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const searchAddon = useMemo(
+    () => searchOpen ? terminalRef.current?.getSearchAddon() ?? null : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [searchOpen],
+  );
+
+  const handleSearchClose = useCallback(() => {
+    setSearchOpen(false);
+    terminalRef.current?.focus();
+  }, [terminalRef]);
 
   const [closeConfirmSessionId, setCloseConfirmSessionId] = useState<string | null>(null);
   const closeConfirmSession = closeConfirmSessionId
@@ -171,14 +185,21 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
         />
         <div className="flex-1 relative overflow-hidden">
           {/* Terminal stays mounted, hidden when diff is active */}
-          <div className={isDiff ? 'hidden' : 'h-full'}>
+          <div className={isDiff ? 'hidden' : 'relative h-full'}>
             <XTerminal
               ref={terminalRef}
               onSizeChange={handleSizeChange}
               onReady={handleTerminalReady}
               sendMessage={handleSendMessage}
               onFileDrop={handleFileDrop}
+              onSearchOpen={() => setSearchOpen(true)}
             />
+            {searchOpen && !isDiff && searchAddon && (
+              <TerminalSearchBar
+                searchAddon={searchAddon}
+                onClose={handleSearchClose}
+              />
+            )}
           </div>
 
           {/* Diff view rendered via child route */}

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { SearchAddon } from "@xterm/addon-search";
 import { Upload } from "lucide-react";
 import { useTerminalTheme } from "./hooks/use-terminal-theme";
 import "@xterm/xterm/css/xterm.css";
@@ -16,6 +18,7 @@ export interface TerminalHandle {
   getSize: () => TerminalSize;
   resetAttached: () => void;
   focus: () => void;
+  getSearchAddon: () => SearchAddon | null;
 }
 
 interface XTerminalProps {
@@ -23,13 +26,15 @@ interface XTerminalProps {
   onReady: () => void;
   sendMessage: (msg: object) => void;
   onFileDrop?: (files: File[]) => void;
+  onSearchOpen?: () => void;
 }
 
 export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
-  function XTerminal({ onSizeChange, onReady, sendMessage, onFileDrop }, ref) {
+  function XTerminal({ onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
+    const searchAddonRef = useRef<SearchAddon | null>(null);
     const attachedRef = useRef(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const dragCounterRef = useRef(0);
@@ -45,9 +50,11 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     const onSizeChangeRef = useRef(onSizeChange);
     const sendMessageRef = useRef(sendMessage);
     const onFileDropRef = useRef(onFileDrop);
+    const onSearchOpenRef = useRef(onSearchOpen);
     onSizeChangeRef.current = onSizeChange;
     sendMessageRef.current = sendMessage;
     onFileDropRef.current = onFileDrop;
+    onSearchOpenRef.current = onSearchOpen;
 
     // Expose methods to parent
     useImperativeHandle(ref, () => ({
@@ -104,6 +111,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       focus: () => {
         termRef.current?.focus();
       },
+      getSearchAddon: () => searchAddonRef.current,
     }), []);
 
     // Initialize terminal - runs once
@@ -119,12 +127,17 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         ...(fontSizeRef.current ? { fontSize: fontSizeRef.current } : {}),
       });
       const fitAddon = new FitAddon();
+      const webLinksAddon = new WebLinksAddon();
+      const searchAddon = new SearchAddon();
       term.loadAddon(fitAddon);
+      term.loadAddon(webLinksAddon);
+      term.loadAddon(searchAddon);
       term.open(container);
       fitAddon.fit();
 
       termRef.current = term;
       fitAddonRef.current = fitAddon;
+      searchAddonRef.current = searchAddon;
 
       // Handle terminal input
       const dataDisposable = term.onData((data) => {
@@ -133,12 +146,23 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         }
       });
 
-      // Handle shift-enter
+      // Handle shift-enter and Cmd/Ctrl+F for search
       term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
         if (ev.key === "Enter" && ev.shiftKey) {
           if (ev.type === "keydown" && attachedRef.current) {
             sendMessageRef.current({ type: "input", data: String.fromCharCode(10) });
           }
+          return false;
+        }
+        if (ev.key === "f" && (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && !ev.altKey) {
+          if (ev.type === "keydown") {
+            ev.preventDefault();
+            onSearchOpenRef.current?.();
+          }
+          return false;
+        }
+        // Let Cmd+G / Shift+Cmd+G propagate for search next/prev
+        if (ev.key === "g" && (ev.metaKey || ev.ctrlKey) && !ev.altKey) {
           return false;
         }
         return true;
@@ -201,6 +225,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         term.dispose();
         termRef.current = null;
         fitAddonRef.current = null;
+        searchAddonRef.current = null;
       };
     }, [onReady]);
 
