@@ -3,8 +3,11 @@ import * as path from "path";
 import * as os from "os";
 
 const CONFIG_DIR = path.join(os.homedir(), ".codetoaster");
-const PID_FILE = path.join(CONFIG_DIR, "codetoaster.pid");
 const LOG_FILE = path.join(CONFIG_DIR, "codetoaster.log");
+
+function pidFilePath(port: number): string {
+  return path.join(CONFIG_DIR, `codetoaster.${port}.pid`);
+}
 
 export interface PidInfo {
   pid: number;
@@ -17,9 +20,9 @@ function ensureConfigDir(): void {
   }
 }
 
-export function readPidFile(): PidInfo | null {
+export function readPidFile(port: number): PidInfo | null {
   try {
-    const data = fs.readFileSync(PID_FILE, "utf-8");
+    const data = fs.readFileSync(pidFilePath(port), "utf-8");
     return JSON.parse(data) as PidInfo;
   } catch {
     return null;
@@ -28,12 +31,12 @@ export function readPidFile(): PidInfo | null {
 
 export function writePidFile(pid: number, port: number): void {
   ensureConfigDir();
-  fs.writeFileSync(PID_FILE, JSON.stringify({ pid, port }));
+  fs.writeFileSync(pidFilePath(port), JSON.stringify({ pid, port }));
 }
 
-export function removePidFile(): void {
+export function removePidFile(port: number): void {
   try {
-    fs.unlinkSync(PID_FILE);
+    fs.unlinkSync(pidFilePath(port));
   } catch {
     // Already gone
   }
@@ -73,6 +76,42 @@ export function spawnDaemon(port: number): void {
 
   proc.unref();
   fs.closeSync(logFd);
+}
+
+export interface InstanceInfo {
+  pid: number;
+  port: number;
+  reachable: boolean;
+}
+
+export async function listAllInstances(): Promise<InstanceInfo[]> {
+  ensureConfigDir();
+  const glob = new Bun.Glob("codetoaster.*.pid");
+  const instances: InstanceInfo[] = [];
+
+  for await (const file of glob.scan(CONFIG_DIR)) {
+    const filePath = path.join(CONFIG_DIR, file);
+    try {
+      const data = fs.readFileSync(filePath, "utf-8");
+      const info = JSON.parse(data) as PidInfo;
+      if (isProcessRunning(info.pid)) {
+        let reachable = false;
+        try {
+          const res = await fetch(`http://localhost:${info.port}/api/ping`);
+          reachable = res.ok;
+        } catch {}
+        instances.push({ pid: info.pid, port: info.port, reachable });
+      } else {
+        // Stale PID file — clean up
+        fs.unlinkSync(filePath);
+      }
+    } catch {
+      // Corrupt PID file — clean up
+      try { fs.unlinkSync(filePath); } catch {}
+    }
+  }
+
+  return instances.sort((a, b) => a.port - b.port);
 }
 
 export function getLogFile(): string {

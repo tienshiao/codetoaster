@@ -101,7 +101,7 @@ export function startServer(options?: ServerOptions) {
       "/api/shutdown": {
         POST() {
           setTimeout(() => {
-            removePidFile();
+            removePidFile(PORT);
             process.exit(0);
           }, 100);
           return Response.json({ status: "shutting down" });

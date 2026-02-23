@@ -8,6 +8,7 @@ import {
   cmdOpen,
   cmdStop,
   cmdStatus,
+  cmdInstances,
   cmdHelp,
 } from "./cli/commands";
 
@@ -61,13 +62,16 @@ import {
       await cmdConnections(port);
       break;
     case "open":
-      await cmdOpen();
+      await cmdOpen(port);
       break;
     case "stop":
       await cmdStop(port);
       break;
     case "status":
       await cmdStatus(port);
+      break;
+    case "instances":
+      await cmdInstances();
       break;
     case "help":
       cmdHelp();

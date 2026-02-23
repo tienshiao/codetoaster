@@ -5,6 +5,7 @@ import {
   isProcessRunning,
   spawnDaemon,
   getLogFile,
+  listAllInstances,
 } from "./daemon";
 import { formatTable, formatAge, formatSessionId } from "./format";
 import { startServer } from "../server";
@@ -23,17 +24,17 @@ async function isDaemonReachable(port: number): Promise<boolean> {
 }
 
 export async function cmdStart(port: number): Promise<void> {
-  const pidInfo = readPidFile();
+  const pidInfo = readPidFile(port);
   if (pidInfo && isProcessRunning(pidInfo.pid)) {
-    if (await isDaemonReachable(pidInfo.port)) {
-      console.log(`Already running (pid ${pidInfo.pid}, port ${pidInfo.port})`);
+    if (await isDaemonReachable(port)) {
+      console.log(`Already running (pid ${pidInfo.pid}, port ${port})`);
       return;
     }
     // Stale — process exists but not responding
-    removePidFile();
+    removePidFile(port);
   } else if (pidInfo) {
     // Stale PID file
-    removePidFile();
+    removePidFile(port);
   }
 
   spawnDaemon(port);
@@ -43,7 +44,7 @@ export async function cmdStart(port: number): Promise<void> {
   for (let i = 0; i < maxAttempts; i++) {
     await Bun.sleep(i === 0 ? 1000 : 300);
     if (await isDaemonReachable(port)) {
-      const info = readPidFile();
+      const info = readPidFile(port);
       console.log(`Started (pid ${info?.pid ?? "?"}, port ${port})`);
       console.log(`Web UI: ${getBaseUrl(port)}`);
       return;
@@ -60,7 +61,7 @@ export async function cmdForeground(port: number): Promise<void> {
   writePidFile(process.pid, port);
 
   const cleanup = () => {
-    removePidFile();
+    removePidFile(port);
     process.exit(0);
   };
   process.on("SIGTERM", cleanup);
@@ -70,15 +71,12 @@ export async function cmdForeground(port: number): Promise<void> {
 }
 
 export async function cmdList(port: number): Promise<void> {
-  const pidInfo = readPidFile();
-  const targetPort = pidInfo?.port ?? port;
-
-  if (!(await isDaemonReachable(targetPort))) {
+  if (!(await isDaemonReachable(port))) {
     console.log("Daemon is not running.");
     process.exit(1);
   }
 
-  const res = await fetch(`${getBaseUrl(targetPort)}/api/sessions`);
+  const res = await fetch(`${getBaseUrl(port)}/api/sessions`);
   const sessions = (await res.json()) as Array<{
     id: string;
     name: string;
@@ -118,15 +116,12 @@ export async function cmdList(port: number): Promise<void> {
 }
 
 export async function cmdKill(target: string, port: number): Promise<void> {
-  const pidInfo = readPidFile();
-  const targetPort = pidInfo?.port ?? port;
-
-  if (!(await isDaemonReachable(targetPort))) {
+  if (!(await isDaemonReachable(port))) {
     console.log("Daemon is not running.");
     process.exit(1);
   }
 
-  const res = await fetch(`${getBaseUrl(targetPort)}/api/sessions`);
+  const res = await fetch(`${getBaseUrl(port)}/api/sessions`);
   const sessions = (await res.json()) as Array<{ id: string; name: string }>;
 
   // Match by name (exact), id prefix, or full id
@@ -143,7 +138,7 @@ export async function cmdKill(target: string, port: number): Promise<void> {
     process.exit(1);
   }
 
-  const killRes = await fetch(`${getBaseUrl(targetPort)}/api/sessions/${match.id}`, {
+  const killRes = await fetch(`${getBaseUrl(port)}/api/sessions/${match.id}`, {
     method: "DELETE",
   });
 
@@ -156,15 +151,12 @@ export async function cmdKill(target: string, port: number): Promise<void> {
 }
 
 export async function cmdConnections(port: number): Promise<void> {
-  const pidInfo = readPidFile();
-  const targetPort = pidInfo?.port ?? port;
-
-  if (!(await isDaemonReachable(targetPort))) {
+  if (!(await isDaemonReachable(port))) {
     console.log("Daemon is not running.");
     process.exit(1);
   }
 
-  const res = await fetch(`${getBaseUrl(targetPort)}/api/connections`);
+  const res = await fetch(`${getBaseUrl(port)}/api/connections`);
   const connections = (await res.json()) as Array<{
     clientId: string;
     sessionId: string | null;
@@ -184,36 +176,28 @@ export async function cmdConnections(port: number): Promise<void> {
   console.log(formatTable(headers, rows));
 }
 
-export async function cmdOpen(): Promise<void> {
-  const pidInfo = readPidFile();
-  if (!pidInfo || !isProcessRunning(pidInfo.pid)) {
+export async function cmdOpen(port: number): Promise<void> {
+  if (!(await isDaemonReachable(port))) {
     console.log("Daemon is not running.");
     process.exit(1);
   }
 
-  if (!(await isDaemonReachable(pidInfo.port))) {
-    console.log("Daemon is not responding.");
-    process.exit(1);
-  }
-
-  const url = getBaseUrl(pidInfo.port);
+  const url = getBaseUrl(port);
   const cmd = process.platform === "darwin" ? "open" : "xdg-open";
   Bun.spawn([cmd, url]);
   console.log(`Opening ${url}`);
 }
 
 export async function cmdStop(port: number): Promise<void> {
-  const pidInfo = readPidFile();
+  const pidInfo = readPidFile(port);
   if (!pidInfo) {
     console.log("Daemon is not running (no PID file).");
     return;
   }
 
-  const targetPort = pidInfo.port;
-
   // Try graceful shutdown via HTTP
   try {
-    await fetch(`${getBaseUrl(targetPort)}/api/shutdown`, { method: "POST" });
+    await fetch(`${getBaseUrl(port)}/api/shutdown`, { method: "POST" });
     console.log(`Stopped daemon (pid ${pidInfo.pid})`);
 
     // Wait briefly for it to actually exit
@@ -234,11 +218,11 @@ export async function cmdStop(port: number): Promise<void> {
     }
   }
 
-  removePidFile();
+  removePidFile(port);
 }
 
 export async function cmdStatus(port: number): Promise<void> {
-  const pidInfo = readPidFile();
+  const pidInfo = readPidFile(port);
   if (!pidInfo) {
     console.log("Not running (no PID file).");
     return;
@@ -246,12 +230,12 @@ export async function cmdStatus(port: number): Promise<void> {
 
   if (!isProcessRunning(pidInfo.pid)) {
     console.log(`Not running (stale PID file, pid ${pidInfo.pid})`);
-    removePidFile();
+    removePidFile(port);
     return;
   }
 
   try {
-    const res = await fetch(`${getBaseUrl(pidInfo.port)}/api/ping`);
+    const res = await fetch(`${getBaseUrl(port)}/api/ping`);
     const info = (await res.json()) as {
       status: string;
       version: string;
@@ -262,13 +246,32 @@ export async function cmdStatus(port: number): Promise<void> {
     console.log(`Running`);
     console.log(`  Version:  ${info.version}`);
     console.log(`  PID:      ${info.pid}`);
-    console.log(`  Port:     ${pidInfo.port}`);
+    console.log(`  Port:     ${port}`);
     console.log(`  Uptime:   ${formatAge(Date.now() - info.uptime * 1000)}`);
     console.log(`  Sessions: ${info.sessions}`);
-    console.log(`  Web UI:   ${getBaseUrl(pidInfo.port)}`);
+    console.log(`  Web UI:   ${getBaseUrl(port)}`);
   } catch {
-    console.log(`Running (pid ${pidInfo.pid}, port ${pidInfo.port}) but not responding to HTTP`);
+    console.log(`Running (pid ${pidInfo.pid}, port ${port}) but not responding to HTTP`);
   }
+}
+
+export async function cmdInstances(): Promise<void> {
+  const instances = await listAllInstances();
+
+  if (instances.length === 0) {
+    console.log("No running instances.");
+    return;
+  }
+
+  const headers = ["PORT", "PID", "STATUS", "URL"];
+  const rows = instances.map((i) => [
+    String(i.port),
+    String(i.pid),
+    i.reachable ? "running" : "not responding",
+    `http://localhost:${i.port}`,
+  ]);
+
+  console.log(formatTable(headers, rows));
 }
 
 export function cmdHelp(): void {
@@ -283,6 +286,7 @@ Commands:
   open            Open web UI in default browser
   stop            Stop the daemon
   status          Check if daemon is running
+  instances       List all running instances (across all ports)
   help            Show this help message
 
 Options:
