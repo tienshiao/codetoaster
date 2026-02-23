@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
+import { generateUUID } from "./utils/uuid";
 import { useWebSocket } from "./hooks/use-websocket";
 
 export interface SessionInfo {
@@ -57,7 +58,7 @@ export function useSession(): SessionContextValue {
 }
 
 function generateSessionId(): string {
-  return crypto.randomUUID();
+  return generateUUID();
 }
 
 function generateSessionName(existingSessions: SessionInfo[]): string {
@@ -364,7 +365,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
 
   const createFolder = useCallback((): { id: string; name: string } => {
-    const id = crypto.randomUUID();
+    const id = generateUUID();
     const name = generateFolderName(foldersRef.current);
     setFolders((prev) => [...prev, { id, name, sessionIds: [] }]);
     send({ type: "createFolder", id, name });
