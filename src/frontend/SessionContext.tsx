@@ -154,8 +154,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     if (message.type === "notification") {
-      // Auto-acknowledge if we're already viewing this session
-      if (message.sessionId === currentSessionIdRef.current) {
+      // Auto-acknowledge if we're already viewing this session AND window has focus
+      if (message.sessionId === currentSessionIdRef.current && document.hasFocus()) {
         sendRef.current({ type: "acknowledge", sessionId: message.sessionId });
       }
       if (!document.hasFocus()) {
@@ -220,6 +220,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     },
     [send],
   );
+
+  // When the window regains focus, ack any pending notification for the current session
+  useEffect(() => {
+    const handleFocus = () => {
+      const sessionId = currentSessionIdRef.current;
+      if (!sessionId) return;
+      const session = sessionsRef.current.find((s) => s.id === sessionId);
+      if (session?.hasNotification) {
+        sendRef.current({ type: "acknowledge", sessionId });
+      }
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, []);
 
   const attachSession = useCallback(
     (id: string) => {
