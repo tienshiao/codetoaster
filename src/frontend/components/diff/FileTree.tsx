@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { ChevronRight, ChevronDown, MessageCircle, Search, X } from "lucide-react";
 import { FileIcon } from "./FileIcon";
+import { buildTree, FILE_KEY } from "../../utils/sortFiles";
+import type { FileTreeNode } from "../../utils/sortFiles";
 import type { FileDiff } from "../../types/diff";
 
 interface FileTreeProps {
@@ -23,28 +25,11 @@ export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, to
       )
     : files;
 
-  const buildTree = (files: FileDiff[]) => {
-    const tree: Record<string, any> = {};
-    files.forEach((file) => {
-      const parts = file.newPath.split("/");
-      let current = tree;
-      parts.forEach((part, idx) => {
-        if (!current[part]) {
-          current[part] = idx === parts.length - 1 ? { __file: file } : {};
-        }
-        current = current[part];
-      });
-    });
-    return tree;
-  };
-
-  const getAllDirectoryPaths = (node: Record<string, any>, path: string = ""): string[] => {
+  const getAllDirectoryPaths = (node: FileTreeNode, path: string = ""): string[] => {
     const paths: string[] = [];
     Object.entries(node).forEach(([key, value]) => {
-      if (key === "__file") return;
       const fullPath = path ? `${path}/${key}` : key;
-      const isFile = value.__file;
-      if (!isFile) {
+      if (!value[FILE_KEY]) {
         paths.push(fullPath);
         paths.push(...getAllDirectoryPaths(value, fullPath));
       }
@@ -92,15 +77,21 @@ export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, to
   };
 
   const renderTree = (
-    node: Record<string, any>,
+    node: FileTreeNode,
     path: string = "",
     depth: number = 0
   ) => {
-    return Object.entries(node).map(([key, value]) => {
-      if (key === "__file") return null;
+    return Object.entries(node)
+      .sort(([aKey, aVal], [bKey, bVal]) => {
+        const aIsDir = !aVal[FILE_KEY];
+        const bIsDir = !bVal[FILE_KEY];
+        if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+        return aKey.localeCompare(bKey, undefined, { sensitivity: "base" });
+      })
+      .map(([key, value]) => {
       const fullPath = path ? `${path}/${key}` : key;
-      const isFile = value.__file;
-      const file = value.__file as FileDiff | undefined;
+      const isFile = value[FILE_KEY];
+      const file = value[FILE_KEY];
       const isExpanded = expandedPaths.has(fullPath);
 
       return (

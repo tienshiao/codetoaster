@@ -3,6 +3,7 @@ import { parseDiff } from "./utils/parseDiff";
 import { enhanceWithWordDiff } from "./utils/wordDiff";
 import { generatePrompt } from "./utils/generatePrompt";
 import { useComments } from "./hooks/use-comments";
+import { sortFiles } from "./utils/sortFiles";
 import { FileTree } from "./components/diff/FileTree";
 import { DiffFile } from "./components/diff/DiffFile";
 import { Button } from "./components/ui/button";
@@ -55,7 +56,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
       }
       const data = await res.json();
       const parsed = parseDiff(data.diff);
-      const enhanced = enhanceWithWordDiff(parsed);
+      const enhanced = sortFiles(enhanceWithWordDiff(parsed));
       setFiles(enhanced);
 
       // Auto-enable single-file mode for large diffs
