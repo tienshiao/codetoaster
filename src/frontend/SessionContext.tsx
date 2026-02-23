@@ -82,11 +82,22 @@ function generateFolderName(existingFolders: FolderInfo[]): string {
   return `folder-${max + 1}`;
 }
 
-function fireWebNotification(title: string, body: string, tag: string) {
+function fireWebNotification(
+  title: string,
+  body: string,
+  tag: string,
+  sessionName?: string,
+  sessionTitle?: string,
+) {
   if (!("Notification" in window)) return;
   if (Notification.permission === "granted") {
+    // Build a metadata line like "session-1 — vim"
+    const metaParts = [sessionName, sessionTitle].filter(Boolean);
+    const metaLine = metaParts.length > 0 ? metaParts.join(" — ") : undefined;
+    const fullBody = [metaLine, body].filter(Boolean).join("\n") || undefined;
+
     const n = new Notification(title || "Terminal notification", {
-      body: body || undefined,
+      body: fullBody,
       tag,
     });
     setTimeout(() => n.close(), 5000);
@@ -148,7 +159,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sendRef.current({ type: "acknowledge", sessionId: message.sessionId });
       }
       if (!document.hasFocus()) {
-        fireWebNotification(message.title, message.body, `codetoaster-${message.sessionId}`);
+        const session = sessionsRef.current.find((s) => s.id === message.sessionId);
+        fireWebNotification(
+          message.title,
+          message.body,
+          `codetoaster-${message.sessionId}`,
+          session?.name,
+          session?.title,
+        );
       }
       return;
     }
