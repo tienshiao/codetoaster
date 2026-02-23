@@ -152,6 +152,34 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       });
       resizeObserver.observe(container);
 
+      // Touch scrolling workaround (fixed in xterm.js 6.1.0, remove when upgraded)
+      const screenEl = container.querySelector('.xterm-screen') as HTMLElement | null;
+      let touchStartY = 0;
+      let accumulatedDelta = 0;
+      const lineHeight = term.options.lineHeight
+        ? Math.ceil(term.options.lineHeight * (term.options.fontSize ?? 15))
+        : (term.options.fontSize ?? 15);
+      const handleTouchStart = (e: TouchEvent) => {
+        if (e.touches.length === 1) {
+          touchStartY = e.touches[0].clientY;
+          accumulatedDelta = 0;
+        }
+      };
+      const handleTouchMove = (e: TouchEvent) => {
+        if (e.touches.length !== 1) return;
+        e.preventDefault();
+        const deltaY = touchStartY - e.touches[0].clientY;
+        touchStartY = e.touches[0].clientY;
+        accumulatedDelta += deltaY;
+        const lines = Math.trunc(accumulatedDelta / lineHeight);
+        if (lines !== 0) {
+          term.scrollLines(lines);
+          accumulatedDelta -= lines * lineHeight;
+        }
+      };
+      screenEl?.addEventListener("touchstart", handleTouchStart, { passive: true });
+      screenEl?.addEventListener("touchmove", handleTouchMove, { passive: false });
+
       // Handle paste with files (screenshots, copied files)
       const handlePaste = (e: ClipboardEvent) => {
         if (e.clipboardData && e.clipboardData.files.length > 0) {
@@ -167,6 +195,8 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       return () => {
         dataDisposable.dispose();
         resizeObserver.disconnect();
+        screenEl?.removeEventListener("touchstart", handleTouchStart);
+        screenEl?.removeEventListener("touchmove", handleTouchMove);
         container.removeEventListener("paste", handlePaste, true);
         term.dispose();
         termRef.current = null;
