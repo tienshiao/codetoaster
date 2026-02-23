@@ -38,6 +38,14 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 - Browser notifications when the window is not focused
 - Amber indicator dot for unacknowledged notifications
 
+### Code Review
+- Built-in diff viewer with unified diff parsing
+- Word-level diff highlighting with syntax tokenization
+- Inline and file-level comments on diff lines
+- Hierarchical file tree navigation
+- Image diff support
+- Terminal/Diff tab switching per session
+
 ### Activity Tracking
 - Animated activity indicator per session (300ms debounce)
 - Color-coded status dots: active, inactive, notification pending, exited
