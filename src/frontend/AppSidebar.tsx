@@ -116,13 +116,13 @@ export function AppSidebar({
 
   return (
     <Sidebar>
-      <SidebarHeader className="flex-row items-center justify-between px-4 py-3 h-10 text-xs font-semibold uppercase tracking-wide text-zinc-500 border-b border-sidebar-border">
+      <SidebarHeader className="flex-row items-center justify-between px-3 py-0 h-10 text-xs font-semibold uppercase tracking-wide text-zinc-500 border-b border-sidebar-border">
         CodeToaster
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" className="size-6 text-zinc-500" title="New Folder" onClick={onNewFolder}>
+          <Button variant="ghost" size="icon" className="size-5 text-zinc-500" title="New Folder" onClick={onNewFolder}>
             <FolderPlus className="size-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="size-6 text-zinc-500" title="New Session" onClick={() => onNewTab()}>
+          <Button variant="ghost" size="icon" className="size-5 text-zinc-500" title="New Session" onClick={() => onNewTab()}>
             <Plus className="size-4" />
           </Button>
         </div>
@@ -140,7 +140,7 @@ export function AppSidebar({
               >
                 <SidebarGroup className={`p-0 ${isFolderDropTarget(folder.id) ? "ring-1 ring-blue-500 rounded-md" : ""}`}>
                   <div
-                    className="group/folder flex items-center gap-1 h-8 px-2 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none"
+                    className="group/folder relative flex items-center gap-1 h-8 px-2 pr-8 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none"
                     {...getFolderDragProps(folder.id, folderIndex)}
                   >
                     <button
@@ -153,10 +153,10 @@ export function AppSidebar({
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
-                          className="p-0.5 rounded opacity-0 group-hover/folder:opacity-100 hover:bg-sidebar-accent"
+                          className="absolute right-3 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-zinc-500 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0"
                           draggable={false}
                         >
-                          <EllipsisVertical className="size-3.5" />
+                          <EllipsisVertical />
                         </button>
                       </DropdownMenuTrigger>
                         <DropdownMenuContent>
@@ -230,7 +230,7 @@ export function AppSidebar({
                             </SidebarMenuButton>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <SidebarMenuAction showOnHover draggable={false}>
+                                <SidebarMenuAction className="right-3 text-zinc-500" draggable={false}>
                                   <EllipsisVertical />
                                 </SidebarMenuAction>
                               </DropdownMenuTrigger>
