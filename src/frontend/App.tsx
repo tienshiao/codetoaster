@@ -146,6 +146,8 @@ export function SessionLayout({ showNotFound = false }: { showNotFound?: boolean
           hasSession={!!currentSession}
           name={currentSession?.name}
           title={currentSession?.title}
+          onUpload={handleFileDrop}
+          onFocusTerminal={() => terminalRef.current?.focus()}
         />
         <div className="flex-1 relative overflow-hidden">
           <XTerminal
