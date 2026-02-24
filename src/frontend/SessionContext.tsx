@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
 import { generateUUID } from "./utils/uuid";
+import { generateSessionName } from "./utils/nameGenerator";
 import { useWebSocket } from "./hooks/use-websocket";
 
 export interface SessionInfo {
@@ -61,16 +62,6 @@ function generateSessionId(): string {
   return generateUUID();
 }
 
-function generateSessionName(existingSessions: SessionInfo[]): string {
-  let max = 0;
-  for (const s of existingSessions) {
-    const match = s.name.match(/^session-(\d+)$/);
-    if (match) {
-      max = Math.max(max, parseInt(match[1]!, 10));
-    }
-  }
-  return `session-${max + 1}`;
-}
 
 function generateFolderName(existingFolders: FolderInfo[]): string {
   let max = 0;
@@ -275,7 +266,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     const sessionId = generateSessionId();
-    const name = generateSessionName(sessionsRef.current);
+    const name = generateSessionName(sessionsRef.current.map(s => s.name));
     const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
 
     // Derive folder from current session if not explicitly provided
