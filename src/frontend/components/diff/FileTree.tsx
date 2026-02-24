@@ -101,6 +101,7 @@ export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, to
               selectedFile === file?.newPath ? "bg-accent text-accent-foreground" : "text-foreground/80"
             }`}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
+            title={fullPath}
             onClick={() => isFile ? onSelectFile(file!.newPath) : toggleDirectory(fullPath)}
           >
             {!isFile && (

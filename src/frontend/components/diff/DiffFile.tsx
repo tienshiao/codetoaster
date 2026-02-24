@@ -85,7 +85,7 @@ function ContextLine({
 }: ContextLineProps) {
   return (
     <>
-      <tr className="diff-line group">
+      <tr className="diff-line group leading-5">
         <td className="w-[1px] whitespace-nowrap px-2 text-right text-xs text-muted-foreground/50 select-none border-r border-border">
           {line.oldLineNum ?? ""}
         </td>
@@ -401,7 +401,7 @@ export function DiffFile({
 
                         return (
                           <React.Fragment key={`${hunkIdx}-${lineIdx}`}>
-                            <tr className={`diff-line group ${lineBgClass}`}>
+                            <tr className={`diff-line group leading-5 ${lineBgClass}`}>
                               <td className="w-[1px] whitespace-nowrap px-2 text-right text-xs text-muted-foreground/50 select-none border-r border-border">
                                 {line.oldLineNum ?? ""}
                               </td>

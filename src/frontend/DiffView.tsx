@@ -17,6 +17,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
+import { tokenizeLine, mergeTokens } from "./utils/syntaxHighlight";
+import { getLanguageFromPath } from "./utils/languageDetection";
 import type { FileDiff, DiffHunk, HunkExpansionState, DiffLine } from "./types/diff";
 import { ChevronLeft, ChevronRight, Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
 import "./components/diff/DiffView.css";
@@ -135,6 +137,39 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [viewMode, navigateToPrevFile, navigateToNextFile]);
 
+  // Track which file is visible during scroll in "all files" mode
+  useEffect(() => {
+    if (viewMode !== "all" || files.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // Find the topmost intersecting file
+        let topEntry: IntersectionObserverEntry | null = null;
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            if (!topEntry || entry.boundingClientRect.top < topEntry.boundingClientRect.top) {
+              topEntry = entry;
+            }
+          }
+        }
+        if (topEntry) {
+          const path = (topEntry.target as HTMLElement).dataset.filePath;
+          if (path) {
+            setSelectedFile(path);
+          }
+        }
+      },
+      { threshold: 0, rootMargin: "0px 0px -70% 0px" }
+    );
+
+    for (const [path, el] of fileRefs.current) {
+      el.dataset.filePath = path;
+      observer.observe(el);
+    }
+
+    return () => observer.disconnect();
+  }, [viewMode, files]);
+
   const handleToggleFile = useCallback((path: string) => {
     setExpandedFiles((prev) => {
       const next = new Set(prev);
@@ -203,12 +238,24 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
         if (!res.ok) return;
         const data = await res.json();
 
-        const contextLines: DiffLine[] = data.lines.map((l: { lineNum: number; content: string }) => ({
-          type: "context" as const,
-          content: l.content,
-          oldLineNum: l.lineNum,
-          newLineNum: l.lineNum,
-        }));
+        const langConfig = getLanguageFromPath(filePath);
+        const contextLines: DiffLine[] = data.lines.map((l: { lineNum: number; content: string }) => {
+          const line: DiffLine = {
+            type: "context" as const,
+            content: l.content,
+            oldLineNum: l.lineNum,
+            newLineNum: l.lineNum,
+          };
+          if (langConfig) {
+            const tokens = mergeTokens(tokenizeLine(l.content, langConfig));
+            line.segments = tokens.map(t => ({
+              text: t.text,
+              highlighted: false,
+              syntaxType: t.type || undefined,
+            }));
+          }
+          return line;
+        });
 
         setHunkExpansions((prev) => {
           const next = new Map(prev);
