@@ -30,7 +30,7 @@ export function RenameDialog({
       setRenameName(item.name);
       setTimeout(() => renameInputRef.current?.select(), 0);
     }
-  }, [item]);
+  }, [item?.id]);
 
   const handleSubmit = () => {
     const trimmed = renameName.trim();
