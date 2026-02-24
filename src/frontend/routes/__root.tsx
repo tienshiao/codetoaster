@@ -3,6 +3,7 @@ import { SessionProvider } from "../SessionContext";
 import { TerminalThemeProvider } from "../hooks/use-terminal-theme";
 import { useTheme } from "../hooks/use-theme";
 import { Toaster } from "../components/ui/sonner";
+import { CommandPalette } from "../components/CommandPalette";
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -15,6 +16,7 @@ function RootComponent() {
     <TerminalThemeProvider>
       <SessionProvider>
         <Outlet />
+        <CommandPalette />
         <Toaster />
       </SessionProvider>
     </TerminalThemeProvider>
