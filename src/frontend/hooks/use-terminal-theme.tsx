@@ -2,7 +2,7 @@ import { createContext, useContext, useState, type ReactNode } from "react";
 import themes from "xterm-theme";
 import type { ITheme } from "@xterm/xterm";
 
-export const terminalThemeNames: string[] = Object.keys(themes).sort();
+export const terminalThemeNames: string[] = Object.keys(themes).filter(k => k !== "default").sort();
 
 function relativeLuminance(hex: string): number {
   const m = hex.match(/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i);
