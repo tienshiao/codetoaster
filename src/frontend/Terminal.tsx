@@ -184,16 +184,18 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         ? Math.ceil(term.options.lineHeight * (term.options.fontSize ?? 15))
         : (term.options.fontSize ?? 15);
       const handleTouchStart = (e: TouchEvent) => {
-        if (e.touches.length === 1) {
-          touchStartY = e.touches[0].clientY;
+        const touch = e.touches[0];
+        if (e.touches.length === 1 && touch) {
+          touchStartY = touch.clientY;
           accumulatedDelta = 0;
         }
       };
       const handleTouchMove = (e: TouchEvent) => {
         if (e.touches.length !== 1) return;
+        const touch = e.touches[0]!;
         e.preventDefault();
-        const deltaY = touchStartY - e.touches[0].clientY;
-        touchStartY = e.touches[0].clientY;
+        const deltaY = touchStartY - touch.clientY;
+        touchStartY = touch.clientY;
         accumulatedDelta += deltaY;
         const lines = Math.trunc(accumulatedDelta / lineHeight);
         if (lines !== 0) {

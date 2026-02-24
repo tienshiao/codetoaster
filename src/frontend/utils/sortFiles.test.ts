@@ -99,9 +99,9 @@ describe("buildTree", () => {
   test("builds nested structure from flat paths", () => {
     const files = [makeFile("src/a.ts"), makeFile("src/lib/b.ts")];
     const tree = buildTree(files);
-    expect(tree.src.lib["b.ts"][FILE_KEY]).toBeDefined();
-    expect(tree.src["a.ts"][FILE_KEY]).toBeDefined();
-    expect(tree.src["a.ts"][FILE_KEY]!.newPath).toBe("src/a.ts");
+    expect(tree.src!.lib!["b.ts"]![FILE_KEY]).toBeDefined();
+    expect(tree.src!["a.ts"]![FILE_KEY]).toBeDefined();
+    expect(tree.src!["a.ts"]![FILE_KEY]!.newPath).toBe("src/a.ts");
   });
 
   test("empty input produces empty tree", () => {
@@ -111,10 +111,10 @@ describe("buildTree", () => {
   test("file literally named __file is not lost", () => {
     const files = [makeFile("src/__file"), makeFile("src/other.ts")];
     const tree = buildTree(files);
-    expect(tree.src["__file"][FILE_KEY]!.newPath).toBe("src/__file");
-    expect(tree.src["other.ts"][FILE_KEY]!.newPath).toBe("src/other.ts");
+    expect(tree.src!["__file"]![FILE_KEY]!.newPath).toBe("src/__file");
+    expect(tree.src!["other.ts"]![FILE_KEY]!.newPath).toBe("src/other.ts");
     // __file entry should appear as a normal child key, not be confused with the marker
-    const childKeys = Object.keys(tree.src);
+    const childKeys = Object.keys(tree.src!);
     expect(childKeys).toContain("__file");
     expect(childKeys).toContain("other.ts");
   });

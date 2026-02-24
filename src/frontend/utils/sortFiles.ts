@@ -3,7 +3,10 @@ import type { FileDiff } from "../types/diff";
 /** Symbol key used to mark leaf nodes in the file tree. */
 export const FILE_KEY = Symbol.for("file");
 
-export type FileTreeNode = { [FILE_KEY]?: FileDiff } & Record<string, FileTreeNode>;
+export interface FileTreeNode {
+  [FILE_KEY]?: FileDiff;
+  [key: string]: FileTreeNode;
+}
 
 /**
  * Sort files in directory-first, alphabetical order.
@@ -17,7 +20,7 @@ export function sortFiles(files: FileDiff[]): FileDiff[] {
       const aIsLast = i === aParts.length - 1;
       const bIsLast = i === bParts.length - 1;
       if (aIsLast !== bIsLast) return aIsLast ? 1 : -1; // dirs before files
-      const cmp = aParts[i].localeCompare(bParts[i], undefined, { sensitivity: "base" });
+      const cmp = aParts[i]!.localeCompare(bParts[i]!, undefined, { sensitivity: "base" });
       if (cmp !== 0) return cmp;
     }
     return aParts.length - bParts.length;
@@ -37,7 +40,7 @@ export function buildTree(files: FileDiff[]): FileTreeNode {
       if (!current[part]) {
         current[part] = idx === parts.length - 1 ? { [FILE_KEY]: file } : {};
       }
-      current = current[part];
+      current = current[part]!;
     });
   });
   return tree;

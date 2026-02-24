@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsr watch & bun --hot src/index.ts foreground",
+    "dev": "tsr watch & tsc --noEmit --watch --preserveWatchOutput & bun --hot src/index.ts foreground",
     "build:server": "bun run build-single.ts",
     "build:server:all": "bun run build-all.ts",
     "start": "NODE_ENV=production bun src/index.ts foreground"
@@ -38,6 +38,7 @@
     "@tanstack/router-cli": "^1.161.4",
     "@types/bun": "latest",
     "@types/react": "^19",
-    "@types/react-dom": "^19"
+    "@types/react-dom": "^19",
+    "typescript": "^5.9.3"
   }
 }
