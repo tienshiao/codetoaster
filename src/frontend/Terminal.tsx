@@ -76,6 +76,14 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
               term.write(message.data);
             }
             term.write(`\x1b[${message.cursor.y + 1};${message.cursor.x + 1}H`);
+            // Re-fit terminal to actual container size after restoring session content.
+            // The restore resizes the grid to the session's stored size, which may not
+            // match this client's container. Fitting ensures the grid fills the container,
+            // and onSizeChange sends the actual size to the server for negotiation.
+            if (fitAddonRef.current) {
+              fitAddonRef.current.fit();
+              onSizeChangeRef.current({ cols: term.cols, rows: term.rows });
+            }
             break;
 
           case "data":
