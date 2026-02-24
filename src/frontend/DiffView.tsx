@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
 import type { FileDiff, DiffHunk, HunkExpansionState, DiffLine } from "./types/diff";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Send } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
 import "./components/diff/DiffView.css";
 
 interface DiffViewProps {
@@ -39,6 +39,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
   const [hunkExpansions, setHunkExpansions] = useState<Map<string, HunkExpansionState>>(new Map());
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [promptText, setPromptText] = useState("");
+  const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<"all" | "single">("all");
   const diffContainerRef = useRef<HTMLDivElement>(null);
   const fileRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -431,6 +432,18 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
           </pre>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={() => {
+                navigator.clipboard.writeText(promptText);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className="gap-1.5"
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+              {copied ? "Copied" : "Copy"}
+            </Button>
             <AlertDialogAction onClick={handleConfirmSubmit}>
               Send to Terminal
             </AlertDialogAction>
