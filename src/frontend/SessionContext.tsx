@@ -185,6 +185,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     onConnect: () => {
       if (terminalReadyRef.current) {
         send({ type: "list" });
+
+        // Re-attach to the session that was active before disconnect
+        const sessionId = currentSessionIdRef.current;
+        if (sessionId) {
+          const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
+          send({ type: "attach", sessionId, cols: size.cols, rows: size.rows });
+        }
       }
     },
     onDisconnect: () => {

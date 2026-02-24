@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, type ReactNode } from "react";
+import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { useNavigate, useMatches } from "@tanstack/react-router";
 import { AppSidebar } from "./AppSidebar";
 import { TopBar } from "./TopBar";
@@ -19,6 +19,7 @@ import {
 import { Button } from "./components/ui/button";
 import { TerminalSearchBar } from "./components/TerminalSearchBar";
 import { Plus } from "lucide-react";
+import { toast } from "sonner";
 import "./index.css";
 
 export function SessionLayout({ showNotFound = false, children }: { showNotFound?: boolean; children?: ReactNode }) {
@@ -60,6 +61,17 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     setSearchOpen(false);
     terminalRef.current?.focus();
   }, [terminalRef]);
+
+  const wasDisconnected = useRef(false);
+  useEffect(() => {
+    if (!isConnected) {
+      wasDisconnected.current = true;
+      toast("Reconnecting...", { id: "reconnect", duration: Infinity });
+    } else if (wasDisconnected.current) {
+      wasDisconnected.current = false;
+      toast.dismiss("reconnect");
+    }
+  }, [isConnected]);
 
   const [closeConfirmSessionId, setCloseConfirmSessionId] = useState<string | null>(null);
   const closeConfirmSession = closeConfirmSessionId
@@ -209,11 +221,6 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
             </div>
           )}
 
-          {!isConnected && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-zinc-500 text-sm z-10">
-              Connecting...
-            </div>
-          )}
           {isConnected && showNotFound && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-zinc-500 text-sm z-10">
               <div className="flex flex-col items-center gap-4">

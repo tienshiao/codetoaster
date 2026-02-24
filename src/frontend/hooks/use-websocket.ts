@@ -12,6 +12,9 @@ export function useWebSocket({ onMessage, onConnect, onDisconnect }: UseWebSocke
   const onMessageRef = useRef(onMessage);
   const onConnectRef = useRef(onConnect);
   const onDisconnectRef = useRef(onDisconnect);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backoffRef = useRef(1000);
+  const unmountedRef = useRef(false);
 
   onMessageRef.current = onMessage;
   onConnectRef.current = onConnect;
@@ -25,37 +28,58 @@ export function useWebSocket({ onMessage, onConnect, onDisconnect }: UseWebSocke
   }, []);
 
   useEffect(() => {
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(`${protocol}//${location.host}/terminal`);
-    wsRef.current = socket;
+    unmountedRef.current = false;
 
-    socket.onopen = () => {
-      if (wsRef.current !== socket) return;
-      setIsConnected(true);
-      onConnectRef.current();
-    };
+    function connect() {
+      if (unmountedRef.current) return;
 
-    socket.onmessage = (e) => {
-      if (wsRef.current !== socket) return;
-      let message;
-      try {
-        message = JSON.parse(e.data);
-      } catch {
-        return;
-      }
-      onMessageRef.current(message);
-    };
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${protocol}//${location.host}/terminal`);
+      wsRef.current = socket;
 
-    socket.onclose = () => {
-      if (wsRef.current === socket) {
+      socket.onopen = () => {
+        if (wsRef.current !== socket) return;
+        backoffRef.current = 1000; // Reset backoff on successful connection
+        setIsConnected(true);
+        onConnectRef.current();
+      };
+
+      socket.onmessage = (e) => {
+        if (wsRef.current !== socket) return;
+        let message;
+        try {
+          message = JSON.parse(e.data);
+        } catch {
+          return;
+        }
+        onMessageRef.current(message);
+      };
+
+      socket.onclose = () => {
+        if (wsRef.current !== socket) return;
         setIsConnected(false);
         wsRef.current = null;
         onDisconnectRef.current?.();
-      }
-    };
+
+        // Schedule reconnection with exponential backoff + jitter
+        if (!unmountedRef.current) {
+          const base = backoffRef.current;
+          const jitter = base * (0.7 + Math.random() * 0.6); // ±30%
+          reconnectTimerRef.current = setTimeout(connect, jitter);
+          backoffRef.current = Math.min(base * 2, 30000);
+        }
+      };
+    }
+
+    connect();
 
     return () => {
-      socket.close();
+      unmountedRef.current = true;
+      if (reconnectTimerRef.current !== null) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      wsRef.current?.close();
     };
   }, []);
 
