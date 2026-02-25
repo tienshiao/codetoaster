@@ -7,6 +7,12 @@ import { diffRoutes } from "./api/diff";
 
 let clientIdCounter = 0;
 const startTime = Date.now();
+const spaPath = `/${crypto.randomUUID()}`;
+
+// Asset extensions that should never be served as HTML.
+// If a browser requests one of these and it doesn't match a real static file,
+// it's a stale cached reference — return 404 instead of the SPA.
+const assetExtRe = /\.(js|css|mjs|woff2?|ttf|otf|eot|map|png|jpe?g|gif|svg|ico|webp|avif)$/;
 
 function generateClientId(): string {
   return `client-${++clientIdCounter}-${Date.now()}`;
@@ -26,7 +32,28 @@ export function startServer(options?: ServerOptions) {
   const server = serve<WebSocketData>({
     port: PORT,
     routes: {
-      "/*": index,
+      // Mount the SPA on a hidden UUID path so Bun handles bundling/hashing.
+      // The wildcard route below proxies to it with proper cache headers.
+      [spaPath]: index,
+
+      "/*": {
+        async GET(req: Request) {
+          const url = new URL(req.url);
+          // Stale asset request from an old cached index.html — return 404
+          if (assetExtRe.test(url.pathname)) {
+            return new Response("Not found", { status: 404 });
+          }
+          // Proxy to the internal SPA path and set no-cache on the HTML
+          const spaUrl = new URL(spaPath, url.origin);
+          const response = await fetch(spaUrl);
+          const headers = new Headers(response.headers);
+          headers.set("Cache-Control", "no-cache");
+          return new Response(response.body, {
+            status: response.status,
+            headers,
+          });
+        },
+      },
 
       "/api/sessions": {
         async GET() {
