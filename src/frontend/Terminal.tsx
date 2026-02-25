@@ -175,8 +175,8 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
           }
           return false;
         }
-        // Let Cmd+P propagate for command palette
-        if (ev.key === "p" && (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && !ev.altKey) {
+        // Let Cmd+K propagate for command palette
+        if (ev.key === "k" && (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && !ev.altKey) {
           return false;
         }
         // Let Cmd+G / Shift+Cmd+G propagate for search next/prev
