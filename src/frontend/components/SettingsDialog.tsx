@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Monitor, Moon, Settings, Sun } from "lucide-react";
 import { useTheme } from "../hooks/use-theme";
 import { useTerminalTheme, terminalThemeNames, terminalFontOptions } from "../hooks/use-terminal-theme";
+import { useNotificationSound, useBellSound, SOUND_OPTIONS } from "../hooks/use-notification-sound";
 import { SidebarFooter } from "./ui/sidebar";
 import {
   Dialog,
@@ -28,6 +29,8 @@ export function SettingsFooter() {
   const [open, setOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const { themeName, setThemeName, theme: terminalTheme, fontFamily, setFontFamily, fontSize, setFontSize } = useTerminalTheme();
+  const { soundOption, setSoundOption, previewSound } = useNotificationSound();
+  const { soundOption: bellOption, setSoundOption: setBellOption, previewSound: previewBell } = useBellSound();
 
   return (
     <SidebarFooter className="border-t border-sidebar-border p-2">
@@ -153,6 +156,54 @@ export function SettingsFooter() {
                     { value: "22", label: "22" },
                     { value: "24", label: "24" },
                   ].map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid sm:grid-cols-[1fr_1.5fr] gap-x-6 gap-y-2 items-start">
+              <div>
+                <label className="text-sm font-medium">Notification Sound</label>
+                <p className="text-xs text-muted-foreground">Audible alert for terminal notifications</p>
+              </div>
+              <Select
+                value={soundOption}
+                onValueChange={(v) => {
+                  setSoundOption(v as typeof soundOption);
+                  previewSound(v as typeof soundOption);
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SOUND_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid sm:grid-cols-[1fr_1.5fr] gap-x-6 gap-y-2 items-start">
+              <div>
+                <label className="text-sm font-medium">Bell Sound</label>
+                <p className="text-xs text-muted-foreground">Audible alert for terminal bell (BEL character)</p>
+              </div>
+              <Select
+                value={bellOption}
+                onValueChange={(v) => {
+                  setBellOption(v as typeof bellOption);
+                  previewBell(v as typeof bellOption);
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SOUND_OPTIONS.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>

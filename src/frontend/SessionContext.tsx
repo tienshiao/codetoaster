@@ -11,6 +11,7 @@ import type { TerminalHandle, TerminalSize } from "./Terminal";
 import { generateUUID } from "./utils/uuid";
 import { generateSessionName } from "./utils/nameGenerator";
 import { useWebSocket } from "./hooks/use-websocket";
+import { playNotificationSound } from "./hooks/use-notification-sound";
 
 export interface SessionInfo {
   id: string;
@@ -149,6 +150,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // Auto-acknowledge if we're already viewing this session AND window has focus
       if (message.sessionId === currentSessionIdRef.current && document.hasFocus()) {
         sendRef.current({ type: "acknowledge", sessionId: message.sessionId });
+      }
+      if (message.sessionId !== currentSessionIdRef.current || !document.hasFocus()) {
+        playNotificationSound();
       }
       if (!document.hasFocus()) {
         const session = sessionsRef.current.find((s) => s.id === message.sessionId);

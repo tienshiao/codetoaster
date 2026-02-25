@@ -5,6 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { Upload } from "lucide-react";
 import { useTerminalTheme } from "./hooks/use-terminal-theme";
+import { playBellSound } from "./hooks/use-notification-sound";
 import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalSize {
@@ -147,6 +148,11 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       fitAddonRef.current = fitAddon;
       searchAddonRef.current = searchAddon;
 
+      // Handle terminal bell
+      const bellDisposable = term.onBell(() => {
+        playBellSound();
+      });
+
       // Handle terminal input
       const dataDisposable = term.onData((data) => {
         if (attachedRef.current) {
@@ -231,6 +237,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       onReady();
 
       return () => {
+        bellDisposable.dispose();
         dataDisposable.dispose();
         resizeObserver.disconnect();
         screenEl?.removeEventListener("touchstart", handleTouchStart);
