@@ -19,7 +19,7 @@ export function CommandPalette() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+      if (e.key === "p" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
         e.preventDefault();
         setOpen((prev) => !prev);
       }

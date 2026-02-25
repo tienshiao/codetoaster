@@ -211,6 +211,13 @@ export function SettingsFooter() {
                 </SelectContent>
               </Select>
             </div>
+            <p className="text-xs text-muted-foreground text-center pt-2 border-t">
+              Press{" "}
+              <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border">
+                {typeof navigator !== "undefined" && navigator.platform.includes("Mac") ? "⌘⇧P" : "Ctrl+Shift+P"}
+              </kbd>{" "}
+              to open the command palette
+            </p>
           </div>
         </DialogContent>
       </Dialog>
