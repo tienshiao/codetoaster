@@ -2,7 +2,6 @@ import { useCallback, useState, useMemo, useEffect, useRef, type ReactNode } fro
 import { useNavigate, useMatches } from "@tanstack/react-router";
 import { AppSidebar } from "./AppSidebar";
 import { TopBar } from "./TopBar";
-import { SidebarProvider } from "./components/ui/sidebar";
 import { XTerminal } from "./Terminal";
 import { useSession } from "./SessionContext";
 import { buildSessionSlug } from "./utils/slug";
@@ -165,7 +164,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
   );
 
   return (
-    <SidebarProvider className="h-svh">
+    <>
       <AppSidebar
         sessions={sessions}
         folders={folders}
@@ -273,7 +272,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </SidebarProvider>
+    </>
   );
 }
 

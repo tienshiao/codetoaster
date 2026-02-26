@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Pencil, Plus, TerminalSquare, X } from "lucide-react";
+import { PanelLeft, Pencil, Plus, TerminalSquare, X } from "lucide-react";
 import { useSession } from "../SessionContext";
 import { buildSessionSlug } from "../utils/slug";
 import { RenameDialog } from "./RenameDialog";
+import { useSidebar } from "./ui/sidebar";
 import {
   CommandDialog,
   CommandInput,
@@ -16,6 +17,7 @@ import {
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const { sessions, currentSessionId, createSession, closeSession, renameSession: doRenameSession } = useSession();
+  const { toggleSidebar } = useSidebar();
   const [renameItem, setRenameItem] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
 
@@ -95,6 +97,16 @@ export function CommandPalette() {
           >
             <Pencil className="size-4" />
             <span>Rename Session</span>
+          </CommandItem>
+          <CommandItem
+            value="toggle sidebar"
+            onSelect={() => {
+              toggleSidebar();
+              setOpen(false);
+            }}
+          >
+            <PanelLeft className="size-4" />
+            <span>Toggle Sidebar</span>
           </CommandItem>
         </CommandGroup>
         <CommandGroup heading="Sessions">
