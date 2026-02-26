@@ -39,6 +39,9 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     const attachedRef = useRef(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const dragCounterRef = useRef(0);
+    const [resizeHudSize, setResizeHudSize] = useState<TerminalSize | null>(null);
+    const resizeHudTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const hasInitialFitRef = useRef(false);
     const { theme: terminalTheme, cssFontFamily, fontSize } = useTerminalTheme();
     const terminalThemeRef = useRef(terminalTheme);
     terminalThemeRef.current = terminalTheme;
@@ -190,7 +193,15 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       const resizeObserver = new ResizeObserver(() => {
         if (container.clientWidth === 0 || container.clientHeight === 0) return;
         fitAddon.fit();
-        onSizeChangeRef.current({ cols: term.cols, rows: term.rows });
+        const size = { cols: term.cols, rows: term.rows };
+        onSizeChangeRef.current(size);
+        if (hasInitialFitRef.current) {
+          setResizeHudSize(size);
+          if (resizeHudTimeoutRef.current) clearTimeout(resizeHudTimeoutRef.current);
+          resizeHudTimeoutRef.current = setTimeout(() => setResizeHudSize(null), 1500);
+        } else {
+          hasInitialFitRef.current = true;
+        }
       });
       resizeObserver.observe(container);
 
@@ -240,6 +251,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         bellDisposable.dispose();
         dataDisposable.dispose();
         resizeObserver.disconnect();
+        if (resizeHudTimeoutRef.current) clearTimeout(resizeHudTimeoutRef.current);
         screenEl?.removeEventListener("touchstart", handleTouchStart);
         screenEl?.removeEventListener("touchmove", handleTouchMove);
         container.removeEventListener("paste", handlePaste, true);
@@ -308,6 +320,13 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
             <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-zinc-500 bg-zinc-900/80 px-10 py-8">
               <Upload className="size-8 text-zinc-400" />
               <span className="text-sm text-zinc-300">Drop files to upload</span>
+            </div>
+          </div>
+        )}
+        {resizeHudSize && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+            <div className="rounded-lg bg-black/70 px-4 py-2 font-mono text-lg text-white shadow-lg">
+              {resizeHudSize.cols} × {resizeHudSize.rows}
             </div>
           </div>
         )}
