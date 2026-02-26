@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Plus, TerminalSquare, X } from "lucide-react";
+import { Pencil, Plus, TerminalSquare, X } from "lucide-react";
 import { useSession } from "../SessionContext";
 import { buildSessionSlug } from "../utils/slug";
+import { RenameDialog } from "./RenameDialog";
 import {
   CommandDialog,
   CommandInput,
@@ -14,7 +15,8 @@ import {
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
-  const { sessions, currentSessionId, createSession, closeSession } = useSession();
+  const { sessions, currentSessionId, createSession, closeSession, renameSession: doRenameSession } = useSession();
+  const [renameItem, setRenameItem] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -28,7 +30,7 @@ export function CommandPalette() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  return (
+  return (<>
     <CommandDialog
       open={open}
       onOpenChange={setOpen}
@@ -80,6 +82,20 @@ export function CommandPalette() {
               )}
             </span>
           </CommandItem>
+          <CommandItem
+            value="rename session"
+            disabled={!currentSessionId}
+            onSelect={() => {
+              if (!currentSessionId) return;
+              const session = sessions.find((s) => s.id === currentSessionId);
+              if (!session) return;
+              setOpen(false);
+              setRenameItem({ id: session.id, name: session.name });
+            }}
+          >
+            <Pencil className="size-4" />
+            <span>Rename Session</span>
+          </CommandItem>
         </CommandGroup>
         <CommandGroup heading="Sessions">
           {sessions.map((session) => (
@@ -111,5 +127,21 @@ export function CommandPalette() {
         </CommandGroup>
       </CommandList>
     </CommandDialog>
+    <RenameDialog
+      item={renameItem}
+      title="Rename Session"
+      onRename={(id, name) => {
+        doRenameSession(id, name);
+        if (id === currentSessionId) {
+          navigate({
+            to: "/sessions/$slug",
+            params: { slug: buildSessionSlug({ id, name }) },
+            replace: true,
+          });
+        }
+      }}
+      onClose={() => setRenameItem(null)}
+    />
+  </>
   );
 }
