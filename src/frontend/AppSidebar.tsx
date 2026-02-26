@@ -5,7 +5,10 @@ import { buildSessionSlug } from "./utils/slug";
 import { StatusDot } from "./components/StatusDot";
 import { RenameDialog } from "./components/RenameDialog";
 import { SettingsFooter } from "./components/SettingsDialog";
+import { TerminalPreview } from "./components/TerminalPreview";
 import { useSidebarDrag } from "./hooks/use-sidebar-drag";
+import { useTerminalPreview } from "./hooks/use-terminal-preview";
+import { useTerminalTheme } from "./hooks/use-terminal-theme";
 import {
   Sidebar,
   SidebarContent,
@@ -46,6 +49,7 @@ interface AppSidebarProps {
   currentSessionId: string | null;
   isConnected: boolean;
   sessionActivity: Record<string, boolean>;
+  lastActivityAt: React.RefObject<Record<string, number>>;
   onNewTab: (folderId?: string) => void;
   onCloseTab: (id: string) => void;
   onRenameSession: (id: string, name: string) => void;
@@ -63,6 +67,7 @@ export function AppSidebar({
   currentSessionId,
   isConnected,
   sessionActivity,
+  lastActivityAt,
   onNewTab,
   onCloseTab,
   onRenameSession,
@@ -74,6 +79,8 @@ export function AppSidebar({
   onFocusTerminal,
 }: AppSidebarProps) {
   const { setOpenMobile, isMobile } = useSidebar();
+  const { theme, themeName } = useTerminalTheme();
+  const { fetchPreview, getPreview } = useTerminalPreview(sessions, theme, themeName, lastActivityAt);
   const [renameTarget, setRenameTarget] = useState<{ type: "session" | "folder"; id: string } | null>(null);
   const [deleteFolderTarget, setDeleteFolderTarget] = useState<string | null>(null);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
@@ -191,43 +198,48 @@ export function AppSidebar({
                             {getSessionDropIndicator(folder.id, indexInFolder) && (
                               <div className="h-0.5 bg-blue-500 rounded mx-2" />
                             )}
-                            <SidebarMenuButton
-                              asChild
-                              isActive={isActive}
-                              className="rounded-none py-2.5 h-auto items-start"
-                              tooltip={session.name}
+                            <TerminalPreview
+                              sessionId={session.id}
+                              fetchPreview={fetchPreview}
+                              getPreview={getPreview}
                             >
-                              <Link
-                                draggable={false}
-                                to="/sessions/$slug"
-                                params={{ slug: buildSessionSlug(session) }}
-                                onClick={() => {
-                                  if (isActive) {
-                                    onAcknowledge?.(session.id);
-                                  }
-                                  if (isMobile) {
-                                    setOpenMobile(false);
-                                  }
-                                  onFocusTerminal();
-                                }}
+                              <SidebarMenuButton
+                                asChild
+                                isActive={isActive}
+                                className="rounded-none py-2.5 h-auto items-start"
                               >
-                                <StatusDot
-                                  isConnected={isConnected}
-                                  isExited={!!session.exited}
-                                  isActive={sessionActivity[session.id] ?? false}
-                                  hasNotification={session.hasNotification ?? false}
-                                  className="translate-y-[6px]"
-                                />
-                                <span className="flex flex-col overflow-hidden flex-1">
-                                  <span className="text-[13px] overflow-hidden text-ellipsis whitespace-nowrap">
-                                    {session.name}
+                                <Link
+                                  draggable={false}
+                                  to="/sessions/$slug"
+                                  params={{ slug: buildSessionSlug(session) }}
+                                  onClick={() => {
+                                    if (isActive) {
+                                      onAcknowledge?.(session.id);
+                                    }
+                                    if (isMobile) {
+                                      setOpenMobile(false);
+                                    }
+                                    onFocusTerminal();
+                                  }}
+                                >
+                                  <StatusDot
+                                    isConnected={isConnected}
+                                    isExited={!!session.exited}
+                                    isActive={sessionActivity[session.id] ?? false}
+                                    hasNotification={session.hasNotification ?? false}
+                                    className="translate-y-[6px]"
+                                  />
+                                  <span className="flex flex-col overflow-hidden flex-1">
+                                    <span className="text-[13px] overflow-hidden text-ellipsis whitespace-nowrap">
+                                      {session.name}
+                                    </span>
+                                    <span className="text-[11px] text-zinc-500 overflow-hidden text-ellipsis whitespace-nowrap">
+                                      {session.title || "\u00A0"}
+                                    </span>
                                   </span>
-                                  <span className="text-[11px] text-zinc-500 overflow-hidden text-ellipsis whitespace-nowrap">
-                                    {session.title || "\u00A0"}
-                                  </span>
-                                </span>
-                              </Link>
-                            </SidebarMenuButton>
+                                </Link>
+                              </SidebarMenuButton>
+                            </TerminalPreview>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <SidebarMenuAction className="right-3 text-zinc-500" draggable={false}>

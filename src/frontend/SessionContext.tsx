@@ -37,6 +37,7 @@ interface SessionContextValue {
   isConnected: boolean;
   sessionsLoaded: boolean;
   sessionActivity: Record<string, boolean>;
+  lastActivityAt: React.RefObject<Record<string, number>>;
   terminalRef: React.RefObject<TerminalHandle | null>;
   attachSession: (id: string) => void;
   createSession: (folderId?: string) => { id: string; name: string };
@@ -105,6 +106,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessionActivity, setSessionActivity] = useState<Record<string, boolean>>({});
+  const lastActivityAt = useRef<Record<string, number>>({});
   const terminalRef = useRef<TerminalHandle | null>(null);
   const terminalReadyRef = useRef(false);
   const currentSessionIdRef = useRef<string | null>(null);
@@ -143,6 +145,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     if (message.type === "activity") {
       setSessionActivity(prev => ({ ...prev, [message.sessionId]: message.active }));
+      if (message.active) {
+        lastActivityAt.current[message.sessionId] = Date.now();
+      }
       return;
     }
 
@@ -425,6 +430,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         isConnected,
         sessionsLoaded,
         sessionActivity,
+        lastActivityAt,
         terminalRef,
         attachSession,
         createSession,

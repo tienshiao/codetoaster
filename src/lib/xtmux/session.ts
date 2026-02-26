@@ -256,6 +256,55 @@ export class Session {
     return { ...this.size };
   }
 
+  getPreviewHTML(theme?: Record<string, string>): string {
+    const core = (this.terminal as any)._core;
+    let prevThemeService: any;
+
+    if (theme) {
+      this.terminal.options.theme = theme;
+
+      // The headless terminal has no _themeService, so the serialize addon
+      // falls back to DEFAULT_ANSI_COLORS. Inject a fake one so the addon
+      // picks up the theme's ANSI colors.
+      prevThemeService = core._themeService;
+      const ansiKeys = [
+        "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+        "brightBlack", "brightRed", "brightGreen", "brightYellow",
+        "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+      ];
+      const defaultAnsi = [
+        "#2e3436", "#cc0000", "#4e9a06", "#c4a000", "#3465a4", "#75507b", "#06989a", "#d3d7cf",
+        "#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec",
+      ];
+      const ansi: Array<{ css: string }> = ansiKeys.map((key, i) => ({
+        css: (theme as any)[key] ?? defaultAnsi[i],
+      }));
+      // Fill remaining 240 extended colors (indices 16-255)
+      const v = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];
+      for (let i = 0; i < 216; i++) {
+        const r = v[(i / 36) % 6 | 0]!;
+        const g = v[(i / 6) % 6 | 0]!;
+        const b = v[i % 6]!;
+        ansi.push({ css: `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}` });
+      }
+      for (let i = 0; i < 24; i++) {
+        const c = 8 + i * 10;
+        ansi.push({ css: `#${c.toString(16).padStart(2, "0")}${c.toString(16).padStart(2, "0")}${c.toString(16).padStart(2, "0")}` });
+      }
+      core._themeService = { colors: { ansi } };
+    }
+
+    const html = this.serializeAddon.serializeAsHTML({
+      scrollback: 0,
+      includeGlobalBackground: true,
+    });
+
+    if (theme) {
+      core._themeService = prevThemeService;
+    }
+    return html;
+  }
+
   private recalculateSize(): void {
     if (this.clients.size === 0 || this.exited) {
       return;

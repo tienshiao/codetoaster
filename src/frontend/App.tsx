@@ -29,6 +29,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     currentSessionId,
     isConnected,
     sessionActivity,
+    lastActivityAt,
     terminalRef,
     createSession,
     closeSession,
@@ -171,6 +172,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
         currentSessionId={currentSessionId}
         isConnected={isConnected}
         sessionActivity={sessionActivity}
+        lastActivityAt={lastActivityAt}
         onNewTab={handleNewTab}
         onCloseTab={handleCloseTab}
         onRenameSession={handleRenameSession}

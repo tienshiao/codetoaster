@@ -81,6 +81,22 @@ export function startServer(options?: ServerOptions) {
         },
       },
 
+      "/api/sessions/:id/preview": {
+        GET(req: Request & { params: { id: string } }) {
+          const session = sessionManager.getSession(req.params.id);
+          if (!session) {
+            return new Response("Session not found", { status: 404 });
+          }
+          const url = new URL(req.url);
+          const themeParam = url.searchParams.get("theme");
+          let theme: Record<string, string> | undefined;
+          try { theme = themeParam ? JSON.parse(themeParam) : undefined; } catch {};
+          return new Response(session.getPreviewHTML(theme), {
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+        },
+      },
+
       "/api/sessions/:id/upload": {
         async POST(req: Request & { params: { id: string } }) {
           const session = sessionManager.getSession(req.params.id);
