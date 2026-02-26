@@ -83,6 +83,10 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
             if (message.data) {
               term.write(message.data);
             }
+            // Restore cursor visibility — RIS and the serialize addon both
+            // leave DECTCEM in an undefined state, so set it explicitly from
+            // the server's authoritative value.
+            term.write(message.cursorHidden ? '\x1b[?25l' : '\x1b[?25h');
             term.write(`\x1b[${message.cursor.y + 1};${message.cursor.x + 1}H`);
             // Re-fit terminal to actual container size after restoring session content.
             // The restore resizes the grid to the session's stored size, which may not

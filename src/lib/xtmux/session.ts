@@ -176,6 +176,7 @@ export class Session {
     const serialized = this.serializeAddon.serialize();
     const buffer = this.terminal.buffer.active;
     const cursor = { x: buffer.cursorX, y: buffer.cursorY };
+    const cursorHidden = (this.terminal as any)._core.coreService.isCursorHidden as boolean;
 
     // Send restore with serialized content (for scrollback history)
     this.send(client, {
@@ -183,6 +184,7 @@ export class Session {
       data: serialized,
       size: this.size,
       cursor,
+      cursorHidden,
     });
     this.send(client, { type: "attached", sessionId: this.id });
 
