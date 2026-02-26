@@ -73,8 +73,12 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
             break;
 
           case "restore":
-            term.clear();
-            term.reset();
+            // Write RIS (Reset to Initial State) through the write buffer rather
+            // than using synchronous term.reset(). term.reset() bypasses the write
+            // buffer, so pending writes from the previous session can re-enable
+            // modes (like mouse tracking) after the reset. RIS via term.write()
+            // is properly ordered: pending old data → RIS → new serialized data.
+            term.write('\x1bc');
             term.resize(message.size.cols, message.size.rows);
             if (message.data) {
               term.write(message.data);
