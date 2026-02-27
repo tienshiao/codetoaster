@@ -4,6 +4,7 @@ import { ChevronRight, EllipsisVertical, FolderPlus, Pencil, Plus, Trash2, X } f
 import { buildSessionSlug } from "./utils/slug";
 import { StatusDot } from "./components/StatusDot";
 import { RenameDialog } from "./components/RenameDialog";
+import { ProjectDialog } from "./components/ProjectDialog";
 import { SettingsFooter } from "./components/SettingsDialog";
 import { TerminalPreview } from "./components/TerminalPreview";
 import { useSidebarDrag } from "./hooks/use-sidebar-drag";
@@ -41,29 +42,37 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
-import type { SessionInfo, FolderInfo } from "./SessionContext";
+import type { SessionInfo, ProjectInfo } from "./SessionContext";
+
+function projectColorVars(color: string): React.CSSProperties | undefined {
+  if (!color) return undefined;
+  return {
+    "--project-bg": `color-mix(in srgb, ${color} 8%, transparent)`,
+    "--sidebar-accent": `color-mix(in srgb, ${color} 18%, transparent)`,
+  } as React.CSSProperties;
+}
 
 interface AppSidebarProps {
   sessions: SessionInfo[];
-  folders: FolderInfo[];
+  projects: ProjectInfo[];
   currentSessionId: string | null;
   isConnected: boolean;
   sessionActivity: Record<string, boolean>;
   lastActivityAt: React.RefObject<Record<string, number>>;
-  onNewTab: (folderId?: string) => void;
+  onNewTab: (projectId?: string) => void;
   onCloseTab: (id: string) => void;
   onRenameSession: (id: string, name: string) => void;
-  onReorder: (folders: Array<{ id: string; sessionIds: string[] }>) => void;
+  onReorder: (projects: Array<{ id: string; sessionIds: string[] }>) => void;
   onAcknowledge: (id: string) => void;
-  onNewFolder: () => void;
-  onRenameFolder: (id: string, name: string) => void;
-  onDeleteFolder: (id: string) => void;
+  onCreateProject: (name: string, initialPath: string, color: string) => void;
+  onUpdateProject: (id: string, name: string, initialPath: string, color: string) => void;
+  onDeleteProject: (id: string) => void;
   onFocusTerminal: () => void;
 }
 
 export function AppSidebar({
   sessions,
-  folders,
+  projects,
   currentSessionId,
   isConnected,
   sessionActivity,
@@ -73,26 +82,26 @@ export function AppSidebar({
   onRenameSession,
   onReorder,
   onAcknowledge,
-  onNewFolder,
-  onRenameFolder,
-  onDeleteFolder,
+  onCreateProject,
+  onUpdateProject,
+  onDeleteProject,
   onFocusTerminal,
 }: AppSidebarProps) {
   const { setOpenMobile, isMobile } = useSidebar();
   const { theme, themeName } = useTerminalTheme();
   const { fetchPreview, getPreview } = useTerminalPreview(sessions, theme, themeName, lastActivityAt);
-  const [renameTarget, setRenameTarget] = useState<{ type: "session" | "folder"; id: string } | null>(null);
-  const [deleteFolderTarget, setDeleteFolderTarget] = useState<string | null>(null);
-  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [renameTarget, setRenameTarget] = useState<{ type: "session"; id: string } | null>(null);
+  const [projectDialogState, setProjectDialogState] = useState<{ mode: "create" | "edit"; project: ProjectInfo | null } | null>(null);
+  const [deleteProjectTarget, setDeleteProjectTarget] = useState<string | null>(null);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const {
-    getFolderDragProps,
+    getProjectDragProps,
     getSessionDragProps,
     getSessionDropIndicator,
     getSessionDropIndicatorAfterLast,
-    getFolderDropIndicator,
-    getFolderDropIndicatorAfterLast,
-    isFolderDropTarget,
-  } = useSidebarDrag(folders, onReorder);
+    getProjectDropIndicator,
+    getProjectDropIndicatorAfterLast,
+  } = useSidebarDrag(projects, onReorder);
 
   const sessionMap = useMemo(
     () => new Map(sessions.map((s) => [s.id, s])),
@@ -101,24 +110,28 @@ export function AppSidebar({
 
   const renameItem = useMemo(() => {
     if (!renameTarget) return null;
-    if (renameTarget.type === "session") {
-      const s = sessionMap.get(renameTarget.id);
-      return s ? { id: s.id, name: s.name } : null;
-    }
-    const f = folders.find((f) => f.id === renameTarget.id);
-    return f ? { id: f.id, name: f.name } : null;
-  }, [renameTarget, sessionMap, folders]);
+    const s = sessionMap.get(renameTarget.id);
+    return s ? { id: s.id, name: s.name } : null;
+  }, [renameTarget, sessionMap]);
 
-  const toggleFolder = (folderId: string) => {
-    setCollapsedFolders((prev) => {
+  const toggleProject = (projectId: string) => {
+    setCollapsedProjects((prev) => {
       const next = new Set(prev);
-      if (next.has(folderId)) {
-        next.delete(folderId);
+      if (next.has(projectId)) {
+        next.delete(projectId);
       } else {
-        next.add(folderId);
+        next.add(projectId);
       }
       return next;
     });
+  };
+
+  const handleNewSession = () => {
+    // If only General exists, create directly
+    if (projects.length <= 1) {
+      onNewTab();
+    }
+    // Otherwise the dropdown handles it (see JSX below)
   };
 
   return (
@@ -126,36 +139,59 @@ export function AppSidebar({
       <SidebarHeader className="flex-row items-center justify-between px-3 py-0 h-10 text-xs font-semibold uppercase tracking-wide text-zinc-500 border-b border-sidebar-border">
         CodeToaster
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" className="size-5 text-zinc-500" title="New Folder" onClick={onNewFolder}>
+          <Button variant="ghost" size="icon" className="size-5 text-zinc-500" title="New Project" onClick={() => setProjectDialogState({ mode: "create", project: null })}>
             <FolderPlus className="size-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="size-5 text-zinc-500" title="New Session" onClick={() => onNewTab()}>
-            <Plus className="size-4" />
-          </Button>
+          {projects.length <= 1 ? (
+            <Button variant="ghost" size="icon" className="size-5 text-zinc-500" title="New Session" onClick={() => onNewTab()}>
+              <Plus className="size-4" />
+            </Button>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="size-5 text-zinc-500" title="New Session">
+                  <Plus className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {projects.map((project) => (
+                  <DropdownMenuItem key={project.id} onClick={() => onNewTab(project.id)}>
+                    {project.color ? (
+                      <span className="size-2.5 rounded-full shrink-0" style={{ backgroundColor: project.color }} />
+                    ) : (
+                      <span className="size-2.5 shrink-0" />
+                    )}
+                    {project.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {folders.map((folder, folderIndex) => {
-          const isCollapsed = collapsedFolders.has(folder.id);
+        {projects.map((project, projectIndex) => {
+          const isCollapsed = collapsedProjects.has(project.id);
           return (
-            <div key={folder.id}>
-              {getFolderDropIndicator(folderIndex) && (
+            <div key={project.id}>
+              {getProjectDropIndicator(projectIndex) && (
                 <div className="h-0.5 bg-blue-500 rounded mx-2" />
               )}
               <Collapsible
                 open={!isCollapsed}
               >
-                <SidebarGroup className={`p-0 ${isFolderDropTarget(folder.id) ? "ring-1 ring-blue-500 rounded-md" : ""}`}>
+                <SidebarGroup className="p-0" style={projectColorVars(project.color)}>
                   <div
-                    className="group/folder relative flex items-center gap-1 h-8 px-2 pr-8 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none"
-                    {...getFolderDragProps(folder.id, folderIndex)}
+                    className={`group/project relative flex items-center gap-1 h-8 px-2 pr-8 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none ${project.color ? "project-tint" : ""}`}
+                    {...getProjectDragProps(project.id, projectIndex)}
+                    style={getProjectDragProps(project.id, projectIndex).style}
                   >
                     <button
                       className="flex items-center gap-1 flex-1 min-w-0 cursor-pointer text-left"
-                      onClick={() => toggleFolder(folder.id)}
+                      onClick={() => toggleProject(project.id)}
                     >
                       <ChevronRight className={`size-3.5 shrink-0 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
-                      <span className="flex-1 truncate">{folder.name}</span>
+                      <span className="flex-1 truncate">{project.name}</span>
                     </button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -167,18 +203,20 @@ export function AppSidebar({
                         </button>
                       </DropdownMenuTrigger>
                         <DropdownMenuContent>
-                          <DropdownMenuItem onClick={() => onNewTab(folder.id)}>
+                          <DropdownMenuItem onClick={() => onNewTab(project.id)}>
                             <Plus />
                             New Session
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setRenameTarget({ type: "folder", id: folder.id })}>
-                            <Pencil />
-                            Rename Folder
-                          </DropdownMenuItem>
-                          {folder.id !== "general" && (
-                            <DropdownMenuItem onClick={() => setDeleteFolderTarget(folder.id)}>
+                          {project.id !== "general" && (
+                            <DropdownMenuItem onClick={() => setProjectDialogState({ mode: "edit", project })}>
+                              <Pencil />
+                              Edit Project
+                            </DropdownMenuItem>
+                          )}
+                          {project.id !== "general" && (
+                            <DropdownMenuItem onClick={() => setDeleteProjectTarget(project.id)}>
                               <Trash2 />
-                              Delete Folder
+                              Delete Project
                             </DropdownMenuItem>
                           )}
                         </DropdownMenuContent>
@@ -186,16 +224,17 @@ export function AppSidebar({
                   </div>
                   <CollapsibleContent>
                     <SidebarMenu className="gap-0">
-                      {folder.sessionIds.map((sessionId, indexInFolder) => {
+                      {project.sessionIds.map((sessionId, indexInProject) => {
                         const session = sessionMap.get(sessionId);
                         if (!session) return null;
                         const isActive = session.id === currentSessionId;
                         return (
                           <SidebarMenuItem
                             key={session.id}
-                            {...getSessionDragProps(session.id, folder.id, indexInFolder)}
+                            className={project.color ? "project-tint" : ""}
+                            {...getSessionDragProps(session.id, project.id, indexInProject)}
                           >
-                            {getSessionDropIndicator(folder.id, indexInFolder) && (
+                            {getSessionDropIndicator(project.id, indexInProject) && (
                               <div className="h-0.5 bg-blue-500 rounded mx-2" />
                             )}
                             <TerminalPreview
@@ -261,8 +300,8 @@ export function AppSidebar({
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
-                            {getSessionDropIndicatorAfterLast(folder.id) &&
-                              indexInFolder === folder.sessionIds.length - 1 && (
+                            {getSessionDropIndicatorAfterLast(project.id) &&
+                              indexInProject === project.sessionIds.length - 1 && (
                               <div className="h-0.5 bg-blue-500 rounded mx-2" />
                             )}
                           </SidebarMenuItem>
@@ -272,7 +311,7 @@ export function AppSidebar({
                   </CollapsibleContent>
                 </SidebarGroup>
               </Collapsible>
-              {getFolderDropIndicatorAfterLast() && folderIndex === folders.length - 1 && (
+              {getProjectDropIndicatorAfterLast() && projectIndex === projects.length - 1 && (
                 <div className="h-0.5 bg-blue-500 rounded mx-2" />
               )}
             </div>
@@ -283,14 +322,14 @@ export function AppSidebar({
       <SettingsFooter />
 
       <AlertDialog
-        open={deleteFolderTarget !== null}
-        onOpenChange={(open) => { if (!open) setDeleteFolderTarget(null); }}
+        open={deleteProjectTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteProjectTarget(null); }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete folder?</AlertDialogTitle>
+            <AlertDialogTitle>Delete project?</AlertDialogTitle>
             <AlertDialogDescription>
-              "{folders.find((f) => f.id === deleteFolderTarget)?.name ?? "Folder"}" will be deleted and its sessions will be moved to General.
+              "{projects.find((p) => p.id === deleteProjectTarget)?.name ?? "Project"}" will be deleted and its sessions will be moved to General.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -298,10 +337,10 @@ export function AppSidebar({
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
-                if (deleteFolderTarget) {
-                  onDeleteFolder(deleteFolderTarget);
+                if (deleteProjectTarget) {
+                  onDeleteProject(deleteProjectTarget);
                 }
-                setDeleteFolderTarget(null);
+                setDeleteProjectTarget(null);
               }}
             >
               Delete
@@ -310,19 +349,28 @@ export function AppSidebar({
         </AlertDialogContent>
       </AlertDialog>
 
+      <ProjectDialog
+        mode={projectDialogState?.mode ?? "create"}
+        project={projectDialogState?.project ?? null}
+        open={projectDialogState !== null}
+        onSave={(name, initialPath, color) => {
+          if (projectDialogState?.mode === "edit" && projectDialogState.project) {
+            onUpdateProject(projectDialogState.project.id, name, initialPath, color);
+          } else {
+            onCreateProject(name, initialPath, color);
+          }
+        }}
+        onClose={() => setProjectDialogState(null)}
+      />
+
       <RenameDialog
         item={renameItem}
-        title={renameTarget?.type === "folder" ? "Rename Folder" : "Rename Session"}
+        title="Rename Session"
         onRename={(id, name) => {
-          if (renameTarget?.type === "folder") {
-            onRenameFolder(id, name);
-          } else {
-            onRenameSession(id, name);
-          }
+          onRenameSession(id, name);
         }}
         onClose={() => setRenameTarget(null)}
       />
     </Sidebar>
   );
 }
-

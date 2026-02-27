@@ -25,15 +25,17 @@ export interface SessionInfo {
   hasNotification?: boolean;
 }
 
-export interface FolderInfo {
+export interface ProjectInfo {
   id: string;
   name: string;
+  initialPath: string;
+  color: string;
   sessionIds: string[];
 }
 
 interface SessionContextValue {
   sessions: SessionInfo[];
-  folders: FolderInfo[];
+  projects: ProjectInfo[];
   currentSessionId: string | null;
   isConnected: boolean;
   sessionsLoaded: boolean;
@@ -41,13 +43,13 @@ interface SessionContextValue {
   lastActivityAt: React.RefObject<Record<string, number>>;
   terminalRef: React.RefObject<TerminalHandle | null>;
   attachSession: (id: string) => void;
-  createSession: (folderId?: string) => { id: string; name: string };
+  createSession: (projectId?: string) => { id: string; name: string };
   closeSession: (id: string) => void;
   renameSession: (id: string, name: string) => void;
-  reorderSessions: (folders: Array<{ id: string; sessionIds: string[] }>) => void;
-  createFolder: () => { id: string; name: string };
-  renameFolder: (id: string, name: string) => void;
-  deleteFolder: (id: string) => void;
+  reorderSessions: (projects: Array<{ id: string; sessionIds: string[] }>) => void;
+  createProject: (name: string, initialPath: string, color: string) => { id: string };
+  updateProject: (id: string, name: string, initialPath: string, color: string) => void;
+  deleteProject: (id: string) => void;
   handleTerminalReady: () => void;
   handleSizeChange: (size: TerminalSize) => void;
   handleSendMessage: (msg: object) => void;
@@ -63,18 +65,6 @@ export function useSession(): SessionContextValue {
 
 function generateSessionId(): string {
   return generateUUID();
-}
-
-
-function generateFolderName(existingFolders: FolderInfo[]): string {
-  let max = 0;
-  for (const f of existingFolders) {
-    const match = f.name.match(/^folder-(\d+)$/);
-    if (match) {
-      max = Math.max(max, parseInt(match[1]!, 10));
-    }
-  }
-  return `folder-${max + 1}`;
 }
 
 function fireWebNotification(
@@ -103,7 +93,7 @@ function fireWebNotification(
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [folders, setFolders] = useState<FolderInfo[]>([]);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessionActivity, setSessionActivity] = useState<Record<string, boolean>>({});
@@ -112,7 +102,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const terminalReadyRef = useRef(false);
   const currentSessionIdRef = useRef<string | null>(null);
   const sessionsRef = useRef<SessionInfo[]>([]);
-  const foldersRef = useRef<FolderInfo[]>([]);
+  const projectsRef = useRef<ProjectInfo[]>([]);
   const messageQueueRef = useRef<any[]>([]);
   const sendRef = useRef<(msg: object) => void>(() => {});
 
@@ -134,15 +124,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [sessions]);
 
   useEffect(() => {
-    foldersRef.current = folders;
-  }, [folders]);
+    projectsRef.current = projects;
+  }, [projects]);
 
   const onMessage = useCallback((message: any) => {
     if (message.type === "sessions") {
       const list = message.list as SessionInfo[];
       setSessions(list);
-      if (message.folders) {
-        setFolders(message.folders as FolderInfo[]);
+      if (message.projects) {
+        setProjects(message.projects as ProjectInfo[]);
       }
       setSessionsLoaded(true);
       return;
@@ -294,11 +284,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
-  const createSession = useCallback((folderId?: string): { id: string; name: string } => {
+  const createSession = useCallback((projectId?: string): { id: string; name: string } => {
     terminalRef.current?.resetAttached();
 
-    // Only inherit position/cwd when no explicit folder is targeted (e.g. Cmd+T)
-    const afterSessionId = folderId ? undefined : (currentSessionIdRef.current || undefined);
+    // Only inherit position/cwd when no explicit project is targeted (e.g. Cmd+T)
+    const afterSessionId = projectId ? undefined : (currentSessionIdRef.current || undefined);
 
     if (currentSessionIdRef.current) {
       send({ type: "detach" });
@@ -308,14 +298,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const name = generateSessionName(sessionsRef.current.map(s => s.name));
     const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
 
-    // Derive folder from current session if not explicitly provided
-    let resolvedFolderId = folderId;
-    if (!resolvedFolderId && afterSessionId) {
-      const currentFolder = foldersRef.current.find((f) => f.sessionIds.includes(afterSessionId));
-      if (currentFolder) resolvedFolderId = currentFolder.id;
+    // Derive project from current session if not explicitly provided
+    let resolvedProjectId = projectId;
+    if (!resolvedProjectId && afterSessionId) {
+      const currentProject = projectsRef.current.find((p) => p.sessionIds.includes(afterSessionId));
+      if (currentProject) resolvedProjectId = currentProject.id;
     }
 
-    send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows, folderId: resolvedFolderId, afterSessionId });
+    send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows, projectId: resolvedProjectId, afterSessionId });
     setCurrentSessionId(sessionId);
     setSessions((prev) => [
       ...prev,
@@ -327,21 +317,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         clientCount: 1,
       },
     ]);
-    // Optimistically add to folder at correct position
-    const targetFolderId = resolvedFolderId || "general";
-    setFolders((prev) =>
-      prev.map((f) => {
-        if (f.id !== targetFolderId) return f;
-        const newSessionIds = [...f.sessionIds];
-        if (afterSessionId && (!folderId || folderId === f.id)) {
+    // Optimistically add to project at correct position
+    const targetProjectId = resolvedProjectId || "general";
+    setProjects((prev) =>
+      prev.map((p) => {
+        if (p.id !== targetProjectId) return p;
+        const newSessionIds = [...p.sessionIds];
+        if (afterSessionId && (!projectId || projectId === p.id)) {
           const afterIndex = newSessionIds.indexOf(afterSessionId);
           if (afterIndex >= 0) {
             newSessionIds.splice(afterIndex + 1, 0, sessionId);
-            return { ...f, sessionIds: newSessionIds };
+            return { ...p, sessionIds: newSessionIds };
           }
         }
         newSessionIds.push(sessionId);
-        return { ...f, sessionIds: newSessionIds };
+        return { ...p, sessionIds: newSessionIds };
       })
     );
     return { id: sessionId, name };
@@ -358,31 +348,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
 
   const reorderSessions = useCallback(
-    (orderedFolders: Array<{ id: string; sessionIds: string[] }>) => {
-      // Optimistically update folders
-      setFolders((prev) => {
-        const folderMap = new Map(prev.map((f) => [f.id, f]));
-        const result: FolderInfo[] = [];
+    (orderedProjects: Array<{ id: string; sessionIds: string[] }>) => {
+      // Optimistically update projects
+      setProjects((prev) => {
+        const projectMap = new Map(prev.map((p) => [p.id, p]));
+        const result: ProjectInfo[] = [];
         const seen = new Set<string>();
-        for (const { id, sessionIds } of orderedFolders) {
-          const existing = folderMap.get(id);
+        for (const { id, sessionIds } of orderedProjects) {
+          const existing = projectMap.get(id);
           if (existing && !seen.has(id)) {
             result.push({ ...existing, sessionIds });
             seen.add(id);
           }
         }
-        // Append missing folders
-        for (const f of prev) {
-          if (!seen.has(f.id)) result.push(f);
+        // Append missing projects
+        for (const p of prev) {
+          if (!seen.has(p.id)) result.push(p);
         }
         return result;
       });
-      // Optimistically reorder sessions to match folder order
+      // Optimistically reorder sessions to match project order
       setSessions((prev) => {
         const map = new Map(prev.map((s) => [s.id, s]));
         const reordered: SessionInfo[] = [];
         const seen = new Set<string>();
-        for (const { sessionIds } of orderedFolders) {
+        for (const { sessionIds } of orderedProjects) {
           for (const id of sessionIds) {
             const s = map.get(id);
             if (s && !seen.has(id)) {
@@ -396,43 +386,42 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         }
         return reordered;
       });
-      send({ type: "reorder", folders: orderedFolders });
+      send({ type: "reorder", projects: orderedProjects });
     },
     [send],
   );
 
-  const createFolder = useCallback((): { id: string; name: string } => {
+  const createProject = useCallback((name: string, initialPath: string, color: string): { id: string } => {
     const id = generateUUID();
-    const name = generateFolderName(foldersRef.current);
-    setFolders((prev) => [...prev, { id, name, sessionIds: [] }]);
-    send({ type: "createFolder", id, name });
-    return { id, name };
+    setProjects((prev) => [...prev, { id, name, initialPath, color, sessionIds: [] }]);
+    send({ type: "createProject", id, name, initialPath, color });
+    return { id };
   }, [send]);
 
-  const renameFolder = useCallback(
-    (id: string, name: string) => {
-      setFolders((prev) =>
-        prev.map((f) => (f.id === id ? { ...f, name } : f))
+  const updateProject = useCallback(
+    (id: string, name: string, initialPath: string, color: string) => {
+      setProjects((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, name, initialPath, color } : p))
       );
-      send({ type: "renameFolder", id, name });
+      send({ type: "updateProject", id, name, initialPath, color });
     },
     [send],
   );
 
-  const deleteFolder = useCallback(
+  const deleteProject = useCallback(
     (id: string) => {
-      setFolders((prev) => {
-        const folder = prev.find((f) => f.id === id);
-        if (!folder || id === "general") return prev;
+      setProjects((prev) => {
+        const project = prev.find((p) => p.id === id);
+        if (!project || id === "general") return prev;
         return prev
-          .filter((f) => f.id !== id)
-          .map((f) =>
-            f.id === "general"
-              ? { ...f, sessionIds: [...f.sessionIds, ...folder.sessionIds] }
-              : f
+          .filter((p) => p.id !== id)
+          .map((p) =>
+            p.id === "general"
+              ? { ...p, sessionIds: [...p.sessionIds, ...project.sessionIds] }
+              : p
           );
       });
-      send({ type: "deleteFolder", id });
+      send({ type: "deleteProject", id });
     },
     [send],
   );
@@ -455,7 +444,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     <SessionContext.Provider
       value={{
         sessions,
-        folders,
+        projects,
         currentSessionId,
         isConnected,
         sessionsLoaded,
@@ -467,9 +456,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         closeSession,
         renameSession,
         reorderSessions,
-        createFolder,
-        renameFolder,
-        deleteFolder,
+        createProject,
+        updateProject,
+        deleteProject,
         handleTerminalReady,
         handleSizeChange,
         handleSendMessage,

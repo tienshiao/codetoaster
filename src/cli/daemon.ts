@@ -51,7 +51,7 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
-export function spawnDaemon(port: number): void {
+export function spawnDaemon(port: number, dbPath?: string): void {
   ensureConfigDir();
 
   // Build the command to run the server in foreground mode.
@@ -63,6 +63,10 @@ export function spawnDaemon(port: number): void {
 
   if (port !== 4000) {
     cmd.push("--port", String(port));
+  }
+
+  if (dbPath) {
+    cmd.push("--db", dbPath);
   }
 
   const logFd = fs.openSync(LOG_FILE, "a");

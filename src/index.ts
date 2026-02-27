@@ -17,6 +17,7 @@ import {
     args: Bun.argv.slice(2),
     options: {
       port: { type: "string", short: "p" },
+      db: { type: "string" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -37,15 +38,16 @@ import {
   }
 
   const port = typeof values.port === "string" ? parseInt(values.port, 10) : parseInt(process.env.PORT || "4000", 10);
+  const dbPath = typeof values.db === "string" ? values.db : undefined;
   const command = positionals[0] ?? "";
 
   switch (command) {
     case "":
-      await cmdStart(port);
+      await cmdStart(port, dbPath);
       break;
     case "foreground":
     case "fg":
-      await cmdForeground(port);
+      await cmdForeground(port, dbPath);
       break;
     case "list":
     case "ls":

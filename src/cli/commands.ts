@@ -23,7 +23,7 @@ async function isDaemonReachable(port: number): Promise<boolean> {
   }
 }
 
-export async function cmdStart(port: number): Promise<void> {
+export async function cmdStart(port: number, dbPath?: string): Promise<void> {
   const pidInfo = readPidFile(port);
   if (pidInfo && isProcessRunning(pidInfo.pid)) {
     if (await isDaemonReachable(port)) {
@@ -37,7 +37,7 @@ export async function cmdStart(port: number): Promise<void> {
     removePidFile(port);
   }
 
-  spawnDaemon(port);
+  spawnDaemon(port, dbPath);
 
   // Wait for daemon to become reachable (first attempt after longer delay for HTML bundling)
   const maxAttempts = 15;
@@ -56,8 +56,8 @@ export async function cmdStart(port: number): Promise<void> {
   process.exit(1);
 }
 
-export async function cmdForeground(port: number): Promise<void> {
-  const server = startServer({ port });
+export async function cmdForeground(port: number, dbPath?: string): Promise<void> {
+  const server = startServer({ port, dbPath });
   writePidFile(process.pid, port);
 
   const cleanup = () => {
@@ -291,6 +291,7 @@ Commands:
 
 Options:
   --port <port>   Server port (default: 4000, or PORT env)
+  --db <path>     Database path (default: ~/.codetoaster/data.db)
   --version       Show version
   --help          Show this help message`);
 }

@@ -4,6 +4,7 @@ import { sessionManager } from "./lib/xtmux/session-manager";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
 import { diffRoutes } from "./api/diff";
+import { initDatabase } from "./lib/db";
 
 let clientIdCounter = 0;
 const startTime = Date.now();
@@ -24,10 +25,16 @@ function sendError(ws: { send: (data: string) => void }, message: string): void 
 
 export interface ServerOptions {
   port?: number;
+  dbPath?: string;
 }
 
 export function startServer(options?: ServerOptions) {
   const PORT = options?.port ?? parseInt(process.env.PORT || "4000", 10);
+
+  // Initialize database
+  const dbPath = options?.dbPath ?? `${process.env.HOME ?? "."}/.codetoaster/data.db`;
+  initDatabase(dbPath);
+  sessionManager.loadProjects();
 
   const server = serve<WebSocketData>({
     port: PORT,
@@ -175,8 +182,8 @@ export function startServer(options?: ServerOptions) {
 
         switch (parsed.type) {
           case "create": {
-            const { sessionId, name, cols, rows, folderId, afterSessionId } = parsed;
-            sessionManager.createSession(sessionId, name || sessionId, cols, rows, folderId, afterSessionId).then(
+            const { sessionId, name, cols, rows, projectId, afterSessionId } = parsed;
+            sessionManager.createSession(sessionId, name || sessionId, cols, rows, projectId, afterSessionId).then(
               (session) => {
                 sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
                 ws.data.sessionId = sessionId;
@@ -229,7 +236,7 @@ export function startServer(options?: ServerOptions) {
               JSON.stringify({
                 type: "sessions",
                 list: sessionManager.listSessions(),
-                folders: sessionManager.getFolders(),
+                projects: sessionManager.getProjects(),
               })
             );
             break;
@@ -259,31 +266,31 @@ export function startServer(options?: ServerOptions) {
           }
 
           case "reorder": {
-            sessionManager.reorderFolders(parsed.folders);
+            sessionManager.reorderProjects(parsed.projects);
             break;
           }
 
-          case "createFolder": {
+          case "createProject": {
             try {
-              sessionManager.createFolder(parsed.id, parsed.name);
+              sessionManager.createProject(parsed.id, parsed.name, parsed.initialPath, parsed.color);
             } catch (e: any) {
               sendError(ws, e.message);
             }
             break;
           }
 
-          case "renameFolder": {
-            const renamed = sessionManager.renameFolder(parsed.id, parsed.name);
-            if (!renamed) {
-              sendError(ws, `Folder "${parsed.id}" not found`);
+          case "updateProject": {
+            const updated = sessionManager.updateProject(parsed.id, parsed.name, parsed.initialPath, parsed.color);
+            if (!updated) {
+              sendError(ws, `Project "${parsed.id}" not found`);
             }
             break;
           }
 
-          case "deleteFolder": {
-            const deleted = sessionManager.deleteFolder(parsed.id);
+          case "deleteProject": {
+            const deleted = sessionManager.deleteProject(parsed.id);
             if (!deleted) {
-              sendError(ws, `Cannot delete folder "${parsed.id}"`);
+              sendError(ws, `Cannot delete project "${parsed.id}"`);
             }
             break;
           }

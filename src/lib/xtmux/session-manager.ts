@@ -1,12 +1,36 @@
 import type { ServerWebSocket } from "bun";
+import * as os from "os";
 import { Session } from "./session";
-import type { ClientInfo, FolderInfo, SessionInfo, WebSocketData } from "./types";
+import type { ClientInfo, ProjectInfo, SessionInfo, WebSocketData } from "./types";
+import * as db from "../db";
+
+function expandTilde(filepath: string): string {
+  if (filepath.startsWith("~/") || filepath === "~") {
+    return os.homedir() + filepath.slice(1);
+  }
+  return filepath;
+}
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
-  private folders: FolderInfo[] = [{ id: "general", name: "General", sessionIds: [] }];
+  private projects: ProjectInfo[] = [{ id: "general", name: "General", initialPath: "", color: "", sessionIds: [] }];
   private clientToSession: Map<string, string> = new Map();
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
+
+  loadProjects(): void {
+    const rows = db.getAllProjects();
+    this.projects = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      initialPath: row.initial_path,
+      color: row.color,
+      sessionIds: [],
+    }));
+    // Ensure General always exists
+    if (!this.projects.some((p) => p.id === "general")) {
+      this.projects.unshift({ id: "general", name: "General", initialPath: "", color: "", sessionIds: [] });
+    }
+  }
 
   registerClient(clientId: string, ws: ServerWebSocket<WebSocketData>): void {
     this.connectedClients.set(clientId, ws);
@@ -24,52 +48,67 @@ export class SessionManager {
   }
 
   broadcastSessionList(): void {
-    this.broadcastToAll({ type: "sessions", list: this.listSessions(), folders: this.getFolders() });
+    this.broadcastToAll({ type: "sessions", list: this.listSessions(), projects: this.getProjects() });
   }
 
-  getFolders(): FolderInfo[] {
-    return this.folders.map((f) => ({ ...f, sessionIds: [...f.sessionIds] }));
+  getProjects(): ProjectInfo[] {
+    return this.projects.map((p) => ({
+      ...p,
+      sessionIds: [...p.sessionIds],
+    }));
   }
 
-  createFolder(id: string, name: string): void {
-    if (this.folders.some((f) => f.id === id)) {
-      throw new Error(`Folder "${id}" already exists`);
+  createProject(id: string, name: string, initialPath: string, color: string): void {
+    if (this.projects.some((p) => p.id === id)) {
+      throw new Error(`Project "${id}" already exists`);
     }
-    this.folders.push({ id, name, sessionIds: [] });
+    const sortOrder = this.projects.length;
+    db.createProject({ id, name, initial_path: initialPath, color, sort_order: sortOrder });
+    this.projects.push({ id, name, initialPath, color, sessionIds: [] });
     this.broadcastSessionList();
   }
 
-  renameFolder(id: string, name: string): boolean {
-    const folder = this.folders.find((f) => f.id === id);
-    if (!folder) return false;
-    folder.name = name;
+  updateProject(id: string, name: string, initialPath: string, color: string): boolean {
+    const project = this.projects.find((p) => p.id === id);
+    if (!project) return false;
+    db.updateProject(id, { name, initial_path: initialPath, color });
+    project.name = name;
+    project.initialPath = initialPath;
+    project.color = color;
     this.broadcastSessionList();
     return true;
   }
 
-  deleteFolder(id: string): boolean {
+  deleteProject(id: string): boolean {
     if (id === "general") return false;
-    const folderIndex = this.folders.findIndex((f) => f.id === id);
-    if (folderIndex === -1) return false;
-    const folder = this.folders[folderIndex]!;
-    const general = this.folders.find((f) => f.id === "general")!;
-    general.sessionIds.push(...folder.sessionIds);
-    this.folders.splice(folderIndex, 1);
+    const projectIndex = this.projects.findIndex((p) => p.id === id);
+    if (projectIndex === -1) return false;
+    const project = this.projects[projectIndex]!;
+    const general = this.projects.find((p) => p.id === "general")!;
+    general.sessionIds.push(...project.sessionIds);
+    this.projects.splice(projectIndex, 1);
+    db.deleteProject(id);
     this.broadcastSessionList();
     return true;
   }
 
-  async createSession(id: string, name: string, cols: number, rows: number, folderId?: string, afterSessionId?: string): Promise<Session> {
+  async createSession(id: string, name: string, cols: number, rows: number, projectId?: string, afterSessionId?: string): Promise<Session> {
     if (this.sessions.has(id)) {
       throw new Error(`Session "${id}" already exists`);
     }
 
-    // Inherit cwd from afterSessionId's session
+    // Inherit cwd from afterSessionId's session, or from project's initialPath
     let cwd: string | undefined;
     if (afterSessionId) {
       const afterSession = this.sessions.get(afterSessionId);
       if (afterSession) {
         cwd = await afterSession.getCwd();
+      }
+    }
+    if (!cwd && projectId) {
+      const project = this.projects.find((p) => p.id === projectId);
+      if (project?.initialPath) {
+        cwd = expandTilde(project.initialPath);
       }
     }
 
@@ -89,31 +128,31 @@ export class SessionManager {
     });
     this.sessions.set(id, session);
 
-    // Determine target folder and insertion position
-    let targetFolder: FolderInfo | undefined;
+    // Determine target project and insertion position
+    let targetProject: ProjectInfo | undefined;
     let insertAfterIndex = -1;
 
     if (afterSessionId) {
-      // Find the folder containing afterSessionId
-      const afterFolder = this.folders.find((f) => f.sessionIds.includes(afterSessionId));
-      if (afterFolder) {
-        if (!folderId || folderId === afterFolder.id) {
-          // Insert after the session in the same folder
-          targetFolder = afterFolder;
-          insertAfterIndex = afterFolder.sessionIds.indexOf(afterSessionId);
+      // Find the project containing afterSessionId
+      const afterProject = this.projects.find((p) => p.sessionIds.includes(afterSessionId));
+      if (afterProject) {
+        if (!projectId || projectId === afterProject.id) {
+          // Insert after the session in the same project
+          targetProject = afterProject;
+          insertAfterIndex = afterProject.sessionIds.indexOf(afterSessionId);
         }
       }
     }
 
-    if (!targetFolder) {
-      targetFolder = (folderId && this.folders.find((f) => f.id === folderId))
-        || this.folders.find((f) => f.id === "general")!;
+    if (!targetProject) {
+      targetProject = (projectId && this.projects.find((p) => p.id === projectId))
+        || this.projects.find((p) => p.id === "general")!;
     }
 
     if (insertAfterIndex >= 0) {
-      targetFolder.sessionIds.splice(insertAfterIndex + 1, 0, id);
+      targetProject.sessionIds.splice(insertAfterIndex + 1, 0, id);
     } else {
-      targetFolder.sessionIds.push(id);
+      targetProject.sessionIds.push(id);
     }
 
     return session;
@@ -175,11 +214,11 @@ export class SessionManager {
     session.kill();
     this.sessions.delete(id);
 
-    // Remove from folder
-    for (const folder of this.folders) {
-      const idx = folder.sessionIds.indexOf(id);
+    // Remove from project
+    for (const project of this.projects) {
+      const idx = project.sessionIds.indexOf(id);
       if (idx !== -1) {
-        folder.sessionIds.splice(idx, 1);
+        project.sessionIds.splice(idx, 1);
         break;
       }
     }
@@ -225,8 +264,8 @@ export class SessionManager {
 
   listSessions(): SessionInfo[] {
     const result: SessionInfo[] = [];
-    for (const folder of this.folders) {
-      for (const id of folder.sessionIds) {
+    for (const project of this.projects) {
+      for (const id of project.sessionIds) {
         const session = this.sessions.get(id);
         if (session) result.push(this.sessionToInfo(session));
       }
@@ -245,17 +284,17 @@ export class SessionManager {
     return result;
   }
 
-  reorderFolders(orderedFolders: Array<{ id: string; sessionIds: string[] }>): void {
+  reorderProjects(orderedProjects: Array<{ id: string; sessionIds: string[] }>): void {
     const validSessionIds = new Set(this.sessions.keys());
-    const existingFolderMap = new Map(this.folders.map((f) => [f.id, f]));
-    const seenFolders = new Set<string>();
+    const existingProjectMap = new Map(this.projects.map((p) => [p.id, p]));
+    const seenProjects = new Set<string>();
     const seenSessions = new Set<string>();
-    const newFolders: FolderInfo[] = [];
+    const newProjects: ProjectInfo[] = [];
 
-    for (const { id, sessionIds } of orderedFolders) {
-      const existing = existingFolderMap.get(id);
-      if (!existing || seenFolders.has(id)) continue;
-      seenFolders.add(id);
+    for (const { id, sessionIds } of orderedProjects) {
+      const existing = existingProjectMap.get(id);
+      if (!existing || seenProjects.has(id)) continue;
+      seenProjects.add(id);
 
       const validSessions: string[] = [];
       for (const sid of sessionIds) {
@@ -264,30 +303,36 @@ export class SessionManager {
           seenSessions.add(sid);
         }
       }
-      newFolders.push({ id, name: existing.name, sessionIds: validSessions });
+      newProjects.push({ ...existing, sessionIds: validSessions });
     }
 
-    // Append missing folders
-    for (const folder of this.folders) {
-      if (!seenFolders.has(folder.id)) {
-        const validSessions = folder.sessionIds.filter(
+    // Append missing projects
+    for (const project of this.projects) {
+      if (!seenProjects.has(project.id)) {
+        const validSessions = project.sessionIds.filter(
           (sid) => validSessionIds.has(sid) && !seenSessions.has(sid),
         );
         for (const sid of validSessions) seenSessions.add(sid);
-        newFolders.push({ id: folder.id, name: folder.name, sessionIds: validSessions });
-        seenFolders.add(folder.id);
+        newProjects.push({ ...project, sessionIds: validSessions });
+        seenProjects.add(project.id);
       }
     }
 
     // Append orphan sessions to General
-    const general = newFolders.find((f) => f.id === "general")!;
+    const general = newProjects.find((p) => p.id === "general")!;
     for (const sid of validSessionIds) {
       if (!seenSessions.has(sid)) {
         general.sessionIds.push(sid);
       }
     }
 
-    this.folders = newFolders;
+    this.projects = newProjects;
+
+    // Persist sort order to DB
+    db.updateProjectOrder(
+      newProjects.map((p, i) => ({ id: p.id, sort_order: i }))
+    );
+
     this.broadcastSessionList();
   }
 }

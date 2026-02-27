@@ -1,14 +1,16 @@
 import type { ServerWebSocket } from "bun";
 
-export interface FolderInfo {
+export interface ProjectInfo {
   id: string;
   name: string;
+  initialPath: string;
+  color: string;
   sessionIds: string[];
 }
 
 // Client -> Server messages
 export type ClientMessage =
-  | { type: "create"; sessionId: string; name?: string; cols: number; rows: number; folderId?: string; afterSessionId?: string }
+  | { type: "create"; sessionId: string; name?: string; cols: number; rows: number; projectId?: string; afterSessionId?: string }
   | { type: "attach"; sessionId: string; cols: number; rows: number }
   | { type: "detach" }
   | { type: "input"; data: string }
@@ -17,10 +19,10 @@ export type ClientMessage =
   | { type: "kill"; sessionId: string }
   | { type: "rename"; sessionId: string; name: string }
   | { type: "acknowledge"; sessionId: string }
-  | { type: "reorder"; folders: Array<{ id: string; sessionIds: string[] }> }
-  | { type: "createFolder"; id: string; name: string }
-  | { type: "renameFolder"; id: string; name: string }
-  | { type: "deleteFolder"; id: string };
+  | { type: "reorder"; projects: Array<{ id: string; sessionIds: string[] }> }
+  | { type: "createProject"; id: string; name: string; initialPath: string; color: string }
+  | { type: "updateProject"; id: string; name: string; initialPath: string; color: string }
+  | { type: "deleteProject"; id: string };
 
 // Server -> Client messages
 export type ServerMessage =
@@ -30,7 +32,7 @@ export type ServerMessage =
   | { type: "resize"; cols: number; rows: number }
   | { type: "exit"; code: number }
   | { type: "error"; message: string }
-  | { type: "sessions"; list: SessionInfo[]; folders: FolderInfo[] }
+  | { type: "sessions"; list: SessionInfo[]; projects: ProjectInfo[] }
   | { type: "activity"; sessionId: string; active: boolean }
   | { type: "notification"; sessionId: string; title: string; body: string };
 

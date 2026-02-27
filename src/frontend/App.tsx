@@ -24,7 +24,7 @@ import "./index.css";
 export function SessionLayout({ showNotFound = false, children }: { showNotFound?: boolean; children?: ReactNode }) {
   const {
     sessions,
-    folders,
+    projects,
     currentSessionId,
     isConnected,
     sessionActivity,
@@ -34,9 +34,9 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     closeSession,
     renameSession,
     reorderSessions,
-    createFolder,
-    renameFolder,
-    deleteFolder,
+    createProject,
+    updateProject,
+    deleteProject,
     handleTerminalReady,
     handleSizeChange,
     handleSendMessage,
@@ -78,17 +78,13 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     ? sessions.find((s) => s.id === closeConfirmSessionId)
     : null;
 
-  const handleNewTab = useCallback((folderId?: string) => {
-    const { id, name } = createSession(folderId);
+  const handleNewTab = useCallback((projectId?: string) => {
+    const { id, name } = createSession(projectId);
     navigate({
       to: "/sessions/$slug",
       params: { slug: buildSessionSlug({ id, name }) },
     });
   }, [createSession, navigate]);
-
-  const handleNewFolder = useCallback(() => {
-    createFolder();
-  }, [createFolder]);
 
   const performClose = useCallback(
     (id: string) => {
@@ -167,7 +163,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     <>
       <AppSidebar
         sessions={sessions}
-        folders={folders}
+        projects={projects}
         currentSessionId={currentSessionId}
         isConnected={isConnected}
         sessionActivity={sessionActivity}
@@ -177,9 +173,9 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
         onRenameSession={handleRenameSession}
         onReorder={reorderSessions}
         onAcknowledge={(id) => handleSendMessage({ type: "acknowledge", sessionId: id })}
-        onNewFolder={handleNewFolder}
-        onRenameFolder={renameFolder}
-        onDeleteFolder={deleteFolder}
+        onCreateProject={createProject}
+        onUpdateProject={updateProject}
+        onDeleteProject={deleteProject}
         onFocusTerminal={() => terminalRef.current?.focus()}
       />
       <div className="flex-1 h-full overflow-hidden flex flex-col">

@@ -23,12 +23,21 @@ interface TopBarProps {
 export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSession, name, title, onUpload, onFocusTerminal, activeTab = "terminal", onTabChange }: TopBarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { open, openMobile, isMobile } = useSidebar();
-  const { sessions } = useSession();
+  const { sessions, projects, currentSessionId } = useSession();
   const sidebarClosed = isMobile ? !openMobile : !open;
   const hasAnyNotification = sessions.some(s => s.hasNotification);
 
+  // Find the project color for the current session
+  const currentProject = currentSessionId
+    ? projects.find(p => p.sessionIds.includes(currentSessionId))
+    : undefined;
+  const projectColor = currentProject?.color;
+
   return (
-    <div className="flex items-center gap-2 px-3 h-10 min-h-10 bg-sidebar border-b border-sidebar-border text-xs text-muted-foreground">
+    <div
+      className="flex items-center gap-2 px-3 h-10 min-h-10 bg-sidebar border-b border-sidebar-border text-xs text-muted-foreground"
+      style={projectColor ? { backgroundColor: `color-mix(in srgb, ${projectColor} 8%, transparent)` } : undefined}
+    >
       <div className="relative -ml-1 size-7">
         <SidebarTrigger className="absolute inset-0" />
         {sidebarClosed && hasAnyNotification && (
