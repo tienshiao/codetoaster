@@ -7,63 +7,23 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 
 ```
 src/
-  index.ts                    # CLI entry point (parseArgs → daemon or foreground server)
-  server.ts                   # Bun.serve() setup (HTTP routes, WebSocket, HTML imports)
-  cli/
-    commands.ts               # CLI command handlers (start, stop, list, kill, open, etc.)
-    daemon.ts                 # Daemon process management (PID file, spawning, logs)
-    format.ts                 # CLI output formatting (tables, time, session IDs)
-  api/
-    diff.ts                   # Diff API routes and image handling
-  lib/xtmux/
-    session-manager.ts        # Singleton managing all sessions and client connections
-    session.ts                # Individual PTY session with @xterm/headless
-    types.ts                  # Shared message types (ClientMessage, ServerMessage, SessionInfo)
+  index.ts              # CLI entry point
+  server.ts             # Bun.serve() setup (HTTP, WebSocket, HTML imports)
+  cli/                  # CLI commands, daemon management, output formatting
+  api/                  # HTTP API routes (diff)
+  lib/xtmux/            # Session manager, PTY sessions, WebSocket message types
   frontend/
-    index.html                # HTML entry point (Bun HTML import)
-    frontend.tsx              # React app bootstrap
-    App.tsx                   # Main layout (SessionLayout)
-    SessionContext.tsx         # Global state via React Context (sessions, WebSocket, activity)
-    Terminal.tsx               # @xterm/xterm wrapper with resize/fit
-    DiffView.tsx              # Code review diff viewer with comments
-    AppSidebar.tsx            # Session list sidebar (shadcn Sidebar)
-    TopBar.tsx                # Connection status, session name/title, sidebar trigger
-    components/
-      StatusDot.tsx           # Animated connection/activity indicator
-      SettingsDialog.tsx      # Terminal theme, font, and app settings
-      RenameDialog.tsx        # Generic rename dialog
-      diff/
-        DiffFile.tsx          # Individual file diff with hunks
-        FileTree.tsx          # Hierarchical file tree for diff navigation
-        CommentInput.tsx      # Inline comment input on diff lines/files
-        CommentDisplay.tsx    # Comment display and management
-        ImageDiff.tsx         # Image file diff rendering
-        FileIcon.tsx          # File type icons by extension
-      ui/                     # shadcn/ui components
-    hooks/
-      use-mobile.ts           # Mobile detection hook (shadcn)
-      use-comments.ts         # Comment state management for diffs
-      use-sidebar-drag.ts     # Sidebar drag-and-drop (sessions/folders)
-      use-drag-reorder.ts     # Generic drag-and-drop reordering
-      use-theme.ts            # App theme (light/dark/system)
-      use-terminal-theme.tsx  # Terminal color scheme and font settings
-      use-websocket.ts        # WebSocket connection management
-    utils/
-      parseDiff.ts            # Unified diff parser
-      wordDiff.ts             # Word-level diff via LCS algorithm
-      syntaxHighlight.ts      # Language-aware syntax tokenization
-      languageDetection.ts    # File extension → language detection
-      generatePrompt.ts       # Generate prompts from commented diffs
-      slug.ts                 # Session slug generation/parsing
-    types/
-      diff.ts                 # Diff types (FileDiff, DiffHunk, DiffLine, LineComment, etc.)
-    lib/utils.ts              # cn() utility
-    routes/                   # TanStack Router file-based routes
-      __root.tsx              # Root layout with SessionProvider
-      index.tsx               # Redirects to first session
-      sessions.$slug.tsx      # Dynamic session route (layout with terminal/diff tabs)
-      sessions.$slug.index.tsx  # Terminal view (default tab)
-      sessions.$slug.diff.tsx   # Diff review view
+    index.html          # HTML entry point (Bun HTML import)
+    App.tsx              # Main layout
+    SessionContext.tsx   # Global state (sessions, WebSocket, activity)
+    Terminal.tsx         # @xterm/xterm wrapper
+    DiffView.tsx         # Code review diff viewer
+    components/          # UI components (sidebar, settings, command palette, diff)
+    components/ui/       # shadcn/ui primitives
+    hooks/               # React hooks (WebSocket, theme, drag-and-drop, etc.)
+    utils/               # Diff parsing, syntax highlighting, slug generation
+    routes/              # TanStack Router file-based routes
+    types/               # TypeScript type definitions
 ```
 
 ## Running
