@@ -7,6 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { useMatches } from "@tanstack/react-router";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
 import { generateUUID } from "./utils/uuid";
 import { generateSessionName } from "./utils/nameGenerator";
@@ -115,6 +116,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const messageQueueRef = useRef<any[]>([]);
   const sendRef = useRef<(msg: object) => void>(() => {});
 
+  // Derive whether the user is viewing the terminal (not the diff tab)
+  const matches = useMatches();
+  const isDiff = matches.some(m => m.routeId === "/sessions/$slug/diff");
+  const isViewingTerminalRef = useRef(!isDiff);
+  useEffect(() => {
+    isViewingTerminalRef.current = !isDiff;
+  }, [isDiff]);
+
   // Keep refs in sync with state
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
@@ -152,11 +161,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     if (message.type === "notification") {
-      // Auto-acknowledge if we're already viewing this session AND window has focus
-      if (message.sessionId === currentSessionIdRef.current && document.hasFocus()) {
+      const isViewingThisSession =
+        message.sessionId === currentSessionIdRef.current
+        && document.hasFocus()
+        && isViewingTerminalRef.current;
+
+      if (isViewingThisSession) {
         sendRef.current({ type: "acknowledge", sessionId: message.sessionId });
-      }
-      if (message.sessionId !== currentSessionIdRef.current || !document.hasFocus()) {
+      } else {
         playNotificationSound();
       }
       if (!document.hasFocus()) {
@@ -232,6 +244,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // When the window regains focus, ack any pending notification for the current session
   useEffect(() => {
     const handleFocus = () => {
+      if (!isViewingTerminalRef.current) return;
       const sessionId = currentSessionIdRef.current;
       if (!sessionId) return;
       const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -243,10 +256,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
+  // Acknowledge pending notifications when switching from diff → terminal
+  useEffect(() => {
+    if (!isDiff) {
+      const sessionId = currentSessionIdRef.current;
+      if (sessionId) {
+        const session = sessionsRef.current.find(s => s.id === sessionId);
+        if (session?.hasNotification) {
+          sendRef.current({ type: "acknowledge", sessionId });
+        }
+      }
+    }
+  }, [isDiff]);
+
   const attachSession = useCallback(
     (id: string) => {
       if (id === currentSessionIdRef.current) {
-        send({ type: "acknowledge", sessionId: id });
+        if (isViewingTerminalRef.current) {
+          send({ type: "acknowledge", sessionId: id });
+        }
         return;
       }
 
@@ -258,7 +286,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
       send({ type: "attach", sessionId: id, cols: size.cols, rows: size.rows });
-      send({ type: "acknowledge", sessionId: id });
+      if (isViewingTerminalRef.current) {
+        send({ type: "acknowledge", sessionId: id });
+      }
       setCurrentSessionId(id);
     },
     [send],
