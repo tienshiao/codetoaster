@@ -44,11 +44,11 @@ export function SettingsFooter() {
         Settings
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="grid-rows-[auto_minmax(0,1fr)] sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
           </DialogHeader>
-          <div className="space-y-6">
+          <div className="space-y-6 overflow-y-auto min-h-0">
             <div className="grid sm:grid-cols-[1fr_1.5fr] gap-x-6 gap-y-2 items-start">
               <div>
                 <label className="text-sm font-medium">Theme</label>
