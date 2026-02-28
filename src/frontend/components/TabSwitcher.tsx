@@ -29,6 +29,7 @@ export function TabSwitcher() {
 
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(1);
+  const isOpenRef = useRef(false);
   const scopeId = useId();
   const scopeClass = `ts-${scopeId.replace(/:/g, "")}`;
   const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -75,10 +76,12 @@ export function TabSwitcher() {
   const open = useCallback(() => {
     if (mruSessions.length < 2) return;
     setSelectedIndex(1);
+    isOpenRef.current = true;
     setIsOpen(true);
   }, [mruSessions.length]);
 
   const close = useCallback(() => {
+    isOpenRef.current = false;
     setIsOpen(false);
   }, []);
 
@@ -103,6 +106,12 @@ export function TabSwitcher() {
     setTimeout(() => terminalRef.current?.focus(), 0);
   }, [close, terminalRef]);
 
+  // Keep refs in sync so keyUp can read fresh values without waiting for re-render.
+  // React 18 schedules re-renders via MessageChannel (macrotask), so keyUp may fire
+  // before the re-render triggered by keyDown's setState calls.
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+
   // Keyboard handling
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -112,9 +121,10 @@ export function TabSwitcher() {
 
       if (isBacktick && !e.shiftKey) {
         e.preventDefault();
-        if (!isOpen) {
+        if (!isOpenRef.current) {
           if (mruSessions.length < 2) return;
           setSelectedIndex(1);
+          isOpenRef.current = true;
           setIsOpen(true);
         } else {
           // Advance forward
@@ -125,7 +135,7 @@ export function TabSwitcher() {
 
       if ((isBacktick && e.shiftKey) || isTilde) {
         e.preventDefault();
-        if (isOpen) {
+        if (isOpenRef.current) {
           // Cycle backward
           setSelectedIndex(
             (prev) => (prev - 1 + mruSessions.length) % mruSessions.length,
@@ -134,7 +144,7 @@ export function TabSwitcher() {
         return;
       }
 
-      if (e.key === "Escape" && isOpen) {
+      if (e.key === "Escape" && isOpenRef.current) {
         e.preventDefault();
         cancel();
         return;
@@ -142,18 +152,18 @@ export function TabSwitcher() {
     }
 
     function onKeyUp(e: KeyboardEvent) {
-      if (e.key === "Control" && isOpen) {
+      if (e.key === "Control" && isOpenRef.current) {
         e.preventDefault();
-        commit();
+        commitRef.current();
       }
-      if (e.key === "Meta" && isOpen) {
+      if (e.key === "Meta" && isOpenRef.current) {
         e.preventDefault();
-        commit();
+        commitRef.current();
       }
     }
 
     function onContextMenu(e: MouseEvent) {
-      if (isOpen || suppressContextMenuRef.current) {
+      if (isOpenRef.current || suppressContextMenuRef.current) {
         e.preventDefault();
         suppressContextMenuRef.current = false;
       }
@@ -167,7 +177,7 @@ export function TabSwitcher() {
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("contextmenu", onContextMenu, true);
     };
-  }, [isOpen, mruSessions, commit, cancel]);
+  }, [mruSessions, cancel]);
 
   if (!isOpen) return null;
 
