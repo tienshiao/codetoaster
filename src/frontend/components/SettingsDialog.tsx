@@ -4,6 +4,7 @@ import { useTheme } from "../hooks/use-theme";
 import { useTerminalTheme, terminalThemeNames, terminalFontOptions } from "../hooks/use-terminal-theme";
 import { useNotificationSound, useBellSound, SOUND_OPTIONS } from "../hooks/use-notification-sound";
 import { SidebarFooter } from "./ui/sidebar";
+import { HelpButton } from "./HelpDialog";
 import {
   Dialog,
   DialogContent,
@@ -34,15 +35,18 @@ export function SettingsFooter() {
 
   return (
     <SidebarFooter className="border-t border-sidebar-border p-2">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="w-full justify-start gap-2 text-zinc-500"
-        onClick={() => setOpen(true)}
-      >
-        <Settings className="size-4" />
-        Settings
-      </Button>
+      <div className="flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="flex-1 justify-start gap-2 text-zinc-500"
+          onClick={() => setOpen(true)}
+        >
+          <Settings className="size-4" />
+          Settings
+        </Button>
+        <HelpButton />
+      </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="grid-rows-[auto_minmax(0,1fr)] sm:max-w-xl">
           <DialogHeader>
