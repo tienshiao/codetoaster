@@ -4,6 +4,7 @@ import { TerminalThemeProvider } from "../hooks/use-terminal-theme";
 import { useTheme } from "../hooks/use-theme";
 import { Toaster } from "../components/ui/sonner";
 import { CommandPalette } from "../components/CommandPalette";
+import { TabSwitcher } from "../components/TabSwitcher";
 import { SidebarProvider } from "../components/ui/sidebar";
 
 export const Route = createRootRoute({
@@ -19,6 +20,7 @@ function RootComponent() {
         <SidebarProvider className="h-svh">
           <Outlet />
           <CommandPalette />
+          <TabSwitcher />
           <Toaster />
         </SidebarProvider>
       </SessionProvider>

@@ -190,6 +190,10 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         if (ev.key === "p" && (ev.metaKey || ev.ctrlKey) && ev.shiftKey && !ev.altKey) {
           return false;
         }
+        // Let Ctrl+` / Ctrl+~ propagate for tab switcher
+        if ((ev.key === "`" || ev.key === "~") && (ev.metaKey || ev.ctrlKey) && !ev.altKey) {
+          return false;
+        }
         // Let Cmd+G / Shift+Cmd+G propagate for search next/prev
         if (ev.key === "g" && (ev.metaKey || ev.ctrlKey) && !ev.altKey) {
           return false;

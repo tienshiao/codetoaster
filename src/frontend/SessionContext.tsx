@@ -37,6 +37,7 @@ interface SessionContextValue {
   sessions: SessionInfo[];
   projects: ProjectInfo[];
   currentSessionId: string | null;
+  mruSessionIds: string[];
   isConnected: boolean;
   sessionsLoaded: boolean;
   sessionActivity: Record<string, boolean>;
@@ -95,6 +96,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [mruSessionIds, setMruSessionIds] = useState<string[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessionActivity, setSessionActivity] = useState<Record<string, boolean>>({});
   const lastActivityAt = useRef<Record<string, number>>({});
@@ -231,6 +233,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
+  // Clean up stale MRU entries when sessions change
+  useEffect(() => {
+    const ids = new Set(sessions.map((s) => s.id));
+    setMruSessionIds((prev) => {
+      const filtered = prev.filter((id) => ids.has(id));
+      return filtered.length === prev.length ? prev : filtered;
+    });
+  }, [sessions]);
+
   // When the window regains focus, ack any pending notification for the current session
   useEffect(() => {
     const handleFocus = () => {
@@ -259,6 +270,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [isDiff]);
 
+  const pushMru = useCallback((id: string) => {
+    setMruSessionIds((prev) => [id, ...prev.filter((x) => x !== id)]);
+  }, []);
+
   const attachSession = useCallback(
     (id: string) => {
       if (id === currentSessionIdRef.current) {
@@ -280,8 +295,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         send({ type: "acknowledge", sessionId: id });
       }
       setCurrentSessionId(id);
+      pushMru(id);
     },
-    [send],
+    [send, pushMru],
   );
 
   const createSession = useCallback((projectId?: string): { id: string; name: string } => {
@@ -307,6 +323,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows, projectId: resolvedProjectId, afterSessionId });
     setCurrentSessionId(sessionId);
+    pushMru(sessionId);
     setSessions((prev) => [
       ...prev,
       {
@@ -446,6 +463,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sessions,
         projects,
         currentSessionId,
+        mruSessionIds,
         isConnected,
         sessionsLoaded,
         sessionActivity,
