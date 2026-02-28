@@ -1,4 +1,7 @@
 import { serve } from "bun";
+import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, basename } from "node:path";
 import index from "./frontend/index.html";
 import { sessionManager } from "./lib/xtmux/session-manager";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
@@ -123,6 +126,60 @@ export function startServer(options?: ServerOptions) {
           }
           session.write(paths.join(" "));
           return Response.json({ paths });
+        },
+      },
+
+      "/api/directories": {
+        async GET(req: Request) {
+          try {
+            const url = new URL(req.url);
+            const home = homedir();
+            let rawPath = url.searchParams.get("path") ?? "";
+
+            // Expand tilde
+            if (rawPath.startsWith("~")) {
+              rawPath = home + rawPath.slice(1);
+            }
+
+            // Default to home directory
+            if (!rawPath) rawPath = home;
+
+            let dirToList: string;
+            let prefix = "";
+
+            if (rawPath.endsWith("/")) {
+              dirToList = rawPath;
+            } else {
+              dirToList = dirname(rawPath);
+              prefix = basename(rawPath).toLowerCase();
+            }
+
+            const entries = await readdir(dirToList, { withFileTypes: true });
+            let directories = entries
+              .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+              .map((e) => e.name);
+
+            if (prefix) {
+              directories = directories.filter((n) =>
+                n.toLowerCase().startsWith(prefix)
+              );
+            }
+
+            directories.sort((a, b) => a.localeCompare(b));
+            directories = directories.slice(0, 50);
+
+            // Replace homedir with ~ for display
+            let parent = dirToList.endsWith("/") ? dirToList.slice(0, -1) : dirToList;
+            if (parent === home) {
+              parent = "~";
+            } else if (parent.startsWith(home + "/")) {
+              parent = "~" + parent.slice(home.length);
+            }
+
+            return Response.json({ parent, directories });
+          } catch {
+            return Response.json({ parent: "", directories: [] });
+          }
         },
       },
 
