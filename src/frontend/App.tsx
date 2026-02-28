@@ -84,7 +84,8 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
       to: "/sessions/$slug",
       params: { slug: buildSessionSlug({ id, name }) },
     });
-  }, [createSession, navigate]);
+    setTimeout(() => terminalRef.current?.focus(), 100);
+  }, [createSession, navigate, terminalRef]);
 
   const performClose = useCallback(
     (id: string) => {

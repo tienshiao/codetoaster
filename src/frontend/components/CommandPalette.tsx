@@ -16,7 +16,7 @@ import {
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
-  const { sessions, currentSessionId, createSession, closeSession, renameSession: doRenameSession } = useSession();
+  const { sessions, currentSessionId, createSession, closeSession, renameSession: doRenameSession, terminalRef } = useSession();
   const { toggleSidebar } = useSidebar();
   const [renameItem, setRenameItem] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
@@ -52,6 +52,7 @@ export function CommandPalette() {
                 params: { slug: buildSessionSlug({ id, name }) },
               });
               setOpen(false);
+              setTimeout(() => terminalRef.current?.focus(), 100);
             }}
           >
             <Plus className="size-4" />
