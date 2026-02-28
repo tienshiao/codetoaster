@@ -3,8 +3,6 @@ import { Monitor, Moon, Settings, Sun } from "lucide-react";
 import { useTheme } from "../hooks/use-theme";
 import { useTerminalTheme, terminalThemeNames, terminalFontOptions } from "../hooks/use-terminal-theme";
 import { useNotificationSound, useBellSound, SOUND_OPTIONS } from "../hooks/use-notification-sound";
-import { SidebarFooter } from "./ui/sidebar";
-import { HelpButton } from "./HelpDialog";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +24,7 @@ const themeOptions = [
   { value: "dark" as const, label: "Dark", icon: Moon },
 ];
 
-export function SettingsFooter() {
+export function SettingsButton() {
   const [open, setOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const { themeName, setThemeName, theme: terminalTheme, fontFamily, setFontFamily, fontSize, setFontSize } = useTerminalTheme();
@@ -34,19 +32,16 @@ export function SettingsFooter() {
   const { soundOption: bellOption, setSoundOption: setBellOption, previewSound: previewBell } = useBellSound();
 
   return (
-    <SidebarFooter className="border-t border-sidebar-border p-2">
-      <div className="flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="flex-1 justify-start gap-2 text-zinc-500"
-          onClick={() => setOpen(true)}
-        >
-          <Settings className="size-4" />
-          Settings
-        </Button>
-        <HelpButton />
-      </div>
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="flex-1 justify-start gap-2 text-zinc-500"
+        onClick={() => setOpen(true)}
+      >
+        <Settings className="size-4" />
+        Settings
+      </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="grid-rows-[auto_minmax(0,1fr)] sm:max-w-xl">
           <DialogHeader>
@@ -225,6 +220,6 @@ export function SettingsFooter() {
           </div>
         </DialogContent>
       </Dialog>
-    </SidebarFooter>
+    </>
   );
 }

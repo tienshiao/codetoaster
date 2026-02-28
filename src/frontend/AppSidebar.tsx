@@ -5,7 +5,8 @@ import { buildSessionSlug } from "./utils/slug";
 import { StatusDot } from "./components/StatusDot";
 import { RenameDialog } from "./components/RenameDialog";
 import { ProjectDialog } from "./components/ProjectDialog";
-import { SettingsFooter } from "./components/SettingsDialog";
+import { SettingsButton } from "./components/SettingsDialog";
+import { HelpButton } from "./components/HelpDialog";
 import { TerminalPreview } from "./components/TerminalPreview";
 import { useSidebarDrag } from "./hooks/use-sidebar-drag";
 import { useTerminalPreview } from "./hooks/use-terminal-preview";
@@ -13,6 +14,7 @@ import { useTerminalTheme } from "./hooks/use-terminal-theme";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
@@ -319,7 +321,12 @@ export function AppSidebar({
         })}
       </SidebarContent>
 
-      <SettingsFooter />
+      <SidebarFooter className="border-t border-sidebar-border p-2">
+        <div className="flex items-center gap-1">
+          <SettingsButton />
+          <HelpButton />
+        </div>
+      </SidebarFooter>
 
       <AlertDialog
         open={deleteProjectTarget !== null}
