@@ -5,13 +5,18 @@ type Theme = "system" | "light" | "dark";
 function applyTheme(theme: Theme) {
   if (theme === "dark") {
     document.documentElement.classList.add("dark");
+    document.documentElement.style.colorScheme = "dark";
   } else if (theme === "light") {
     document.documentElement.classList.remove("dark");
+    document.documentElement.style.colorScheme = "light";
   } else {
-    if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    if (isDark) {
       document.documentElement.classList.add("dark");
+      document.documentElement.style.colorScheme = "dark";
     } else {
       document.documentElement.classList.remove("dark");
+      document.documentElement.style.colorScheme = "light";
     }
   }
 }
