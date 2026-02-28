@@ -60,6 +60,7 @@ export function RenameDialog({
             value={renameName}
             onChange={(e) => setRenameName(e.target.value)}
             placeholder="Name"
+            data-1p-ignore
           />
           <DialogFooter className="mt-4">
             <Button type="button" variant="outline" onClick={onClose}>
