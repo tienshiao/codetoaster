@@ -2,6 +2,12 @@
 
 Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocket, with multi-client support — multiple browsers can attach to the same session.
 
+## Screenshots
+
+![Terminal](images/terminal.png)
+
+![Diff Viewer](images/diff.png)
+
 ## Features
 
 ### Sessions
@@ -12,11 +18,12 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 - Session renaming and close confirmation with session name/title
 - Live terminal preview on sidebar hover
 
-### Folders
-- Organize sessions into collapsible folders
-- Drag-and-drop reordering of sessions and folders
-- Create, rename, and delete folders
-- Default "General" folder for ungrouped sessions
+### Projects
+- Organize sessions into collapsible, color-coded projects
+- Optional initial working directory per project for new sessions
+- Drag-and-drop reordering of sessions and projects
+- Create, rename, and delete projects
+- Default "General" project for ungrouped sessions
 
 ### Terminal
 - Full terminal emulation with `@xterm/xterm` and 10,000-line scrollback
