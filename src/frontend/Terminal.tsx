@@ -42,6 +42,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     const [resizeHudSize, setResizeHudSize] = useState<TerminalSize | null>(null);
     const resizeHudTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hasInitialFitRef = useRef(false);
+    const wasHiddenRef = useRef(false);
     const { theme: terminalTheme, cssFontFamily, fontSize } = useTerminalTheme();
     const terminalThemeRef = useRef(terminalTheme);
     terminalThemeRef.current = terminalTheme;
@@ -203,16 +204,20 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
 
       // Handle resize (skip when container is hidden/zero-sized to avoid corruption)
       const resizeObserver = new ResizeObserver(() => {
-        if (container.clientWidth === 0 || container.clientHeight === 0) return;
+        if (container.clientWidth === 0 || container.clientHeight === 0) {
+          wasHiddenRef.current = true;
+          return;
+        }
         fitAddon.fit();
         const size = { cols: term.cols, rows: term.rows };
         onSizeChangeRef.current(size);
-        if (hasInitialFitRef.current) {
+        if (!hasInitialFitRef.current || wasHiddenRef.current) {
+          hasInitialFitRef.current = true;
+          wasHiddenRef.current = false;
+        } else {
           setResizeHudSize(size);
           if (resizeHudTimeoutRef.current) clearTimeout(resizeHudTimeoutRef.current);
           resizeHudTimeoutRef.current = setTimeout(() => setResizeHudSize(null), 1500);
-        } else {
-          hasInitialFitRef.current = true;
         }
       });
       resizeObserver.observe(container);
