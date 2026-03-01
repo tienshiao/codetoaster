@@ -176,9 +176,9 @@ export function startServer(options?: ServerOptions) {
               parent = "~" + parent.slice(home.length);
             }
 
-            return Response.json({ parent, directories });
+            return Response.json({ parent, directories, home });
           } catch {
-            return Response.json({ parent: "", directories: [] });
+            return Response.json({ parent: "", directories: [], home: "" });
           }
         },
       },

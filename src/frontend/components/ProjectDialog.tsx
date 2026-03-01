@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { FolderOpen } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,6 +11,7 @@ import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import type { ProjectInfo } from "../SessionContext";
 import { InitialPathAutocomplete } from "./InitialPathAutocomplete";
+import { DirectoryPickerDialog } from "./DirectoryPickerDialog";
 
 const COLOR_PRESETS = [
   "",
@@ -43,6 +45,7 @@ export function ProjectDialog({
   const [color, setColor] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [isPathAutocompleteOpen, setIsPathAutocompleteOpen] = useState(false);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -94,15 +97,34 @@ export function ProjectDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="project-path" className="text-sm font-medium">Initial Path</label>
-            <InitialPathAutocomplete
-              inputId="project-path"
-              value={initialPath}
-              onChange={setInitialPath}
-              onOpenChange={setIsPathAutocompleteOpen}
-              placeholder="~/projects/my-app"
-            />
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <InitialPathAutocomplete
+                  inputId="project-path"
+                  value={initialPath}
+                  onChange={setInitialPath}
+                  onOpenChange={setIsPathAutocompleteOpen}
+                  placeholder="~/projects/my-app"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => setIsPickerOpen(true)}
+                title="Browse directories"
+              >
+                <FolderOpen size={16} />
+              </Button>
+            </div>
             <p className="text-xs text-zinc-500">New sessions in this project will start in this directory</p>
           </div>
+          <DirectoryPickerDialog
+            open={isPickerOpen}
+            onOpenChange={setIsPickerOpen}
+            initialPath={initialPath}
+            onSelect={setInitialPath}
+          />
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Color</span>
             <div className="flex gap-3 flex-wrap">
