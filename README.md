@@ -78,10 +78,13 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 | Action | Mac | Windows/Linux |
 |--------|-----|---------------|
 | Command Palette | Cmd+Shift+P | Ctrl+Shift+P |
+| Next Tab/Session (MRU) | Cmd+` | Ctrl+` |
+| Previous Tab/Session (MRU) | Cmd+Shift+` | Ctrl+Shift+` |
 | Search Terminal | Cmd+F | Ctrl+F |
 | Find Next | Cmd+G | Ctrl+G |
 | Find Previous | Shift+Cmd+G | Shift+Ctrl+G |
 | Toggle Sidebar | Cmd+B | Ctrl+B |
+| Prev/Next File (Diff) | Left/Right Arrow | Left/Right Arrow |
 
 ## Tech Stack
 
