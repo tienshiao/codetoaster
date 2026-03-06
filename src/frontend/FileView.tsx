@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { FileTree } from "./components/file/FileTree";
 import { FileContent } from "./components/file/FileContent";
 import { Button } from "./components/ui/button";
@@ -7,14 +7,19 @@ import { useSessionFiles, useFileContent } from "./hooks/use-session-files";
 
 interface FileViewProps {
   sessionId: string;
+  file?: string;
 }
 
-export function FileView({ sessionId }: FileViewProps) {
+export function FileView({ sessionId, file }: FileViewProps) {
   const { data: filesData, isLoading: loading, error: queryError, refetch } = useSessionFiles(sessionId);
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
   const files = filesData?.files ?? [];
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(file ?? null);
   const [lineWrap, setLineWrap] = useState(false);
+
+  useEffect(() => {
+    if (file) setSelectedFile(file);
+  }, [file]);
 
   const { data: fileContent = null, isLoading: contentLoading } = useFileContent(sessionId, selectedFile);
 

@@ -1,5 +1,31 @@
 import { resolveSessionGitRoot, getImageMimeType, IMAGE_MIME_TYPES, safePath } from "./utils";
 
+function fuzzyMatch(filePath: string, query: string): { score: number; indices: number[] } | null {
+  const lowerPath = filePath.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const basename = lowerPath.split("/").pop() || "";
+  const basenameStart = lowerPath.length - basename.length;
+
+  let qi = 0;
+  let score = 0;
+  let prevMatchIdx = -2;
+  const indices: number[] = [];
+
+  for (let pi = 0; pi < lowerPath.length && qi < lowerQuery.length; pi++) {
+    if (lowerPath[pi] === lowerQuery[qi]) {
+      if (pi === prevMatchIdx + 1) score += 3;
+      if (pi === 0 || lowerPath[pi - 1] === "/") score += 5;
+      if (pi >= basenameStart) score += 2;
+      prevMatchIdx = pi;
+      indices.push(pi);
+      qi++;
+    }
+  }
+
+  if (qi < lowerQuery.length) return null;
+  return { score, indices };
+}
+
 function isBinaryContent(buffer: ArrayBuffer): boolean {
   const bytes = new Uint8Array(buffer, 0, Math.min(8192, buffer.byteLength));
   for (let i = 0; i < bytes.length; i++) {
@@ -64,6 +90,45 @@ export const fileRoutes = {
       } catch (error) {
         return Response.json(
           { error: "Failed to list files", message: error instanceof Error ? error.message : String(error) },
+          { status: 500 }
+        );
+      }
+    },
+  },
+
+  "/api/sessions/:id/files/search": {
+    async GET(req: Request & { params: { id: string } }) {
+      try {
+        const url = new URL(req.url);
+        const q = url.searchParams.get("q") || "";
+        if (!q) return Response.json({ results: [] });
+
+        const result = await resolveSessionGitRoot(req.params.id);
+        if ("error" in result) return result.error;
+        const { dir } = result;
+
+        const gitResult = await Bun.$`git -C ${dir} ls-files --others --cached --exclude-standard`.quiet().nothrow();
+        if (gitResult.exitCode !== 0) {
+          return Response.json({ error: "Failed to list files" }, { status: 500 });
+        }
+
+        const filePaths = gitResult.text().trim().split("\n").filter(Boolean);
+        const scored: { path: string; name: string; score: number; indices: number[] }[] = [];
+
+        for (const fp of filePaths) {
+          const match = fuzzyMatch(fp, q);
+          if (match !== null) {
+            scored.push({ path: fp, name: fp.split("/").pop() || fp, ...match });
+          }
+        }
+
+        scored.sort((a, b) => b.score - a.score);
+        const results = scored.slice(0, 20).map(({ path, name, indices }) => ({ path, name, indices }));
+
+        return Response.json({ results });
+      } catch (error) {
+        return Response.json(
+          { error: "Failed to search files", message: error instanceof Error ? error.message : String(error) },
           { status: 500 }
         );
       }
