@@ -1,4 +1,12 @@
-import { resolveSessionGitRoot, getImageMimeType, IMAGE_MIME_TYPES } from "./utils";
+import { resolveSessionGitRoot, getImageMimeType, IMAGE_MIME_TYPES, safePath } from "./utils";
+
+function isBinaryContent(buffer: ArrayBuffer): boolean {
+  const bytes = new Uint8Array(buffer, 0, Math.min(8192, buffer.byteLength));
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0) return true;
+  }
+  return false;
+}
 
 export const fileRoutes = {
   "/api/sessions/:id/files": {
@@ -8,27 +16,49 @@ export const fileRoutes = {
         if ("error" in result) return result.error;
         const { dir } = result;
 
-        const findResult = await Bun.$`find ${dir} -mindepth 1`.quiet().text();
-        const lines = findResult.trim().split("\n").filter(Boolean);
+        const gitResult = await Bun.$`git -C ${dir} ls-files --others --cached --exclude-standard`.quiet().nothrow();
+        if (gitResult.exitCode !== 0) {
+          return Response.json({ error: "Failed to list files" }, { status: 500 });
+        }
 
-        const files = await Promise.all(
-          lines.map(async (line) => {
-            const relativePath = line.slice(dir.length + 1);
-            const parts = relativePath.split("/");
-            const name = parts[parts.length - 1]!;
+        const filePaths = gitResult.text().trim().split("\n").filter(Boolean);
 
-            const stat = await Bun.file(line).stat();
-            const isDirectory = stat.isDirectory();
+        const dirSet = new Set<string>();
+        const files: { path: string; name: string; isDirectory: boolean; size?: number; depth: number }[] = [];
 
-            return {
-              path: relativePath,
-              name,
-              isDirectory,
-              size: isDirectory ? undefined : stat.size,
-              depth: parts.length - 1,
-            };
-          })
-        );
+        for (const relativePath of filePaths) {
+          const parts = relativePath.split("/");
+
+          // Add parent directories
+          for (let i = 1; i < parts.length; i++) {
+            const dirPath = parts.slice(0, i).join("/");
+            if (!dirSet.has(dirPath)) {
+              dirSet.add(dirPath);
+              files.push({
+                path: dirPath,
+                name: parts[i - 1]!,
+                isDirectory: true,
+                depth: i - 1,
+              });
+            }
+          }
+
+          // Add file entry
+          const fullPath = `${dir}/${relativePath}`;
+          const bunFile = Bun.file(fullPath);
+          let size: number | undefined;
+          try {
+            size = bunFile.size;
+          } catch {}
+
+          files.push({
+            path: relativePath,
+            name: parts[parts.length - 1]!,
+            isDirectory: false,
+            size,
+            depth: parts.length - 1,
+          });
+        }
 
         return Response.json({ files, directory: dir });
       } catch (error) {
@@ -53,27 +83,39 @@ export const fileRoutes = {
           return Response.json({ error: "Missing file parameter" }, { status: 400 });
         }
 
-        const fullPath = `${dir}/${filePath}`;
+        const fullPath = safePath(dir, filePath);
+        if (!fullPath) {
+          return Response.json({ error: "Invalid file path" }, { status: 400 });
+        }
+
         const file = Bun.file(fullPath);
 
         if (!(await file.exists())) {
           return Response.json({ error: "File not found" }, { status: 404 });
         }
 
-        const stat = await file.stat();
-        const isImage = IMAGE_MIME_TYPES[filePath.split(".").pop()?.toLowerCase() || ""];
+        const isImage = !!IMAGE_MIME_TYPES[filePath.split(".").pop()?.toLowerCase() || ""];
 
         if (isImage) {
           return Response.json({
             isBinary: true,
             isImage: true,
-            size: stat.size,
+            size: file.size,
           });
         }
 
-        const content = await file.text();
+        const buffer = await file.arrayBuffer();
+
+        if (isBinaryContent(buffer)) {
+          return Response.json({
+            isBinary: true,
+            isImage: false,
+            size: buffer.byteLength,
+          });
+        }
+
+        const content = new TextDecoder().decode(buffer);
         const lines = content.split("\n");
-        const totalLines = lines.length;
 
         const lineData = lines.map((content, idx) => ({
           lineNum: idx + 1,
@@ -82,10 +124,10 @@ export const fileRoutes = {
 
         return Response.json({
           lines: lineData,
-          totalLines,
+          totalLines: lines.length,
           isBinary: false,
           isImage: false,
-          size: stat.size,
+          size: buffer.byteLength,
         });
       } catch (error) {
         return Response.json(
@@ -109,7 +151,11 @@ export const fileRoutes = {
           return Response.json({ error: "Missing file parameter" }, { status: 400 });
         }
 
-        const fullPath = `${dir}/${filePath}`;
+        const fullPath = safePath(dir, filePath);
+        if (!fullPath) {
+          return Response.json({ error: "Invalid file path" }, { status: 400 });
+        }
+
         const file = Bun.file(fullPath);
         if (!(await file.exists())) {
           return Response.json({ error: "File not found" }, { status: 404 });
@@ -140,6 +186,10 @@ export const fileRoutes = {
         const ref = url.searchParams.get("ref") || "HEAD";
         if (!filePath) {
           return Response.json({ error: "Missing file parameter" }, { status: 400 });
+        }
+
+        if (safePath(dir, filePath) === null) {
+          return Response.json({ error: "Invalid file path" }, { status: 400 });
         }
 
         const gitResult = await Bun.$`git -C ${dir} show ${ref}:${filePath}`.quiet().nothrow();

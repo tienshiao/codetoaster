@@ -1,3 +1,4 @@
+import path from "node:path";
 import { sessionManager } from "../lib/xtmux/session-manager";
 
 export async function resolveSessionGitRoot(
@@ -34,4 +35,10 @@ export const IMAGE_MIME_TYPES: Record<string, string> = {
 export function getImageMimeType(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase() || "";
   return IMAGE_MIME_TYPES[ext] || "application/octet-stream";
+}
+
+export function safePath(dir: string, filePath: string): string | null {
+  const resolved = path.resolve(dir, filePath);
+  if (!resolved.startsWith(dir + "/")) return null;
+  return resolved;
 }

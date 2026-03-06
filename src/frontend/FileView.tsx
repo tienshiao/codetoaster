@@ -118,6 +118,7 @@ export function FileView({ sessionId }: FileViewProps) {
           </div>
         </div>
         <FileContent
+          key={selectedFile || ""}
           filePath={selectedFile || ""}
           sessionId={sessionId}
           content={fileContent}

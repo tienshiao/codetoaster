@@ -6,13 +6,19 @@ export interface FileInfo {
   depth: number;
 }
 
-export interface FileContentResponse {
-  lines: { lineNum: number; content: string }[];
-  totalLines: number;
-  isBinary: boolean;
-  isImage: boolean;
-  size?: number;
-}
+export type FileContentResponse =
+  | {
+      isBinary: true;
+      isImage: boolean;
+      size?: number;
+    }
+  | {
+      isBinary: false;
+      isImage: false;
+      lines: { lineNum: number; content: string }[];
+      totalLines: number;
+      size?: number;
+    };
 
 export interface FilesResponse {
   files: FileInfo[];

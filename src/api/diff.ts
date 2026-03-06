@@ -1,4 +1,4 @@
-import { resolveSessionGitRoot } from "./utils";
+import { resolveSessionGitRoot, safePath } from "./utils";
 
 function unescapeGitPath(path: string): string {
   let r = path;
@@ -65,7 +65,10 @@ export const diffRoutes = {
           return Response.json({ error: "Missing file parameter" }, { status: 400 });
         }
 
-        const fullPath = `${dir}/${filePath}`;
+        const fullPath = safePath(dir, filePath);
+        if (!fullPath) {
+          return Response.json({ error: "Invalid file path" }, { status: 400 });
+        }
         const file = Bun.file(fullPath);
         if (!(await file.exists())) {
           return Response.json({ error: "File not found" }, { status: 404 });
