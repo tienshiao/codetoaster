@@ -1,22 +1,4 @@
-import { sessionManager } from "../lib/xtmux/session-manager";
-
-const IMAGE_MIME_TYPES: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  svg: "image/svg+xml",
-  webp: "image/webp",
-  ico: "image/x-icon",
-  bmp: "image/bmp",
-  tiff: "image/tiff",
-  tif: "image/tiff",
-};
-
-function getImageMimeType(filePath: string): string {
-  const ext = filePath.split(".").pop()?.toLowerCase() || "";
-  return IMAGE_MIME_TYPES[ext] || "application/octet-stream";
-}
+import { resolveSessionGitRoot } from "./utils";
 
 function unescapeGitPath(path: string): string {
   let r = path;
@@ -31,24 +13,6 @@ function unescapeGitPath(path: string): string {
     return new TextDecoder().decode(new Uint8Array(bytes));
   });
   return r.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-}
-
-async function resolveSessionGitRoot(
-  sessionId: string
-): Promise<{ dir: string } | { error: Response }> {
-  const session = sessionManager.getSession(sessionId);
-  if (!session) {
-    return { error: Response.json({ error: "Session not found" }, { status: 404 }) };
-  }
-  const cwd = await session.getCwd();
-  if (!cwd) {
-    return { error: Response.json({ error: "Cannot determine session CWD" }, { status: 400 }) };
-  }
-  const gitRootResult = await Bun.$`git -C ${cwd} rev-parse --show-toplevel`.quiet().nothrow();
-  if (gitRootResult.exitCode !== 0) {
-    return { error: Response.json({ error: "Not a git repository" }, { status: 400 }) };
-  }
-  return { dir: gitRootResult.text().trim() };
 }
 
 export const diffRoutes = {
@@ -123,69 +87,6 @@ export const diffRoutes = {
       } catch (error) {
         return Response.json(
           { error: "Failed to read file context", message: error instanceof Error ? error.message : String(error) },
-          { status: 500 }
-        );
-      }
-    },
-  },
-
-  "/api/sessions/:id/image": {
-    async GET(req: Request & { params: { id: string } }) {
-      try {
-        const result = await resolveSessionGitRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { dir } = result;
-
-        const url = new URL(req.url);
-        const filePath = url.searchParams.get("file");
-        if (!filePath) {
-          return Response.json({ error: "Missing file parameter" }, { status: 400 });
-        }
-
-        const fullPath = `${dir}/${filePath}`;
-        const file = Bun.file(fullPath);
-        if (!(await file.exists())) {
-          return Response.json({ error: "File not found" }, { status: 404 });
-        }
-
-        const data = await file.arrayBuffer();
-        return new Response(data, {
-          headers: { "Content-Type": getImageMimeType(filePath), "Cache-Control": "no-cache" },
-        });
-      } catch (error) {
-        return Response.json(
-          { error: "Failed to read image", message: error instanceof Error ? error.message : String(error) },
-          { status: 500 }
-        );
-      }
-    },
-  },
-
-  "/api/sessions/:id/image/git": {
-    async GET(req: Request & { params: { id: string } }) {
-      try {
-        const result = await resolveSessionGitRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { dir } = result;
-
-        const url = new URL(req.url);
-        const filePath = url.searchParams.get("file");
-        const ref = url.searchParams.get("ref") || "HEAD";
-        if (!filePath) {
-          return Response.json({ error: "Missing file parameter" }, { status: 400 });
-        }
-
-        const gitResult = await Bun.$`git -C ${dir} show ${ref}:${filePath}`.quiet().nothrow();
-        if (gitResult.exitCode !== 0) {
-          return Response.json({ error: "File not found in git history" }, { status: 404 });
-        }
-
-        return new Response(new Uint8Array(gitResult.stdout), {
-          headers: { "Content-Type": getImageMimeType(filePath), "Cache-Control": "no-cache" },
-        });
-      } catch (error) {
-        return Response.json(
-          { error: "Failed to read image from git", message: error instanceof Error ? error.message : String(error) },
           { status: 500 }
         );
       }

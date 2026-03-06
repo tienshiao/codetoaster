@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SessionsSlugRouteImport } from './routes/sessions.$slug'
 import { Route as SessionsSlugIndexRouteImport } from './routes/sessions.$slug.index'
+import { Route as SessionsSlugFileRouteImport } from './routes/sessions.$slug.file'
 import { Route as SessionsSlugDiffRouteImport } from './routes/sessions.$slug.diff'
 
 const IndexRoute = IndexRouteImport.update({
@@ -29,6 +30,11 @@ const SessionsSlugIndexRoute = SessionsSlugIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SessionsSlugRoute,
 } as any)
+const SessionsSlugFileRoute = SessionsSlugFileRouteImport.update({
+  id: '/file',
+  path: '/file',
+  getParentRoute: () => SessionsSlugRoute,
+} as any)
 const SessionsSlugDiffRoute = SessionsSlugDiffRouteImport.update({
   id: '/diff',
   path: '/diff',
@@ -39,11 +45,13 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/sessions/$slug': typeof SessionsSlugRouteWithChildren
   '/sessions/$slug/diff': typeof SessionsSlugDiffRoute
+  '/sessions/$slug/file': typeof SessionsSlugFileRoute
   '/sessions/$slug/': typeof SessionsSlugIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/sessions/$slug/diff': typeof SessionsSlugDiffRoute
+  '/sessions/$slug/file': typeof SessionsSlugFileRoute
   '/sessions/$slug': typeof SessionsSlugIndexRoute
 }
 export interface FileRoutesById {
@@ -51,6 +59,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/sessions/$slug': typeof SessionsSlugRouteWithChildren
   '/sessions/$slug/diff': typeof SessionsSlugDiffRoute
+  '/sessions/$slug/file': typeof SessionsSlugFileRoute
   '/sessions/$slug/': typeof SessionsSlugIndexRoute
 }
 export interface FileRouteTypes {
@@ -59,14 +68,16 @@ export interface FileRouteTypes {
     | '/'
     | '/sessions/$slug'
     | '/sessions/$slug/diff'
+    | '/sessions/$slug/file'
     | '/sessions/$slug/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/sessions/$slug/diff' | '/sessions/$slug'
+  to: '/' | '/sessions/$slug/diff' | '/sessions/$slug/file' | '/sessions/$slug'
   id:
     | '__root__'
     | '/'
     | '/sessions/$slug'
     | '/sessions/$slug/diff'
+    | '/sessions/$slug/file'
     | '/sessions/$slug/'
   fileRoutesById: FileRoutesById
 }
@@ -98,6 +109,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SessionsSlugIndexRouteImport
       parentRoute: typeof SessionsSlugRoute
     }
+    '/sessions/$slug/file': {
+      id: '/sessions/$slug/file'
+      path: '/file'
+      fullPath: '/sessions/$slug/file'
+      preLoaderRoute: typeof SessionsSlugFileRouteImport
+      parentRoute: typeof SessionsSlugRoute
+    }
     '/sessions/$slug/diff': {
       id: '/sessions/$slug/diff'
       path: '/diff'
@@ -110,11 +128,13 @@ declare module '@tanstack/react-router' {
 
 interface SessionsSlugRouteChildren {
   SessionsSlugDiffRoute: typeof SessionsSlugDiffRoute
+  SessionsSlugFileRoute: typeof SessionsSlugFileRoute
   SessionsSlugIndexRoute: typeof SessionsSlugIndexRoute
 }
 
 const SessionsSlugRouteChildren: SessionsSlugRouteChildren = {
   SessionsSlugDiffRoute: SessionsSlugDiffRoute,
+  SessionsSlugFileRoute: SessionsSlugFileRoute,
   SessionsSlugIndexRoute: SessionsSlugIndexRoute,
 }
 

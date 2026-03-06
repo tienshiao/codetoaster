@@ -7,6 +7,7 @@ import { sessionManager } from "./lib/xtmux/session-manager";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
 import { diffRoutes } from "./api/diff";
+import { fileRoutes } from "./api/files";
 import { initDatabase } from "./lib/db";
 
 let clientIdCounter = 0;
@@ -184,6 +185,7 @@ export function startServer(options?: ServerOptions) {
       },
 
       ...diffRoutes,
+      ...fileRoutes,
 
       "/api/ping": {
         GET() {

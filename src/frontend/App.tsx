@@ -5,6 +5,7 @@ import { TopBar } from "./TopBar";
 import { XTerminal } from "./Terminal";
 import { useSession } from "./SessionContext";
 import { buildSessionSlug } from "./utils/slug";
+import type { TabType } from "./types/tab";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,12 +43,17 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     handleSendMessage,
   } = useSession();
   const currentSession = sessions.find((s) => s.id === currentSessionId);
+
   const isActive = currentSessionId ? (sessionActivity[currentSessionId] ?? false) : false;
   const navigate = useNavigate();
   const matches = useMatches();
 
-  // Detect if we're on the diff route
-  const isDiff = matches.some((m) => m.routeId === "/sessions/$slug/diff");
+  // Detect current tab
+  const currentTab: TabType = matches.some((m) => m.routeId === "/sessions/$slug/diff")
+    ? "diff"
+    : matches.some((m) => m.routeId === "/sessions/$slug/file")
+    ? "file"
+    : "terminal";
 
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -147,11 +153,13 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
   );
 
   const handleTabChange = useCallback(
-    (tab: "terminal" | "diff") => {
+    (tab: TabType) => {
       if (!currentSession) return;
       const slug = buildSessionSlug(currentSession);
       if (tab === "diff") {
         navigate({ to: "/sessions/$slug/diff", params: { slug } });
+      } else if (tab === "file") {
+        navigate({ to: "/sessions/$slug/file", params: { slug } });
       } else {
         navigate({ to: "/sessions/$slug", params: { slug } });
         setTimeout(() => terminalRef.current?.focus(), 100);
@@ -190,12 +198,12 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           title={currentSession?.title}
           onUpload={handleFileDrop}
           onFocusTerminal={() => terminalRef.current?.focus()}
-          activeTab={isDiff ? "diff" : "terminal"}
+          activeTab={currentTab}
           onTabChange={handleTabChange}
         />
         <div className="flex-1 relative overflow-hidden">
-          {/* Terminal stays mounted, hidden when diff is active */}
-          <div className={isDiff ? 'hidden' : 'relative h-full'}>
+          {/* Terminal stays mounted, hidden when diff or file view is active */}
+          <div className={currentTab !== "terminal" ? 'hidden' : 'relative h-full'}>
             <XTerminal
               ref={terminalRef}
               onSizeChange={handleSizeChange}
@@ -204,7 +212,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
               onFileDrop={handleFileDrop}
               onSearchOpen={() => setSearchOpen(true)}
             />
-            {searchOpen && !isDiff && searchAddon && (
+            {searchOpen && currentTab === "terminal" && searchAddon && (
               <TerminalSearchBar
                 searchAddon={searchAddon}
                 onClose={handleSearchClose}
@@ -212,8 +220,8 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
             )}
           </div>
 
-          {/* Diff view rendered via child route */}
-          {isDiff && (
+          {/* Diff and File views rendered via child route */}
+          {currentTab !== "terminal" && (
             <div className="h-full overflow-hidden">
               {children}
             </div>
