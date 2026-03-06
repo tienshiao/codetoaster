@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import { FileTree } from "./components/file/FileTree";
 import { FileContent } from "./components/file/FileContent";
 import { Button } from "./components/ui/button";
-import { Checkbox } from "./components/ui/checkbox";
 import { Loader2, RefreshCw, WrapText } from "lucide-react";
 import type { FileInfo, FileContentResponse, FilesResponse } from "./types/file";
 
@@ -12,7 +11,7 @@ interface FileViewProps {
 
 export function FileView({ sessionId }: FileViewProps) {
   const [files, setFiles] = useState<FileInfo[]>([]);
-  const [directory, setDirectory] = useState<string>("");
+  const [, setDirectory] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -105,17 +104,15 @@ export function FileView({ sessionId }: FileViewProps) {
           <div className="flex items-center gap-2 text-xs">
             <span className="font-mono text-foreground">{selectedFile || "No file selected"}</span>
           </div>
-          <div className="flex items-center gap-2 text-xs">
-            <Checkbox
-              id="lineWrap"
-              checked={lineWrap}
-              onCheckedChange={(checked: boolean) => setLineWrap(checked)}
-            />
-            <label htmlFor="lineWrap" className="flex items-center gap-1 cursor-pointer">
-              <WrapText size={14} />
-              Wrap
-            </label>
-          </div>
+          <Button
+            variant={lineWrap ? "secondary" : "ghost"}
+            size="sm"
+            className="h-6 w-6 p-0"
+            title="Wrap"
+            onClick={() => setLineWrap(!lineWrap)}
+          >
+            <WrapText size={14} />
+          </Button>
         </div>
         <FileContent
           key={selectedFile || ""}
