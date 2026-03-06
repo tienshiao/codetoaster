@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { parseDiff } from "./utils/parseDiff";
-import { enhanceWithWordDiff } from "./utils/wordDiff";
 import { generatePrompt } from "./utils/generatePrompt";
 import { useComments } from "./hooks/use-comments";
-import { sortFiles } from "./utils/sortFiles";
+import { useSessionDiff } from "./hooks/use-session-diff";
 import { FileTree } from "./components/diff/FileTree";
 import { DiffFile } from "./components/diff/DiffFile";
 import { Button } from "./components/ui/button";
@@ -19,7 +17,7 @@ import {
 } from "./components/ui/alert-dialog";
 import { tokenizeLine, mergeTokens } from "./utils/syntaxHighlight";
 import { getLanguageFromPath } from "./utils/languageDetection";
-import type { FileDiff, DiffHunk, HunkExpansionState, DiffLine } from "./types/diff";
+import type { DiffHunk, HunkExpansionState, DiffLine } from "./types/diff";
 import { ChevronLeft, ChevronRight, Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
 import "./components/diff/DiffView.css";
 
@@ -33,9 +31,8 @@ const FILE_COUNT_THRESHOLD = 30;
 const TOTAL_LINES_THRESHOLD = 1500;
 
 export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
-  const [files, setFiles] = useState<FileDiff[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: files = [], isLoading: loading, error: queryError, refetch } = useSessionDiff(sessionId);
+  const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [hunkExpansions, setHunkExpansions] = useState<Map<string, HunkExpansionState>>(new Map());
@@ -48,42 +45,21 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
 
   const commentState = useComments();
 
-  const fetchDiff = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}/diff`);
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to fetch diff");
-      }
-      const data = await res.json();
-      const parsed = parseDiff(data.diff);
-      const enhanced = sortFiles(enhanceWithWordDiff(parsed));
-      setFiles(enhanced);
-
-      // Auto-enable single-file mode for large diffs
-      const totalLines = enhanced.reduce((sum, f) => sum + f.additions + f.deletions, 0);
-      const isLarge = enhanced.length >= FILE_COUNT_THRESHOLD || totalLines >= TOTAL_LINES_THRESHOLD;
-
-      if (isLarge && enhanced[0]) {
-        setViewMode("single");
-        setSelectedFile(enhanced[0].newPath);
-        setExpandedFiles(new Set([enhanced[0].newPath]));
-      } else {
-        setViewMode("all");
-        setExpandedFiles(new Set(enhanced.map((f) => f.newPath)));
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId]);
-
+  // Auto-enable single-file mode for large diffs
   useEffect(() => {
-    fetchDiff();
-  }, [fetchDiff]);
+    if (files.length === 0) return;
+    const totalLines = files.reduce((sum, f) => sum + f.additions + f.deletions, 0);
+    const isLarge = files.length >= FILE_COUNT_THRESHOLD || totalLines >= TOTAL_LINES_THRESHOLD;
+
+    if (isLarge && files[0]) {
+      setViewMode("single");
+      setSelectedFile(files[0].newPath);
+      setExpandedFiles(new Set([files[0].newPath]));
+    } else {
+      setViewMode("all");
+      setExpandedFiles(new Set(files.map((f) => f.newPath)));
+    }
+  }, [files]);
 
   const navigateToFile = useCallback((path: string) => {
     setSelectedFile(path);
@@ -321,7 +297,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm gap-3">
         <p>{error}</p>
-        <Button variant="outline" size="sm" onClick={fetchDiff}>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
           <RefreshCw size={14} /> Retry
         </Button>
       </div>
@@ -332,7 +308,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm gap-3">
         <p>No changes detected</p>
-        <Button variant="outline" size="sm" onClick={fetchDiff}>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
           <RefreshCw size={14} /> Refresh
         </Button>
       </div>

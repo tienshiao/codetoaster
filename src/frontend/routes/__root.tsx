@@ -1,4 +1,6 @@
 import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "../query-client";
 import { SessionProvider } from "../SessionContext";
 import { TerminalThemeProvider } from "../hooks/use-terminal-theme";
 import { useTheme } from "../hooks/use-theme";
@@ -15,15 +17,17 @@ function RootComponent() {
   useTheme();
 
   return (
-    <TerminalThemeProvider>
-      <SessionProvider>
-        <SidebarProvider className="h-svh">
-          <Outlet />
-          <CommandPalette />
-          <TabSwitcher />
-          <Toaster />
-        </SidebarProvider>
-      </SessionProvider>
-    </TerminalThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <TerminalThemeProvider>
+        <SessionProvider>
+          <SidebarProvider className="h-svh">
+            <Outlet />
+            <CommandPalette />
+            <TabSwitcher />
+            <Toaster />
+          </SidebarProvider>
+        </SessionProvider>
+      </TerminalThemeProvider>
+    </QueryClientProvider>
   );
 }

@@ -4,6 +4,7 @@ import { AppSidebar } from "./AppSidebar";
 import { TopBar } from "./TopBar";
 import { XTerminal } from "./Terminal";
 import { useSession } from "./SessionContext";
+import { useUploadFiles } from "./hooks/use-upload-mutation";
 import { buildSessionSlug } from "./utils/slug";
 import type { TabType } from "./types/tab";
 import {
@@ -43,6 +44,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     handleSendMessage,
   } = useSession();
   const currentSession = sessions.find((s) => s.id === currentSessionId);
+  const uploadMutation = useUploadFiles(currentSessionId ?? undefined);
 
   const isActive = currentSessionId ? (sessionActivity[currentSessionId] ?? false) : false;
   const navigate = useNavigate();
@@ -128,16 +130,10 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
   );
 
   const handleFileDrop = useCallback(
-    async (files: File[]) => {
-      if (!currentSessionId) return;
-      const formData = new FormData();
-      for (const file of files) formData.append("files", file);
-      await fetch(`/api/sessions/${currentSessionId}/upload`, {
-        method: "POST",
-        body: formData,
-      });
+    (files: File[]) => {
+      uploadMutation.mutate(files);
     },
-    [currentSessionId],
+    [uploadMutation],
   );
 
   const handleCloseTab = useCallback(

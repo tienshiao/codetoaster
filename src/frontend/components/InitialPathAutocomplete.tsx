@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Input } from "./ui/input";
-
-interface DirResult {
-  parent: string;
-  directories: string[];
-}
+import { useDirectories } from "../hooks/use-directories";
 
 interface InitialPathAutocompleteProps {
   value: string;
@@ -21,13 +17,17 @@ export function InitialPathAutocomplete({
   inputId,
   placeholder,
 }: InitialPathAutocompleteProps) {
-  const [suggestions, setSuggestions] = useState<DirResult | null>(null);
+  const [debouncedValue, setDebouncedValue] = useState(value);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const { data: suggestions = null } = useDirectories(debouncedValue, {
+    enabled: debouncedValue.length > 0,
+  });
 
   const setOpen = useCallback(
     (open: boolean) => {
@@ -37,31 +37,26 @@ export function InitialPathAutocomplete({
     [onOpenChange]
   );
 
-  const fetchSuggestions = useCallback(
-    (path: string) => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(async () => {
-        if (!path) {
-          setSuggestions(null);
-          setOpen(false);
-          return;
-        }
-        try {
-          const res = await fetch(
-            `/api/directories?path=${encodeURIComponent(path)}`
-          );
-          const data: DirResult = await res.json();
-          setSuggestions(data);
-          setOpen(data.directories.length > 0);
-          setSelectedIndex(0);
-        } catch {
-          setSuggestions(null);
-          setOpen(false);
-        }
-      }, 200);
-    },
-    [setOpen]
-  );
+  // Update showSuggestions when query data arrives
+  useEffect(() => {
+    if (suggestions && suggestions.directories.length > 0) {
+      setOpen(true);
+      setSelectedIndex(0);
+    } else if (suggestions) {
+      setOpen(false);
+    }
+  }, [suggestions, setOpen]);
+
+  const debouncePath = useCallback((path: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!path) {
+      setDebouncedValue("");
+      return;
+    }
+    debounceRef.current = setTimeout(() => {
+      setDebouncedValue(path);
+    }, 200);
+  }, []);
 
   const selectSuggestion = useCallback(
     (dirName: string) => {
@@ -69,14 +64,18 @@ export function InitialPathAutocomplete({
       const newPath = suggestions.parent + "/" + dirName + "/";
       onChange(newPath);
       setOpen(false);
-      fetchSuggestions(newPath);
+      // Trigger a new debounced fetch for the selected path
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        setDebouncedValue(newPath);
+      }, 200);
     },
-    [fetchSuggestions, onChange, setOpen, suggestions]
+    [onChange, setOpen, suggestions]
   );
 
   const handlePathChange = (nextValue: string) => {
     onChange(nextValue);
-    fetchSuggestions(nextValue);
+    debouncePath(nextValue);
   };
 
   const handlePathKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
