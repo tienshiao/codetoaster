@@ -131,7 +131,7 @@ export function DirectoryPickerDialog({
       newMap.set("/", rootData.directories);
       newExpanded.add("/");
       for (const [seg, children] of results) {
-        newMap.set(seg, children);
+        newMap.set(seg, [...children]);
         newExpanded.add(seg);
       }
 
