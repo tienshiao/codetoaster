@@ -84,6 +84,15 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
             if (message.data) {
               term.write(message.data);
             }
+            // Restore mouse encoding — the serialize addon preserves the mouse
+            // tracking protocol (e.g. 1002h) but not the encoding mode (e.g.
+            // SGR/1006h). Without this, apps expecting SGR-encoded mouse reports
+            // silently ignore the DEFAULT-encoded ones after a session switch.
+            if (message.mouseEncoding === "SGR") {
+              term.write('\x1b[?1006h');
+            } else if (message.mouseEncoding === "SGR_PIXELS") {
+              term.write('\x1b[?1016h');
+            }
             // Restore cursor visibility — RIS and the serialize addon both
             // leave DECTCEM in an undefined state, so set it explicitly from
             // the server's authoritative value.

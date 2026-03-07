@@ -27,7 +27,7 @@ export type ClientMessage =
 // Server -> Client messages
 export type ServerMessage =
   | { type: "attached"; sessionId: string }
-  | { type: "restore"; data: string; size: { cols: number; rows: number }; cursor: { x: number; y: number }; cursorHidden: boolean }
+  | { type: "restore"; data: string; size: { cols: number; rows: number }; cursor: { x: number; y: number }; cursorHidden: boolean; mouseEncoding: string }
   | { type: "data"; data: string }
   | { type: "resize"; cols: number; rows: number }
   | { type: "exit"; code: number }
