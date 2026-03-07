@@ -6,6 +6,7 @@ import { buildSessionSlug } from "../utils/slug";
 import { RenameDialog } from "./RenameDialog";
 import { useSidebar } from "./ui/sidebar";
 import { useFileSearch, type FileSearchResult } from "../hooks/use-file-search";
+import { useRecentFiles } from "../hooks/use-recent-files";
 import {
   CommandDialog,
   CommandInput,
@@ -79,6 +80,8 @@ export function CommandPalette() {
   const currentSession = currentSessionId
     ? sessions.find((s) => s.id === currentSessionId)
     : null;
+
+  const { recentFiles, addRecentFile } = useRecentFiles(currentSessionId ?? null);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -175,6 +178,29 @@ export function CommandPalette() {
             <span>Toggle Sidebar</span>
           </CommandItem>
         </CommandGroup>
+        {currentSession && debouncedQuery.length === 0 && recentFiles.length > 0 && (
+          <CommandGroup heading="Recent Files" forceMount>
+            {recentFiles.map((filePath) => (
+              <CommandItem
+                key={filePath}
+                value={`recent:${filePath}`}
+                forceMount
+                onSelect={() => {
+                  addRecentFile(filePath);
+                  navigate({
+                    to: "/sessions/$slug/file",
+                    params: { slug: buildSessionSlug(currentSession) },
+                    search: { file: filePath },
+                  });
+                  setOpen(false);
+                }}
+              >
+                <FileText className="size-4" />
+                <span className="truncate font-mono text-xs">{filePath}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
         <CommandGroup heading="Sessions">
           {sessions.map((session) => (
             <CommandItem
@@ -217,6 +243,7 @@ export function CommandPalette() {
                 value={`file:${file.path}`}
                 forceMount
                 onSelect={() => {
+                  addRecentFile(file.path);
                   navigate({
                     to: "/sessions/$slug/file",
                     params: { slug: buildSessionSlug(currentSession) },

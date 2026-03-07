@@ -13,6 +13,7 @@ import { generateUUID } from "./utils/uuid";
 import { generateSessionName } from "./utils/nameGenerator";
 import { useWebSocket } from "./hooks/use-websocket";
 import { playNotificationSound } from "./hooks/use-notification-sound";
+import { removeRecentFiles } from "./hooks/use-recent-files";
 
 export interface SessionInfo {
   id: string;
@@ -445,6 +446,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const closeSession = useCallback(
     (id: string) => {
+      removeRecentFiles(id);
       send({ type: "kill", sessionId: id });
 
       if (id === currentSessionIdRef.current) {
