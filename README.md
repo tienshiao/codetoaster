@@ -51,6 +51,14 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 - Paste images/files from clipboard
 - Uploaded file paths are injected into the shell
 
+### File Browser
+- Built-in file browser with directory tree navigation
+- View file contents with syntax highlighting
+- Line wrap toggle for long lines
+- Git-based file search across the project
+- Recent files tracking (5 files per session)
+- Browse and view files without leaving the browser
+
 ### Notifications
 - Desktop notifications via OSC 777, OSC 9, and OSC 99 (Kitty protocol)
 - Browser notifications when the window is not focused
@@ -90,9 +98,13 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 
 - **Runtime:** [Bun](https://bun.sh)
 - **Server:** `Bun.serve()` with WebSocket and HTML imports
-- **Frontend:** React 19, TanStack Router, Tailwind CSS 4, shadcn/ui
+- **Database:** `bun:sqlite`
+- **Frontend:** React 19, TanStack Router (file-based), TanStack Query, Tailwind CSS 4, shadcn/ui
 - **Terminal:** `@xterm/xterm` (client) + `@xterm/headless` (server)
+- **Terminal Addons:** fit, search, serialize, web-links
 - **PTY:** `Bun.spawn()` with `pty: true`
+- **Styling:** `bun-plugin-tailwind`, Radix UI, Lucide icons
+- **Build:** `@tanstack/router-cli` (`tsr`) for route generation
 
 ## Getting Started
 
