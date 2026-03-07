@@ -36,16 +36,14 @@ export function FileContent({ filePath, sessionId, content, loading, lineWrap }:
     if (content.isImage) {
       const imageUrl = `/api/sessions/${sessionId}/image?file=${encodeURIComponent(filePath)}`;
       return (
-        <div className="flex items-center justify-center p-8 h-full">
-          <div className="text-center">
-            <img
-              src={imageUrl}
-              alt={filePath}
-              className="max-w-full max-h-[600px] object-contain rounded-lg border border-border"
-            />
-            <p className="mt-4 text-xs text-muted-foreground font-mono truncate">{filePath}</p>
-            <p className="text-xs text-muted-foreground">{formatSize(content.size || 0)}</p>
-          </div>
+        <div className="flex flex-col items-center justify-center p-8 h-full">
+          <img
+            src={imageUrl}
+            alt={filePath}
+            className="max-w-full max-h-[600px] object-contain border border-border"
+          />
+          <p className="mt-4 text-xs text-muted-foreground font-mono truncate">{filePath}</p>
+          <p className="text-xs text-muted-foreground">{formatSize(content.size || 0)}</p>
         </div>
       );
     }
