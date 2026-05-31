@@ -37,6 +37,13 @@ export function getImageMimeType(filePath: string): string {
   return IMAGE_MIME_TYPES[ext] || "application/octet-stream";
 }
 
+export async function listGitFiles(dir: string): Promise<string[]> {
+  const result = await Bun.$`git -C ${dir} ls-files -z --others --cached --exclude-standard`.quiet().nothrow();
+  if (result.exitCode !== 0) throw new Error("Failed to list files");
+  // -z outputs null-terminated paths, avoiding git's quoting of special characters
+  return result.text().split("\0").filter(Boolean);
+}
+
 export function safePath(dir: string, filePath: string): string | null {
   const resolved = path.resolve(dir, filePath);
   if (!resolved.startsWith(dir + "/")) return null;

@@ -1,4 +1,4 @@
-import { resolveSessionGitRoot, getImageMimeType, IMAGE_MIME_TYPES, safePath } from "./utils";
+import { resolveSessionGitRoot, getImageMimeType, IMAGE_MIME_TYPES, listGitFiles, safePath } from "./utils";
 
 function fuzzyMatch(filePath: string, query: string): { score: number; indices: number[] } | null {
   const lowerPath = filePath.toLowerCase();
@@ -42,12 +42,7 @@ export const fileRoutes = {
         if ("error" in result) return result.error;
         const { dir } = result;
 
-        const gitResult = await Bun.$`git -C ${dir} ls-files --others --cached --exclude-standard`.quiet().nothrow();
-        if (gitResult.exitCode !== 0) {
-          return Response.json({ error: "Failed to list files" }, { status: 500 });
-        }
-
-        const filePaths = gitResult.text().trim().split("\n").filter(Boolean);
+        const filePaths = await listGitFiles(dir);
 
         const dirSet = new Set<string>();
         const files: { path: string; name: string; isDirectory: boolean; size?: number; depth: number }[] = [];
@@ -107,12 +102,7 @@ export const fileRoutes = {
         if ("error" in result) return result.error;
         const { dir } = result;
 
-        const gitResult = await Bun.$`git -C ${dir} ls-files --others --cached --exclude-standard`.quiet().nothrow();
-        if (gitResult.exitCode !== 0) {
-          return Response.json({ error: "Failed to list files" }, { status: 500 });
-        }
-
-        const filePaths = gitResult.text().trim().split("\n").filter(Boolean);
+        const filePaths = await listGitFiles(dir);
         const scored: { path: string; name: string; score: number; indices: number[] }[] = [];
 
         for (const fp of filePaths) {

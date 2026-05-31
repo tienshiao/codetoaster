@@ -1,19 +1,4 @@
-import { resolveSessionGitRoot, safePath } from "./utils";
-
-function unescapeGitPath(path: string): string {
-  let r = path;
-  if (r.startsWith('"') && r.endsWith('"')) r = r.slice(1, -1);
-  r = r.replace(/((?:\\[0-7]{3})+)/g, (match) => {
-    const bytes: number[] = [];
-    const octalPattern = /\\([0-7]{3})/g;
-    let octalMatch;
-    while ((octalMatch = octalPattern.exec(match)) !== null) {
-      bytes.push(parseInt(octalMatch[1]!, 8));
-    }
-    return new TextDecoder().decode(new Uint8Array(bytes));
-  });
-  return r.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-}
+import { resolveSessionGitRoot, listGitFiles, safePath } from "./utils";
 
 export const diffRoutes = {
   "/api/sessions/:id/diff": {
@@ -26,10 +11,9 @@ export const diffRoutes = {
         const [unstagedDiff, stagedDiff, untrackedDiffs] = await Promise.all([
           Bun.$`git -C ${dir} diff`.quiet().text(),
           Bun.$`git -C ${dir} diff --cached`.quiet().text(),
-          Bun.$`git -C ${dir} ls-files --others --exclude-standard`.quiet().then(async (lsResult) => {
-            const untrackedFiles = lsResult.text().trim().split("\n").filter(Boolean).map(unescapeGitPath);
+          listGitFiles(dir).then(async (untrackedFiles) => {
             return Promise.all(
-              untrackedFiles.map(async (file: string) => {
+              untrackedFiles.map(async (file) => {
                 const diff = await Bun.$`git -C ${dir} diff --no-index /dev/null ${file}`.quiet().nothrow();
                 return diff.stdout.length > 0 ? diff.text() : "";
               })
