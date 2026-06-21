@@ -1,4 +1,4 @@
-import { resolveSessionGitRoot, listGitFiles, safePath } from "./utils";
+import { resolveSessionGitRoot, listGitFiles, safePath, diffUntrackedFile } from "./utils";
 
 export const diffRoutes = {
   "/api/sessions/:id/diff": {
@@ -11,13 +11,8 @@ export const diffRoutes = {
         const [unstagedDiff, stagedDiff, untrackedDiffs] = await Promise.all([
           Bun.$`git -C ${dir} diff`.quiet().text(),
           Bun.$`git -C ${dir} diff --cached`.quiet().text(),
-          listGitFiles(dir).then(async (untrackedFiles) => {
-            return Promise.all(
-              untrackedFiles.map(async (file) => {
-                const diff = await Bun.$`git -C ${dir} diff --no-index /dev/null ${file}`.quiet().nothrow();
-                return diff.stdout.length > 0 ? diff.text() : "";
-              })
-            );
+          listGitFiles(dir, { cached: false }).then(async (untrackedFiles) => {
+            return Promise.all(untrackedFiles.map((file) => diffUntrackedFile(dir, file)));
           }),
         ]);
 

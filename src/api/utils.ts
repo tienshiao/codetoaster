@@ -37,11 +37,25 @@ export function getImageMimeType(filePath: string): string {
   return IMAGE_MIME_TYPES[ext] || "application/octet-stream";
 }
 
-export async function listGitFiles(dir: string): Promise<string[]> {
-  const result = await Bun.$`git -C ${dir} ls-files -z --others --cached --exclude-standard`.quiet().nothrow();
+export async function listGitFiles(dir: string, { cached = true }: { cached?: boolean } = {}): Promise<string[]> {
+  const result = await Bun.$`git -C ${dir} ls-files -z --others ${cached ? ["--cached"] : []} --exclude-standard`.quiet().nothrow();
   if (result.exitCode !== 0) throw new Error("Failed to list files");
   // -z outputs null-terminated paths, avoiding git's quoting of special characters
   return result.text().split("\0").filter(Boolean);
+}
+
+// Diff a single untracked file against /dev/null. Uses Bun.spawn rather than
+// Bun.$ because Bun.$ deadlocks when many concurrent shells each buffer large
+// stdout (e.g. multi-MB untracked files); streaming the pipe via Response avoids
+// it. `git diff --no-index` exits non-zero when files differ, so the exit code
+// is intentionally ignored.
+export async function diffUntrackedFile(dir: string, file: string): Promise<string> {
+  const proc = Bun.spawn(["git", "-C", dir, "diff", "--no-index", "/dev/null", file], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [text] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return text;
 }
 
 export function safePath(dir: string, filePath: string): string | null {
