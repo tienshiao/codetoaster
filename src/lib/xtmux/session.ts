@@ -233,7 +233,34 @@ export class Session {
 
   async getCwd(): Promise<string | undefined> {
     if (this.exited) return undefined;
-    const pid = this.proc.pid;
+    const shellPid = this.proc.pid;
+    // Prefer the cwd of the terminal's foreground process group. A program like
+    // `claude --worktree` chdir's into a git worktree while the session shell
+    // stays put, so the foreground process's cwd is what the user perceives as
+    // "where they are". Fall back to the shell's own cwd.
+    const fgPid = this.getForegroundPid(shellPid);
+    if (fgPid && fgPid !== shellPid) {
+      const fgCwd = this.cwdForPid(fgPid);
+      if (fgCwd) return fgCwd;
+    }
+    return this.cwdForPid(shellPid);
+  }
+
+  // The terminal's foreground process group id (== its leader's pid). When no
+  // program is running this equals the shell's own group, so callers fall back
+  // to the shell cwd.
+  private getForegroundPid(shellPid: number): number | undefined {
+    try {
+      const result = Bun.spawnSync(["ps", "-o", "tpgid=", "-p", String(shellPid)]);
+      const tpgid = parseInt(result.stdout.toString().trim(), 10);
+      if (Number.isFinite(tpgid) && tpgid > 0) return tpgid;
+    } catch {
+      // ignore
+    }
+    return undefined;
+  }
+
+  private cwdForPid(pid: number): string | undefined {
     try {
       if (process.platform === "darwin") {
         const result = Bun.spawnSync(["lsof", "-a", "-d", "cwd", "-Fn", "-p", String(pid)]);
