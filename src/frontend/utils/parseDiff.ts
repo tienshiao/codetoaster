@@ -72,7 +72,9 @@ function parseGitDiffHeader(line: string): { oldPath: string; newPath: string } 
 
 // Parse "--- a/path" or "+++ b/path" lines, handling quoted paths
 function parseDiffPathLine(line: string, prefix: string): string {
-  const content = line.slice(prefix.length);
+  let content = line.slice(prefix.length);
+  // Git appends a tab after pathnames containing blanks (GNU patch compat)
+  if (content.endsWith("\t")) content = content.slice(0, -1);
   // Check for quoted path
   if (content.startsWith('"') && content.endsWith('"')) {
     return unescapeGitPath(content.slice(1, -1).replace(/^[ab]\//, ""));
