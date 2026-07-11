@@ -6,6 +6,8 @@ export interface FileInfo {
   depth: number;
 }
 
+import type { FileTokens } from "../../types/highlight";
+
 export type FileContentResponse =
   | {
       isBinary: true;
@@ -18,6 +20,8 @@ export type FileContentResponse =
       lines: { lineNum: number; content: string }[];
       totalLines: number;
       size?: number;
+      // Per-line tree-sitter tokens, aligned with `lines`. Null => regex fallback.
+      tokens?: FileTokens | null;
     };
 
 export interface FilesResponse {

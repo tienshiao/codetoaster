@@ -1,13 +1,18 @@
-import { useMemo, useRef, useLayoutEffect } from "react";
+import { useMemo, useRef, useEffect, useLayoutEffect, type MouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Element } from "hast";
 import { MermaidDiagram } from "./MermaidDiagram";
-import { tokenizeLine, mergeTokens } from "../../utils/syntaxHighlight";
+import { syntaxTokensFor } from "../../utils/wordDiff";
 import { getLanguageFromPath } from "../../utils/languageDetection";
 import { FileIcon } from "../diff/FileIcon";
 import { formatSize } from "../../utils/formatSize";
 import type { FileContentResponse } from "../../types/file";
+import type { LineTokens } from "../../../types/highlight";
+import { symbolAtPoint } from "../../utils/symbolClick";
+import { useModifierHeld } from "../../hooks/use-modifier-held";
+import { useSymbolHighlight } from "../../hooks/use-symbol-highlight";
+import { maybeShowSymbolTip } from "../../utils/tips";
 
 /** Source text of a ```mermaid fence, given the hast node of its <pre>. */
 function extractMermaidSource(node: Element | undefined): string | null {
@@ -28,6 +33,8 @@ interface FileContentProps {
   markdownPreview?: boolean;
   initialScrollTop?: number;
   onScrollTopChange?: (top: number) => void;
+  highlightLine?: number;
+  onSymbolClick?: (name: string, x: number, y: number) => void;
 }
 
 export function FileContent({
@@ -39,10 +46,32 @@ export function FileContent({
   markdownPreview,
   initialScrollTop,
   onScrollTopChange,
+  highlightLine,
+  onSymbolClick,
 }: FileContentProps) {
   const langConfig = useMemo(() => getLanguageFromPath(filePath), [filePath]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const restoredScrollRef = useRef(false);
+  const modHeld = useModifierHeld();
+  const symbolHover = useSymbolHighlight(modHeld && !!onSymbolClick, content);
+
+  // First time a code file is shown, nudge the ⌘/Ctrl-click gesture (once ever).
+  useEffect(() => {
+    if (onSymbolClick && content && !content.isBinary) maybeShowSymbolTip();
+  }, [content, onSymbolClick]);
+
+  // Per-line tokens: prefer server tree-sitter tokens, but only when they
+  // reconstruct the line exactly (guards against a stale diff/content race or an
+  // unsupported grammar); otherwise fall back to the client regex tokenizer.
+  // syntaxTokensFor centralizes that choice (shared with the diff view).
+  const lineTokens = useMemo<LineTokens[]>(() => {
+    if (!content || content.isBinary) return [];
+    const serverTokens = content.tokens;
+    return content.lines.map((line, i) =>
+      syntaxTokensFor(line.content, serverTokens?.[i] ?? null, langConfig)
+        ?? [{ text: line.content, type: null }],
+    );
+  }, [content, langConfig]);
 
   // Restore scroll once the lines have rendered (content arrives async, and
   // the scroll container only exists in the text branch below)
@@ -52,6 +81,29 @@ export function FileContent({
     scrollRef.current.scrollTop = initialScrollTop;
     restoredScrollRef.current = true;
   }, [content, initialScrollTop]);
+
+  // Deep link (go-to-definition): scroll the target line into view and flash it.
+  // Takes precedence over the saved scroll position when a line is specified.
+  useLayoutEffect(() => {
+    if (!highlightLine || !content || content.isBinary || !scrollRef.current) return;
+    restoredScrollRef.current = true; // don't fight this with scroll-restore
+    const row = scrollRef.current.querySelector<HTMLElement>(`[data-line="${highlightLine}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: "center" });
+    row.classList.remove("line-flash");
+    // Force reflow so re-adding the class restarts the animation.
+    void row.offsetWidth;
+    row.classList.add("line-flash");
+  }, [highlightLine, content]);
+
+  const handleClick = (e: MouseEvent) => {
+    if (!onSymbolClick || !(e.metaKey || e.ctrlKey)) return;
+    const name = symbolAtPoint(e.clientX, e.clientY);
+    if (name) {
+      e.preventDefault();
+      onSymbolClick(name, e.clientX, e.clientY);
+    }
+  };
 
   if (loading) {
     return (
@@ -143,12 +195,16 @@ export function FileContent({
       className="overflow-auto h-full"
       onScroll={(e) => onScrollTopChange?.(e.currentTarget.scrollTop)}
     >
-      <div className="min-w-fit">
-        {lines.map((line) => {
-          const tokens = mergeTokens(tokenizeLine(line.content, langConfig));
+      <div
+        className={`min-w-fit ${onSymbolClick ? "symbol-clickable" : ""} ${modHeld ? "mod-held" : ""}`}
+        onClick={handleClick}
+        {...symbolHover}
+      >
+        {lines.map((line, idx) => {
+          const tokens = lineTokens[idx] ?? [];
 
           return (
-            <div key={line.lineNum} className="flex group">
+            <div key={line.lineNum} data-line={line.lineNum} className="flex group">
               <div className="w-12 shrink-0 text-right pr-4 text-xs text-muted-foreground/50 select-none border-r border-border">
                 {line.lineNum.toString().padStart(maxLineNum, " ")}
               </div>

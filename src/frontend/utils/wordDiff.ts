@@ -1,7 +1,29 @@
-import type { TextSegment, FileDiff, SyntaxTokenType } from "../types/diff";
+import type { TextSegment, FileDiff } from "../types/diff";
 import { tokenizeLine, mergeTokens } from "./syntaxHighlight";
 import { getLanguageFromPath } from "./languageDetection";
 import type { LanguageConfig } from "./languageDetection";
+import type { SyntaxToken, LineTokens, FileTokens } from "../../types/highlight";
+
+/** Precomputed server tokens for both sides of a file's diff. */
+export interface DiffFileTokens {
+  old: FileTokens | null;
+  new: FileTokens | null;
+}
+
+// Returns the syntax tokens for a line: the server's precomputed tokens when
+// they reconstruct the line exactly (guards against stale content / grammar
+// gaps), else the client regex tokenizer, else null (no highlighting available).
+export function syntaxTokensFor(
+  fullLine: string,
+  precomputed: LineTokens | null,
+  config: LanguageConfig | null
+): SyntaxToken[] | null {
+  if (precomputed && precomputed.map((t) => t.text).join("") === fullLine) {
+    return mergeTokens(precomputed);
+  }
+  if (config) return mergeTokens(tokenizeLine(fullLine, config));
+  return null;
+}
 
 // Tokenize a string into words and whitespace
 function tokenize(str: string): string[] {
@@ -123,11 +145,13 @@ export function computeWordDiff(
 }
 
 // Apply syntax highlighting to a line and return segments with syntax types
-function applySyntaxToLine(
+export function applySyntaxToLine(
   content: string,
+  precomputed: LineTokens | null,
   config: LanguageConfig | null
 ): TextSegment[] {
-  const tokens = mergeTokens(tokenizeLine(content, config));
+  const tokens = syntaxTokensFor(content, precomputed, config);
+  if (!tokens) return [{ text: content, highlighted: false }];
   return tokens.map((token) => ({
     text: token.text,
     highlighted: false,
@@ -136,15 +160,15 @@ function applySyntaxToLine(
 }
 
 // Apply syntax highlighting to existing word-diff segments
-function applySyntaxToSegments(
+export function applySyntaxToSegments(
   segments: TextSegment[],
+  precomputed: LineTokens | null,
   config: LanguageConfig | null
 ): TextSegment[] {
-  if (!config) return segments;
-
   // Reconstruct the full line to tokenize properly
   const fullLine = segments.map((s) => s.text).join('');
-  const syntaxTokens = mergeTokens(tokenizeLine(fullLine, config));
+  const syntaxTokens = syntaxTokensFor(fullLine, precomputed, config);
+  if (!syntaxTokens) return segments;
 
   // Map syntax tokens back to word-diff segments
   const result: TextSegment[] = [];
@@ -193,10 +217,20 @@ function applySyntaxToSegments(
   return merged;
 }
 
-// Enhance parsed diff files with word-level highlighting and syntax highlighting
-export function enhanceWithWordDiff(files: FileDiff[]): FileDiff[] {
+// Enhance parsed diff files with word-level highlighting and syntax highlighting.
+// `tokensByFile` (keyed by FileDiff.newPath) supplies server tree-sitter tokens;
+// deletion lines use the old side, additions/context use the new side.
+export function enhanceWithWordDiff(
+  files: FileDiff[],
+  tokensByFile?: Map<string, DiffFileTokens>
+): FileDiff[] {
   for (const file of files) {
     const langConfig = getLanguageFromPath(file.newPath);
+    const fileTokens = tokensByFile?.get(file.newPath);
+    const oldTok = (n?: number): LineTokens | null =>
+      n && fileTokens?.old ? fileTokens.old[n - 1] ?? null : null;
+    const newTok = (n?: number): LineTokens | null =>
+      n && fileTokens?.new ? fileTokens.new[n - 1] ?? null : null;
 
     for (const hunk of file.hunks) {
       const lines = hunk.lines;
@@ -247,8 +281,8 @@ export function enhanceWithWordDiff(files: FileDiff[]): FileDiff[] {
             );
 
             // Apply syntax highlighting to word-diff segments
-            delLine.segments = applySyntaxToSegments(deletionSegments, langConfig);
-            addLine.segments = applySyntaxToSegments(additionSegments, langConfig);
+            delLine.segments = applySyntaxToSegments(deletionSegments, oldTok(delLine.oldLineNum), langConfig);
+            addLine.segments = applySyntaxToSegments(additionSegments, newTok(addLine.newLineNum), langConfig);
           }
 
           // Handle unpaired deletions (apply syntax only)
@@ -257,7 +291,7 @@ export function enhanceWithWordDiff(files: FileDiff[]): FileDiff[] {
             if (delIdx === undefined) continue;
             const delLine = lines[delIdx];
             if (delLine) {
-              delLine.segments = applySyntaxToLine(delLine.content, langConfig);
+              delLine.segments = applySyntaxToLine(delLine.content, oldTok(delLine.oldLineNum), langConfig);
             }
           }
 
@@ -267,16 +301,16 @@ export function enhanceWithWordDiff(files: FileDiff[]): FileDiff[] {
             if (addIdx === undefined) continue;
             const addLine = lines[addIdx];
             if (addLine) {
-              addLine.segments = applySyntaxToLine(addLine.content, langConfig);
+              addLine.segments = applySyntaxToLine(addLine.content, newTok(addLine.newLineNum), langConfig);
             }
           }
         } else if (currentLine && currentLine.type === "context") {
           // Apply syntax highlighting to context lines
-          currentLine.segments = applySyntaxToLine(currentLine.content, langConfig);
+          currentLine.segments = applySyntaxToLine(currentLine.content, newTok(currentLine.newLineNum), langConfig);
           i++;
         } else if (currentLine && currentLine.type === "addition") {
           // Standalone addition (not preceded by deletion) - apply syntax only
-          currentLine.segments = applySyntaxToLine(currentLine.content, langConfig);
+          currentLine.segments = applySyntaxToLine(currentLine.content, newTok(currentLine.newLineNum), langConfig);
           i++;
         } else {
           i++;

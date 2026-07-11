@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { FileText, Loader2, PanelLeft, Pencil, Plus, TerminalSquare, X } from "lucide-react";
+import { Braces, ChevronLeft, FileText, Loader2, PanelLeft, Pencil, Plus, TerminalSquare, X } from "lucide-react";
 import { useSession } from "../SessionContext";
 import { buildSessionSlug } from "../utils/slug";
 import { sessionNavTarget, closeNavTarget } from "../utils/session-nav";
@@ -8,6 +8,9 @@ import { RenameDialog } from "./RenameDialog";
 import { useSidebar } from "./ui/sidebar";
 import { useFileSearch, type FileSearchResult } from "../hooks/use-file-search";
 import { useRecentFiles } from "../hooks/use-recent-files";
+import { useSymbolSearch } from "../hooks/use-symbol-search";
+import { modifierSymbol } from "../utils/platform";
+import type { SymbolEntry } from "../../lib/symbols/types";
 import {
   CommandDialog,
   CommandInput,
@@ -56,6 +59,11 @@ export function CommandPalette() {
 
   const [inputValue, setInputValue] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  // Symbol-lookup mode: the input becomes an exact symbol-name query instead of
+  // the default session/command/file search. Also documents the ⌘/Ctrl-click
+  // gesture, which is otherwise undiscoverable.
+  const [symbolMode, setSymbolMode] = useState(false);
+  const modLabel = modifierSymbol();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
@@ -69,6 +77,7 @@ export function CommandPalette() {
     if (!open) {
       setInputValue("");
       setDebouncedQuery("");
+      setSymbolMode(false);
     }
   }, [open]);
 
@@ -83,6 +92,24 @@ export function CommandPalette() {
     : null;
 
   const { recentFiles, addRecentFile } = useRecentFiles(currentSessionId ?? null);
+
+  // Fuzzy/prefix symbol search, active only in symbol mode.
+  const { data: symbolData, isLoading: symbolLoading } = useSymbolSearch(
+    currentSessionId ?? "",
+    symbolMode ? (debouncedQuery || null) : null,
+  );
+  const symbolMatches = symbolData?.matches ?? [];
+
+  const goToSymbol = (entry: SymbolEntry) => {
+    if (!currentSession) return;
+    addRecentFile(entry.path);
+    navigate({
+      to: "/sessions/$slug/file",
+      params: { slug: buildSessionSlug(currentSession) },
+      search: { file: entry.path, line: entry.line },
+    });
+    setOpen(false);
+  };
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -101,13 +128,74 @@ export function CommandPalette() {
       onOpenChange={setOpen}
       title="Command Palette"
       description="Search for sessions, commands, or files"
+      // Symbol results are ranked server-side; let cmdk filter/sort everything else.
+      shouldFilter={!symbolMode}
     >
       <CommandInput
-        placeholder="Search sessions, commands, files..."
+        placeholder={symbolMode ? "Search symbols by name…" : "Search sessions, commands, files..."}
         value={inputValue}
         onValueChange={setInputValue}
       />
       <CommandList>
+        {symbolMode ? (
+          <>
+            <CommandGroup forceMount>
+              <CommandItem
+                value="__back-to-commands"
+                forceMount
+                onSelect={() => {
+                  setSymbolMode(false);
+                  setInputValue("");
+                  setDebouncedQuery("");
+                }}
+              >
+                <ChevronLeft className="size-4" />
+                <span>Back</span>
+              </CommandItem>
+            </CommandGroup>
+            {debouncedQuery.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                Type to search symbols by name.
+              </div>
+            ) : symbolLoading ? (
+              <CommandItem value="symbol-loading" disabled forceMount>
+                <Loader2 className="size-4 animate-spin" />
+                <span>Searching symbols…</span>
+              </CommandItem>
+            ) : symbolMatches.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                No symbols match “{debouncedQuery}”.
+              </div>
+            ) : (
+              <CommandGroup heading="Symbols" forceMount>
+                {symbolMatches.map((m, i) => (
+                  <CommandItem
+                    key={`sym:${m.name}:${m.primary.path}:${m.primary.line}:${i}`}
+                    value={`sym:${m.name}:${i}`}
+                    forceMount
+                    onSelect={() => goToSymbol(m.primary)}
+                  >
+                    <Braces className="size-4 shrink-0" />
+                    <span className="font-mono text-xs">{m.name}</span>
+                    <span className="ml-2 truncate font-mono text-[10px] text-muted-foreground">
+                      {m.primary.path}:{m.primary.line}
+                    </span>
+                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                      {m.symbolKind}
+                      {m.defCount + m.refCount > 1 && ` · ${m.defCount + m.refCount}`}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+            {symbolMode && symbolData?.partial && symbolMatches.length > 0 && (
+              <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-t border-border">
+                Index partial — some symbols may be missing
+              </div>
+            )}
+          </>
+        ) : (
+          <>
         {!(fileResults.length > 0 || fileSearchLoading) && (
           <CommandEmpty>No results found.</CommandEmpty>
         )}
@@ -169,6 +257,19 @@ export function CommandPalette() {
           >
             <PanelLeft className="size-4" />
             <span>Toggle Sidebar</span>
+          </CommandItem>
+          <CommandItem
+            value="find symbol go to definition reference"
+            disabled={!currentSession}
+            onSelect={() => {
+              setSymbolMode(true);
+              setInputValue("");
+              setDebouncedQuery("");
+            }}
+          >
+            <Braces className="size-4" />
+            <span>Find Symbol…</span>
+            <span className="ml-auto text-xs text-muted-foreground">{modLabel}-click in code</span>
           </CommandItem>
         </CommandGroup>
         {currentSession && debouncedQuery.length === 0 && recentFiles.length > 0 && (
@@ -247,6 +348,8 @@ export function CommandPalette() {
               </CommandItem>
             ))}
           </CommandGroup>
+        )}
+          </>
         )}
       </CommandList>
     </CommandDialog>

@@ -1,4 +1,6 @@
 import { resolveSessionGitRoot, listGitFiles, safePath, diffUntrackedFile } from "./utils";
+import { highlightFile } from "../lib/highlight/tokenize";
+import type { LineTokens } from "../types/highlight";
 
 export const diffRoutes = {
   "/api/sessions/:id/diff": {
@@ -65,7 +67,17 @@ export const diffRoutes = {
           lines.push({ lineNum: i, content: allLines[i - 1] ?? "" });
         }
 
-        return Response.json({ lines, hasMore: end < totalLines, totalLines });
+        // Tree-sitter tokens for the returned lines (null => client regex
+        // fallback). Whole-file highlight is cached, so repeat expansions are free.
+        let tokens: (LineTokens)[] | null = null;
+        try {
+          const fileTokens = await highlightFile(content, filePath);
+          if (fileTokens) tokens = lines.map((l) => fileTokens[l.lineNum - 1] ?? []);
+        } catch {
+          tokens = null;
+        }
+
+        return Response.json({ lines, hasMore: end < totalLines, totalLines, tokens });
       } catch (error) {
         return Response.json(
           { error: "Failed to read file context", message: error instanceof Error ? error.message : String(error) },

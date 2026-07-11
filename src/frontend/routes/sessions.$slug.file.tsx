@@ -5,14 +5,15 @@ import { parseSessionSlug } from "../utils/slug";
 
 export const Route = createFileRoute("/sessions/$slug/file")({
   component: FileRoute,
-  validateSearch: (search: Record<string, unknown>): { file?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { file?: string; line?: number } => ({
     file: typeof search.file === "string" && search.file ? search.file : undefined,
+    line: typeof search.line === "number" ? search.line : undefined,
   }),
 });
 
 function FileRoute() {
   const { slug } = Route.useParams();
-  const { file } = Route.useSearch();
+  const { file, line } = Route.useSearch();
   const { id } = parseSessionSlug(slug);
   const navigate = useNavigate();
 
@@ -31,5 +32,5 @@ function FileRoute() {
 
   // key by session id: without it the component survives $slug-only route
   // changes and one session's view state would bleed into the next
-  return <FileView key={id} sessionId={id} file={file} onSelectFile={handleSelectFile} />;
+  return <FileView key={id} sessionId={id} file={file} highlightLine={line} onSelectFile={handleSelectFile} />;
 }

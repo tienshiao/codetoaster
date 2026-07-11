@@ -4,14 +4,8 @@ export interface DiffResponse {
   hash: string;
 }
 
-export type SyntaxTokenType =
-  | 'keyword'
-  | 'string'
-  | 'comment'
-  | 'number'
-  | 'operator'
-  | 'type'
-  | 'punctuation';
+export type { SyntaxTokenType } from '../../types/highlight';
+import type { SyntaxTokenType } from '../../types/highlight';
 
 export interface TextSegment {
   text: string;

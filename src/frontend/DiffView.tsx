@@ -18,9 +18,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
-import { tokenizeLine, mergeTokens } from "./utils/syntaxHighlight";
+import { applySyntaxToLine } from "./utils/wordDiff";
 import { getLanguageFromPath } from "./utils/languageDetection";
+import { symbolAtPoint } from "./utils/symbolClick";
+import { useModifierHeld } from "./hooks/use-modifier-held";
+import { useSymbolHighlight } from "./hooks/use-symbol-highlight";
+import { maybeShowSymbolTip } from "./utils/tips";
+import { SymbolPopover, type SymbolTarget } from "./components/SymbolPopover";
 import type { DiffHunk, HunkExpansionState, DiffLine } from "./types/diff";
+import type { LineTokens } from "../types/highlight";
 import { ChevronLeft, ChevronRight, Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
 import "./components/diff/DiffView.css";
 
@@ -43,6 +49,14 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [promptText, setPromptText] = useState("");
   const [copied, setCopied] = useState(false);
+  const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
+  const modHeld = useModifierHeld();
+  const symbolHover = useSymbolHighlight(modHeld, data);
+
+  // First time a diff with content is shown, nudge the ⌘/Ctrl-click gesture.
+  useEffect(() => {
+    if (data && data.length > 0) maybeShowSymbolTip();
+  }, [data]);
   // null override → derive from diff size, so the large-diff single-file
   // default stays live across refetches; the toggle buttons set it explicitly.
   const [viewModeOverride, setViewModeOverride] = useViewState(sessionId, "diffView", "viewModeOverride");
@@ -266,21 +280,16 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
         const data = await res.json();
 
         const langConfig = getLanguageFromPath(filePath);
-        const contextLines: DiffLine[] = data.lines.map((l: { lineNum: number; content: string }) => {
+        const serverTokens = data.tokens as LineTokens[] | null | undefined;
+        const contextLines: DiffLine[] = data.lines.map((l: { lineNum: number; content: string }, i: number) => {
           const line: DiffLine = {
             type: "context" as const,
             content: l.content,
             oldLineNum: l.lineNum,
             newLineNum: l.lineNum,
           };
-          if (langConfig) {
-            const tokens = mergeTokens(tokenizeLine(l.content, langConfig));
-            line.segments = tokens.map(t => ({
-              text: t.text,
-              highlighted: false,
-              syntaxType: t.type || undefined,
-            }));
-          }
+          // Prefer server tokens (validated inside applySyntaxToLine), else regex.
+          line.segments = applySyntaxToLine(l.content, serverTokens?.[i] ?? null, langConfig);
           return line;
         });
 
@@ -465,9 +474,19 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
         {/* Scrollable file diffs */}
         <div
           ref={diffContainerRef}
-          className="flex-1 overflow-y-auto px-4 flex flex-col gap-3 relative"
+          className={`flex-1 overflow-y-auto px-4 flex flex-col gap-3 relative symbol-clickable ${modHeld ? "mod-held" : ""}`}
           onScroll={(e) => {
             getViewState(sessionId).diffView.scrollTop = e.currentTarget.scrollTop;
+          }}
+          {...symbolHover}
+          onClickCapture={(e) => {
+            if (!(e.metaKey || e.ctrlKey)) return;
+            const name = symbolAtPoint(e.clientX, e.clientY);
+            if (name) {
+              e.preventDefault();
+              e.stopPropagation();
+              setSymbolTarget({ name, x: e.clientX, y: e.clientY });
+            }
           }}
         >
           {renderFiles()}
@@ -535,6 +554,8 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <SymbolPopover sessionId={sessionId} target={symbolTarget} onClose={() => setSymbolTarget(null)} />
     </div>
   );
 }

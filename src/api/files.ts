@@ -1,4 +1,6 @@
 import { resolveSessionGitRoot, getImageMimeType, IMAGE_MIME_TYPES, listGitFiles, safePath } from "./utils";
+import { highlightFile } from "../lib/highlight/tokenize";
+import type { FileTokens } from "../types/highlight";
 
 function fuzzyMatch(filePath: string, query: string): { score: number; indices: number[] } | null {
   const lowerPath = filePath.toLowerCase();
@@ -177,12 +179,22 @@ export const fileRoutes = {
           content,
         }));
 
+        // Server-side tree-sitter tokens (null => client regex fallback).
+        // Never let highlighting failure break the file response.
+        let tokens: FileTokens | null = null;
+        try {
+          tokens = await highlightFile(content, filePath);
+        } catch {
+          tokens = null;
+        }
+
         return Response.json({
           lines: lineData,
           totalLines: lines.length,
           isBinary: false,
           isImage: false,
           size: buffer.byteLength,
+          tokens,
         });
       } catch (error) {
         return Response.json(

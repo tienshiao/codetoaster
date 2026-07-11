@@ -1,6 +1,27 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Flash a line briefly after deep-linking to it (go-to-definition). */
+@keyframes line-flash {
+  from { background-color: rgba(59, 130, 246, 0.25); }
+  to { background-color: transparent; }
+}
+.line-flash { animation: line-flash 1.5s ease-out; }
+
+/* ⌘/Ctrl-click go-to-definition affordance: while the modifier is held the code
+   area shows a pointer cursor, so the otherwise-hidden gesture is discoverable.
+   `.mod-held` is toggled by useModifierHeld. */
+.symbol-clickable.mod-held { cursor: pointer; }
+
+/* The identifier under the cursor is underlined via the Custom Highlight API
+   (useSymbolHighlight), which styles the exact character Range — so unlike a
+   span :hover rule it never smears onto indentation or the line-wrapper span.
+   The highlight only has ranges while the modifier is held. */
+::highlight(symbol-link) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* Nerd Font Mono variants — Regular (400) + Bold (700) */
 
 @font-face {

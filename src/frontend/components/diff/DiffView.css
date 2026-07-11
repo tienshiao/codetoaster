@@ -6,6 +6,12 @@
 .syntax-operator { color: #56b6c2; }
 .syntax-type { color: #e5c07b; }
 .syntax-punctuation { color: #abb2bf; }
+.syntax-function { color: #61afef; }
+.syntax-variable { color: #e06c75; }
+.syntax-property { color: #e06c75; }
+.syntax-constant { color: #d19a66; }
+.syntax-tag { color: #e06c75; }
+.syntax-attribute { color: #d19a66; }
 
 /* Word-level diff highlights */
 .word-highlight-addition {
@@ -25,6 +31,12 @@
 :root:not(.dark) .syntax-operator { color: #0184bc; }
 :root:not(.dark) .syntax-type { color: #c18401; }
 :root:not(.dark) .syntax-punctuation { color: #383a42; }
+:root:not(.dark) .syntax-function { color: #4078f2; }
+:root:not(.dark) .syntax-variable { color: #e45649; }
+:root:not(.dark) .syntax-property { color: #e45649; }
+:root:not(.dark) .syntax-constant { color: #986801; }
+:root:not(.dark) .syntax-tag { color: #e45649; }
+:root:not(.dark) .syntax-attribute { color: #986801; }
 :root:not(.dark) .word-highlight-addition {
   background-color: rgba(34, 197, 94, 0.25);
 }

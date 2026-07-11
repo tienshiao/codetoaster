@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FileTree } from "./components/file/FileTree";
 import { FileContent } from "./components/file/FileContent";
 import { Button } from "./components/ui/button";
@@ -7,14 +7,17 @@ import { useSessionFiles, useFileContent } from "./hooks/use-session-files";
 import { useViewState } from "./hooks/use-view-state";
 import { getViewState } from "./view-state-store";
 import { getLanguageFromPath } from "./utils/languageDetection";
+import { SymbolPopover, type SymbolTarget } from "./components/SymbolPopover";
 
 interface FileViewProps {
   sessionId: string;
   file?: string;
+  highlightLine?: number;
   onSelectFile: (path: string | null) => void;
 }
 
-export function FileView({ sessionId, file, onSelectFile }: FileViewProps) {
+export function FileView({ sessionId, file, highlightLine, onSelectFile }: FileViewProps) {
+  const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const { data: filesData, isLoading: loading, error: queryError, refetch } = useSessionFiles(sessionId);
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
   const files = filesData?.files ?? [];
@@ -141,8 +144,11 @@ export function FileView({ sessionId, file, onSelectFile }: FileViewProps) {
           onScrollTopChange={(top) => {
             if (scrollKey) scrollTops.set(scrollKey, top);
           }}
+          highlightLine={highlightLine}
+          onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}
         />
       </div>
+      <SymbolPopover sessionId={sessionId} target={symbolTarget} onClose={() => setSymbolTarget(null)} />
     </div>
   );
 }

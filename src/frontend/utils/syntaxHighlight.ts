@@ -1,10 +1,8 @@
 import type { SyntaxTokenType } from '../types/diff';
 import type { LanguageConfig, CommentStyle } from './languageDetection';
 
-export interface SyntaxToken {
-  text: string;
-  type: SyntaxTokenType | null;
-}
+export type { SyntaxToken } from '../../types/highlight';
+import type { SyntaxToken } from '../../types/highlight';
 
 interface TokenPattern {
   type: SyntaxTokenType | null;
