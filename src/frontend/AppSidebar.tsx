@@ -97,12 +97,14 @@ export function AppSidebar({
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<string | null>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const {
+    getProjectDropZoneProps,
     getProjectDragProps,
     getSessionDragProps,
     getSessionDropIndicator,
     getSessionDropIndicatorAfterLast,
     getProjectDropIndicator,
     getProjectDropIndicatorAfterLast,
+    isProjectDropTarget,
   } = useSidebarDrag(projects, onReorder);
 
   const sessionMap = useMemo(
@@ -174,8 +176,9 @@ export function AppSidebar({
       <SidebarContent>
         {projects.map((project, projectIndex) => {
           const isCollapsed = collapsedProjects.has(project.id);
+          const projectDragProps = getProjectDragProps(project.id);
           return (
-            <div key={project.id}>
+            <div key={project.id} {...getProjectDropZoneProps(projectIndex)}>
               {getProjectDropIndicator(projectIndex) && (
                 <div className="h-0.5 bg-blue-500 rounded mx-2" />
               )}
@@ -184,9 +187,8 @@ export function AppSidebar({
               >
                 <SidebarGroup className="p-0" style={projectColorVars(project.color)}>
                   <div
-                    className={`group/project relative flex items-center gap-1 h-8 px-2 pr-8 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none ${project.color ? "project-tint" : ""}`}
-                    {...getProjectDragProps(project.id, projectIndex)}
-                    style={getProjectDragProps(project.id, projectIndex).style}
+                    className={`group/project relative flex items-center gap-1 h-8 px-2 pr-8 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none ${project.color ? "project-tint" : ""} ${isProjectDropTarget(project.id) ? "bg-sidebar-accent ring-1 ring-inset ring-blue-500 rounded" : ""}`}
+                    {...projectDragProps}
                   >
                     <button
                       className="flex items-center gap-1 flex-1 min-w-0 cursor-pointer text-left"
