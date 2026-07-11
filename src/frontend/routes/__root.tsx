@@ -8,6 +8,7 @@ import { Toaster } from "../components/ui/sonner";
 import { CommandPalette } from "../components/CommandPalette";
 import { TabSwitcher } from "../components/TabSwitcher";
 import { SidebarProvider } from "../components/ui/sidebar";
+import { useVisualViewportHeight } from "../hooks/use-visual-viewport";
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -15,12 +16,13 @@ export const Route = createRootRoute({
 
 function RootComponent() {
   useTheme();
+  useVisualViewportHeight();
 
   return (
     <QueryClientProvider client={queryClient}>
       <TerminalThemeProvider>
         <SessionProvider>
-          <SidebarProvider className="h-svh">
+          <SidebarProvider className="h-[var(--app-height,100svh)] min-h-0">
             <Outlet />
             <CommandPalette />
             <TabSwitcher />
