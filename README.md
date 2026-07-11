@@ -37,6 +37,7 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 ### Command Palette
 - Quick access via Cmd/Ctrl+Shift+P
 - Search sessions by name, title, or ID
+- Fuzzy symbol search ("Find Symbol…") — jump to any definition by name
 - Actions: new session, close session, rename session, toggle sidebar
 
 ### Customization
@@ -53,7 +54,9 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 
 ### File Browser
 - Built-in file browser with directory tree navigation
-- View file contents with syntax highlighting
+- View file contents with tree-sitter syntax highlighting (regex fallback)
+- Markdown preview with Mermaid diagram rendering
+- Cmd/Ctrl+click a symbol to jump to its definition (deep-linked, flashes on arrival)
 - Line wrap toggle for long lines
 - Git-based file search across the project
 - Recent files tracking (5 files per session)
@@ -68,7 +71,8 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 
 ### Code Review
 - Built-in diff viewer with unified diff parsing
-- Word-level diff highlighting with syntax tokenization
+- Word-level diff highlighting with tree-sitter syntax tokenization
+- Cmd/Ctrl+click a symbol to view its definitions and references
 - Inline and file-level comments on diff lines
 - Hierarchical file tree navigation
 - Single-file and all-files view modes (auto-switches for large diffs)
@@ -76,6 +80,13 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 - Image diff support (side-by-side, added, deleted)
 - Generate agent prompts from code review feedback
 - Terminal/Diff tab switching per session
+
+### Code Intelligence
+- Server-side tree-sitter syntax highlighting across ~18 languages (TypeScript/TSX, JavaScript, Python, Go, Rust, C/C++, Java, PHP, Ruby, Bash, JSON, YAML, TOML, CSS, HTML, Kotlin), shared by the file browser and diff viewer
+- Automatic fallback to the client-side regex highlighter for unsupported grammars, oversized files, or any highlighting failure — highlighting never blocks the view
+- Per-repository symbol index (tree-sitter tags, mtime-revalidated) for TS/JS, Python, Go, Rust, Ruby, Java, and C/C++
+- Cmd/Ctrl+click any symbol to open a definitions/references popover and jump to `file:line`
+- Fuzzy/prefix symbol search from the command palette
 
 ### Activity Tracking
 - Animated activity indicator per session (300ms debounce)
@@ -93,6 +104,7 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 | Find Previous | Shift+Cmd+G | Shift+Ctrl+G |
 | Toggle Sidebar | Cmd+B | Ctrl+B |
 | Prev/Next File (Diff) | Left/Right Arrow | Left/Right Arrow |
+| Go to Definition | Cmd+Click symbol | Ctrl+Click symbol |
 
 ## Tech Stack
 
@@ -102,6 +114,7 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 - **Frontend:** React 19, TanStack Router (file-based), TanStack Query, Tailwind CSS 4, shadcn/ui
 - **Terminal:** `@xterm/xterm` (client) + `@xterm/headless` (server)
 - **Terminal Addons:** fit, search, serialize, web-links
+- **Code Intelligence:** `web-tree-sitter` (WASM grammars) for server-side highlighting and symbol tags
 - **PTY:** `Bun.spawn()` with `pty: true`
 - **Styling:** `bun-plugin-tailwind`, Radix UI, Lucide icons
 - **Build:** `@tanstack/router-cli` (`tsr`) for route generation
