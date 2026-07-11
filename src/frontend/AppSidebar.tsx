@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRight, EllipsisVertical, FolderPlus, Pencil, Plus, Trash2, X } from "lucide-react";
-import { buildSessionSlug } from "./utils/slug";
+import { sessionNavTarget } from "./utils/session-nav";
 import { StatusDot } from "./components/StatusDot";
 import { RenameDialog } from "./components/RenameDialog";
 import { ProjectDialog } from "./components/ProjectDialog";
@@ -90,6 +90,7 @@ export function AppSidebar({
   onFocusTerminal,
 }: AppSidebarProps) {
   const { setOpenMobile, isMobile } = useSidebar();
+  const navigate = useNavigate();
   const { theme, themeName } = useTerminalTheme();
   const { fetchPreview, getPreview } = useTerminalPreview(sessions, theme, themeName, lastActivityAt);
   const [renameTarget, setRenameTarget] = useState<{ type: "session"; id: string } | null>(null);
@@ -128,14 +129,6 @@ export function AppSidebar({
       }
       return next;
     });
-  };
-
-  const handleNewSession = () => {
-    // If only General exists, create directly
-    if (projects.length <= 1) {
-      onNewTab();
-    }
-    // Otherwise the dropdown handles it (see JSX below)
   };
 
   return (
@@ -253,9 +246,17 @@ export function AppSidebar({
                               >
                                 <Link
                                   draggable={false}
-                                  to="/sessions/$slug"
-                                  params={{ slug: buildSessionSlug(session) }}
-                                  onClick={() => {
+                                  {...sessionNavTarget(session)}
+                                  onClick={(e) => {
+                                    // The href above was computed at render time, but
+                                    // lastTab/selectedFile live in the non-reactive
+                                    // view-state store and are written by post-commit
+                                    // effects — recompute the target at click time.
+                                    // Modified clicks keep the href (new tab etc.).
+                                    if (!e.defaultPrevented && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+                                      e.preventDefault();
+                                      navigate(sessionNavTarget(session));
+                                    }
                                     if (isActive) {
                                       onAcknowledge?.(session.id);
                                     }

@@ -5,7 +5,9 @@ import { TopBar } from "./TopBar";
 import { XTerminal } from "./Terminal";
 import { useSession } from "./SessionContext";
 import { useUploadFiles } from "./hooks/use-upload-mutation";
-import { buildSessionSlug } from "./utils/slug";
+import { buildSessionSlug, parseSessionSlug } from "./utils/slug";
+import { sessionNavTarget, tabNavTarget, closeNavTarget } from "./utils/session-nav";
+import { setLastTab } from "./view-state-store";
 import type { TabType } from "./types/tab";
 import {
   AlertDialog,
@@ -57,6 +59,18 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     ? "file"
     : "terminal";
 
+  // Record the last-viewed tab per session so session switches can restore it.
+  // Keyed by the slug's session id (not currentSessionId): the slug and tab
+  // change atomically with the route, while currentSessionId lags one effect
+  // behind and would briefly attribute the new route's tab to the old session.
+  const slugMatch = matches.find((m) => m.routeId === "/sessions/$slug");
+  const routeSessionId = slugMatch
+    ? parseSessionSlug((slugMatch.params as { slug: string }).slug).id
+    : null;
+  useEffect(() => {
+    if (routeSessionId) setLastTab(routeSessionId, currentTab);
+  }, [routeSessionId, currentTab]);
+
   const [searchOpen, setSearchOpen] = useState(false);
 
   const searchAddon = useMemo(
@@ -101,15 +115,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
       closeSession(id);
 
       if (id === currentSessionId) {
-        if (remaining.length > 0) {
-          const next = remaining[0]!;
-          navigate({
-            to: "/sessions/$slug",
-            params: { slug: buildSessionSlug(next) },
-          });
-        } else {
-          navigate({ to: "/" });
-        }
+        navigate(closeNavTarget(remaining));
       }
     },
     [sessions, currentSessionId, closeSession, navigate],
@@ -119,11 +125,9 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     (id: string, newName: string) => {
       renameSession(id, newName);
       if (id === currentSessionId) {
-        navigate({
-          to: "/sessions/$slug",
-          params: { slug: buildSessionSlug({ id, name: newName }) },
-          replace: true,
-        });
+        // sessionNavTarget keeps the current tab; a plain /sessions/$slug
+        // navigation would kick a rename on the diff/file tab back to terminal
+        navigate({ ...sessionNavTarget({ id, name: newName }), replace: true });
       }
     },
     [currentSessionId, renameSession, navigate],
@@ -151,13 +155,8 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
   const handleTabChange = useCallback(
     (tab: TabType) => {
       if (!currentSession) return;
-      const slug = buildSessionSlug(currentSession);
-      if (tab === "diff") {
-        navigate({ to: "/sessions/$slug/diff", params: { slug } });
-      } else if (tab === "file") {
-        navigate({ to: "/sessions/$slug/file", params: { slug } });
-      } else {
-        navigate({ to: "/sessions/$slug", params: { slug } });
+      navigate(tabNavTarget(currentSession, tab));
+      if (tab === "terminal") {
         setTimeout(() => terminalRef.current?.focus(), 100);
       }
     },

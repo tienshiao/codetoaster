@@ -213,3 +213,97 @@ html, body, #root {
 .project-tint {
   background-color: var(--project-bg);
 }
+
+/* Rendered Markdown preview (file view) */
+.markdown-preview {
+  line-height: 1.6;
+  color: var(--foreground);
+}
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4,
+.markdown-preview h5,
+.markdown-preview h6 {
+  font-weight: 600;
+  margin: 1.25em 0 0.5em;
+  line-height: 1.3;
+}
+.markdown-preview h1 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+.markdown-preview h2 { font-size: 1.25em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+.markdown-preview h3 { font-size: 1.1em; }
+.markdown-preview h1:first-child,
+.markdown-preview h2:first-child,
+.markdown-preview h3:first-child { margin-top: 0; }
+.markdown-preview p { margin: 0.75em 0; }
+.markdown-preview ul,
+.markdown-preview ol { margin: 0.75em 0; padding-left: 1.5em; }
+.markdown-preview ul { list-style: disc; }
+.markdown-preview ol { list-style: decimal; }
+.markdown-preview li { margin: 0.25em 0; }
+.markdown-preview li > ul,
+.markdown-preview li > ol { margin: 0.25em 0; }
+.markdown-preview li.task-list-item { list-style: none; margin-left: -1.25em; }
+.markdown-preview li.task-list-item input[type="checkbox"] { margin-right: 0.4em; vertical-align: middle; }
+.markdown-preview code {
+  font-family: "JetBrainsMono Nerd Font Mono", ui-monospace, monospace;
+  font-size: 0.9em;
+  background-color: var(--muted);
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-sm);
+}
+.markdown-preview pre {
+  background-color: var(--muted);
+  padding: 0.75em 1em;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  margin: 0.75em 0;
+}
+.markdown-preview pre code {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+.markdown-preview blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 1em;
+  margin: 0.75em 0;
+  color: var(--muted-foreground);
+}
+.markdown-preview a {
+  color: oklch(0.55 0.18 259);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dark .markdown-preview a {
+  color: oklch(0.7 0.15 259);
+}
+.markdown-preview hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+.markdown-preview table {
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.markdown-preview th,
+.markdown-preview td {
+  border: 1px solid var(--border);
+  padding: 0.35em 0.75em;
+  text-align: left;
+}
+.markdown-preview th {
+  font-weight: 600;
+  background-color: var(--muted);
+}
+.markdown-preview img {
+  max-width: 100%;
+}
+.markdown-preview .mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}

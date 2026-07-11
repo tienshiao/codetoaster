@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSession } from "../SessionContext";
 import { useTerminalPreview } from "../hooks/use-terminal-preview";
 import { useTerminalTheme } from "../hooks/use-terminal-theme";
-import { buildSessionSlug } from "../utils/slug";
+import { sessionNavTarget } from "../utils/session-nav";
 import { StatusDot } from "./StatusDot";
 
 export function TabSwitcher() {
@@ -91,10 +91,7 @@ export function TabSwitcher() {
       return;
     }
     attachSession(selectedSession.id);
-    navigate({
-      to: "/sessions/$slug",
-      params: { slug: buildSessionSlug(selectedSession) },
-    });
+    navigate(sessionNavTarget(selectedSession));
     close();
     // Re-focus terminal after switching
     setTimeout(() => terminalRef.current?.focus(), 0);

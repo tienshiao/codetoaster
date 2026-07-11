@@ -2,10 +2,13 @@ import { useState, useEffect } from "react";
 import { ChevronRight, ChevronDown, MessageCircle, Search, X } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 import { buildTree, FILE_KEY } from "../../utils/sortFiles";
+import { useViewState } from "../../hooks/use-view-state";
+import { collectPathPrefixes, pruneSet } from "../../view-state-store";
 import type { FileTreeNode } from "../../utils/sortFiles";
 import type { FileDiff } from "../../types/diff";
 
 interface FileTreeProps {
+  sessionId: string;
   files: FileDiff[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
@@ -14,10 +17,11 @@ interface FileTreeProps {
   commentCounts?: Map<string, number>;
 }
 
-export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts }: FileTreeProps) {
+export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts }: FileTreeProps) {
   const [filter, setFilter] = useState("");
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
-  const [hasInitialized, setHasInitialized] = useState(false);
+  // Collapse-tracking (not expansion): directories newly entering the diff
+  // default to expanded, while the user's collapses survive refetches.
+  const [collapsedPaths, setCollapsedPaths] = useViewState(sessionId, "diffView", "treeCollapsedPaths");
 
   const filteredFiles = filter
     ? files.filter((file) =>
@@ -25,47 +29,30 @@ export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, to
       )
     : files;
 
-  const getAllDirectoryPaths = (node: FileTreeNode, path: string = ""): string[] => {
-    const paths: string[] = [];
-    Object.entries(node).forEach(([key, value]) => {
-      const fullPath = path ? `${path}/${key}` : key;
-      if (!value[FILE_KEY]) {
-        paths.push(fullPath);
-        paths.push(...getAllDirectoryPaths(value, fullPath));
-      }
-    });
-    return paths;
-  };
-
   const tree = buildTree(filteredFiles);
 
+  // Reconcile: drop collapse entries for directories no longer in the diff,
+  // so a directory that leaves and comes back defaults to expanded again
   useEffect(() => {
-    if (!hasInitialized && files.length > 0) {
-      const allPaths = getAllDirectoryPaths(buildTree(files));
-      setExpandedPaths(new Set(allPaths));
-      setHasInitialized(true);
-    }
-  }, [files, hasInitialized]);
+    if (files.length === 0) return;
+    const dirs = collectPathPrefixes(files.map((f) => f.newPath));
+    setCollapsedPaths((prev) => pruneSet(prev, dirs));
+  }, [files, setCollapsedPaths]);
 
+  // Un-collapse the selected file's ancestors so it's visible
   useEffect(() => {
-    if (selectedFile) {
-      const parts = selectedFile.split("/");
-      const parentPaths: string[] = [];
-      for (let i = 1; i < parts.length; i++) {
-        parentPaths.push(parts.slice(0, i).join("/"));
-      }
-      if (parentPaths.length > 0) {
-        setExpandedPaths(prev => {
-          const next = new Set(prev);
-          parentPaths.forEach(p => next.add(p));
-          return next;
-        });
-      }
-    }
-  }, [selectedFile]);
+    if (!selectedFile) return;
+    const parentPaths = collectPathPrefixes([selectedFile]);
+    setCollapsedPaths((prev) => {
+      if (![...parentPaths].some((p) => prev.has(p))) return prev;
+      const next = new Set(prev);
+      parentPaths.forEach((p) => next.delete(p));
+      return next;
+    });
+  }, [selectedFile, setCollapsedPaths]);
 
   const toggleDirectory = (path: string) => {
-    setExpandedPaths(prev => {
+    setCollapsedPaths(prev => {
       const next = new Set(prev);
       if (next.has(path)) {
         next.delete(path);
@@ -92,7 +79,7 @@ export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, to
       const fullPath = path ? `${path}/${key}` : key;
       const isFile = value[FILE_KEY];
       const file = value[FILE_KEY];
-      const isExpanded = expandedPaths.has(fullPath);
+      const isExpanded = !collapsedPaths.has(fullPath);
 
       return (
         <div key={fullPath}>

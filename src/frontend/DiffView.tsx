@@ -1,7 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { toast } from "sonner";
 import { generatePrompt } from "./utils/generatePrompt";
 import { useComments } from "./hooks/use-comments";
 import { useSessionDiff } from "./hooks/use-session-diff";
+import { useViewState } from "./hooks/use-view-state";
+import { getViewState, pruneSet } from "./view-state-store";
 import { FileTree } from "./components/diff/FileTree";
 import { DiffFile } from "./components/diff/DiffFile";
 import { Button } from "./components/ui/button";
@@ -31,39 +34,87 @@ const FILE_COUNT_THRESHOLD = 30;
 const TOTAL_LINES_THRESHOLD = 1500;
 
 export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
-  const { data: files = [], isLoading: loading, error: queryError, refetch } = useSessionDiff(sessionId);
+  const { data, isLoading: loading, error: queryError, refetch } = useSessionDiff(sessionId);
+  const files = data ?? [];
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
-  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useViewState(sessionId, "diffView", "selectedFile");
+  const [collapsedFiles, setCollapsedFiles] = useViewState(sessionId, "diffView", "collapsedFiles");
   const [hunkExpansions, setHunkExpansions] = useState<Map<string, HunkExpansionState>>(new Map());
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [promptText, setPromptText] = useState("");
   const [copied, setCopied] = useState(false);
-  const [viewMode, setViewMode] = useState<"all" | "single">("all");
+  // null override → derive from diff size, so the large-diff single-file
+  // default stays live across refetches; the toggle buttons set it explicitly.
+  const [viewModeOverride, setViewModeOverride] = useViewState(sessionId, "diffView", "viewModeOverride");
   const diffContainerRef = useRef<HTMLDivElement>(null);
   const fileRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  const commentState = useComments();
+  const commentState = useComments(sessionId);
+  const { pruneComments, clearComments } = commentState;
 
-  // Auto-enable single-file mode for large diffs
+  const totalLines = files.reduce((sum, f) => sum + f.additions + f.deletions, 0);
+  const isLargeDiff = files.length >= FILE_COUNT_THRESHOLD || totalLines >= TOTAL_LINES_THRESHOLD;
+  const viewMode: "all" | "single" = viewModeOverride ?? (isLargeDiff ? "single" : "all");
+
+  // Reconcile persisted state against the current diff. Prune user collapses /
+  // comments for files or lines that left the diff; seed a selection in single mode.
   useEffect(() => {
-    if (files.length === 0) return;
-    const totalLines = files.reduce((sum, f) => sum + f.additions + f.deletions, 0);
-    const isLarge = files.length >= FILE_COUNT_THRESHOLD || totalLines >= TOTAL_LINES_THRESHOLD;
-
-    if (isLarge && files[0]) {
-      setViewMode("single");
-      setSelectedFile(files[0].newPath);
-      setExpandedFiles(new Set([files[0].newPath]));
-    } else {
-      setViewMode("all");
-      setExpandedFiles(new Set(files.map((f) => f.newPath)));
+    if (!data || data.length === 0) return; // empty diff: nothing to reconcile against, keep drafts
+    const paths = new Set(data.map((f) => f.newPath));
+    setCollapsedFiles((prev) => pruneSet(prev, paths));
+    setSelectedFile((prev) => {
+      if (viewMode === "single") {
+        if (prev && paths.has(prev)) return prev;
+        // Reseeding to a different file: the scroll offset saved for the old
+        // selection is meaningless there. (Idempotent, safe to run twice.)
+        getViewState(sessionId).diffView.scrollTop = 0;
+        diffContainerRef.current?.scrollTo({ top: 0 });
+        return data[0]?.newPath ?? null;
+      }
+      return prev && paths.has(prev) ? prev : null;
+    });
+    // Keys mirror DiffFile's getCommentKey for addition/deletion lines
+    const validLineKeys = new Set<string>();
+    for (const file of data) {
+      for (const hunk of file.hunks) {
+        for (const line of hunk.lines) {
+          if (line.type !== "addition" && line.type !== "deletion") continue;
+          const lineNum = line.newLineNum ?? line.oldLineNum;
+          if (lineNum) validLineKeys.add(`${file.newPath}:${lineNum}:${line.type}`);
+        }
+      }
     }
-  }, [files]);
+    const removed = pruneComments(paths, validLineKeys);
+    if (removed > 0) {
+      toast(`${removed} review comment${removed === 1 ? "" : "s"} removed — no longer in diff`);
+    }
+  }, [data, viewMode, sessionId, setCollapsedFiles, setSelectedFile, pruneComments]);
+
+  // Restore scroll position once the diff has rendered. The IntersectionObserver
+  // below is a passive effect and attaches after this layout effect, so it then
+  // reports the file at the restored offset — consistent, no guard needed.
+  const restoredScrollRef = useRef(false);
+  useLayoutEffect(() => {
+    if (restoredScrollRef.current || files.length === 0 || !diffContainerRef.current) return;
+    restoredScrollRef.current = true;
+    const storedTop = getViewState(sessionId).diffView.scrollTop;
+    if (storedTop > 0) {
+      diffContainerRef.current.scrollTop = storedTop;
+    }
+  }, [files, sessionId]);
+
+  const expandFile = useCallback((path: string) => {
+    setCollapsedFiles((prev) => {
+      if (!prev.has(path)) return prev;
+      const next = new Set(prev);
+      next.delete(path);
+      return next;
+    });
+  }, [setCollapsedFiles]);
 
   const navigateToFile = useCallback((path: string) => {
     setSelectedFile(path);
-    setExpandedFiles((prev) => new Set(prev).add(path));
+    expandFile(path);
     if (viewMode === "all") {
       const el = fileRefs.current.get(path);
       if (el) {
@@ -72,7 +123,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     } else {
       diffContainerRef.current?.scrollTo({ top: 0 });
     }
-  }, [viewMode]);
+  }, [viewMode, setSelectedFile, expandFile]);
 
   const handleSelectFile = useCallback((path: string) => {
     navigateToFile(path);
@@ -147,7 +198,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
   }, [viewMode, files]);
 
   const handleToggleFile = useCallback((path: string) => {
-    setExpandedFiles((prev) => {
+    setCollapsedFiles((prev) => {
       const next = new Set(prev);
       if (next.has(path)) {
         next.delete(path);
@@ -156,7 +207,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
       }
       return next;
     });
-  }, []);
+  }, [setCollapsedFiles]);
 
   const handleExpandContext = useCallback(
     async (
@@ -280,7 +331,10 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
   const handleConfirmSubmit = useCallback(() => {
     setShowSubmitDialog(false);
     onSubmit(promptText);
-  }, [onSubmit, promptText]);
+    // Comments persist in the view-state store across unmounts, so drop them
+    // explicitly — otherwise the next submit would resend the same feedback
+    clearComments();
+  }, [onSubmit, promptText, clearComments]);
 
   const selectedFileIndex = selectedFile ? files.findIndex((f) => f.newPath === selectedFile) : -1;
 
@@ -317,7 +371,8 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
 
   const renderFiles = () => {
     if (viewMode === "single") {
-      const file = files.find((f) => f.newPath === selectedFile);
+      // fall back to the first file for the frame before reconcile seeds a selection
+      const file = files.find((f) => f.newPath === selectedFile) ?? files[0];
       if (!file) return null;
       return (
         <div
@@ -350,7 +405,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
       >
         <DiffFile
           file={file}
-          isExpanded={expandedFiles.has(file.newPath)}
+          isExpanded={!collapsedFiles.has(file.newPath)}
           onToggle={() => handleToggleFile(file.newPath)}
           hunkExpansions={hunkExpansions}
           onExpandContext={handleExpandContext}
@@ -366,6 +421,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
       {/* File tree sidebar */}
       <div className="w-[280px] shrink-0">
         <FileTree
+          sessionId={sessionId}
           files={files}
           selectedFile={selectedFile}
           onSelectFile={handleSelectFile}
@@ -382,14 +438,14 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
           <div className="inline-flex rounded-md border border-border overflow-hidden">
             <button
               className={`px-2.5 py-1 transition-colors ${viewMode === "all" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}
-              onClick={() => setViewMode("all")}
+              onClick={() => setViewModeOverride("all")}
             >
               All Files
             </button>
             <button
               className={`px-2.5 py-1 transition-colors border-l border-border ${viewMode === "single" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}
               onClick={() => {
-                setViewMode("single");
+                setViewModeOverride("single");
                 if (!selectedFile && files[0]) {
                   setSelectedFile(files[0].newPath);
                 }
@@ -407,7 +463,13 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
         </div>
 
         {/* Scrollable file diffs */}
-        <div ref={diffContainerRef} className="flex-1 overflow-y-auto px-4 flex flex-col gap-3 relative">
+        <div
+          ref={diffContainerRef}
+          className="flex-1 overflow-y-auto px-4 flex flex-col gap-3 relative"
+          onScroll={(e) => {
+            getViewState(sessionId).diffView.scrollTop = e.currentTarget.scrollTop;
+          }}
+        >
           {renderFiles()}
 
         {/* Floating prev/next navigation for single-file mode */}

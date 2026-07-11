@@ -1,9 +1,13 @@
 import { useState, useCallback, useMemo } from "react";
 import type { LineComment } from "../types/diff";
 import { generateUUID } from "../utils/uuid";
+import { useViewState } from "./use-view-state";
+import { pruneComments as pruneCommentsMap } from "../view-state-store";
 
-export function useComments() {
-  const [comments, setComments] = useState<Map<string, LineComment>>(new Map());
+export function useComments(sessionId: string) {
+  // Draft review comments survive tab/session switches (store-backed);
+  // the editing UI state below is transient and resets on unmount.
+  const [comments, setComments] = useViewState(sessionId, "diffView", "comments");
   const [activeCommentLines, setActiveCommentLines] = useState<Set<string>>(new Set());
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -146,6 +150,24 @@ export function useComments() {
     setDeleteConfirmId(null);
   }, []);
 
+  /** Remove comments whose file left the diff, or whose added/deleted line no
+   * longer exists in it. Returns how many were removed so the caller can
+   * surface the loss. */
+  const pruneComments = useCallback(
+    (validPaths: Set<string>, validLineKeys: Set<string>): number => {
+      const next = pruneCommentsMap(comments, validPaths, validLineKeys);
+      if (next === comments) return 0;
+      setComments(next);
+      return comments.size - next.size;
+    },
+    [comments, setComments],
+  );
+
+  /** Drop all drafts — called after a review is submitted so it isn't resent. */
+  const clearComments = useCallback(() => {
+    setComments((prev) => (prev.size === 0 ? prev : new Map()));
+  }, [setComments]);
+
   const fileCommentCounts = useMemo((): Map<string, number> => {
     const counts = new Map<string, number>();
     comments.forEach((comment) => {
@@ -171,6 +193,8 @@ export function useComments() {
     requestDelete,
     confirmDelete,
     cancelDelete,
+    pruneComments,
+    clearComments,
     fileCommentCounts,
   };
 }

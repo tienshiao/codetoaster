@@ -2,9 +2,12 @@ import { useState, useEffect, useMemo } from "react";
 import { ChevronRight, ChevronDown, Search, X } from "lucide-react";
 import { FileIcon } from "../diff/FileIcon";
 import { formatSize } from "../../utils/formatSize";
+import { useViewState } from "../../hooks/use-view-state";
+import { collectDirectoryPaths, collectPathPrefixes, pruneSet } from "../../view-state-store";
 import type { FileInfo } from "../../types/file";
 
 interface FileTreeProps {
+  sessionId: string;
   files: FileInfo[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
@@ -66,9 +69,9 @@ function sortTree(nodes: TreeNode[]): TreeNode[] {
     });
 }
 
-export function FileTree({ files, selectedFile, onSelectFile }: FileTreeProps) {
+export function FileTree({ sessionId, files, selectedFile, onSelectFile }: FileTreeProps) {
   const [filter, setFilter] = useState("");
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [expandedPaths, setExpandedPaths] = useViewState(sessionId, "fileView", "expandedPaths");
 
   const filteredFiles = useMemo(() => {
     if (!filter) return files;
@@ -77,17 +80,23 @@ export function FileTree({ files, selectedFile, onSelectFile }: FileTreeProps) {
 
   const tree = useMemo(() => sortTree(buildTree(filteredFiles)), [filteredFiles]);
 
+  // Drop expansion entries for directories that no longer exist (pruneSet
+  // returns the same reference when nothing changed, so this doesn't loop)
   useEffect(() => {
-    if (selectedFile) {
-      const parts = selectedFile.split("/");
-      const parentPaths = parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
-      setExpandedPaths((prev) => {
-        const next = new Set(prev);
-        parentPaths.forEach((p) => next.add(p));
-        return next;
-      });
-    }
-  }, [selectedFile]);
+    if (files.length === 0) return;
+    const validDirs = collectDirectoryPaths(files);
+    setExpandedPaths((prev) => pruneSet(prev, validDirs));
+  }, [files, setExpandedPaths]);
+
+  useEffect(() => {
+    if (!selectedFile) return;
+    const parentPaths = collectPathPrefixes([selectedFile]);
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      parentPaths.forEach((p) => next.add(p));
+      return next;
+    });
+  }, [selectedFile, setExpandedPaths]);
 
   const toggleDirectory = (path: string) => {
     setExpandedPaths((prev) => {

@@ -1,9 +1,23 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useLayoutEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { Element } from "hast";
+import { MermaidDiagram } from "./MermaidDiagram";
 import { tokenizeLine, mergeTokens } from "../../utils/syntaxHighlight";
 import { getLanguageFromPath } from "../../utils/languageDetection";
 import { FileIcon } from "../diff/FileIcon";
 import { formatSize } from "../../utils/formatSize";
 import type { FileContentResponse } from "../../types/file";
+
+/** Source text of a ```mermaid fence, given the hast node of its <pre>. */
+function extractMermaidSource(node: Element | undefined): string | null {
+  const child = node?.children[0];
+  if (!child || child.type !== "element" || child.tagName !== "code") return null;
+  const className = child.properties.className;
+  if (!Array.isArray(className) || !className.includes("language-mermaid")) return null;
+  const text = child.children[0];
+  return text?.type === "text" ? text.value : null;
+}
 
 interface FileContentProps {
   filePath: string;
@@ -11,10 +25,33 @@ interface FileContentProps {
   content: FileContentResponse | null;
   loading: boolean;
   lineWrap: boolean;
+  markdownPreview?: boolean;
+  initialScrollTop?: number;
+  onScrollTopChange?: (top: number) => void;
 }
 
-export function FileContent({ filePath, sessionId, content, loading, lineWrap }: FileContentProps) {
+export function FileContent({
+  filePath,
+  sessionId,
+  content,
+  loading,
+  lineWrap,
+  markdownPreview,
+  initialScrollTop,
+  onScrollTopChange,
+}: FileContentProps) {
   const langConfig = useMemo(() => getLanguageFromPath(filePath), [filePath]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const restoredScrollRef = useRef(false);
+
+  // Restore scroll once the lines have rendered (content arrives async, and
+  // the scroll container only exists in the text branch below)
+  useLayoutEffect(() => {
+    if (restoredScrollRef.current || initialScrollTop === undefined) return;
+    if (!content || content.isBinary || !scrollRef.current) return;
+    scrollRef.current.scrollTop = initialScrollTop;
+    restoredScrollRef.current = true;
+  }, [content, initialScrollTop]);
 
   if (loading) {
     return (
@@ -73,10 +110,39 @@ export function FileContent({ filePath, sessionId, content, loading, lineWrap }:
     );
   }
 
+  if (markdownPreview && langConfig?.name === "Markdown") {
+    return (
+      <div
+        ref={scrollRef}
+        className="overflow-auto h-full"
+        onScroll={(e) => onScrollTopChange?.(e.currentTarget.scrollTop)}
+      >
+        <div className="markdown-preview max-w-3xl px-6 py-4 text-sm">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              pre({ node, ...props }) {
+                const mermaidSource = extractMermaidSource(node);
+                if (mermaidSource !== null) return <MermaidDiagram source={mermaidSource} />;
+                return <pre {...props} />;
+              },
+            }}
+          >
+            {lines.map((line) => line.content).join("\n")}
+          </ReactMarkdown>
+        </div>
+      </div>
+    );
+  }
+
   const maxLineNum = lines.length.toString().length;
 
   return (
-    <div className="overflow-auto h-full">
+    <div
+      ref={scrollRef}
+      className="overflow-auto h-full"
+      onScroll={(e) => onScrollTopChange?.(e.currentTarget.scrollTop)}
+    >
       <div className="min-w-fit">
         {lines.map((line) => {
           const tokens = mergeTokens(tokenizeLine(line.content, langConfig));

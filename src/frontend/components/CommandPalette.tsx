@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { FileText, Loader2, PanelLeft, Pencil, Plus, TerminalSquare, X } from "lucide-react";
 import { useSession } from "../SessionContext";
 import { buildSessionSlug } from "../utils/slug";
+import { sessionNavTarget, closeNavTarget } from "../utils/session-nav";
 import { RenameDialog } from "./RenameDialog";
 import { useSidebar } from "./ui/sidebar";
 import { useFileSearch, type FileSearchResult } from "../hooks/use-file-search";
@@ -133,15 +134,7 @@ export function CommandPalette() {
               if (!currentSessionId) return;
               const remaining = sessions.filter((s) => s.id !== currentSessionId);
               closeSession(currentSessionId);
-              if (remaining.length > 0) {
-                const next = remaining[0]!;
-                navigate({
-                  to: "/sessions/$slug",
-                  params: { slug: buildSessionSlug(next) },
-                });
-              } else {
-                navigate({ to: "/" });
-              }
+              navigate(closeNavTarget(remaining));
               setOpen(false);
             }}
           >
@@ -207,10 +200,7 @@ export function CommandPalette() {
               key={session.id}
               value={`${session.name} ${session.title ?? ""} ${session.id}`}
               onSelect={() => {
-                navigate({
-                  to: "/sessions/$slug",
-                  params: { slug: buildSessionSlug(session) },
-                });
+                navigate(sessionNavTarget(session));
                 setOpen(false);
               }}
             >
@@ -266,11 +256,9 @@ export function CommandPalette() {
       onRename={(id, name) => {
         doRenameSession(id, name);
         if (id === currentSessionId) {
-          navigate({
-            to: "/sessions/$slug",
-            params: { slug: buildSessionSlug({ id, name }) },
-            replace: true,
-          });
+          // keep the current tab; a plain /sessions/$slug navigation would
+          // kick a rename on the diff/file tab back to terminal
+          navigate({ ...sessionNavTarget({ id, name }), replace: true });
         }
       }}
       onClose={() => setRenameItem(null)}

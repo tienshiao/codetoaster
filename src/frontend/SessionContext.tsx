@@ -14,6 +14,7 @@ import { generateSessionName } from "./utils/nameGenerator";
 import { useWebSocket } from "./hooks/use-websocket";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { removeRecentFiles } from "./hooks/use-recent-files";
+import { clearViewState, retainViewStates } from "./view-state-store";
 
 export interface SessionInfo {
   id: string;
@@ -234,14 +235,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
-  // Clean up stale MRU entries when sessions change
+  // Clean up stale MRU entries and view state when sessions change, so entries
+  // for sessions removed by the server or another client don't linger/leak.
   useEffect(() => {
     const ids = new Set(sessions.map((s) => s.id));
     setMruSessionIds((prev) => {
       const filtered = prev.filter((id) => ids.has(id));
       return filtered.length === prev.length ? prev : filtered;
     });
-  }, [sessions]);
+    if (sessionsLoaded) retainViewStates(ids);
+  }, [sessions, sessionsLoaded]);
 
   // When the window regains focus, ack any pending notification for the current session
   useEffect(() => {
@@ -447,6 +450,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const closeSession = useCallback(
     (id: string) => {
       removeRecentFiles(id);
+      clearViewState(id);
       send({ type: "kill", sessionId: id });
 
       if (id === currentSessionIdRef.current) {

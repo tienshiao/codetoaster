@@ -27,5 +27,7 @@ function DiffRoute() {
     [handleSendMessage, navigate, slug, terminalRef]
   );
 
-  return <DiffView sessionId={id} onSubmit={handleSubmit} />;
+  // key by session id: without it the component survives $slug-only route
+  // changes and one session's view state would bleed into the next
+  return <DiffView key={id} sessionId={id} onSubmit={handleSubmit} />;
 }
