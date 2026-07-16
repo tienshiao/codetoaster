@@ -13,6 +13,8 @@ export interface GitLogCommit {
 export interface GitLogPage {
   commits: GitLogCommit[];
   hasMore: boolean;
+  /** Present only on until= responses: whether the target sha was located. */
+  found?: boolean;
 }
 
 export interface GitRef {

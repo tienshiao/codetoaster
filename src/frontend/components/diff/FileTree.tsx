@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { ChevronRight, ChevronDown, MessageCircle, Search, X } from "lucide-react";
+import { ChevronRight, ChevronDown, MessageCircle } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 import { DiffStat } from "./DiffStat";
+import { FilterInput } from "../FilterInput";
 import { buildTree, FILE_KEY } from "../../utils/sortFiles";
 import { useViewState } from "../../hooks/use-view-state";
 import { collectPathPrefixes, pruneSet } from "../../view-state-store";
@@ -148,25 +149,7 @@ export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAd
             <DiffStat additions={totalAdditions} deletions={totalDeletions} />
           </span>
         </div>
-        <div className="relative">
-          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Filter files"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="w-full bg-muted/50 text-xs text-foreground rounded-md pl-7 pr-7 py-1.5 outline-none border border-transparent focus:border-border placeholder:text-muted-foreground"
-          />
-          {filter && (
-            <button
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              onClick={() => setFilter("")}
-              aria-label="Clear filter"
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
+        <FilterInput value={filter} onChange={setFilter} placeholder="Filter files" />
       </div>
       <div className="flex-1 overflow-y-auto py-1">{renderTree(tree)}</div>
     </div>

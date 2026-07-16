@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { parseLogOutput, parseRefDecorations } from "./git";
+import { parseLogOutput, parseRefDecorations, applyAfterCheck, sliceUntil } from "./git";
+import type { GitLogCommit } from "./git";
 
 // --- parseRefDecorations -----------------------------------------------------
 
@@ -90,4 +91,77 @@ test("subject containing spaces and punctuation is preserved verbatim", () => {
   const out = record(["h", "p", "A", "a@x", "1", "", "fix: handle a, b, and c -> d"]) + "\n";
   const commits = parseLogOutput(out);
   expect(commits[0]!.subject).toBe("fix: handle a, b, and c -> d");
+});
+
+// --- applyAfterCheck ---------------------------------------------------------
+
+function commit(hash: string): GitLogCommit {
+  return { hash, parents: [], refs: [], author: "A", email: "a@x", date: 0, subject: hash };
+}
+
+test("applyAfterCheck: row 0 matches after → predecessor dropped, remainder returned", () => {
+  const rows = [commit("x0"), commit("x1"), commit("x2")];
+  const result = applyAfterCheck(rows, "x0");
+  expect(result).toEqual({ rows: [commit("x1"), commit("x2")] });
+});
+
+test("applyAfterCheck: row 0 mismatch → stale", () => {
+  const rows = [commit("y0"), commit("y1")];
+  expect(applyAfterCheck(rows, "x0")).toEqual({ stale: true });
+});
+
+test("applyAfterCheck: empty rows + after → stale", () => {
+  expect(applyAfterCheck([], "x0")).toEqual({ stale: true });
+});
+
+// --- sliceUntil --------------------------------------------------------------
+
+test("sliceUntil: found at start → single commit, hasMore true", () => {
+  const rows = [commit("a"), commit("b"), commit("c")];
+  expect(sliceUntil(rows, "a", false)).toEqual({
+    commits: [commit("a")],
+    hasMore: true,
+    found: true,
+  });
+});
+
+test("sliceUntil: found in middle → inclusive slice, hasMore true", () => {
+  const rows = [commit("a"), commit("b"), commit("c")];
+  expect(sliceUntil(rows, "b", false)).toEqual({
+    commits: [commit("a"), commit("b")],
+    hasMore: true,
+    found: true,
+  });
+});
+
+test("sliceUntil: found at end, not truncated → all rows, hasMore false", () => {
+  const rows = [commit("a"), commit("b"), commit("c")];
+  expect(sliceUntil(rows, "c", false)).toEqual({
+    commits: [commit("a"), commit("b"), commit("c")],
+    hasMore: false,
+    found: true,
+  });
+});
+
+test("sliceUntil: found at last row but fetch truncated at cap → hasMore true", () => {
+  const rows = [commit("a"), commit("b"), commit("c")];
+  expect(sliceUntil(rows, "c", true)).toEqual({
+    commits: [commit("a"), commit("b"), commit("c")],
+    hasMore: true,
+    found: true,
+  });
+});
+
+test("sliceUntil: found before last row is unaffected by fetchTruncated flag", () => {
+  const rows = [commit("a"), commit("b"), commit("c")];
+  expect(sliceUntil(rows, "b", true)).toEqual({
+    commits: [commit("a"), commit("b")],
+    hasMore: true,
+    found: true,
+  });
+});
+
+test("sliceUntil: missing → empty commits, found false, hasMore true", () => {
+  const rows = [commit("a"), commit("b")];
+  expect(sliceUntil(rows, "z", false)).toEqual({ commits: [], hasMore: true, found: false });
 });

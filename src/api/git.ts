@@ -78,8 +78,51 @@ export function parseLogOutput(stdout: string): GitLogCommit[] {
 }
 
 // ---------------------------------------------------------------------------
+// Drift detection & until-slicing (pure — exported for unit tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Drift check for a windowed page fetched from `skip-1` (so its first parsed
+ * row is the client's last-loaded commit, `after`). If the window no longer
+ * matches server history — no rows at all, or row 0 isn't `after` — the client's
+ * window is stale. Otherwise the leading predecessor row is dropped and the
+ * remaining rows returned for normal slicing.
+ */
+export function applyAfterCheck(
+  rows: GitLogCommit[],
+  after: string,
+): { stale: true } | { rows: GitLogCommit[] } {
+  if (rows.length === 0 || rows[0]!.hash !== after) return { stale: true };
+  return { rows: rows.slice(1) };
+}
+
+/**
+ * Fetch-until-SHA slicing. Given post-drift rows, locate `until`:
+ * - found at index i → commits[0..i] inclusive. `hasMore` is true when a row
+ *   exists past i, OR `until` is the final row but the underlying git fetch was
+ *   truncated at the cap (`fetchTruncated`) — the fetch stopped there, so more
+ *   history may exist beyond the window even though nothing is known yet.
+ * - not found → empty commits with `found: false` (the caller fetched a hard cap
+ *   of rows and the target wasn't among them, i.e. it's too deep in history).
+ */
+export function sliceUntil(
+  rows: GitLogCommit[],
+  until: string,
+  fetchTruncated: boolean,
+): { commits: GitLogCommit[]; hasMore: boolean; found: boolean } {
+  const i = rows.findIndex((r) => r.hash === until);
+  if (i === -1) return { commits: [], hasMore: true, found: false };
+  const hasMore = i + 1 < rows.length || (i + 1 === rows.length && fetchTruncated);
+  return { commits: rows.slice(0, i + 1), hasMore, found: true };
+}
+
+// ---------------------------------------------------------------------------
 // git helpers
 // ---------------------------------------------------------------------------
+
+// Hard cap on rows fetched for an until= request — never ship a 50k-row payload
+// the client didn't ask to render.
+const UNTIL_CAP = 50000;
 
 const LOG_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
 const COMMIT_META_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%D%x1f%B";
@@ -108,14 +151,37 @@ export const gitRoutes = {
         }
         const limit = Math.min(limitRaw, 1000);
 
-        // Fetch limit+1 rows to detect whether more history remains.
+        const after = url.searchParams.get("after");
+        const until = url.searchParams.get("until");
+        if (after !== null) {
+          if (!SHA_RE.test(after)) {
+            return Response.json({ error: "Invalid after sha" }, { status: 400 });
+          }
+          // Drift detection reads the predecessor at skip-1, so it's only
+          // meaningful past the first page.
+          if (skip === 0) {
+            return Response.json({ error: "after requires skip > 0" }, { status: 400 });
+          }
+        }
+        if (until !== null && !SHA_RE.test(until)) {
+          return Response.json({ error: "Invalid until sha" }, { status: 400 });
+        }
+
+        // With `after`, fetch one row earlier so row 0 is the predecessor we
+        // verify. `until` ignores limit and fetches up to the hard cap; both
+        // over-fetch by one for hasMore detection.
+        const withAfter = after !== null;
+        const effectiveSkip = withAfter ? skip - 1 : skip;
+        const baseN = until !== null ? UNTIL_CAP + 1 : limit + 1;
+        const n = baseN + (withAfter ? 1 : 0);
+
         const { stdout, exitCode } = await gitSpawn(dir, [
           "log",
           "--all",
           "--topo-order",
-          `--skip=${skip}`,
+          `--skip=${effectiveSkip}`,
           "-n",
-          String(limit + 1),
+          String(n),
           LOG_FORMAT,
         ]);
 
@@ -126,7 +192,24 @@ export const gitRoutes = {
           return Response.json({ error: "Failed to get git log" }, { status: 500 });
         }
 
-        const parsed = parseLogOutput(stdout);
+        let parsed = parseLogOutput(stdout);
+        // Whether git returned every row we asked for (n). If so the fetch was
+        // truncated at the cap and more history may exist beyond it. Captured
+        // before applyAfterCheck trims the predecessor row below.
+        const fetchTruncated = parsed.length === n;
+
+        if (withAfter) {
+          const checked = applyAfterCheck(parsed, after!);
+          if ("stale" in checked) {
+            return Response.json({ stale: true }, { status: 409 });
+          }
+          parsed = checked.rows;
+        }
+
+        if (until !== null) {
+          return Response.json(sliceUntil(parsed, until, fetchTruncated));
+        }
+
         const hasMore = parsed.length > limit;
         const commits = hasMore ? parsed.slice(0, limit) : parsed;
         return Response.json({ commits, hasMore });

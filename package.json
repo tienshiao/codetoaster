@@ -13,6 +13,7 @@
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-router": "^1.161.4",
+    "@tanstack/react-virtual": "^3.14.6",
     "@tree-sitter-grammars/tree-sitter-kotlin": "1.1.0",
     "@tree-sitter-grammars/tree-sitter-toml": "0.7.0",
     "@tree-sitter-grammars/tree-sitter-yaml": "0.7.1",
