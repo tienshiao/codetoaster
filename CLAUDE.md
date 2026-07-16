@@ -91,3 +91,7 @@ import { test, expect } from "bun:test";
 Uses Bun HTML imports with `Bun.serve()` - not Vite. HTML files import `.tsx` directly. Tailwind via `bun-plugin-tailwind`.
 
 For Bun API docs: `node_modules/bun-types/docs/**.mdx`
+
+## Model delegation when running as Fable
+
+If the task's complexity does not require Fable to solve, do the planning/analysis with Fable, then delegate the execution/implementation to a subagent running Opus (pass `model: "opus"` on the Agent call). Reserve Fable itself for the genuinely hard parts (e.g. smallest-wins terminal size negotiation across multiple clients, unified diff parsing edge cases in `parseDiff.ts` (renames, path quoting, binary files), commit-graph lane assignment, and PTY/session lifecycle logic in `lib/xtmux/`).
