@@ -5,7 +5,8 @@ import type { TabType } from "../types/tab";
 export type SessionNavTarget =
   | { to: "/sessions/$slug"; params: { slug: string } }
   | { to: "/sessions/$slug/diff"; params: { slug: string } }
-  | { to: "/sessions/$slug/file"; params: { slug: string }; search: { file?: string } };
+  | { to: "/sessions/$slug/file"; params: { slug: string }; search: { file?: string } }
+  | { to: "/sessions/$slug/git"; params: { slug: string }; search: { commit?: string } };
 
 /**
  * Navigation target for a specific tab of a session. The file tab restores
@@ -21,6 +22,13 @@ export function tabNavTarget(session: { id: string; name: string }, tab: TabType
       to: "/sessions/$slug/file",
       params: { slug },
       search: { file: getViewState(session.id).fileView.selectedFile ?? undefined },
+    };
+  }
+  if (tab === "git") {
+    return {
+      to: "/sessions/$slug/git",
+      params: { slug },
+      search: { commit: getViewState(session.id).gitView.commit ?? undefined },
     };
   }
   return { to: "/sessions/$slug", params: { slug } };

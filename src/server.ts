@@ -8,6 +8,7 @@ import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
 import { diffRoutes } from "./api/diff";
 import { fileRoutes } from "./api/files";
+import { gitRoutes } from "./api/git";
 import { highlightRoutes } from "./api/highlight";
 import { symbolRoutes } from "./api/symbols";
 import { initDatabase } from "./lib/db";
@@ -188,6 +189,7 @@ export function startServer(options?: ServerOptions) {
 
       ...diffRoutes,
       ...fileRoutes,
+      ...gitRoutes,
       ...highlightRoutes,
       ...symbolRoutes,
 

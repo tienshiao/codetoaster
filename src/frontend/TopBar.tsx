@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { Upload } from "lucide-react";
+import { Upload, GitBranch } from "lucide-react";
 import { StatusDot } from "./components/StatusDot";
 import { Button } from "./components/ui/button";
 import { SidebarTrigger, useSidebar } from "./components/ui/sidebar";
@@ -81,6 +81,9 @@ export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSe
                 <TabsTrigger value="terminal" className="text-xs px-2.5 py-0.5 h-5">Terminal</TabsTrigger>
                 <TabsTrigger value="diff" className="text-xs px-2.5 py-0.5 h-5">Diff</TabsTrigger>
                 <TabsTrigger value="file" className="text-xs px-2.5 py-0.5 h-5">Files</TabsTrigger>
+                <TabsTrigger value="git" className="text-xs px-2.5 py-0.5 h-5">
+                  <GitBranch className="h-3 w-3" /> Git
+                </TabsTrigger>
               </TabsList>
             </Tabs>
           </div>

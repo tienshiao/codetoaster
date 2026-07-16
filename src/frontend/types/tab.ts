@@ -1,1 +1,1 @@
-export type TabType = "terminal" | "diff" | "file";
+export type TabType = "terminal" | "diff" | "file" | "git";

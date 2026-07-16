@@ -26,10 +26,15 @@ export interface DiffViewState {
   comments: Map<string, LineComment>;
 }
 
+export interface GitViewState {
+  commit?: string;
+}
+
 export interface SessionViewState {
   lastTab: TabType;
   fileView: FileViewState;
   diffView: DiffViewState;
+  gitView: GitViewState;
 }
 
 // In-memory only: view state survives tab/session switches but not a page
@@ -54,6 +59,9 @@ function createDefault(): SessionViewState {
       treeCollapsedPaths: new Set(),
       comments: new Map(),
     },
+    gitView: {
+      commit: undefined,
+    },
   };
 }
 
@@ -68,6 +76,10 @@ export function getViewState(sessionId: string): SessionViewState {
 
 export function setLastTab(sessionId: string, tab: TabType): void {
   getViewState(sessionId).lastTab = tab;
+}
+
+export function setGitViewCommit(sessionId: string, commit: string | undefined): void {
+  getViewState(sessionId).gitView.commit = commit;
 }
 
 export function clearViewState(sessionId: string): void {

@@ -57,6 +57,8 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     ? "diff"
     : matches.some((m) => m.routeId === "/sessions/$slug/file")
     ? "file"
+    : matches.some((m) => m.routeId === "/sessions/$slug/git")
+    ? "git"
     : "terminal";
 
   // Record the last-viewed tab per session so session switches can restore it.
