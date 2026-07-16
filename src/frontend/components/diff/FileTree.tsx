@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type Dispatch, type SetStateAction } from "react";
 import { ChevronRight, ChevronDown, MessageCircle } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 import { DiffStat } from "./DiffStat";
@@ -10,20 +10,29 @@ import type { FileTreeNode } from "../../utils/sortFiles";
 import type { FileDiff } from "../../types/diff";
 
 interface FileTreeProps {
-  sessionId: string;
+  sessionId?: string;
   files: FileDiff[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
   totalAdditions: number;
   totalDeletions: number;
   commentCounts?: Map<string, number>;
+  // Controlled collapse state (git commit view supplies its own so reusing the
+  // tree for a commit's file list never corrupts the diff tab's persisted set).
+  // When omitted, falls back to the diffView view-state store.
+  collapsedPaths?: Set<string>;
+  onCollapsedPathsChange?: Dispatch<SetStateAction<Set<string>>>;
 }
 
-export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts }: FileTreeProps) {
+export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts, collapsedPaths: collapsedPathsProp, onCollapsedPathsChange }: FileTreeProps) {
   const [filter, setFilter] = useState("");
   // Collapse-tracking (not expansion): directories newly entering the diff
-  // default to expanded, while the user's collapses survive refetches.
-  const [collapsedPaths, setCollapsedPaths] = useViewState(sessionId, "diffView", "treeCollapsedPaths");
+  // default to expanded, while the user's collapses survive refetches. Hooks
+  // must run unconditionally, so always read the store then pick which pair to
+  // use — the controlled props win when supplied.
+  const [storeCollapsedPaths, setStoreCollapsedPaths] = useViewState(sessionId ?? "", "diffView", "treeCollapsedPaths");
+  const collapsedPaths = collapsedPathsProp ?? storeCollapsedPaths;
+  const setCollapsedPaths = onCollapsedPathsChange ?? setStoreCollapsedPaths;
 
   const filteredFiles = filter
     ? files.filter((file) =>

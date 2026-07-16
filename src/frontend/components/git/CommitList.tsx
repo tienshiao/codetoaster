@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Loader2 } from "lucide-react";
+import { FileDiff, Loader2 } from "lucide-react";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
 import { assignLanes, type GraphRow, type GraphState } from "../../utils/commitGraph";
 import { CommitGraph } from "./CommitGraph";
@@ -18,6 +18,7 @@ interface CommitListProps {
   isFetchingNextPage: boolean;
   onLoadMore: () => void;
   refsData: GitRefsResponse | undefined;
+  onLocalChanges: () => void;
 }
 
 // A commit row matches the selected SHA when either equals the other's prefix
@@ -123,6 +124,7 @@ export function CommitList({
   isFetchingNextPage,
   onLoadMore,
   refsData,
+  onLocalChanges,
 }: CommitListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -220,8 +222,22 @@ export function CommitList({
   }, [selectedSha, commits]);
 
   return (
-    <div ref={parentRef} className="h-full overflow-y-auto">
-      <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+    <div className="h-full flex flex-col">
+      {/* Pinned, non-virtualized entry into the working-tree diff. Always shown;
+          the diff tab itself handles the no-changes case. */}
+      <button
+        type="button"
+        onClick={onLocalChanges}
+        className="shrink-0 w-full h-7 flex items-center gap-2 px-2 text-left text-xs border-b border-border hover:bg-accent/40"
+      >
+        <span className="flex items-center justify-center w-6 shrink-0 text-primary">
+          <FileDiff size={14} />
+        </span>
+        <span className="flex-1 min-w-0 truncate italic text-primary font-medium">Local Changes</span>
+      </button>
+
+      <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto">
+        <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
         {virtualItems.map((vi) => {
           const isSentinel = vi.index >= commits.length;
           return (
@@ -260,6 +276,7 @@ export function CommitList({
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );

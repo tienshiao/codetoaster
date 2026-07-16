@@ -4,7 +4,10 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useGitLog, type FetchUntilStatus } from "../../hooks/use-git-log";
 import { useGitRefs } from "../../hooks/use-git-refs";
-import { setGitViewCommit } from "../../view-state-store";
+import { setGitViewSelection } from "../../view-state-store";
+import { useViewState } from "../../hooks/use-view-state";
+import { useSession } from "../../SessionContext";
+import { queryClient } from "../../query-client";
 import { Button } from "../ui/button";
 import { CommitList } from "./CommitList";
 import { CommitDetail } from "./CommitDetail";
@@ -27,6 +30,8 @@ export function GitView({ sessionId }: GitViewProps) {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const search = useSearch({ strict: false }) as { commit?: string; mode?: GitViewMode; file?: string };
 
+  const { sessionActivity } = useSession();
+
   const logQuery = useGitLog(sessionId);
   const refsQuery = useGitRefs(sessionId);
   const { fetchUntil } = logQuery;
@@ -34,6 +39,18 @@ export function GitView({ sessionId }: GitViewProps) {
   // Sha whose fetch-until is in flight after a sidebar click (drives the
   // sidebar spinner and gates further clicks).
   const [pendingRefSha, setPendingRefSha] = useState<string | null>(null);
+
+  // Draggable top/bottom split. Backed by the per-session view-state store
+  // (GitView remounts per session via route key, so the hook's mount-time seed
+  // restores the persisted ratio), written back once per drag on pointerup.
+  const [splitRatio, setSplitRatio] = useViewState(sessionId, "gitView", "splitRatio");
+  const [dragging, setDragging] = useState(false);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  // The top pane whose height the divider drives. During a drag the height is
+  // written imperatively on this element (see onDividerPointerMove).
+  const topPaneRef = useRef<HTMLDivElement>(null);
+  // Last ratio produced by the in-flight drag; committed to state on pointerup.
+  const dragRatioRef = useRef<number | null>(null);
 
   const commits = useMemo(
     () => logQuery.data?.pages.flatMap((p) => p.commits) ?? [],
@@ -45,25 +62,90 @@ export function GitView({ sessionId }: GitViewProps) {
   // request failed) so a selection is still made.
   const selectedSha = search.commit ?? refsQuery.data?.head.sha ?? commits[0]?.hash;
 
-  // Mirror the explicit URL selection into the store so tab/session switches
-  // restore it (session-nav reads gitView.commit).
-  useEffect(() => {
-    setGitViewCommit(sessionId, search.commit);
-  }, [sessionId, search.commit]);
+  // The bottom-pane mode persists independently of selection; default to commit.
+  const mode: GitViewMode = search.mode ?? "commit";
 
-  const selectCommit = useCallback(
-    (sha: string) => {
-      // The effect above mirrors search.commit into the store, so the explicit
-      // store write here would be redundant — navigation is the single source.
-      navigate({
-        to: "/sessions/$slug/git",
-        params: { slug },
-        // Keep the current mode; only the commit changes.
-        search: { commit: sha, mode: search.mode, file: search.file },
-        replace: true,
-      });
+  // Mirror the explicit URL selection into the store so tab/session switches
+  // restore it (session-nav reads gitView.commit/mode/file).
+  useEffect(() => {
+    setGitViewSelection(sessionId, { commit: search.commit, mode: search.mode, file: search.file });
+  }, [sessionId, search.commit, search.mode, search.file]);
+
+  // Single navigation entry point: merge a search delta over the current search
+  // and apply the file-only-in-tree invariant centrally so no caller can leave a
+  // stale path in the URL. The selection→store mirror effect above keeps the
+  // store in sync, so navigation is the single source of truth.
+  const navigateGit = useCallback(
+    (delta: Partial<{ commit: string | undefined; mode: GitViewMode; file: string | undefined }>) => {
+      const next = { commit: search.commit, mode: search.mode, file: search.file, ...delta };
+      // `file` only applies to tree mode; strip it everywhere else so a stale
+      // path never lingers in the URL.
+      if ((next.mode ?? "commit") !== "tree") next.file = undefined;
+      navigate({ to: "/sessions/$slug/git", params: { slug }, search: next, replace: true });
     },
-    [navigate, slug, sessionId, search.mode, search.file],
+    [navigate, slug, search.commit, search.mode, search.file],
+  );
+
+  // Keep the current mode; only the commit changes.
+  const selectCommit = useCallback((sha: string) => navigateGit({ commit: sha }), [navigateGit]);
+
+  const selectFile = useCallback(
+    (path: string | null) => navigateGit({ file: path ?? undefined }),
+    [navigateGit],
+  );
+
+  const selectMode = useCallback((next: GitViewMode) => navigateGit({ mode: next }), [navigateGit]);
+
+  // Pinned "Local Changes" row → real tab switch to the working-tree diff.
+  const onLocalChanges = useCallback(() => {
+    navigate({ to: "/sessions/$slug/diff", params: { slug } });
+  }, [navigate, slug]);
+
+  // Divider drag: ratio is the pointer's vertical position within the split
+  // container, clamped so neither pane collapses. setPointerCapture keeps
+  // move/up events flowing to the divider even when the pointer leaves it.
+  const onDividerPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault(); // suppress text selection at drag start
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setDragging(true);
+    },
+    [],
+  );
+  const onDividerPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+      const container = splitContainerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      // The pane's percentage height resolves against the container's height,
+      // but its top edge is the pane's own top (below the optional refs-error
+      // banner), so measure from there — this makes the divider track the
+      // pointer exactly, banner or not.
+      const paneTop = topPaneRef.current?.getBoundingClientRect().top ?? rect.top;
+      const ratio = Math.min(0.85, Math.max(0.15, (e.clientY - paneTop) / rect.height));
+      // Drive the height imperatively and commit to React state only once, on
+      // pointerup: a per-move setState would re-render both panes dozens of
+      // times per second.
+      dragRatioRef.current = ratio;
+      if (topPaneRef.current) topPaneRef.current.style.height = `${ratio * 100}%`;
+    },
+    [],
+  );
+  const onDividerPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      setDragging(false);
+      // Commit the final ratio to state (writes through to the store); normal
+      // renders resume driving the pane height from state.
+      if (dragRatioRef.current !== null) {
+        setSplitRatio(dragRatioRef.current);
+        dragRatioRef.current = null;
+      }
+    },
+    [setSplitRatio],
   );
 
   // Toast for the non-found outcomes of a fetch-until seek. "found" is handled
@@ -127,7 +209,18 @@ export function GitView({ sessionId }: GitViewProps) {
     (async () => {
       try {
         const status = await fetchUntil(target);
-        if (status !== "found") reportSeekFailure(status);
+        if (status !== "found") {
+          reportSeekFailure(status);
+          // A genuine depth miss: the server scanned to its cap without finding
+          // the commit (a commit that no longer exists surfaces the same way),
+          // so fall back to HEAD by clearing ?commit= (and file, since its tree
+          // path belonged to the vanished commit). A transient "error" keeps
+          // ?commit= — the detail pane loads independently by sha — and only
+          // toasts. "stale" already reset the log and will re-seek, so leave it.
+          if (status === "too-deep") {
+            navigateGit({ commit: undefined, file: undefined });
+          }
+        }
       } finally {
         setPendingRefSha(null);
       }
@@ -140,7 +233,36 @@ export function GitView({ sessionId }: GitViewProps) {
     pendingRefSha,
     fetchUntil,
     reportSeekFailure,
+    navigateGit,
   ]);
+
+  // Refetch refs when the session's PTY activity settles (true→false). The 300ms
+  // debounced activity signal flipping off is a good proxy for "a command just
+  // finished" — refs may have moved. Track the previous value so mount and
+  // false→true transitions don't refetch.
+  const active = sessionActivity[sessionId] ?? false;
+  const prevActiveRef = useRef(active);
+  useEffect(() => {
+    const wasActive = prevActiveRef.current;
+    prevActiveRef.current = active;
+    if (wasActive && !active) refsQuery.refetch();
+  }, [active, refsQuery.refetch]);
+
+  // When the refs payload hash actually changes (not first load, not an
+  // identical refetch), the log window may be invalid: reset it to page one and
+  // clear attemptedShas so the seek effect re-attempts the current ?commit=
+  // against the fresh history. Only a change between two DEFINED hashes acts, so
+  // undefined→A (initial) and A→A (unchanged refetch) never reset or loop.
+  const refsHash = refsQuery.data?.hash;
+  const prevRefsHashRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevRefsHashRef.current;
+    prevRefsHashRef.current = refsHash;
+    if (prev !== undefined && refsHash !== undefined && prev !== refsHash) {
+      queryClient.resetQueries({ queryKey: ["git-log", sessionId] });
+      attemptedShas.current.clear();
+    }
+  }, [refsHash, sessionId]);
 
   if (logQuery.isLoading || refsQuery.isLoading) {
     return (
@@ -179,7 +301,10 @@ export function GitView({ sessionId }: GitViewProps) {
         pendingSha={pendingRefSha}
       />
 
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div
+        ref={splitContainerRef}
+        className={`flex-1 min-w-0 flex flex-col ${dragging ? "select-none" : ""}`}
+      >
         {/* Refs failed but the log succeeded: surface it without blanking the
             view — branch/tag decorations and the HEAD default are just missing. */}
         {refsQuery.error && (
@@ -195,8 +320,13 @@ export function GitView({ sessionId }: GitViewProps) {
           </div>
         )}
 
-        {/* Top: commit list (fixed 40% split for phase 1) */}
-        <div className="h-[40%] min-h-[140px] border-b border-border overflow-hidden">
+        {/* Top: commit list. Height driven by the persisted split ratio for
+            normal renders; overwritten imperatively during a divider drag. */}
+        <div
+          ref={topPaneRef}
+          className="min-h-[140px] overflow-hidden"
+          style={{ height: `${splitRatio * 100}%` }}
+        >
           <CommitList
             commits={commits}
             selectedSha={selectedSha}
@@ -209,12 +339,34 @@ export function GitView({ sessionId }: GitViewProps) {
               if (!pendingRefSha) logQuery.fetchNextPage();
             }}
             refsData={refsQuery.data}
+            onLocalChanges={onLocalChanges}
           />
         </div>
 
+        {/* Draggable divider between the two panes. */}
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          onPointerDown={onDividerPointerDown}
+          onPointerMove={onDividerPointerMove}
+          onPointerUp={onDividerPointerUp}
+          onPointerCancel={onDividerPointerUp}
+          className={`shrink-0 h-1 cursor-row-resize border-b border-border ${
+            dragging ? "bg-primary" : "hover:bg-primary/40"
+          }`}
+        />
+
         {/* Bottom: commit detail */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          <CommitDetail sessionId={sessionId} sha={selectedSha} onSelectCommit={selectCommit} />
+          <CommitDetail
+            sessionId={sessionId}
+            sha={selectedSha}
+            mode={mode}
+            onSelectMode={selectMode}
+            onSelectCommit={selectCommit}
+            file={search.file}
+            onSelectFile={selectFile}
+          />
         </div>
       </div>
     </div>

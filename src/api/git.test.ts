@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { parseLogOutput, parseRefDecorations, applyAfterCheck, sliceUntil } from "./git";
 import type { GitLogCommit } from "./git";
+import { buildFileListing } from "./utils";
 
 // --- parseRefDecorations -----------------------------------------------------
 
@@ -164,4 +165,44 @@ test("sliceUntil: found before last row is unaffected by fetchTruncated flag", (
 test("sliceUntil: missing → empty commits, found false, hasMore true", () => {
   const rows = [commit("a"), commit("b")];
   expect(sliceUntil(rows, "z", false)).toEqual({ commits: [], hasMore: true, found: false });
+});
+
+// --- buildFileListing --------------------------------------------------------
+
+test("buildFileListing: empty input → []", () => {
+  expect(buildFileListing([])).toEqual([]);
+});
+
+test("buildFileListing: root-level files have depth 0 and synthesize no dirs", () => {
+  expect(buildFileListing(["README.md", "LICENSE"])).toEqual([
+    { path: "README.md", name: "README.md", isDirectory: false, depth: 0 },
+    { path: "LICENSE", name: "LICENSE", isDirectory: false, depth: 0 },
+  ]);
+});
+
+test("buildFileListing: nested file synthesizes parent dirs before the file, with ascending depth", () => {
+  expect(buildFileListing(["src/api/git.ts"])).toEqual([
+    { path: "src", name: "src", isDirectory: true, depth: 0 },
+    { path: "src/api", name: "api", isDirectory: true, depth: 1 },
+    { path: "src/api/git.ts", name: "git.ts", isDirectory: false, depth: 2 },
+  ]);
+});
+
+test("buildFileListing: shared parent dir is emitted once for sibling files", () => {
+  expect(buildFileListing(["src/a.ts", "src/b.ts"])).toEqual([
+    { path: "src", name: "src", isDirectory: true, depth: 0 },
+    { path: "src/a.ts", name: "a.ts", isDirectory: false, depth: 1 },
+    { path: "src/b.ts", name: "b.ts", isDirectory: false, depth: 1 },
+  ]);
+});
+
+test("buildFileListing: dedups shared prefixes across deeper trees, preserving first-seen order", () => {
+  expect(buildFileListing(["src/api/git.ts", "src/api/utils.ts", "src/lib/x.ts"])).toEqual([
+    { path: "src", name: "src", isDirectory: true, depth: 0 },
+    { path: "src/api", name: "api", isDirectory: true, depth: 1 },
+    { path: "src/api/git.ts", name: "git.ts", isDirectory: false, depth: 2 },
+    { path: "src/api/utils.ts", name: "utils.ts", isDirectory: false, depth: 2 },
+    { path: "src/lib", name: "lib", isDirectory: true, depth: 1 },
+    { path: "src/lib/x.ts", name: "x.ts", isDirectory: false, depth: 2 },
+  ]);
 });

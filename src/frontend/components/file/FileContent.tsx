@@ -35,6 +35,9 @@ interface FileContentProps {
   onScrollTopChange?: (top: number) => void;
   highlightLine?: number;
   onSymbolClick?: (name: string, x: number, y: number) => void;
+  // Overrides the default working-tree image endpoint (git view reads a blob at
+  // a specific sha via /image/git). When omitted, the working-tree URL is used.
+  imageUrl?: string;
 }
 
 export function FileContent({
@@ -48,6 +51,7 @@ export function FileContent({
   onScrollTopChange,
   highlightLine,
   onSymbolClick,
+  imageUrl: imageUrlProp,
 }: FileContentProps) {
   const langConfig = useMemo(() => getLanguageFromPath(filePath), [filePath]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -123,7 +127,7 @@ export function FileContent({
 
   if (content.isBinary) {
     if (content.isImage) {
-      const imageUrl = `/api/sessions/${sessionId}/image?file=${encodeURIComponent(filePath)}`;
+      const imageUrl = imageUrlProp ?? `/api/sessions/${sessionId}/image?file=${encodeURIComponent(filePath)}`;
       return (
         <div className="flex flex-col items-center justify-center p-8 h-full">
           <img

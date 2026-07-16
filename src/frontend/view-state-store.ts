@@ -1,6 +1,7 @@
 import type { TabType } from "./types/tab";
 import type { LineComment } from "./types/diff";
 import type { FileInfo } from "./types/file";
+import type { GitViewMode } from "./types/git";
 
 export interface FileViewState {
   selectedFile: string | null;
@@ -28,6 +29,10 @@ export interface DiffViewState {
 
 export interface GitViewState {
   commit?: string;
+  mode?: GitViewMode;
+  file?: string;
+  // Height fraction of the commit-list (top) pane in the draggable split.
+  splitRatio: number;
 }
 
 export interface SessionViewState {
@@ -61,6 +66,9 @@ function createDefault(): SessionViewState {
     },
     gitView: {
       commit: undefined,
+      mode: undefined,
+      file: undefined,
+      splitRatio: 0.4,
     },
   };
 }
@@ -78,8 +86,19 @@ export function setLastTab(sessionId: string, tab: TabType): void {
   getViewState(sessionId).lastTab = tab;
 }
 
-export function setGitViewCommit(sessionId: string, commit: string | undefined): void {
-  getViewState(sessionId).gitView.commit = commit;
+// One coherent mirror of the git view's URL selection into the store, so a
+// tab/session switch restores commit + mode + file together (session-nav reads
+// all three).
+export function setGitViewSelection(
+  sessionId: string,
+  selection: { commit?: string; mode?: GitViewMode; file?: string },
+): void {
+  const gitView = getViewState(sessionId).gitView;
+  // Only the selection fields are written; splitRatio is left intact so a
+  // selection change never resets the pane split.
+  gitView.commit = selection.commit;
+  gitView.mode = selection.mode;
+  gitView.file = selection.file;
 }
 
 export function clearViewState(sessionId: string): void {

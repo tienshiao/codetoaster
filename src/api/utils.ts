@@ -53,6 +53,15 @@ export async function gitSpawn(dir: string, args: string[]): Promise<{ stdout: s
   return { stdout, exitCode };
 }
 
+// Raw-bytes variant of gitSpawn for blob content that must not be decoded as
+// text (binary detection needs the raw bytes). Same rationale: Bun.spawn (not
+// Bun.$) so large output streams through a pipe rather than buffering in a shell.
+export async function gitSpawnRaw(dir: string, args: string[]): Promise<{ bytes: Uint8Array; exitCode: number }> {
+  const proc = Bun.spawn(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "ignore" });
+  const [buffer, exitCode] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited]);
+  return { bytes: new Uint8Array(buffer), exitCode };
+}
+
 // Parse a query param that must be a non-negative integer. Returns the default
 // when absent, or null when present-but-invalid (caller responds 400).
 export function parseNonNegInt(raw: string | null, def: number): number | null {
@@ -74,4 +83,43 @@ export function safePath(dir: string, filePath: string): string | null {
   const resolved = path.resolve(dir, filePath);
   if (!resolved.startsWith(dir + "/")) return null;
   return resolved;
+}
+
+// ---------------------------------------------------------------------------
+// Tree listing (pure — exported for unit tests)
+// ---------------------------------------------------------------------------
+
+export interface FileInfo {
+  path: string;
+  name: string;
+  isDirectory: boolean;
+  depth: number;
+}
+
+/**
+ * Derive a flat file listing (same shape as GET /api/sessions/:id/files) from a
+ * set of blob paths. Each parent directory is synthesized once, before the first
+ * file living under it; depth is the path's segment count minus one. `size` is
+ * omitted — git blobs aren't stat'd.
+ */
+export function buildFileListing(paths: string[]): FileInfo[] {
+  const dirSet = new Set<string>();
+  const files: FileInfo[] = [];
+  for (const relativePath of paths) {
+    const parts = relativePath.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const dirPath = parts.slice(0, i).join("/");
+      if (!dirSet.has(dirPath)) {
+        dirSet.add(dirPath);
+        files.push({ path: dirPath, name: parts[i - 1]!, isDirectory: true, depth: i - 1 });
+      }
+    }
+    files.push({
+      path: relativePath,
+      name: parts[parts.length - 1]!,
+      isDirectory: false,
+      depth: parts.length - 1,
+    });
+  }
+  return files;
 }

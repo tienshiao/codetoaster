@@ -1,4 +1,5 @@
-import { resolveSessionGitRoot, gitSpawn, parseNonNegInt, SHA_RE } from "./utils";
+import { resolveSessionGitRoot, gitSpawn, gitSpawnRaw, parseNonNegInt, safePath, buildFileListing, IMAGE_MIME_TYPES, SHA_RE } from "./utils";
+import { serializeFileContent } from "./files";
 
 // ---------------------------------------------------------------------------
 // Pure parsers (exported for unit tests — no repo required)
@@ -340,6 +341,88 @@ export const gitRoutes = {
       } catch (error) {
         return Response.json(
           { error: "Failed to get commit", message: error instanceof Error ? error.message : String(error) },
+          { status: 500 },
+        );
+      }
+    },
+  },
+
+  "/api/sessions/:id/git/tree": {
+    async GET(req: Request & { params: { id: string } }) {
+      try {
+        const result = await resolveSessionGitRoot(req.params.id);
+        if ("error" in result) return result.error;
+        const { dir } = result;
+
+        const url = new URL(req.url);
+        const sha = url.searchParams.get("sha") ?? "";
+        if (!SHA_RE.test(sha)) {
+          return Response.json({ error: "Invalid sha" }, { status: 400 });
+        }
+
+        // -z null-terminates paths, avoiding git's quoting of special characters.
+        const { stdout, exitCode } = await gitSpawn(dir, ["ls-tree", "-r", "-z", "--name-only", sha]);
+        if (exitCode !== 0) {
+          return Response.json({ error: "Commit not found" }, { status: 404 });
+        }
+
+        const paths = stdout.split("\0").filter(Boolean);
+        return Response.json({ files: buildFileListing(paths), directory: dir });
+      } catch (error) {
+        return Response.json(
+          { error: "Failed to get tree", message: error instanceof Error ? error.message : String(error) },
+          { status: 500 },
+        );
+      }
+    },
+  },
+
+  "/api/sessions/:id/git/file": {
+    async GET(req: Request & { params: { id: string } }) {
+      try {
+        const result = await resolveSessionGitRoot(req.params.id);
+        if ("error" in result) return result.error;
+        const { dir } = result;
+
+        const url = new URL(req.url);
+        const sha = url.searchParams.get("sha") ?? "";
+        if (!SHA_RE.test(sha)) {
+          return Response.json({ error: "Invalid sha" }, { status: 400 });
+        }
+        const filePath = url.searchParams.get("file");
+        if (!filePath) {
+          return Response.json({ error: "Missing file parameter" }, { status: 400 });
+        }
+        // Shape guard only — the blob is read via git, not the filesystem.
+        if (safePath(dir, filePath) === null) {
+          return Response.json({ error: "Invalid file path" }, { status: 400 });
+        }
+
+        const isImage = !!IMAGE_MIME_TYPES[filePath.split(".").pop()?.toLowerCase() || ""];
+
+        if (isImage) {
+          // Pixels load via /image/git?ref=; here we only need the blob size.
+          const sizeResult = await gitSpawn(dir, ["cat-file", "-s", `${sha}:${filePath}`]);
+          if (sizeResult.exitCode !== 0) {
+            return Response.json({ error: "File not found in commit" }, { status: 404 });
+          }
+          return Response.json({
+            isBinary: true,
+            isImage: true,
+            size: parseInt(sizeResult.stdout.trim(), 10),
+          });
+        }
+
+        // Fetch raw bytes: binary detection must not decode as text first.
+        const { bytes, exitCode } = await gitSpawnRaw(dir, ["show", `${sha}:${filePath}`]);
+        if (exitCode !== 0) {
+          return Response.json({ error: "File not found in commit" }, { status: 404 });
+        }
+
+        return Response.json(await serializeFileContent(bytes.buffer as ArrayBuffer, filePath));
+      } catch (error) {
+        return Response.json(
+          { error: "Failed to read file", message: error instanceof Error ? error.message : String(error) },
           { status: 500 },
         );
       }

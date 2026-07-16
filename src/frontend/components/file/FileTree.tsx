@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { FileIcon } from "../diff/FileIcon";
 import { FilterInput } from "../FilterInput";
@@ -12,6 +12,12 @@ interface FileTreeProps {
   files: FileInfo[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
+  // Controlled expansion state (git tree view supplies its own so reusing the
+  // tree for an old commit never corrupts the file tab's persisted set — an old
+  // commit's tree lacks directories that exist today). When omitted, falls back
+  // to the fileView view-state store.
+  expandedPaths?: Set<string>;
+  onExpandedPathsChange?: Dispatch<SetStateAction<Set<string>>>;
 }
 
 interface TreeNode {
@@ -70,9 +76,13 @@ function sortTree(nodes: TreeNode[]): TreeNode[] {
     });
 }
 
-export function FileTree({ sessionId, files, selectedFile, onSelectFile }: FileTreeProps) {
+export function FileTree({ sessionId, files, selectedFile, onSelectFile, expandedPaths: expandedPathsProp, onExpandedPathsChange }: FileTreeProps) {
   const [filter, setFilter] = useState("");
-  const [expandedPaths, setExpandedPaths] = useViewState(sessionId, "fileView", "expandedPaths");
+  // Hooks must run unconditionally, so always read the store then pick which
+  // pair to use — the controlled props win when supplied.
+  const [storeExpandedPaths, setStoreExpandedPaths] = useViewState(sessionId, "fileView", "expandedPaths");
+  const expandedPaths = expandedPathsProp ?? storeExpandedPaths;
+  const setExpandedPaths = onExpandedPathsChange ?? setStoreExpandedPaths;
 
   const filteredFiles = useMemo(() => {
     if (!filter) return files;

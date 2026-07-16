@@ -1,7 +1,7 @@
 import { useState, useCallback, type Dispatch, type SetStateAction } from "react";
 import { getViewState, type SessionViewState } from "../view-state-store";
 
-type Section = "fileView" | "diffView";
+type Section = "fileView" | "diffView" | "gitView";
 
 /**
  * useState backed by the per-session view-state store: hydrates from the store

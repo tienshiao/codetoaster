@@ -1,4 +1,4 @@
-import { resolveSessionGitRoot, getImageMimeType, IMAGE_MIME_TYPES, listGitFiles, safePath } from "./utils";
+import { resolveSessionGitRoot, getImageMimeType, IMAGE_MIME_TYPES, listGitFiles, safePath, buildFileListing } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
 import type { FileTokens } from "../types/highlight";
 
@@ -28,12 +28,41 @@ function fuzzyMatch(filePath: string, query: string): { score: number; indices: 
   return { score, indices };
 }
 
-function isBinaryContent(buffer: ArrayBuffer): boolean {
+export function isBinaryContent(buffer: ArrayBuffer): boolean {
   const bytes = new Uint8Array(buffer, 0, Math.min(8192, buffer.byteLength));
   for (let i = 0; i < bytes.length; i++) {
     if (bytes[i] === 0) return true;
   }
   return false;
+}
+
+// Shared non-image body of the /file and git/file routes: binary detection,
+// text decode, per-line data, and server-side tree-sitter tokens (null => client
+// regex fallback; highlighting failure never breaks the response).
+export async function serializeFileContent(buffer: ArrayBuffer, filePath: string) {
+  if (isBinaryContent(buffer)) {
+    return { isBinary: true, isImage: false, size: buffer.byteLength };
+  }
+
+  const content = new TextDecoder().decode(buffer);
+  const lines = content.split("\n");
+  const lineData = lines.map((content, idx) => ({ lineNum: idx + 1, content }));
+
+  let tokens: FileTokens | null = null;
+  try {
+    tokens = await highlightFile(content, filePath);
+  } catch {
+    tokens = null;
+  }
+
+  return {
+    lines: lineData,
+    totalLines: lines.length,
+    isBinary: false,
+    isImage: false,
+    size: buffer.byteLength,
+    tokens,
+  };
 }
 
 export const fileRoutes = {
@@ -46,42 +75,16 @@ export const fileRoutes = {
 
         const filePaths = await listGitFiles(dir);
 
-        const dirSet = new Set<string>();
-        const files: { path: string; name: string; isDirectory: boolean; size?: number; depth: number }[] = [];
-
-        for (const relativePath of filePaths) {
-          const parts = relativePath.split("/");
-
-          // Add parent directories
-          for (let i = 1; i < parts.length; i++) {
-            const dirPath = parts.slice(0, i).join("/");
-            if (!dirSet.has(dirPath)) {
-              dirSet.add(dirPath);
-              files.push({
-                path: dirPath,
-                name: parts[i - 1]!,
-                isDirectory: true,
-                depth: i - 1,
-              });
-            }
-          }
-
-          // Add file entry
-          const fullPath = `${dir}/${relativePath}`;
-          const bunFile = Bun.file(fullPath);
+        // Shared directory-synthesis derivation; layer the per-file stat size on
+        // top (non-directories only) preserving the try/catch semantics.
+        const files = buildFileListing(filePaths).map((f) => {
+          if (f.isDirectory) return f;
           let size: number | undefined;
           try {
-            size = bunFile.size;
+            size = Bun.file(`${dir}/${f.path}`).size;
           } catch {}
-
-          files.push({
-            path: relativePath,
-            name: parts[parts.length - 1]!,
-            isDirectory: false,
-            size,
-            depth: parts.length - 1,
-          });
-        }
+          return { ...f, size };
+        });
 
         return Response.json({ files, directory: dir });
       } catch (error) {
@@ -162,40 +165,7 @@ export const fileRoutes = {
         }
 
         const buffer = await file.arrayBuffer();
-
-        if (isBinaryContent(buffer)) {
-          return Response.json({
-            isBinary: true,
-            isImage: false,
-            size: buffer.byteLength,
-          });
-        }
-
-        const content = new TextDecoder().decode(buffer);
-        const lines = content.split("\n");
-
-        const lineData = lines.map((content, idx) => ({
-          lineNum: idx + 1,
-          content,
-        }));
-
-        // Server-side tree-sitter tokens (null => client regex fallback).
-        // Never let highlighting failure break the file response.
-        let tokens: FileTokens | null = null;
-        try {
-          tokens = await highlightFile(content, filePath);
-        } catch {
-          tokens = null;
-        }
-
-        return Response.json({
-          lines: lineData,
-          totalLines: lines.length,
-          isBinary: false,
-          isImage: false,
-          size: buffer.byteLength,
-          tokens,
-        });
+        return Response.json(await serializeFileContent(buffer, filePath));
       } catch (error) {
         return Response.json(
           { error: "Failed to read file", message: error instanceof Error ? error.message : String(error) },

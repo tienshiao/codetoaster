@@ -1,13 +1,11 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { generatePrompt } from "./utils/generatePrompt";
 import { useComments } from "./hooks/use-comments";
 import { useSessionDiff } from "./hooks/use-session-diff";
 import { useViewState } from "./hooks/use-view-state";
-import { getViewState, pruneSet } from "./view-state-store";
-import { FileTree } from "./components/diff/FileTree";
-import { DiffFile } from "./components/diff/DiffFile";
-import { sumDiffStats } from "./components/diff/DiffStat";
+import { getViewState } from "./view-state-store";
+import { DiffLayout, type DiffLayoutScroll } from "./components/diff/DiffLayout";
 import { Button } from "./components/ui/button";
 import {
   AlertDialog,
@@ -21,15 +19,13 @@ import {
 } from "./components/ui/alert-dialog";
 import { applySyntaxToLine } from "./utils/wordDiff";
 import { getLanguageFromPath } from "./utils/languageDetection";
-import { symbolAtPoint } from "./utils/symbolClick";
 import { useModifierHeld } from "./hooks/use-modifier-held";
 import { useSymbolHighlight } from "./hooks/use-symbol-highlight";
 import { maybeShowSymbolTip } from "./utils/tips";
 import { SymbolPopover, type SymbolTarget } from "./components/SymbolPopover";
 import type { DiffHunk, HunkExpansionState, DiffLine } from "./types/diff";
 import type { LineTokens } from "../types/highlight";
-import { ChevronLeft, ChevronRight, Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
-import "./components/diff/DiffView.css";
+import { Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
 
 interface DiffViewProps {
   sessionId: string;
@@ -37,15 +33,20 @@ interface DiffViewProps {
 }
 
 const CONTEXT_LINES = 20;
-const FILE_COUNT_THRESHOLD = 30;
-const TOTAL_LINES_THRESHOLD = 1500;
 
 export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
   const { data, isLoading: loading, error: queryError, refetch } = useSessionDiff(sessionId);
-  const files = data ?? [];
+  const files = useMemo(() => data ?? [], [data]);
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
+
+  // Persistence-backed state supplied to the shared diff layout.
   const [selectedFile, setSelectedFile] = useViewState(sessionId, "diffView", "selectedFile");
   const [collapsedFiles, setCollapsedFiles] = useViewState(sessionId, "diffView", "collapsedFiles");
+  // null override → derive from diff size, so the large-diff single-file
+  // default stays live across refetches; the toggle buttons set it explicitly.
+  const [viewModeOverride, setViewModeOverride] = useViewState(sessionId, "diffView", "viewModeOverride");
+  const [treeCollapsedPaths, setTreeCollapsedPaths] = useViewState(sessionId, "diffView", "treeCollapsedPaths");
+
   const [hunkExpansions, setHunkExpansions] = useState<Map<string, HunkExpansionState>>(new Map());
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [promptText, setPromptText] = useState("");
@@ -58,36 +59,15 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
   useEffect(() => {
     if (data && data.length > 0) maybeShowSymbolTip();
   }, [data]);
-  // null override → derive from diff size, so the large-diff single-file
-  // default stays live across refetches; the toggle buttons set it explicitly.
-  const [viewModeOverride, setViewModeOverride] = useViewState(sessionId, "diffView", "viewModeOverride");
-  const diffContainerRef = useRef<HTMLDivElement>(null);
-  const fileRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const commentState = useComments(sessionId);
   const { pruneComments, clearComments } = commentState;
 
-  const totalLines = files.reduce((sum, f) => sum + f.additions + f.deletions, 0);
-  const isLargeDiff = files.length >= FILE_COUNT_THRESHOLD || totalLines >= TOTAL_LINES_THRESHOLD;
-  const viewMode: "all" | "single" = viewModeOverride ?? (isLargeDiff ? "single" : "all");
-
-  // Reconcile persisted state against the current diff. Prune user collapses /
-  // comments for files or lines that left the diff; seed a selection in single mode.
+  // Prune comments for files/lines that left the diff. The layout owns collapse
+  // pruning and single-mode reseeding; comments stay here with their store.
   useEffect(() => {
-    if (!data || data.length === 0) return; // empty diff: nothing to reconcile against, keep drafts
+    if (!data || data.length === 0) return; // empty diff: keep drafts
     const paths = new Set(data.map((f) => f.newPath));
-    setCollapsedFiles((prev) => pruneSet(prev, paths));
-    setSelectedFile((prev) => {
-      if (viewMode === "single") {
-        if (prev && paths.has(prev)) return prev;
-        // Reseeding to a different file: the scroll offset saved for the old
-        // selection is meaningless there. (Idempotent, safe to run twice.)
-        getViewState(sessionId).diffView.scrollTop = 0;
-        diffContainerRef.current?.scrollTo({ top: 0 });
-        return data[0]?.newPath ?? null;
-      }
-      return prev && paths.has(prev) ? prev : null;
-    });
     // Keys mirror DiffFile's getCommentKey for addition/deletion lines
     const validLineKeys = new Set<string>();
     for (const file of data) {
@@ -103,126 +83,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     if (removed > 0) {
       toast(`${removed} review comment${removed === 1 ? "" : "s"} removed — no longer in diff`);
     }
-  }, [data, viewMode, sessionId, setCollapsedFiles, setSelectedFile, pruneComments]);
-
-  // Restore scroll position once the diff has rendered. The IntersectionObserver
-  // below is a passive effect and attaches after this layout effect, so it then
-  // reports the file at the restored offset — consistent, no guard needed.
-  const restoredScrollRef = useRef(false);
-  useLayoutEffect(() => {
-    if (restoredScrollRef.current || files.length === 0 || !diffContainerRef.current) return;
-    restoredScrollRef.current = true;
-    const storedTop = getViewState(sessionId).diffView.scrollTop;
-    if (storedTop > 0) {
-      diffContainerRef.current.scrollTop = storedTop;
-    }
-  }, [files, sessionId]);
-
-  const expandFile = useCallback((path: string) => {
-    setCollapsedFiles((prev) => {
-      if (!prev.has(path)) return prev;
-      const next = new Set(prev);
-      next.delete(path);
-      return next;
-    });
-  }, [setCollapsedFiles]);
-
-  const navigateToFile = useCallback((path: string) => {
-    setSelectedFile(path);
-    expandFile(path);
-    if (viewMode === "all") {
-      const el = fileRefs.current.get(path);
-      if (el) {
-        el.scrollIntoView({ behavior: "instant", block: "start" });
-      }
-    } else {
-      diffContainerRef.current?.scrollTo({ top: 0 });
-    }
-  }, [viewMode, setSelectedFile, expandFile]);
-
-  const handleSelectFile = useCallback((path: string) => {
-    navigateToFile(path);
-  }, [navigateToFile]);
-
-  const navigateToPrevFile = useCallback(() => {
-    if (!selectedFile) return;
-    const idx = files.findIndex((f) => f.newPath === selectedFile);
-    const prev = files[idx - 1];
-    if (idx > 0 && prev) {
-      navigateToFile(prev.newPath);
-    }
-  }, [selectedFile, files, navigateToFile]);
-
-  const navigateToNextFile = useCallback(() => {
-    if (!selectedFile) return;
-    const idx = files.findIndex((f) => f.newPath === selectedFile);
-    const next = files[idx + 1];
-    if (idx < files.length - 1 && next) {
-      navigateToFile(next.newPath);
-    }
-  }, [selectedFile, files, navigateToFile]);
-
-  // Keyboard navigation in single-file mode
-  useEffect(() => {
-    if (viewMode !== "single") return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === "ArrowLeft") {
-        navigateToPrevFile();
-      } else if (e.key === "ArrowRight") {
-        navigateToNextFile();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [viewMode, navigateToPrevFile, navigateToNextFile]);
-
-  // Track which file is visible during scroll in "all files" mode
-  useEffect(() => {
-    if (viewMode !== "all" || files.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        // Find the topmost intersecting file
-        let topEntry: IntersectionObserverEntry | null = null;
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            if (!topEntry || entry.boundingClientRect.top < topEntry.boundingClientRect.top) {
-              topEntry = entry;
-            }
-          }
-        }
-        if (topEntry) {
-          const path = (topEntry.target as HTMLElement).dataset.filePath;
-          if (path) {
-            setSelectedFile(path);
-          }
-        }
-      },
-      { threshold: 0, rootMargin: "0px 0px -70% 0px" }
-    );
-
-    for (const [path, el] of fileRefs.current) {
-      el.dataset.filePath = path;
-      observer.observe(el);
-    }
-
-    return () => observer.disconnect();
-  }, [viewMode, files]);
-
-  const handleToggleFile = useCallback((path: string) => {
-    setCollapsedFiles((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  }, [setCollapsedFiles]);
+  }, [data, pruneComments]);
 
   const handleExpandContext = useCallback(
     async (
@@ -325,8 +186,6 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     [sessionId, hunkExpansions]
   );
 
-  const { additions: totalAdditions, deletions: totalDeletions } = sumDiffStats(files);
-
   const handleSubmitReview = useCallback(() => {
     const prompt = generatePrompt({
       comments: commentState.comments,
@@ -345,7 +204,16 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     clearComments();
   }, [onSubmit, promptText, clearComments]);
 
-  const selectedFileIndex = selectedFile ? files.findIndex((f) => f.newPath === selectedFile) : -1;
+  // Stable scroll persistence handles for the layout's restore/persist/reseed.
+  const scroll = useMemo<DiffLayoutScroll>(
+    () => ({
+      getStored: () => getViewState(sessionId).diffView.scrollTop,
+      setStored: (top) => {
+        getViewState(sessionId).diffView.scrollTop = top;
+      },
+    }),
+    [sessionId],
+  );
 
   if (loading) {
     return (
@@ -378,149 +246,38 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     );
   }
 
-  const renderFiles = () => {
-    if (viewMode === "single") {
-      // fall back to the first file for the frame before reconcile seeds a selection
-      const file = files.find((f) => f.newPath === selectedFile) ?? files[0];
-      if (!file) return null;
-      return (
-        <div
-          key={file.newPath}
-          ref={(el) => {
-            if (el) fileRefs.current.set(file.newPath, el);
-            else fileRefs.current.delete(file.newPath);
-          }}
-        >
-          <DiffFile
-            file={file}
-            isExpanded={true}
-            onToggle={() => handleToggleFile(file.newPath)}
-            hunkExpansions={hunkExpansions}
-            onExpandContext={handleExpandContext}
-            commentState={commentState}
-            sessionId={sessionId}
-          />
-        </div>
-      );
-    }
-
-    return files.map((file) => (
-      <div
-        key={file.newPath}
-        ref={(el) => {
-          if (el) fileRefs.current.set(file.newPath, el);
-          else fileRefs.current.delete(file.newPath);
-        }}
-      >
-        <DiffFile
-          file={file}
-          isExpanded={!collapsedFiles.has(file.newPath)}
-          onToggle={() => handleToggleFile(file.newPath)}
-          hunkExpansions={hunkExpansions}
-          onExpandContext={handleExpandContext}
-          commentState={commentState}
-          sessionId={sessionId}
-        />
-      </div>
-    ));
-  };
-
   return (
-    <div className="flex h-full">
-      {/* File tree sidebar */}
-      <div className="w-[280px] shrink-0">
-        <FileTree
-          sessionId={sessionId}
-          files={files}
-          selectedFile={selectedFile}
-          onSelectFile={handleSelectFile}
-          totalAdditions={totalAdditions}
-          totalDeletions={totalDeletions}
-          commentCounts={commentState.fileCommentCounts}
-        />
-      </div>
-
-      {/* Diff content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* View mode toggle + submit */}
-        <div className="flex items-center text-xs px-4 py-2 shrink-0">
-          <div className="inline-flex rounded-md border border-border overflow-hidden">
-            <button
-              className={`px-2.5 py-1 transition-colors ${viewMode === "all" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}
-              onClick={() => setViewModeOverride("all")}
-            >
-              All Files
-            </button>
-            <button
-              className={`px-2.5 py-1 transition-colors border-l border-border ${viewMode === "single" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}
-              onClick={() => {
-                setViewModeOverride("single");
-                if (!selectedFile && files[0]) {
-                  setSelectedFile(files[0].newPath);
-                }
-              }}
-            >
-              Single File
-            </button>
-          </div>
-          {commentState.comments.size > 0 && (
+    <>
+      <DiffLayout
+        files={files}
+        sessionId={sessionId}
+        viewModeOverride={viewModeOverride}
+        onViewModeOverride={setViewModeOverride}
+        selectedFile={selectedFile}
+        onSelectedFileChange={setSelectedFile}
+        collapsedFiles={collapsedFiles}
+        onCollapsedFilesChange={setCollapsedFiles}
+        treeCollapsedPaths={treeCollapsedPaths}
+        onTreeCollapsedPathsChange={setTreeCollapsedPaths}
+        scroll={scroll}
+        commentState={commentState}
+        commentCounts={commentState.fileCommentCounts}
+        hunkExpansions={hunkExpansions}
+        onExpandContext={handleExpandContext}
+        symbol={{
+          modHeld,
+          hoverHandlers: symbolHover,
+          onSymbolClick: (name, x, y) => setSymbolTarget({ name, x, y }),
+        }}
+        toolbarExtra={
+          commentState.comments.size > 0 ? (
             <Button size="sm" onClick={handleSubmitReview} className="ml-auto gap-1.5 h-7 text-xs">
               <Send size={12} />
               Submit Review ({commentState.comments.size})
             </Button>
-          )}
-        </div>
-
-        {/* Scrollable file diffs */}
-        <div
-          ref={diffContainerRef}
-          className={`flex-1 overflow-y-auto px-4 flex flex-col gap-3 relative symbol-clickable ${modHeld ? "mod-held" : ""}`}
-          onScroll={(e) => {
-            getViewState(sessionId).diffView.scrollTop = e.currentTarget.scrollTop;
-          }}
-          {...symbolHover}
-          onClickCapture={(e) => {
-            if (!(e.metaKey || e.ctrlKey)) return;
-            const name = symbolAtPoint(e.clientX, e.clientY);
-            if (name) {
-              e.preventDefault();
-              e.stopPropagation();
-              setSymbolTarget({ name, x: e.clientX, y: e.clientY });
-            }
-          }}
-        >
-          {renderFiles()}
-
-        {/* Floating prev/next navigation for single-file mode */}
-        {viewMode === "single" && (
-          <div className="sticky bottom-4 z-50 flex items-center justify-center pointer-events-none">
-            <div className="pointer-events-auto flex items-center gap-3 px-5 py-2.5 bg-popover border border-border rounded-lg shadow-lg">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs gap-1"
-                onClick={navigateToPrevFile}
-                disabled={selectedFileIndex <= 0}
-              >
-                <ChevronLeft size={14} /> Prev
-              </Button>
-              <span className="text-xs text-muted-foreground min-w-[70px] text-center">
-                {selectedFileIndex + 1} of {files.length}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs gap-1"
-                onClick={navigateToNextFile}
-                disabled={selectedFileIndex >= files.length - 1}
-              >
-                Next <ChevronRight size={14} />
-              </Button>
-            </div>
-          </div>
-        )}
-        </div>
-      </div>
+          ) : null
+        }
+      />
 
       {/* Submit confirmation dialog */}
       <AlertDialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
@@ -556,6 +313,6 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
       </AlertDialog>
 
       <SymbolPopover sessionId={sessionId} target={symbolTarget} onClose={() => setSymbolTarget(null)} />
-    </div>
+    </>
   );
 }

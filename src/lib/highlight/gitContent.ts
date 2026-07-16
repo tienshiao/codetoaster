@@ -4,7 +4,7 @@
 // added file).
 import { gitSpawn } from "../../api/utils";
 
-async function gitShow(dir: string, ref: string): Promise<string | null> {
+export async function gitShow(dir: string, ref: string): Promise<string | null> {
   const { stdout, exitCode } = await gitSpawn(dir, ["show", ref]);
   return exitCode === 0 ? stdout : null;
 }

@@ -1,12 +1,17 @@
 import { buildSessionSlug } from "./slug";
 import { getViewState } from "../view-state-store";
 import type { TabType } from "../types/tab";
+import type { GitViewMode } from "../types/git";
 
 export type SessionNavTarget =
   | { to: "/sessions/$slug"; params: { slug: string } }
   | { to: "/sessions/$slug/diff"; params: { slug: string } }
   | { to: "/sessions/$slug/file"; params: { slug: string }; search: { file?: string } }
-  | { to: "/sessions/$slug/git"; params: { slug: string }; search: { commit?: string } };
+  | {
+      to: "/sessions/$slug/git";
+      params: { slug: string };
+      search: { commit?: string; mode?: GitViewMode; file?: string };
+    };
 
 /**
  * Navigation target for a specific tab of a session. The file tab restores
@@ -25,10 +30,15 @@ export function tabNavTarget(session: { id: string; name: string }, tab: TabType
     };
   }
   if (tab === "git") {
+    const gitView = getViewState(session.id).gitView;
     return {
       to: "/sessions/$slug/git",
       params: { slug },
-      search: { commit: getViewState(session.id).gitView.commit ?? undefined },
+      search: {
+        commit: gitView.commit ?? undefined,
+        mode: gitView.mode ?? undefined,
+        file: gitView.file ?? undefined,
+      },
     };
   }
   return { to: "/sessions/$slug", params: { slug } };
