@@ -4,7 +4,7 @@ import { FileIcon } from "../diff/FileIcon";
 import { FilterInput } from "../FilterInput";
 import { formatSize } from "../../utils/formatSize";
 import { useViewState } from "../../hooks/use-view-state";
-import { collectDirectoryPaths, collectPathPrefixes, pruneSet, toggleInSet } from "../../view-state-store";
+import { collectDirectoryPaths, collectPathPrefixes, pruneSet, toggleInSet, withAll } from "../../view-state-store";
 import { compareTreeSiblings } from "../../utils/sortFiles";
 import type { FileInfo } from "../../types/file";
 
@@ -97,12 +97,7 @@ export function FileTree({ sessionId, files, selectedFile, onSelectFile, expande
 
   useEffect(() => {
     if (!selectedFile) return;
-    const parentPaths = collectPathPrefixes([selectedFile]);
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
-      parentPaths.forEach((p) => next.add(p));
-      return next;
-    });
+    setExpandedPaths((prev) => withAll(prev, collectPathPrefixes([selectedFile])));
   }, [selectedFile, setExpandedPaths]);
 
   const toggleDirectory = (path: string) => {

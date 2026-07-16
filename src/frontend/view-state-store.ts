@@ -1,5 +1,5 @@
 import type { TabType } from "./types/tab";
-import type { LineComment } from "./types/diff";
+import type { LineComment, HunkExpansionState } from "./types/diff";
 import type { FileInfo } from "./types/file";
 import type { GitViewMode } from "./types/git";
 
@@ -25,6 +25,23 @@ export interface DiffViewState {
   // rationale as collapsedFiles: new directories default to expanded).
   treeCollapsedPaths: Set<string>;
   comments: Map<string, LineComment>;
+  // Loaded expanded-context lines, keyed by `${filePath}:${hunkIndex}` (see
+  // DiffFile). Survives refetches while the file stays in the diff.
+  hunkExpansions: Map<string, HunkExpansionState>;
+}
+
+// Per-commit sub-mode state for the git detail pane. A single cache slot keyed
+// by sha: switching commits resets it (see gitDetailState), matching the old
+// per-commit `key={sha}` reset while surviving tab unmounts for the same commit.
+export interface GitDetailViewState {
+  sha: string | null;
+  commitExpandedPaths: Set<string>;
+  changesSelectedFile: string | null;
+  changesCollapsedFiles: Set<string>;
+  changesViewModeOverride: "all" | "single" | null;
+  changesTreeCollapsedPaths: Set<string>;
+  changesScrollTop: number;
+  treeExpandedPaths: Set<string>;
 }
 
 export interface GitViewState {
@@ -33,6 +50,22 @@ export interface GitViewState {
   file?: string;
   // Height fraction of the commit-list (top) pane in the draggable split.
   splitRatio: number;
+  // RefSidebar section titles the user closed (sections default open).
+  refsClosedSections: Set<string>;
+  // HEAD branch whose ancestor folders were last auto-expanded, so the reveal
+  // runs once per checkout instead of on every remount (which would undo a
+  // user's collapse of those folders on every tab switch).
+  refsHeadExpandedFor: string | null;
+  // Expanded ref folder paths, keyed by section title so identically-named
+  // folders in different sections (a local branch "origin/foo" vs a remote)
+  // never share a namespace.
+  refsExpanded: Map<string, Set<string>>;
+  // CommitList scroll offset (px).
+  listScrollTop: number;
+  // Tree-mode word wrap — a session-wide preference, not per-commit.
+  treeLineWrap: boolean;
+  // Single-commit sub-mode cache (reset when the sha changes).
+  detail: GitDetailViewState;
 }
 
 export interface SessionViewState {
@@ -45,6 +78,19 @@ export interface SessionViewState {
 // In-memory only: view state survives tab/session switches but not a page
 // reload, where stale selections/scroll offsets would be meaningless anyway.
 const store = new Map<string, SessionViewState>();
+
+function createDefaultGitDetail(sha: string | null): GitDetailViewState {
+  return {
+    sha,
+    commitExpandedPaths: new Set(),
+    changesSelectedFile: null,
+    changesCollapsedFiles: new Set(),
+    changesViewModeOverride: null,
+    changesTreeCollapsedPaths: new Set(),
+    changesScrollTop: 0,
+    treeExpandedPaths: new Set(),
+  };
+}
 
 function createDefault(): SessionViewState {
   return {
@@ -63,14 +109,45 @@ function createDefault(): SessionViewState {
       scrollTop: 0,
       treeCollapsedPaths: new Set(),
       comments: new Map(),
+      hunkExpansions: new Map(),
     },
     gitView: {
       commit: undefined,
       mode: undefined,
       file: undefined,
       splitRatio: 0.4,
+      refsClosedSections: new Set(),
+      refsHeadExpandedFor: null,
+      refsExpanded: new Map(),
+      listScrollTop: 0,
+      treeLineWrap: false,
+      detail: createDefaultGitDetail(null),
     },
   };
+}
+
+/**
+ * The single-commit detail cache for `sha`. When the requested sha differs from
+ * the cached one, the slot is replaced with a fresh default stamped `sha` — this
+ * reproduces the old per-commit reset while surviving unmounts for the same
+ * commit. Consumers must remount when the commit changes (CommitDetail keys its
+ * sub-mode components by the full hash) so mount-time seeds stay correct.
+ */
+export function gitDetailState(sessionId: string, sha: string): GitDetailViewState {
+  const gitView = getViewState(sessionId).gitView;
+  if (gitView.detail.sha !== sha) {
+    gitView.detail = createDefaultGitDetail(sha);
+  }
+  return gitView.detail;
+}
+
+/** The detail slot only if it currently belongs to `sha`; never resets. Use
+ * for writes from long-lived handles/callbacks so a stale caller (component
+ * unmounting after a commit switch) becomes a no-op instead of wiping the
+ * new commit's cached state. */
+export function peekGitDetailState(sessionId: string, sha: string): GitDetailViewState | null {
+  const detail = getViewState(sessionId).gitView.detail;
+  return detail.sha === sha ? detail : null;
 }
 
 export function getViewState(sessionId: string): SessionViewState {
@@ -136,6 +213,49 @@ export function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
   return next;
 }
 
+/** Copy of `set` with all `values` added; returns `set` unchanged (same
+ * reference) when every value is already present, so setState callers can
+ * bail out without re-rendering. */
+export function withAll<T>(set: Set<T>, values: Iterable<T>): Set<T> {
+  let next: Set<T> | null = null;
+  for (const value of values) {
+    if ((next ?? set).has(value)) continue;
+    next ??= new Set(set);
+    next.add(value);
+  }
+  return next ?? set;
+}
+
+/** Copy of `set` with all `values` removed; returns `set` unchanged (same
+ * reference) when none are present. */
+export function withoutAll<T>(set: Set<T>, values: Iterable<T>): Set<T> {
+  let next: Set<T> | null = null;
+  for (const value of values) {
+    if (!(next ?? set).has(value)) continue;
+    next ??= new Set(set);
+    next.delete(value);
+  }
+  return next ?? set;
+}
+
+/** Returns `map` unchanged (same reference) when every entry passes `keep`,
+ * so setState callers can bail out without re-rendering. */
+export function pruneMap<V>(
+  map: Map<string, V>,
+  keep: (key: string, value: V) => boolean,
+): Map<string, V> {
+  let changed = false;
+  const next = new Map<string, V>();
+  for (const [key, value] of map) {
+    if (keep(key, value)) {
+      next.set(key, value);
+    } else {
+      changed = true;
+    }
+  }
+  return changed ? next : map;
+}
+
 /** Ancestor directory prefixes of the given paths (e.g. "a/b/c.ts" →
  * {"a", "a/b"}). */
 export function collectPathPrefixes(paths: Iterable<string>): Set<string> {
@@ -170,18 +290,11 @@ export function pruneComments(
   validPaths: Set<string>,
   validLineKeys?: Set<string>,
 ): Map<string, LineComment> {
-  let changed = false;
-  const next = new Map<string, LineComment>();
-  for (const [key, comment] of comments) {
+  return pruneMap(comments, (key, comment) => {
     const lineGone =
       validLineKeys !== undefined &&
       (comment.lineType === "addition" || comment.lineType === "deletion") &&
       !validLineKeys.has(key);
-    if (validPaths.has(comment.filePath) && !lineGone) {
-      next.set(key, comment);
-    } else {
-      changed = true;
-    }
-  }
-  return changed ? next : comments;
+    return validPaths.has(comment.filePath) && !lineGone;
+  });
 }

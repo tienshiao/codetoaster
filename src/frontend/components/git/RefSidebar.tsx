@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback, type Dispatch, type SetStateAction } from "react";
 import { ChevronDown, ChevronRight, Check, Loader2 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { FilterInput } from "../FilterInput";
 import { buildRefTree, countRefs, isRefFolder, type RefTreeNode } from "../../utils/refTree";
-import { collectPathPrefixes, toggleInSet } from "../../view-state-store";
+import { collectPathPrefixes, getViewState, toggleInSet, withAll } from "../../view-state-store";
+import { useViewState } from "../../hooks/use-view-state";
 import type { GitRef, GitRefsResponse } from "../../types/git";
 
+// Shared empty-set default for sections with no persisted expansion state.
+const EMPTY_SET: Set<string> = new Set();
+
 interface RefSidebarProps {
+  sessionId: string;
   refs: GitRefsResponse | undefined;
   refsError: boolean;
   onSelectRef: (sha: string) => void;
@@ -22,36 +27,32 @@ interface SectionProps {
   pendingSha: string | null;
   /** True while the sidebar filter is non-empty — forces every folder open. */
   filterActive: boolean;
+  // Controlled section open/closed and folder-expansion state, lifted to
+  // RefSidebar so both persist in the per-session view-state store.
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  expanded: Set<string>;
+  onExpandedChange: Dispatch<SetStateAction<Set<string>>>;
 }
 
-function RefSection({ title, items, headBranch, onSelectRef, pendingSha, filterActive }: SectionProps) {
-  // Controlled open state (default open) — Radix drives the toggle/content, and
-  // the icon swap below preserves the original chevron visuals exactly. Matches
-  // AppSidebar's controlled-Collapsible pattern.
-  const [open, setOpen] = useState(true);
-
-  // Folders start collapsed. No persistence across reloads.
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-
+function RefSection({
+  title,
+  items,
+  headBranch,
+  onSelectRef,
+  pendingSha,
+  filterActive,
+  open,
+  onOpenChange,
+  expanded,
+  onExpandedChange,
+}: SectionProps) {
   const tree = useMemo(() => buildRefTree(items), [items]);
 
   const headAncestors = useMemo(
     () => (headBranch ? collectPathPrefixes([headBranch]) : null),
     [headBranch],
   );
-
-  // Reveal HEAD whenever it changes (refs load async, and a checkout in the
-  // terminal moves HEAD mid-session) by unioning its ancestors into the expand
-  // set — the user's manual state is otherwise untouched. Same pattern as
-  // file/FileTree's auto-expand of the selected file's ancestors.
-  useEffect(() => {
-    if (headAncestors == null || headAncestors.size === 0) return;
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      for (const path of headAncestors) next.add(path);
-      return next.size === prev.size ? prev : next;
-    });
-  }, [headAncestors]);
 
   // Ancestor folders of the pending ref, so a collapsed folder can roll up the
   // in-flight spinner that its hidden leaf would otherwise show.
@@ -63,7 +64,7 @@ function RefSection({ title, items, headBranch, onSelectRef, pendingSha, filterA
 
   if (items.length === 0) return null;
 
-  const toggle = (path: string) => setExpanded((prev) => toggleInSet(prev, path));
+  const toggle = (path: string) => onExpandedChange((prev) => toggleInSet(prev, path));
 
   const renderNodes = (nodes: RefTreeNode[], depth: number) =>
     nodes.map((node) => {
@@ -133,7 +134,7 @@ function RefSection({ title, items, headBranch, onSelectRef, pendingSha, filterA
     });
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="mb-1">
+    <Collapsible open={open} onOpenChange={onOpenChange} className="mb-1">
       <CollapsibleTrigger className="w-full flex items-center gap-1 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         {title}
@@ -144,10 +145,46 @@ function RefSection({ title, items, headBranch, onSelectRef, pendingSha, filterA
   );
 }
 
-export function RefSidebar({ refs, refsError, onSelectRef, pendingSha }: RefSidebarProps) {
+export function RefSidebar({ sessionId, refs, refsError, onSelectRef, pendingSha }: RefSidebarProps) {
   const [filter, setFilter] = useState("");
 
   const filterActive = filter.trim() !== "";
+
+  // Persisted section open/closed (tracked as closures — sections default open)
+  // and per-section folder expansion, both surviving tab switches.
+  const [closedSections, setClosedSections] = useViewState(sessionId, "gitView", "refsClosedSections");
+  const [refsExpanded, setRefsExpanded] = useViewState(sessionId, "gitView", "refsExpanded");
+
+  // setState-style update scoped to one section's expansion set. Replaces that
+  // section's Set inside a new Map immutably; a same-reference result bails
+  // out so no-op updates don't re-render.
+  const handleExpandedChange = useCallback(
+    (title: string, action: SetStateAction<Set<string>>) =>
+      setRefsExpanded((prev) => {
+        const current = prev.get(title) ?? EMPTY_SET;
+        const nextSet =
+          typeof action === "function"
+            ? (action as (p: Set<string>) => Set<string>)(current)
+            : action;
+        if (nextSet === current) return prev;
+        return new Map(prev).set(title, nextSet);
+      }),
+    [setRefsExpanded],
+  );
+
+  const headBranch = refs?.head.ref;
+
+  // Reveal HEAD's ancestor folders when HEAD actually changes (refs load
+  // async; a checkout in the terminal moves HEAD mid-session). Runs once per
+  // HEAD value — not per remount, which would silently undo a user's collapse
+  // of those folders on every tab switch now that the expansion set persists.
+  useEffect(() => {
+    if (!headBranch) return;
+    const gitView = getViewState(sessionId).gitView;
+    if (gitView.refsHeadExpandedFor === headBranch) return;
+    gitView.refsHeadExpandedFor = headBranch;
+    handleExpandedChange("Branches", (prev) => withAll(prev, collectPathPrefixes([headBranch])));
+  }, [headBranch, sessionId, handleExpandedChange]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -170,28 +207,27 @@ export function RefSidebar({ refs, refsError, onSelectRef, pendingSha }: RefSide
           <div className="px-3 py-4 text-xs text-muted-foreground italic">refs unavailable</div>
         ) : (
           <>
-            <RefSection
-              title="Branches"
-              items={filtered.branches}
-              headBranch={refs?.head.ref}
-              onSelectRef={onSelectRef}
-              pendingSha={pendingSha}
-              filterActive={filterActive}
-            />
-            <RefSection
-              title="Remotes"
-              items={filtered.remotes}
-              onSelectRef={onSelectRef}
-              pendingSha={pendingSha}
-              filterActive={filterActive}
-            />
-            <RefSection
-              title="Tags"
-              items={filtered.tags}
-              onSelectRef={onSelectRef}
-              pendingSha={pendingSha}
-              filterActive={filterActive}
-            />
+            {(
+              [
+                { title: "Branches", items: filtered.branches, headBranch },
+                { title: "Remotes", items: filtered.remotes },
+                { title: "Tags", items: filtered.tags },
+              ] as const
+            ).map((s) => (
+              <RefSection
+                key={s.title}
+                title={s.title}
+                items={s.items}
+                headBranch={"headBranch" in s ? s.headBranch : undefined}
+                onSelectRef={onSelectRef}
+                pendingSha={pendingSha}
+                filterActive={filterActive}
+                open={!closedSections.has(s.title)}
+                onOpenChange={() => setClosedSections((prev) => toggleInSet(prev, s.title))}
+                expanded={refsExpanded.get(s.title) ?? EMPTY_SET}
+                onExpandedChange={(action) => handleExpandedChange(s.title, action)}
+              />
+            ))}
           </>
         )}
       </div>

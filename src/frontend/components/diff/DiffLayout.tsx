@@ -14,7 +14,7 @@ import { FileTree } from "./FileTree";
 import { DiffFile } from "./DiffFile";
 import { sumDiffStats } from "./DiffStat";
 import { Button } from "../ui/button";
-import { pruneSet, toggleInSet } from "../../view-state-store";
+import { collectPathPrefixes, pruneSet, toggleInSet, withoutAll } from "../../view-state-store";
 import { symbolAtPoint } from "../../utils/symbolClick";
 import type { FileDiff, DiffHunk, HunkExpansionState } from "../../types/diff";
 import type { UseCommentsReturn } from "../../hooks/use-comments";
@@ -146,17 +146,17 @@ export function DiffLayout({
   }, [files, scroll]);
 
   const expandFile = useCallback((path: string) => {
-    onCollapsedFilesChange((prev) => {
-      if (!prev.has(path)) return prev;
-      const next = new Set(prev);
-      next.delete(path);
-      return next;
-    });
+    onCollapsedFilesChange((prev) => withoutAll(prev, [path]));
   }, [onCollapsedFilesChange]);
 
   const navigateToFile = useCallback((path: string) => {
     onSelectedFileChange(path);
     expandFile(path);
+    // Reveal the target in the tree: prev/next/keyboard can land on a file
+    // whose directory is collapsed. Only explicit navigation does this —
+    // passive selection (scroll tracking, mount restore) must not un-collapse
+    // directories the user closed.
+    onTreeCollapsedPathsChange((prev) => withoutAll(prev, collectPathPrefixes([path])));
     if (viewMode === "all") {
       const el = fileRefs.current.get(path);
       if (el) {
@@ -165,7 +165,7 @@ export function DiffLayout({
     } else {
       diffContainerRef.current?.scrollTo({ top: 0 });
     }
-  }, [viewMode, onSelectedFileChange, expandFile]);
+  }, [viewMode, onSelectedFileChange, expandFile, onTreeCollapsedPathsChange]);
 
   const handleSelectFile = useCallback((path: string) => {
     navigateToFile(path);
@@ -333,8 +333,11 @@ export function DiffLayout({
               className={`px-2.5 py-1 transition-colors border-l border-border ${viewMode === "single" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}
               onClick={() => {
                 onViewModeOverride("single");
+                // Seeding a selection is explicit navigation — reveal it in
+                // the tree so the highlighted row isn't hidden in a collapsed
+                // directory.
                 if (!selectedFile && files[0]) {
-                  onSelectedFileChange(files[0].newPath);
+                  navigateToFile(files[0].newPath);
                 }
               }}
             >

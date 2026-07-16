@@ -3,13 +3,14 @@ import { Loader2, Copy, Check, WrapText } from "lucide-react";
 import { useGitCommit } from "../../hooks/use-git-commit";
 import { useGitTree, useGitFile } from "../../hooks/use-git-tree";
 import { DiffFile } from "../diff/DiffFile";
-import { DiffLayout } from "../diff/DiffLayout";
+import { DiffLayout, type DiffLayoutScroll } from "../diff/DiffLayout";
 import { DiffStat, sumDiffStats } from "../diff/DiffStat";
 import { FileTree } from "../file/FileTree";
 import { FileContent } from "../file/FileContent";
 import { Button } from "../ui/button";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
-import { toggleInSet } from "../../view-state-store";
+import { toggleInSet, peekGitDetailState } from "../../view-state-store";
+import { useGitDetailState, useViewState } from "../../hooks/use-view-state";
 import { RefChip, displayRefs, type RefSets } from "./RefChip";
 import type { FileDiff } from "../../types/diff";
 import type { GitCommitMeta, GitViewMode } from "../../types/git";
@@ -117,10 +118,12 @@ function CommitMode({
   onSelectCommit: (sha: string) => void;
   refSets: RefSets;
 }) {
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  // Per-commit expansion state persists across tab switches (mount-seeded by the
+  // full hash; CommitMode is keyed by meta.hash so the seed is always correct).
+  const [expandedPaths, setExpandedPaths] = useGitDetailState(sessionId, meta.hash, "commitExpandedPaths");
   const toggleFile = useCallback((path: string) => {
     setExpandedPaths((prev) => toggleInSet(prev, path));
-  }, []);
+  }, [setExpandedPaths]);
 
   const { additions: totalAdditions, deletions: totalDeletions } = useMemo(
     () => sumDiffStats(files),
@@ -201,21 +204,40 @@ function CommitMode({
 }
 
 // Changes mode: the shared diff layout with no comments / context / symbols.
-// All persisted state is plain local state so a commit's file list never touches
-// the diff tab's view-state store; a `key={sha}` on the instance resets it.
+// State is backed by the per-commit git detail cache (keyed by the full hash),
+// so it survives tab switches yet resets when the commit changes — the instance
+// is keyed by the full hash upstream, so the mount-time seed is always correct
+// and never touches the diff tab's own view-state store.
 function ChangesMode({
   sessionId,
+  sha,
   files,
   imageRefs,
 }: {
   sessionId: string;
+  // Full 40-char hash — the git detail cache key.
+  sha: string;
   files: FileDiff[];
   imageRefs: { old: string; new: string };
 }) {
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
-  const [viewModeOverride, setViewModeOverride] = useState<"all" | "single" | null>(null);
-  const [treeCollapsedPaths, setTreeCollapsedPaths] = useState<Set<string>>(new Set());
+  const [selectedFile, setSelectedFile] = useGitDetailState(sessionId, sha, "changesSelectedFile");
+  const [collapsedFiles, setCollapsedFiles] = useGitDetailState(sessionId, sha, "changesCollapsedFiles");
+  const [viewModeOverride, setViewModeOverride] = useGitDetailState(sessionId, sha, "changesViewModeOverride");
+  const [treeCollapsedPaths, setTreeCollapsedPaths] = useGitDetailState(sessionId, sha, "changesTreeCollapsedPaths");
+
+  // Stable scroll persistence handle for the layout's restore/persist/reseed,
+  // backed by the same per-commit cache slot. Peek (never ensure) so a write
+  // firing around a commit switch can't wipe the next commit's slot.
+  const scroll = useMemo<DiffLayoutScroll>(
+    () => ({
+      getStored: () => peekGitDetailState(sessionId, sha)?.changesScrollTop ?? 0,
+      setStored: (top) => {
+        const detail = peekGitDetailState(sessionId, sha);
+        if (detail) detail.changesScrollTop = top;
+      },
+    }),
+    [sessionId, sha],
+  );
 
   return (
     <DiffLayout
@@ -229,6 +251,7 @@ function ChangesMode({
       onCollapsedFilesChange={setCollapsedFiles}
       treeCollapsedPaths={treeCollapsedPaths}
       onTreeCollapsedPathsChange={setTreeCollapsedPaths}
+      scroll={scroll}
       imageRefs={imageRefs}
     />
   );
@@ -250,8 +273,10 @@ function TreeMode({
   onSelectFile: (path: string | null) => void;
 }) {
   const { data: treeData, isLoading, error } = useGitTree(sessionId, sha);
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
-  const [lineWrap, setLineWrap] = useState(false);
+  // Expanded folders are per-commit (keyed by the full hash); word wrap is a
+  // session-wide Tree-mode preference shared across commits.
+  const [expandedPaths, setExpandedPaths] = useGitDetailState(sessionId, sha, "treeExpandedPaths");
+  const [lineWrap, setLineWrap] = useViewState(sessionId, "gitView", "treeLineWrap");
 
   const selectedFile = file ?? null;
   const {
@@ -407,11 +432,15 @@ export function CommitDetail({ sessionId, sha, mode, onSelectMode, onSelectCommi
     }
 
     if (mode === "changes") {
-      return <ChangesMode key={sha} sessionId={sessionId} files={files} imageRefs={imageRefs} />;
+      // Key + cache by the resolved full hash (the `sha` prop may be abbreviated).
+      return (
+        <ChangesMode key={meta.hash} sessionId={sessionId} sha={meta.hash} files={files} imageRefs={imageRefs} />
+      );
     }
 
     return (
       <CommitMode
+        key={meta.hash}
         meta={meta}
         files={files}
         sessionId={sessionId}

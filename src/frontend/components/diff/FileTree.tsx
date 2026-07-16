@@ -50,17 +50,10 @@ export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAd
     setCollapsedPaths((prev) => pruneSet(prev, dirs));
   }, [files, setCollapsedPaths]);
 
-  // Un-collapse the selected file's ancestors so it's visible
-  useEffect(() => {
-    if (!selectedFile) return;
-    const parentPaths = collectPathPrefixes([selectedFile]);
-    setCollapsedPaths((prev) => {
-      if (![...parentPaths].some((p) => prev.has(p))) return prev;
-      const next = new Set(prev);
-      parentPaths.forEach((p) => next.delete(p));
-      return next;
-    });
-  }, [selectedFile, setCollapsedPaths]);
+  // Note: no auto-un-collapse of the selected file's ancestors here. Selection
+  // also changes passively (scroll tracking in "all" mode, restore on mount),
+  // and reacting to it would keep force-expanding directories the user
+  // collapsed. Explicit navigation reveals its target in DiffLayout instead.
 
   const toggleDirectory = (path: string) => {
     setCollapsedPaths((prev) => toggleInSet(prev, path));

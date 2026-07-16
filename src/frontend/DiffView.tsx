@@ -4,7 +4,7 @@ import { generatePrompt } from "./utils/generatePrompt";
 import { useComments } from "./hooks/use-comments";
 import { useSessionDiff } from "./hooks/use-session-diff";
 import { useViewState } from "./hooks/use-view-state";
-import { getViewState } from "./view-state-store";
+import { getViewState, pruneMap } from "./view-state-store";
 import { DiffLayout, type DiffLayoutScroll } from "./components/diff/DiffLayout";
 import { Button } from "./components/ui/button";
 import {
@@ -23,7 +23,7 @@ import { useModifierHeld } from "./hooks/use-modifier-held";
 import { useSymbolHighlight } from "./hooks/use-symbol-highlight";
 import { maybeShowSymbolTip } from "./utils/tips";
 import { SymbolPopover, type SymbolTarget } from "./components/SymbolPopover";
-import type { DiffHunk, HunkExpansionState, DiffLine } from "./types/diff";
+import type { DiffHunk, DiffLine } from "./types/diff";
 import type { LineTokens } from "../types/highlight";
 import { Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
 
@@ -46,8 +46,8 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
   // default stays live across refetches; the toggle buttons set it explicitly.
   const [viewModeOverride, setViewModeOverride] = useViewState(sessionId, "diffView", "viewModeOverride");
   const [treeCollapsedPaths, setTreeCollapsedPaths] = useViewState(sessionId, "diffView", "treeCollapsedPaths");
+  const [hunkExpansions, setHunkExpansions] = useViewState(sessionId, "diffView", "hunkExpansions");
 
-  const [hunkExpansions, setHunkExpansions] = useState<Map<string, HunkExpansionState>>(new Map());
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [promptText, setPromptText] = useState("");
   const [copied, setCopied] = useState(false);
@@ -84,6 +84,30 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
       toast(`${removed} review comment${removed === 1 ? "" : "s"} removed — no longer in diff`);
     }
   }, [data, pruneComments]);
+
+  // Drop loaded context expansions that no longer line up with the diff. Keys
+  // are `${filePath}:${hunkIndex}` (see DiffFile). An expansion is kept only
+  // while its stored context lines are still contiguous with that hunk's
+  // current boundaries — if the file changed underneath (edited from another
+  // tab, committed away), stale lines would render against the wrong hunk,
+  // corrupt further expand-range math, and leak into the review prompt.
+  useEffect(() => {
+    if (!data) return;
+    const filesByPath = new Map(data.map((f) => [f.newPath, f]));
+    setHunkExpansions((prev) =>
+      pruneMap(prev, (key, exp) => {
+        const sep = key.lastIndexOf(":");
+        const path = key.slice(0, sep);
+        const hunk = filesByPath.get(path)?.hunks[Number(key.slice(sep + 1))];
+        if (!hunk) return false;
+        const lastBefore = exp.beforeLines[exp.beforeLines.length - 1];
+        if (lastBefore && lastBefore.newLineNum !== hunk.newStart - 1) return false;
+        const firstAfter = exp.afterLines[0];
+        if (firstAfter && firstAfter.newLineNum !== hunk.newStart + hunk.newCount) return false;
+        return true;
+      }),
+    );
+  }, [data, setHunkExpansions]);
 
   const handleExpandContext = useCallback(
     async (

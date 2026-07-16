@@ -297,6 +297,7 @@ export function GitView({ sessionId }: GitViewProps) {
   return (
     <div className="h-full flex flex-row">
       <RefSidebar
+        sessionId={sessionId}
         refs={refsQuery.data}
         refsError={!!refsQuery.error}
         onSelectRef={selectRef}
@@ -330,6 +331,7 @@ export function GitView({ sessionId }: GitViewProps) {
           style={{ height: `${splitRatio * 100}%` }}
         >
           <CommitList
+            sessionId={sessionId}
             commits={commits}
             selectedSha={selectedSha}
             onSelect={selectCommit}

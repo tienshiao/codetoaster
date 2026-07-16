@@ -1,8 +1,9 @@
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { FileDiff, Loader2 } from "lucide-react";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
 import { assignLanes, type GraphRow, type GraphState } from "../../utils/commitGraph";
+import { getViewState } from "../../view-state-store";
 import { CommitGraph } from "./CommitGraph";
 import { RefChip, displayRefs, type RefSets } from "./RefChip";
 import type { GitLogCommit } from "../../types/git";
@@ -12,6 +13,7 @@ import type { GitLogCommit } from "../../types/git";
 const ROW_HEIGHT = 28;
 
 interface CommitListProps {
+  sessionId: string;
   commits: GitLogCommit[];
   selectedSha: string | undefined;
   onSelect: (sha: string) => void;
@@ -85,6 +87,7 @@ const CommitRow = memo(function CommitRow({
 });
 
 export function CommitList({
+  sessionId,
   commits,
   selectedSha,
   onSelect,
@@ -95,6 +98,14 @@ export function CommitList({
   onLocalChanges,
 }: CommitListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
+  // Scroll-into-view guard (also primed by the mount-time scroll restore below).
+  const scrolledToSha = useRef<string | null>(null);
+  const didRestoreScroll = useRef(false);
+  // Set while the restore assigns scrollTop, so the resulting scroll event
+  // doesn't overwrite the stored offset with a clamped value (the loaded
+  // window can be shorter than when the offset was saved — gc'd pages, 409
+  // reset). The offset stays stored until a real user scroll replaces it.
+  const suppressScrollPersist = useRef(false);
 
   // Incremental lane assignment. Pagination only ever appends: react-query
   // keeps earlier pages (and their commit objects) by reference, so if the
@@ -161,15 +172,38 @@ export function CommitList({
     }
   }, [virtualItems, commits.length, hasMore, isFetchingNextPage, onLoadMore]);
 
-  // Scroll the selected commit into view — once per selection. The effect
-  // re-runs on page appends (commits identity changes), but the ref guard
-  // keeps it from re-scrolling and yanking the viewport away from wherever
-  // the user scrolled; it only fires again when selectedSha itself changes,
-  // or when a not-yet-loaded selection (deep link) finally appears in a page.
-  const scrolledToSha = useRef<string | null>(null);
-  useEffect(() => {
-    if (!selectedSha) return;
-    if (scrolledToSha.current === selectedSha) return;
+  // Restore-then-reveal, sequentially in one effect so their interplay is
+  // straight-line code rather than a cross-effect ref protocol.
+  //
+  // Restore (once, first run with commits present): re-apply the persisted
+  // scroll offset. Suppress the reveal only when the selected commit is
+  // already loaded — it was wherever the user left it relative to the saved
+  // offset. A not-yet-loaded selection (deep link, reset log window) must
+  // still reveal when its page finally arrives, so it is NOT primed.
+  //
+  // Reveal (once per selection): scroll the selected commit into view. The
+  // effect re-runs on page appends, but the ref guard keeps it from yanking
+  // the viewport away from wherever the user scrolled; it fires again only
+  // when selectedSha changes or a pending selection finally loads.
+  useLayoutEffect(() => {
+    const el = parentRef.current;
+    if (!el || commits.length === 0) return;
+
+    if (!didRestoreScroll.current) {
+      didRestoreScroll.current = true;
+      const stored = getViewState(sessionId).gitView.listScrollTop;
+      if (stored > 0) {
+        suppressScrollPersist.current = true;
+        el.scrollTop = stored;
+        // A no-op assignment (clamped to 0) fires no scroll event to consume.
+        if (el.scrollTop === 0) suppressScrollPersist.current = false;
+        if (selectedSha && commits.some((c) => shaMatches(c.hash, selectedSha))) {
+          scrolledToSha.current = selectedSha;
+        }
+      }
+    }
+
+    if (!selectedSha || scrolledToSha.current === selectedSha) return;
     const idx = commits.findIndex((c) => shaMatches(c.hash, selectedSha));
     if (idx >= 0) {
       virtualizer.scrollToIndex(idx, { align: "auto" });
@@ -177,7 +211,7 @@ export function CommitList({
     }
     // virtualizer identity is stable across renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSha, commits]);
+  }, [selectedSha, commits, sessionId]);
 
   return (
     <div className="h-full flex flex-col">
@@ -194,7 +228,17 @@ export function CommitList({
         <span className="flex-1 min-w-0 truncate italic text-primary font-medium">Local Changes</span>
       </button>
 
-      <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto">
+      <div
+        ref={parentRef}
+        className="flex-1 min-h-0 overflow-y-auto"
+        onScroll={(e) => {
+          if (suppressScrollPersist.current) {
+            suppressScrollPersist.current = false;
+            return;
+          }
+          getViewState(sessionId).gitView.listScrollTop = e.currentTarget.scrollTop;
+        }}
+      >
         <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
         {virtualItems.map((vi) => {
           const isSentinel = vi.index >= commits.length;
