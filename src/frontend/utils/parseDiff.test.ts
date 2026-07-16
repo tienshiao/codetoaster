@@ -78,3 +78,61 @@ test("parses added file with quoted path", () => {
   expect(files[0]!.newPath).toBe("notes/plan — v2.md");
   expect(files[0]!.status).toBe("added");
 });
+
+test("parses a pure rename (100% similarity, no hunks)", () => {
+  const diff = [
+    "diff --git a/src/old.ts b/src/new.ts",
+    "similarity index 100%",
+    "rename from src/old.ts",
+    "rename to src/new.ts",
+    "",
+  ].join("\n");
+
+  const files = parseDiff(diff);
+  expect(files).toHaveLength(1);
+  expect(files[0]!.status).toBe("renamed");
+  expect(files[0]!.oldPath).toBe("src/old.ts");
+  expect(files[0]!.newPath).toBe("src/new.ts");
+  expect(files[0]!.hunks).toHaveLength(0);
+  expect(files[0]!.additions).toBe(0);
+  expect(files[0]!.deletions).toBe(0);
+});
+
+test("parses a rename with content changes (keeps renamed status)", () => {
+  const diff = [
+    "diff --git a/src/old.ts b/src/new.ts",
+    "similarity index 80%",
+    "rename from src/old.ts",
+    "rename to src/new.ts",
+    "--- a/src/old.ts",
+    "+++ b/src/new.ts",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+    "",
+  ].join("\n");
+
+  const files = parseDiff(diff);
+  expect(files).toHaveLength(1);
+  expect(files[0]!.status).toBe("renamed");
+  expect(files[0]!.oldPath).toBe("src/old.ts");
+  expect(files[0]!.newPath).toBe("src/new.ts");
+  expect(files[0]!.additions).toBe(1);
+  expect(files[0]!.deletions).toBe(1);
+});
+
+test("parses a pure copy (100% similarity, no hunks)", () => {
+  const diff = [
+    "diff --git a/src/orig.ts b/src/dup.ts",
+    "similarity index 100%",
+    "copy from src/orig.ts",
+    "copy to src/dup.ts",
+    "",
+  ].join("\n");
+
+  const files = parseDiff(diff);
+  expect(files).toHaveLength(1);
+  expect(files[0]!.status).toBe("copied");
+  expect(files[0]!.oldPath).toBe("src/orig.ts");
+  expect(files[0]!.newPath).toBe("src/dup.ts");
+});

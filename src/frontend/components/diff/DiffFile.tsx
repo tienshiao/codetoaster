@@ -244,7 +244,11 @@ export function DiffFile({
           <span className="bg-green-500 h-full" style={{ width: `${additionWidth}%` }} />
           <span className="bg-red-500 h-full" style={{ width: `${100 - additionWidth}%` }} />
         </span>
-        <span className="truncate font-mono text-xs">{file.newPath}</span>
+        <span className="truncate font-mono text-xs">
+          {(file.status === "renamed" || file.status === "copied") && file.oldPath !== file.newPath
+            ? <>{file.oldPath} <span className="text-muted-foreground">→</span> {file.newPath}</>
+            : file.newPath}
+        </span>
         <span className="ml-auto flex items-center gap-2 shrink-0 text-xs">
           <span className="text-green-500">+{file.additions}</span>
           <span className="text-red-500">-{file.deletions}</span>
@@ -312,7 +316,13 @@ export function DiffFile({
         <div className="overflow-x-auto @container">
           {file.hunks.length === 0 ? (
             <div className="px-4 py-3 text-xs text-muted-foreground italic">
-              {file.isBinary ? "Binary file" : "Empty file"}
+              {file.isBinary
+                ? "Binary file"
+                : file.status === "renamed"
+                  ? "Renamed without content changes"
+                  : file.status === "copied"
+                    ? "Copied without content changes"
+                    : "Empty file"}
             </div>
           ) : (
             <table className="w-full border-collapse font-mono text-xs">

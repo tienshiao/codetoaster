@@ -92,6 +92,16 @@ function isImageFile(path: string): boolean {
   return IMAGE_EXTENSIONS.has(ext);
 }
 
+// Parse a path from a "rename from/to" or "copy from/to" line, handling
+// git's quoting for paths with special characters. Unlike ---/+++ lines,
+// these have no a/ b/ prefix.
+function parseRenameLinePath(raw: string): string {
+  if (raw.startsWith('"') && raw.endsWith('"')) {
+    return unescapeGitPath(raw.slice(1, -1));
+  }
+  return raw;
+}
+
 export function parseDiff(diffText: string): FileDiff[] {
   const files: FileDiff[] = [];
   const lines = diffText.split("\n");
@@ -151,6 +161,28 @@ export function parseDiff(diffText: string): FileDiff[] {
       continue;
     }
 
+    // Rename/copy detection. Git emits these instead of (or in addition to)
+    // ---/+++ lines. For a pure move (100% similarity) there are no hunks at
+    // all, so these lines are the only source of the paths and status.
+    if (line.startsWith("rename from ")) {
+      currentFile.oldPath = parseRenameLinePath(line.slice("rename from ".length));
+      continue;
+    }
+    if (line.startsWith("rename to ")) {
+      currentFile.newPath = parseRenameLinePath(line.slice("rename to ".length));
+      currentFile.status = "renamed";
+      continue;
+    }
+    if (line.startsWith("copy from ")) {
+      currentFile.oldPath = parseRenameLinePath(line.slice("copy from ".length));
+      continue;
+    }
+    if (line.startsWith("copy to ")) {
+      currentFile.newPath = parseRenameLinePath(line.slice("copy to ".length));
+      currentFile.status = "copied";
+      continue;
+    }
+
     // Detect binary files
     if (line.startsWith("Binary files")) {
       currentFile.isBinary = true;
@@ -180,8 +212,8 @@ export function parseDiff(diffText: string): FileDiff[] {
       } else if (currentFile.oldPath === "/dev/null") {
         // Added file
         currentFile.status = "added";
-      } else {
-        // Modified file
+      } else if (!currentFile.status) {
+        // Modified file (don't clobber an already-detected rename/copy status)
         currentFile.status = "modified";
       }
       continue;

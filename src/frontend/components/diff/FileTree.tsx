@@ -123,6 +123,9 @@ export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAd
                   if (file?.status === "deleted") {
                     return <span className="w-2 h-2 rounded-full bg-red-500" title="Deleted" />;
                   }
+                  if (file?.status === "renamed" || file?.status === "copied") {
+                    return <span className="w-2 h-2 rounded-full bg-purple-500" title={file.status === "copied" ? "Copied" : "Renamed"} />;
+                  }
                   return null;
                 })()}
               </span>
