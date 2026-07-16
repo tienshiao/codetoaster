@@ -10,18 +10,27 @@ src/
   index.ts              # CLI entry point
   server.ts             # Bun.serve() setup (HTTP, WebSocket, HTML imports)
   cli/                  # CLI commands, daemon management, output formatting
-  api/                  # HTTP API routes (diff)
+  api/                  # HTTP API routes (diff, files, git, highlight, symbols)
+  api/utils.ts          # Shared route helpers (gitSpawn, SHA_RE, file listing)
+  lib/db.ts             # bun:sqlite (projects) with migrations
   lib/xtmux/            # Session manager, PTY sessions, WebSocket message types
+  lib/highlight/        # Server-side tree-sitter tokenizing, grammar registry, cache
+  lib/symbols/          # Per-repo symbol index (tree-sitter tags) and store
   frontend/
     index.html          # HTML entry point (Bun HTML import)
     App.tsx              # Main layout
     SessionContext.tsx   # Global state (sessions, WebSocket, activity)
     Terminal.tsx         # @xterm/xterm wrapper
-    DiffView.tsx         # Code review diff viewer
-    components/          # UI components (sidebar, settings, command palette, diff)
+    DiffView.tsx         # Code review diff viewer (comments/symbols over DiffLayout)
+    FileView.tsx         # File browser
+    view-state-store.ts  # Per-session UI state that survives tab unmounts
+    components/          # UI components (sidebar, settings, command palette)
+    components/diff/     # Diff viewer; DiffLayout is the shared read-only core
+    components/file/     # File tree, content, markdown/mermaid preview
+    components/git/      # Commit list, graph, detail, ref sidebar
     components/ui/       # shadcn/ui primitives
-    hooks/               # React hooks (WebSocket, theme, drag-and-drop, etc.)
-    utils/               # Diff parsing, syntax highlighting, slug generation
+    hooks/               # React hooks (WebSocket, theme, git queries, etc.)
+    utils/               # Diff parsing, commit graph lanes, ref tree, slug generation
     routes/              # TanStack Router file-based routes
     types/               # TypeScript type definitions
 ```
@@ -65,6 +74,8 @@ Default to Bun instead of Node.js.
 - `Bun.file()` - not `node:fs` readFile/writeFile
 - `Bun.$\`cmd\`` - not `execa`
 
+Exception: git invocations go through `gitSpawn`/`gitSpawnRaw` in `api/utils.ts`, which use `Bun.spawn`. `Bun.$` buffers output in a shell and deadlocks on large payloads (e.g. diffing many large untracked files).
+
 ## WebSocket Protocol
 
 Client sends: `create`, `attach`, `detach`, `input`, `resize`, `list`, `kill`
@@ -78,7 +89,11 @@ Server sends: `attached`, `restore`, `data`, `resize`, `exit`, `error`, `session
 - Frontend queues WebSocket messages until terminal is mounted
 - Activity tracking with 300ms trailing debounce
 - Diff view: unified diff parser with word-level highlighting, inline comments, syntax tokenization
-- Session routes use nested layout: `sessions.$slug.tsx` (tabs) → `index.tsx` (terminal) / `diff.tsx` (code review)
+- `DiffLayout` is the comment-free diff core (file tree, all/single toggle, keyboard nav); `DiffView` wraps it with comments/submit/symbols, the git view feeds it per-commit state. Read-only consumers pass no comment/expand props, so those affordances don't render.
+- Git view: commit graph lanes are assigned by a pure, resumable `GraphState` in `utils/commitGraph.ts` so contiguous pagination stays deterministic
+- `/git/log` uses `after=` drift detection (409 → `StaleLogError`, reset once outside the retry cycle) and `until=` seek for fetch-until-SHA
+- UI state that must survive tab unmounts lives in `view-state-store.ts` keyed by session, not component state
+- Session routes use nested layout: `sessions.$slug.tsx` (tabs) → `index.tsx` (terminal) / `diff.tsx` (code review) / `file.tsx` (browser) / `git.tsx` (history)
 
 ## Testing
 

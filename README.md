@@ -76,10 +76,23 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 - Inline and file-level comments on diff lines
 - Hierarchical file tree navigation
 - Single-file and all-files view modes (auto-switches for large diffs)
-- Expandable context lines around hunks
+- Expandable context lines around hunks (persisted across tab switches)
+- Rename and copy detection, including pure moves with no content changes
 - Image diff support (side-by-side, added, deleted)
 - Generate agent prompts from code review feedback
-- Terminal/Diff tab switching per session
+- Terminal/Diff/Files/Git tab switching per session
+
+### Git
+- Commit history browser over `git log --all --topo-order`, virtualized with auto-pagination
+- Commit graph with colored lanes and bezier connectors
+- Filterable ref sidebar (branches, remotes, tags) with a collapsible `/`-delimited folder tree
+- Color-coded ref chips: HEAD solid, branch tinted, remote muted, tag amber
+- Selecting a ref fetches until its SHA even when it's outside the loaded window
+- Three modes per commit: metadata with clickable parents, changes (full diff viewer), and tree (browse the repo at that commit)
+- Pinned "Local Changes" row linking to the working-tree diff
+- Refs refresh on window focus and when terminal activity settles
+- Deep-linkable via `?commit=`, `?mode=`, and `?file=` search params
+- Draggable commit-list/detail split, persisted per session
 
 ### Code Intelligence
 - Server-side tree-sitter syntax highlighting across ~18 languages (TypeScript/TSX, JavaScript, Python, Go, Rust, C/C++, Java, PHP, Ruby, Bash, JSON, YAML, TOML, CSS, HTML, Kotlin), shared by the file browser and diff viewer
@@ -103,7 +116,7 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 | Find Next | Cmd+G | Ctrl+G |
 | Find Previous | Shift+Cmd+G | Shift+Ctrl+G |
 | Toggle Sidebar | Cmd+B | Ctrl+B |
-| Prev/Next File (Diff) | Left/Right Arrow | Left/Right Arrow |
+| Prev/Next File (Diff, Git changes) | Left/Right Arrow | Left/Right Arrow |
 | Go to Definition | Cmd+Click symbol | Ctrl+Click symbol |
 
 ## Tech Stack
