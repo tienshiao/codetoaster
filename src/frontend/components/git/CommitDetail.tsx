@@ -9,6 +9,7 @@ import { FileTree } from "../file/FileTree";
 import { FileContent } from "../file/FileContent";
 import { Button } from "../ui/button";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
+import { toggleInSet } from "../../view-state-store";
 import type { FileDiff } from "../../types/diff";
 import type { GitCommitMeta, GitViewMode } from "../../types/git";
 
@@ -114,12 +115,7 @@ function CommitMode({
 }) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const toggleFile = useCallback((path: string) => {
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
+    setExpandedPaths((prev) => toggleInSet(prev, path));
   }, []);
 
   const { additions: totalAdditions, deletions: totalDeletions } = useMemo(

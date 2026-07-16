@@ -4,7 +4,8 @@ import { FileIcon } from "../diff/FileIcon";
 import { FilterInput } from "../FilterInput";
 import { formatSize } from "../../utils/formatSize";
 import { useViewState } from "../../hooks/use-view-state";
-import { collectDirectoryPaths, collectPathPrefixes, pruneSet } from "../../view-state-store";
+import { collectDirectoryPaths, collectPathPrefixes, pruneSet, toggleInSet } from "../../view-state-store";
+import { compareTreeSiblings } from "../../utils/sortFiles";
 import type { FileInfo } from "../../types/file";
 
 interface FileTreeProps {
@@ -68,12 +69,7 @@ function sortTree(nodes: TreeNode[]): TreeNode[] {
       ...node,
       children: sortTree(node.children),
     }))
-    .sort((a, b) => {
-      if (a.isDirectory !== b.isDirectory) {
-        return a.isDirectory ? -1 : 1;
-      }
-      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-    });
+    .sort((a, b) => compareTreeSiblings(a.isDirectory, b.isDirectory, a.name, b.name));
 }
 
 export function FileTree({ sessionId, files, selectedFile, onSelectFile, expandedPaths: expandedPathsProp, onExpandedPathsChange }: FileTreeProps) {
@@ -110,15 +106,7 @@ export function FileTree({ sessionId, files, selectedFile, onSelectFile, expande
   }, [selectedFile, setExpandedPaths]);
 
   const toggleDirectory = (path: string) => {
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
+    setExpandedPaths((prev) => toggleInSet(prev, path));
   };
 
   const renderTree = (nodes: TreeNode[], depth: number = 0) => {

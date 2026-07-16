@@ -128,6 +128,14 @@ export function pruneSet(set: Set<string>, valid: Set<string>): Set<string> {
   return changed ? next : set;
 }
 
+/** Copy of `set` with `value` toggled: removed if present, added if not. */
+export function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
 /** Ancestor directory prefixes of the given paths (e.g. "a/b/c.ts" →
  * {"a", "a/b"}). */
 export function collectPathPrefixes(paths: Iterable<string>): Set<string> {

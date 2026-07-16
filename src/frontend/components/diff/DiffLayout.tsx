@@ -14,7 +14,7 @@ import { FileTree } from "./FileTree";
 import { DiffFile } from "./DiffFile";
 import { sumDiffStats } from "./DiffStat";
 import { Button } from "../ui/button";
-import { pruneSet } from "../../view-state-store";
+import { pruneSet, toggleInSet } from "../../view-state-store";
 import { symbolAtPoint } from "../../utils/symbolClick";
 import type { FileDiff, DiffHunk, HunkExpansionState } from "../../types/diff";
 import type { UseCommentsReturn } from "../../hooks/use-comments";
@@ -240,15 +240,7 @@ export function DiffLayout({
   }, [viewMode, files, onSelectedFileChange]);
 
   const handleToggleFile = useCallback((path: string) => {
-    onCollapsedFilesChange((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
+    onCollapsedFilesChange((prev) => toggleInSet(prev, path));
   }, [onCollapsedFilesChange]);
 
   const { additions: totalAdditions, deletions: totalDeletions } = useMemo(

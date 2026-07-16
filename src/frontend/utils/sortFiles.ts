@@ -3,6 +3,20 @@ import type { FileDiff } from "../types/diff";
 /** Symbol key used to mark leaf nodes in the file tree. */
 export const FILE_KEY = Symbol.for("file");
 
+const nameCollator = new Intl.Collator(undefined, { sensitivity: "base" });
+
+/** Shared tree-sibling ordering: folders/directories before leaves, then
+ * case-insensitive alpha. Used by the file trees and the git ref tree. */
+export function compareTreeSiblings(
+  aIsFolder: boolean,
+  bIsFolder: boolean,
+  aName: string,
+  bName: string,
+): number {
+  if (aIsFolder !== bIsFolder) return aIsFolder ? -1 : 1;
+  return nameCollator.compare(aName, bName);
+}
+
 export interface FileTreeNode {
   [FILE_KEY]?: FileDiff;
   [key: string]: FileTreeNode;

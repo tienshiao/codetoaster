@@ -3,9 +3,9 @@ import { ChevronRight, ChevronDown, MessageCircle } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 import { DiffStat } from "./DiffStat";
 import { FilterInput } from "../FilterInput";
-import { buildTree, FILE_KEY } from "../../utils/sortFiles";
+import { buildTree, FILE_KEY, compareTreeSiblings } from "../../utils/sortFiles";
 import { useViewState } from "../../hooks/use-view-state";
-import { collectPathPrefixes, pruneSet } from "../../view-state-store";
+import { collectPathPrefixes, pruneSet, toggleInSet } from "../../view-state-store";
 import type { FileTreeNode } from "../../utils/sortFiles";
 import type { FileDiff } from "../../types/diff";
 
@@ -63,15 +63,7 @@ export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAd
   }, [selectedFile, setCollapsedPaths]);
 
   const toggleDirectory = (path: string) => {
-    setCollapsedPaths(prev => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
+    setCollapsedPaths((prev) => toggleInSet(prev, path));
   };
 
   const renderTree = (
@@ -80,12 +72,9 @@ export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAd
     depth: number = 0
   ) => {
     return Object.entries(node)
-      .sort(([aKey, aVal], [bKey, bVal]) => {
-        const aIsDir = !aVal[FILE_KEY];
-        const bIsDir = !bVal[FILE_KEY];
-        if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
-        return aKey.localeCompare(bKey, undefined, { sensitivity: "base" });
-      })
+      .sort(([aKey, aVal], [bKey, bVal]) =>
+        compareTreeSiblings(!aVal[FILE_KEY], !bVal[FILE_KEY], aKey, bKey)
+      )
       .map(([key, value]) => {
       const fullPath = path ? `${path}/${key}` : key;
       const isFile = value[FILE_KEY];
