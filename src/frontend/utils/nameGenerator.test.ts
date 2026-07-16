@@ -13,12 +13,14 @@ describe("generateSessionName", () => {
   });
 
   test("returns unique names across multiple calls", () => {
+    // Independent draws so a broken RNG (always the same combo) still fails,
+    // with slack for birthday-paradox collisions: 20 draws from ~2400 combos
+    // collide ~8% of the time, but 6+ collisions is ~1e-10.
     const names = new Set<string>();
     for (let i = 0; i < 20; i++) {
       names.add(generateSessionName([]));
     }
-    // With ~2400 combos, 20 calls should almost certainly be unique
-    expect(names.size).toBe(20);
+    expect(names.size).toBeGreaterThanOrEqual(15);
   });
 
   test("avoids collisions with existing names", () => {

@@ -10,6 +10,7 @@ import { FileContent } from "../file/FileContent";
 import { Button } from "../ui/button";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
 import { toggleInSet } from "../../view-state-store";
+import { RefChip, displayRefs, type RefSets } from "./RefChip";
 import type { FileDiff } from "../../types/diff";
 import type { GitCommitMeta, GitViewMode } from "../../types/git";
 
@@ -21,6 +22,7 @@ interface CommitDetailProps {
   onSelectCommit: (sha: string) => void;
   file: string | undefined;
   onSelectFile: (path: string | null) => void;
+  refSets: RefSets;
 }
 
 // Memoized so toggling one file's expansion re-renders only that row. Props are
@@ -106,12 +108,14 @@ function CommitMode({
   sessionId,
   imageRefs,
   onSelectCommit,
+  refSets,
 }: {
   meta: GitCommitMeta;
   files: FileDiff[];
   sessionId: string;
   imageRefs: { old: string; new: string };
   onSelectCommit: (sha: string) => void;
+  refSets: RefSets;
 }) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const toggleFile = useCallback((path: string) => {
@@ -152,13 +156,8 @@ function CommitMode({
               ))}
             </span>
           )}
-          {meta.refs.map((ref) => (
-            <span
-              key={ref}
-              className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 text-[10px] font-medium"
-            >
-              {ref}
-            </span>
+          {displayRefs(meta.refs, refSets).map((ref) => (
+            <RefChip key={ref} name={ref} refSets={refSets} />
           ))}
         </div>
 
@@ -352,7 +351,7 @@ function TreeMode({
   );
 }
 
-export function CommitDetail({ sessionId, sha, mode, onSelectMode, onSelectCommit, file, onSelectFile }: CommitDetailProps) {
+export function CommitDetail({ sessionId, sha, mode, onSelectMode, onSelectCommit, file, onSelectFile, refSets }: CommitDetailProps) {
   // Tree mode renders no diff, so skip the token fetch until a diff-rendering
   // mode needs it.
   const { data, isLoading, error } = useGitCommit(sessionId, sha, mode !== "tree");
@@ -418,6 +417,7 @@ export function CommitDetail({ sessionId, sha, mode, onSelectMode, onSelectCommi
         sessionId={sessionId}
         imageRefs={imageRefs}
         onSelectCommit={onSelectCommit}
+        refSets={refSets}
       />
     );
   };

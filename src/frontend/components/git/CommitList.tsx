@@ -4,7 +4,8 @@ import { FileDiff, Loader2 } from "lucide-react";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
 import { assignLanes, type GraphRow, type GraphState } from "../../utils/commitGraph";
 import { CommitGraph } from "./CommitGraph";
-import type { GitLogCommit, GitRefsResponse } from "../../types/git";
+import { RefChip, displayRefs, type RefSets } from "./RefChip";
+import type { GitLogCommit } from "../../types/git";
 
 // Fixed row height (px) so virtualization measures exactly and graph cells /
 // text columns line up. Must match the h-7 on each row.
@@ -17,7 +18,7 @@ interface CommitListProps {
   hasMore: boolean;
   isFetchingNextPage: boolean;
   onLoadMore: () => void;
-  refsData: GitRefsResponse | undefined;
+  refSets: RefSets;
   onLocalChanges: () => void;
 }
 
@@ -27,30 +28,6 @@ function shaMatches(rowSha: string, selected: string | undefined): boolean {
   if (!selected) return false;
   return rowSha === selected || rowSha.startsWith(selected) || selected.startsWith(rowSha);
 }
-
-type RefKind = "head" | "branch" | "remote" | "tag" | "unknown";
-
-interface RefSets {
-  branches: Set<string>;
-  remotes: Set<string>;
-  tags: Set<string>;
-  headBranch: string | null;
-}
-
-function classifyRef(name: string, sets: RefSets): RefKind {
-  if (sets.branches.has(name)) return name === sets.headBranch ? "head" : "branch";
-  if (sets.remotes.has(name)) return "remote";
-  if (sets.tags.has(name)) return "tag";
-  return "unknown";
-}
-
-const REF_VARIANT: Record<RefKind, string> = {
-  head: "bg-primary text-primary-foreground font-semibold",
-  branch: "bg-primary/15 text-primary",
-  remote: "bg-muted text-muted-foreground",
-  tag: "bg-amber-500/15 text-amber-500",
-  unknown: "bg-muted text-muted-foreground",
-};
 
 // Memoized so a selection change re-renders only the two rows whose isSelected
 // flips, not the whole list. `onSelect`, `refSets`, `row` and `globalLanes` are
@@ -71,8 +48,7 @@ const CommitRow = memo(function CommitRow({
   globalLanes: number;
   refSets: RefSets;
 }) {
-  // Drop the literal "HEAD" pseudo-ref; the current branch is styled instead.
-  const refs = commit.refs.filter((r) => r !== "HEAD");
+  const refs = displayRefs(commit.refs, refSets);
   const shown = refs.slice(0, 3);
   const overflow = refs.length - shown.length;
 
@@ -87,15 +63,7 @@ const CommitRow = memo(function CommitRow({
       <CommitGraph row={row} height={ROW_HEIGHT} globalLanes={globalLanes} />
       <span className="flex-1 min-w-0 flex items-center gap-2">
         {shown.map((ref) => (
-          <span
-            key={ref}
-            className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium max-w-[140px] truncate ${
-              REF_VARIANT[classifyRef(ref, refSets)]
-            }`}
-            title={ref}
-          >
-            {ref}
-          </span>
+          <RefChip key={ref} name={ref} refSets={refSets} className="shrink-0 max-w-[140px] truncate" />
         ))}
         {overflow > 0 && (
           <span className="shrink-0 text-[10px] text-muted-foreground">+{overflow}</span>
@@ -123,7 +91,7 @@ export function CommitList({
   hasMore,
   isFetchingNextPage,
   onLoadMore,
-  refsData,
+  refSets,
   onLocalChanges,
 }: CommitListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -171,16 +139,6 @@ export function CommitList({
     graphCache.current = next;
     return { rows: next.rows, globalLanes: next.maxLanes };
   }, [commits]);
-
-  const refSets = useMemo<RefSets>(
-    () => ({
-      branches: new Set(refsData?.branches.map((b) => b.name) ?? []),
-      remotes: new Set(refsData?.remotes.map((r) => r.name) ?? []),
-      tags: new Set(refsData?.tags.map((t) => t.name) ?? []),
-      headBranch: refsData?.head.ref ?? null,
-    }),
-    [refsData],
-  );
 
   // One extra virtual row for the bottom sentinel (spinner / Load more) when
   // more history remains.

@@ -12,6 +12,7 @@ import { Button } from "../ui/button";
 import { CommitList } from "./CommitList";
 import { CommitDetail } from "./CommitDetail";
 import { RefSidebar } from "./RefSidebar";
+import { useRefSets } from "./RefChip";
 import type { GitViewMode } from "../../types/git";
 
 interface GitViewProps {
@@ -34,6 +35,7 @@ export function GitView({ sessionId }: GitViewProps) {
 
   const logQuery = useGitLog(sessionId);
   const refsQuery = useGitRefs(sessionId);
+  const refSets = useRefSets(refsQuery.data);
   const { fetchUntil } = logQuery;
 
   // Sha whose fetch-until is in flight after a sidebar click (drives the
@@ -338,7 +340,7 @@ export function GitView({ sessionId }: GitViewProps) {
             onLoadMore={() => {
               if (!pendingRefSha) logQuery.fetchNextPage();
             }}
-            refsData={refsQuery.data}
+            refSets={refSets}
             onLocalChanges={onLocalChanges}
           />
         </div>
@@ -366,6 +368,7 @@ export function GitView({ sessionId }: GitViewProps) {
             onSelectCommit={selectCommit}
             file={search.file}
             onSelectFile={selectFile}
+            refSets={refSets}
           />
         </div>
       </div>
