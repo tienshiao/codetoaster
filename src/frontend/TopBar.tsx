@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { Upload, GitBranch } from "lucide-react";
+import { Upload, GitBranch, Terminal, FileDiff, Files } from "lucide-react";
 import { StatusDot } from "./components/StatusDot";
 import { Button } from "./components/ui/button";
 import { SidebarTrigger, useSidebar } from "./components/ui/sidebar";
@@ -78,10 +78,16 @@ export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSe
             </Button>
             <Tabs value={activeTab} onValueChange={(v) => onTabChange?.(v as TabType)} className="flex-row">
               <TabsList className="h-7">
-                <TabsTrigger value="terminal" className="text-xs px-2.5 py-0.5 h-5">Terminal</TabsTrigger>
-                <TabsTrigger value="diff" className="text-xs px-2.5 py-0.5 h-5">Diff</TabsTrigger>
-                <TabsTrigger value="file" className="text-xs px-2.5 py-0.5 h-5">Files</TabsTrigger>
-                <TabsTrigger value="git" className="text-xs px-2.5 py-0.5 h-5">
+                <TabsTrigger value="terminal" className="text-xs px-2.5 py-0.5 h-5 gap-1">
+                  <Terminal className="h-3 w-3" /> Terminal
+                </TabsTrigger>
+                <TabsTrigger value="diff" className="text-xs px-2.5 py-0.5 h-5 gap-1">
+                  <FileDiff className="h-3 w-3" /> Diff
+                </TabsTrigger>
+                <TabsTrigger value="file" className="text-xs px-2.5 py-0.5 h-5 gap-1">
+                  <Files className="h-3 w-3" /> Files
+                </TabsTrigger>
+                <TabsTrigger value="git" className="text-xs px-2.5 py-0.5 h-5 gap-1">
                   <GitBranch className="h-3 w-3" /> Git
                 </TabsTrigger>
               </TabsList>
