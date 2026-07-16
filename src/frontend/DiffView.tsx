@@ -7,6 +7,7 @@ import { useViewState } from "./hooks/use-view-state";
 import { getViewState, pruneSet } from "./view-state-store";
 import { FileTree } from "./components/diff/FileTree";
 import { DiffFile } from "./components/diff/DiffFile";
+import { sumDiffStats } from "./components/diff/DiffStat";
 import { Button } from "./components/ui/button";
 import {
   AlertDialog,
@@ -324,8 +325,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     [sessionId, hunkExpansions]
   );
 
-  const totalAdditions = files.reduce((sum, f) => sum + f.additions, 0);
-  const totalDeletions = files.reduce((sum, f) => sum + f.deletions, 0);
+  const { additions: totalAdditions, deletions: totalDeletions } = sumDiffStats(files);
 
   const handleSubmitReview = useCallback(() => {
     const prompt = generatePrompt({

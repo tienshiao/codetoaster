@@ -3,15 +3,18 @@ import { ChevronDown, ChevronRight, ChevronUp, MessageCircle, MessageSquare, Mes
 import { CommentInput } from "./CommentInput";
 import { CommentDisplay } from "./CommentDisplay";
 import { ImageDiff } from "./ImageDiff";
+import { DiffStat } from "./DiffStat";
 import type { FileDiff, DiffHunk, HunkExpansionState, DiffLine, LineComment } from "../../types/diff";
 import type { UseCommentsReturn } from "../../hooks/use-comments";
 
+// Read-only consumers (the git commit view) omit commentState / onExpandContext:
+// no per-line comment affordances and no working-tree context expansion.
 interface DiffFileProps {
   file: FileDiff;
   isExpanded: boolean;
   onToggle: () => void;
-  hunkExpansions: Map<string, HunkExpansionState>;
-  onExpandContext: (
+  hunkExpansions?: Map<string, HunkExpansionState>;
+  onExpandContext?: (
     filePath: string,
     hunkIndex: number,
     direction: "before" | "after",
@@ -19,9 +22,14 @@ interface DiffFileProps {
     prevHunk: DiffHunk | null,
     nextHunk: DiffHunk | null
   ) => void;
-  commentState: UseCommentsReturn;
+  commentState?: UseCommentsReturn;
   sessionId?: string;
+  // When present (git commit view) both image sides are resolved from git refs;
+  // absent means the working-tree diff, where the "after" side is the file on disk.
+  imageRefs?: { old: string; new: string };
 }
+
+const EMPTY_EXPANSIONS = new Map<string, HunkExpansionState>();
 
 function ExpandButton({
   direction,
@@ -146,27 +154,17 @@ export function DiffFile({
   file,
   isExpanded,
   onToggle,
-  hunkExpansions,
+  hunkExpansions: hunkExpansionsProp,
   onExpandContext,
   commentState,
   sessionId,
+  imageRefs,
 }: DiffFileProps) {
-  const {
-    comments,
-    activeCommentLines,
-    editingCommentId,
-    deleteConfirmId,
-    getFileCommentKey,
-    openComment,
-    openFileComment,
-    saveComment,
-    saveFileComment,
-    cancelComment,
-    editComment,
-    requestDelete,
-    confirmDelete,
-    cancelDelete,
-  } = commentState;
+  const hunkExpansions = hunkExpansionsProp ?? EMPTY_EXPANSIONS;
+  const comments = commentState?.comments;
+  const activeCommentLines = commentState?.activeCommentLines;
+  const editingCommentId = commentState?.editingCommentId ?? null;
+  const deleteConfirmId = commentState?.deleteConfirmId ?? null;
 
   const total = file.additions + file.deletions;
   const additionWidth = total > 0 ? (file.additions / total) * 100 : 0;
@@ -174,6 +172,7 @@ export function DiffFile({
   const filePath = file.newPath;
 
   const fileCommentCount = useMemo(() => {
+    if (!comments) return 0;
     let count = 0;
     comments.forEach((c) => { if (c.filePath === filePath) count++; });
     return count;
@@ -184,6 +183,7 @@ export function DiffFile({
   };
 
   const shouldShowExpandBefore = (hunkIndex: number, hunk: DiffHunk) => {
+    if (!onExpandContext) return false;
     const prevHunk = hunkIndex > 0 ? file.hunks[hunkIndex - 1] : null;
     const expansionKey = `${filePath}:${hunkIndex}`;
     const expansion = hunkExpansions.get(expansionKey);
@@ -209,6 +209,7 @@ export function DiffFile({
   };
 
   const shouldShowExpandAfter = (hunkIndex: number, hunk: DiffHunk) => {
+    if (!onExpandContext) return false;
     const nextHunk = hunkIndex < file.hunks.length - 1 ? file.hunks[hunkIndex + 1] : null;
     const expansionKey = `${filePath}:${hunkIndex}`;
     const expansion = hunkExpansions.get(expansionKey);
@@ -250,31 +251,32 @@ export function DiffFile({
             : file.newPath}
         </span>
         <span className="ml-auto flex items-center gap-2 shrink-0 text-xs">
-          <span className="text-green-500">+{file.additions}</span>
-          <span className="text-red-500">-{file.deletions}</span>
+          <DiffStat additions={file.additions} deletions={file.deletions} />
           {fileCommentCount > 0 && (
             <span className="flex items-center gap-0.5 text-blue-400">
               <MessageCircle size={12} /> {fileCommentCount}
             </span>
           )}
         </span>
-        <button
-          className="shrink-0 flex items-center gap-1 text-xs font-sans text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-accent"
-          onClick={(e) => {
-            e.stopPropagation();
-            openFileComment(filePath);
-          }}
-          title="Add comment on file"
-        >
-          <MessageSquare size={12} />
-        </button>
+        {commentState && (
+          <button
+            className="shrink-0 flex items-center gap-1 text-xs font-sans text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-accent"
+            onClick={(e) => {
+              e.stopPropagation();
+              commentState.openFileComment(filePath);
+            }}
+            title="Add comment on file"
+          >
+            <MessageSquare size={12} />
+          </button>
+        )}
       </div>
 
       {/* File-level comment section */}
-      {isExpanded && (() => {
-        const fileCommentKey = getFileCommentKey(filePath);
-        const fileComment = comments.get(fileCommentKey);
-        const isFileCommentActive = activeCommentLines.has(fileCommentKey);
+      {isExpanded && commentState && (() => {
+        const fileCommentKey = commentState.getFileCommentKey(filePath);
+        const fileComment = commentState.comments.get(fileCommentKey);
+        const isFileCommentActive = commentState.activeCommentLines.has(fileCommentKey);
         const isFileCommentEditing = isFileCommentActive && editingCommentId !== null;
         const isFileCommentDeleteConfirm = fileComment && deleteConfirmId === fileComment.id;
 
@@ -286,10 +288,10 @@ export function DiffFile({
               <CommentDisplay
                 comment={fileComment}
                 commentKey={fileCommentKey}
-                onEdit={() => editComment(fileCommentKey)}
-                onRequestDelete={() => requestDelete(fileComment.id)}
-                onConfirmDelete={() => confirmDelete(fileCommentKey)}
-                onCancelDelete={cancelDelete}
+                onEdit={() => commentState.editComment(fileCommentKey)}
+                onRequestDelete={() => commentState.requestDelete(fileComment.id)}
+                onConfirmDelete={() => commentState.confirmDelete(fileCommentKey)}
+                onCancelDelete={commentState.cancelDelete}
                 isDeleteConfirm={!!isFileCommentDeleteConfirm}
                 variant="file"
               />
@@ -297,8 +299,8 @@ export function DiffFile({
             {isFileCommentActive && (
               <CommentInput
                 initialContent={isFileCommentEditing ? fileComment?.content : undefined}
-                onSave={(content) => saveFileComment(filePath, content)}
-                onCancel={() => cancelComment(fileCommentKey)}
+                onSave={(content) => commentState.saveFileComment(filePath, content)}
+                onCancel={() => commentState.cancelComment(fileCommentKey)}
                 variant="file"
               />
             )}
@@ -308,7 +310,7 @@ export function DiffFile({
 
       {/* Image diff */}
       {isExpanded && file.isImage && sessionId && (
-        <ImageDiff file={file} sessionId={sessionId} />
+        <ImageDiff file={file} sessionId={sessionId} imageRefs={imageRefs} />
       )}
 
       {/* Diff content */}
@@ -341,15 +343,15 @@ export function DiffFile({
                       {showExpandBefore && (
                         <ExpandButton
                           direction="before"
-                          onClick={() => onExpandContext(filePath, hunkIdx, "before", hunk, prevHunk, nextHunk)}
+                          onClick={() => onExpandContext?.(filePath, hunkIdx, "before", hunk, prevHunk, nextHunk)}
                         />
                       )}
 
                       {expansion?.beforeLines.map((line, lineIdx) => {
                         const lineNum = line.newLineNum!;
                         const commentKey = getCommentKey(lineNum, "context");
-                        const comment = comments.get(commentKey);
-                        const isActive = activeCommentLines.has(commentKey);
+                        const comment = comments?.get(commentKey);
+                        const isActive = activeCommentLines?.has(commentKey) ?? false;
                         const isEditing = isActive && editingCommentId !== null;
                         const isDeleteConfirm = comment && deleteConfirmId === comment.id;
 
@@ -364,13 +366,13 @@ export function DiffFile({
                             isActive={isActive}
                             isEditing={isEditing}
                             isDeleteConfirm={!!isDeleteConfirm}
-                            onOpenComment={() => openComment(filePath, lineNum, "context")}
-                            onSaveComment={(content) => saveComment(filePath, lineNum, "context", hunkIdx, content)}
-                            onCancelComment={() => cancelComment(commentKey)}
-                            onEditComment={() => editComment(commentKey)}
-                            onRequestDelete={() => comment && requestDelete(comment.id)}
-                            onConfirmDelete={() => confirmDelete(commentKey)}
-                            onCancelDelete={cancelDelete}
+                            onOpenComment={() => commentState?.openComment(filePath, lineNum, "context")}
+                            onSaveComment={(content) => commentState?.saveComment(filePath, lineNum, "context", hunkIdx, content)}
+                            onCancelComment={() => commentState?.cancelComment(commentKey)}
+                            onEditComment={() => commentState?.editComment(commentKey)}
+                            onRequestDelete={() => comment && commentState?.requestDelete(comment.id)}
+                            onConfirmDelete={() => commentState?.confirmDelete(commentKey)}
+                            onCancelDelete={() => commentState?.cancelDelete()}
                           />
                         );
                       })}
@@ -400,8 +402,8 @@ export function DiffFile({
                         const lineType = line.type as 'addition' | 'deletion' | 'context';
                         const lineNum = line.newLineNum ?? line.oldLineNum;
                         const commentKey = lineNum ? getCommentKey(lineNum, lineType) : null;
-                        const comment = commentKey ? comments.get(commentKey) : undefined;
-                        const isActive = commentKey ? activeCommentLines.has(commentKey) : false;
+                        const comment = commentKey ? comments?.get(commentKey) : undefined;
+                        const isActive = commentKey ? (activeCommentLines?.has(commentKey) ?? false) : false;
                         const isEditing = isActive && editingCommentId !== null;
                         const isDeleteConfirm = comment && deleteConfirmId === comment.id;
 
@@ -419,12 +421,12 @@ export function DiffFile({
                                 {line.newLineNum ?? ""}
                               </td>
                               <td className="px-1 whitespace-pre relative">
-                                {lineNum && (
+                                {lineNum && commentState && (
                                   <button
                                     className="absolute left-0 top-0 h-full w-6 flex items-center justify-center opacity-0 group-hover:opacity-100 text-accent-foreground bg-blue-500/80 hover:bg-blue-500 rounded-r-sm"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      openComment(filePath, lineNum, lineType);
+                                      commentState.openComment(filePath, lineNum, lineType);
                                     }}
                                     title="Add comment"
                                   >
@@ -463,22 +465,22 @@ export function DiffFile({
                                 </span>
                               </td>
                             </tr>
-                            {comment && !isActive && commentKey && (
+                            {comment && !isActive && commentKey && commentState && (
                               <CommentDisplay
                                 comment={comment}
                                 commentKey={commentKey}
-                                onEdit={() => editComment(commentKey)}
-                                onRequestDelete={() => requestDelete(comment.id)}
-                                onConfirmDelete={() => confirmDelete(commentKey)}
-                                onCancelDelete={cancelDelete}
+                                onEdit={() => commentState.editComment(commentKey)}
+                                onRequestDelete={() => commentState.requestDelete(comment.id)}
+                                onConfirmDelete={() => commentState.confirmDelete(commentKey)}
+                                onCancelDelete={commentState.cancelDelete}
                                 isDeleteConfirm={!!isDeleteConfirm}
                               />
                             )}
-                            {isActive && commentKey && lineNum && (
+                            {isActive && commentKey && lineNum && commentState && (
                               <CommentInput
                                 initialContent={isEditing ? comment?.content : undefined}
-                                onSave={(content) => saveComment(filePath, lineNum, lineType, hunkIdx, content)}
-                                onCancel={() => cancelComment(commentKey)}
+                                onSave={(content) => commentState.saveComment(filePath, lineNum, lineType, hunkIdx, content)}
+                                onCancel={() => commentState.cancelComment(commentKey)}
                               />
                             )}
                           </React.Fragment>
@@ -488,8 +490,8 @@ export function DiffFile({
                       {expansion?.afterLines.map((line, lineIdx) => {
                         const lineNum = line.newLineNum!;
                         const commentKey = getCommentKey(lineNum, "context");
-                        const comment = comments.get(commentKey);
-                        const isActive = activeCommentLines.has(commentKey);
+                        const comment = comments?.get(commentKey);
+                        const isActive = activeCommentLines?.has(commentKey) ?? false;
                         const isEditing = isActive && editingCommentId !== null;
                         const isDeleteConfirm = comment && deleteConfirmId === comment.id;
 
@@ -504,13 +506,13 @@ export function DiffFile({
                             isActive={isActive}
                             isEditing={isEditing}
                             isDeleteConfirm={!!isDeleteConfirm}
-                            onOpenComment={() => openComment(filePath, lineNum, "context")}
-                            onSaveComment={(content) => saveComment(filePath, lineNum, "context", hunkIdx, content)}
-                            onCancelComment={() => cancelComment(commentKey)}
-                            onEditComment={() => editComment(commentKey)}
-                            onRequestDelete={() => comment && requestDelete(comment.id)}
-                            onConfirmDelete={() => confirmDelete(commentKey)}
-                            onCancelDelete={cancelDelete}
+                            onOpenComment={() => commentState?.openComment(filePath, lineNum, "context")}
+                            onSaveComment={(content) => commentState?.saveComment(filePath, lineNum, "context", hunkIdx, content)}
+                            onCancelComment={() => commentState?.cancelComment(commentKey)}
+                            onEditComment={() => commentState?.editComment(commentKey)}
+                            onRequestDelete={() => comment && commentState?.requestDelete(comment.id)}
+                            onConfirmDelete={() => commentState?.confirmDelete(commentKey)}
+                            onCancelDelete={() => commentState?.cancelDelete()}
                           />
                         );
                       })}
@@ -518,7 +520,7 @@ export function DiffFile({
                       {showExpandAfter && (
                         <ExpandButton
                           direction="after"
-                          onClick={() => onExpandContext(filePath, hunkIdx, "after", hunk, prevHunk, nextHunk)}
+                          onClick={() => onExpandContext?.(filePath, hunkIdx, "after", hunk, prevHunk, nextHunk)}
                         />
                       )}
                     </React.Fragment>

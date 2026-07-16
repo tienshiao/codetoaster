@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { ChevronRight, ChevronDown, MessageCircle, Search, X } from "lucide-react";
 import { FileIcon } from "./FileIcon";
+import { DiffStat } from "./DiffStat";
 import { buildTree, FILE_KEY } from "../../utils/sortFiles";
 import { useViewState } from "../../hooks/use-view-state";
 import { collectPathPrefixes, pruneSet } from "../../view-state-store";
@@ -102,8 +103,7 @@ export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAd
             <span className="truncate">{key}</span>
             {isFile && file && (
               <span className="ml-auto flex items-center gap-1.5 shrink-0 text-[11px]">
-                <span className="text-green-500">+{file.additions}</span>
-                <span className="text-red-500">-{file.deletions}</span>
+                <DiffStat additions={file.additions} deletions={file.deletions} />
               </span>
             )}
             {isFile && (
@@ -145,8 +145,7 @@ export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAd
             {files.length} file{files.length !== 1 ? "s" : ""} changed
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="text-green-500">+{totalAdditions}</span>
-            <span className="text-red-500">-{totalDeletions}</span>
+            <DiffStat additions={totalAdditions} deletions={totalDeletions} />
           </span>
         </div>
         <div className="relative">

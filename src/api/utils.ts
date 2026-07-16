@@ -44,18 +44,30 @@ export async function listGitFiles(dir: string, { cached = true }: { cached?: bo
   return result.text().split("\0").filter(Boolean);
 }
 
-// Diff a single untracked file against /dev/null. Uses Bun.spawn rather than
-// Bun.$ because Bun.$ deadlocks when many concurrent shells each buffer large
-// stdout (e.g. multi-MB untracked files); streaming the pipe via Response avoids
-// it. `git diff --no-index` exits non-zero when files differ, so the exit code
-// is intentionally ignored.
+// Run git via Bun.spawn (not Bun.$) so large output streams through a pipe
+// rather than buffering in a shell — Bun.$ deadlocks when many concurrent shells
+// each buffer large stdout (e.g. multi-MB files or patch output).
+export async function gitSpawn(dir: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
+  const proc = Bun.spawn(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "ignore" });
+  const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return { stdout, exitCode };
+}
+
+// Parse a query param that must be a non-negative integer. Returns the default
+// when absent, or null when present-but-invalid (caller responds 400).
+export function parseNonNegInt(raw: string | null, def: number): number | null {
+  if (raw === null) return def;
+  if (!/^\d+$/.test(raw)) return null;
+  return parseInt(raw, 10);
+}
+
+export const SHA_RE = /^[0-9a-f]{4,40}$/i;
+
+// Diff a single untracked file against /dev/null. `git diff --no-index` exits
+// non-zero when files differ, so the exit code is intentionally ignored.
 export async function diffUntrackedFile(dir: string, file: string): Promise<string> {
-  const proc = Bun.spawn(["git", "-C", dir, "diff", "--no-index", "/dev/null", file], {
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const [text] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-  return text;
+  const { stdout } = await gitSpawn(dir, ["diff", "--no-index", "/dev/null", file]);
+  return stdout;
 }
 
 export function safePath(dir: string, filePath: string): string | null {
