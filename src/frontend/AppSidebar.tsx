@@ -11,6 +11,7 @@ import { TerminalPreview } from "./components/TerminalPreview";
 import { useSidebarDrag } from "./hooks/use-sidebar-drag";
 import { useTerminalPreview } from "./hooks/use-terminal-preview";
 import { useTerminalTheme } from "./hooks/use-terminal-theme";
+import { useFocusTerminalOnClose } from "./hooks/use-focus-terminal-on-close";
 import {
   Sidebar,
   SidebarContent,
@@ -108,6 +109,8 @@ export function AppSidebar({
     isProjectDropTarget,
   } = useSidebarDrag(projects, onReorder);
 
+  const { arm: armFocusTerminal, disarm: disarmFocusTerminal, onCloseAutoFocus: focusTerminalOnMenuClose } = useFocusTerminalOnClose(onFocusTerminal);
+
   const sessionMap = useMemo(
     () => new Map(sessions.map((s) => [s.id, s])),
     [sessions],
@@ -144,15 +147,21 @@ export function AppSidebar({
               <Plus className="size-4" />
             </Button>
           ) : (
-            <DropdownMenu>
+            <DropdownMenu onOpenChange={(open) => { if (open) disarmFocusTerminal(); }}>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="size-5 text-zinc-500" title="New Session">
                   <Plus className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" onCloseAutoFocus={focusTerminalOnMenuClose}>
                 {projects.map((project) => (
-                  <DropdownMenuItem key={project.id} onClick={() => onNewTab(project.id)}>
+                  <DropdownMenuItem
+                    key={project.id}
+                    onClick={() => {
+                      armFocusTerminal();
+                      onNewTab(project.id);
+                    }}
+                  >
                     {project.color ? (
                       <span className="size-2.5 rounded-full shrink-0" style={{ backgroundColor: project.color }} />
                     ) : (
@@ -190,7 +199,7 @@ export function AppSidebar({
                       <ChevronRight className={`size-3.5 shrink-0 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
                       <span className="flex-1 truncate">{project.name}</span>
                     </button>
-                    <DropdownMenu>
+                    <DropdownMenu onOpenChange={(open) => { if (open) disarmFocusTerminal(); }}>
                       <DropdownMenuTrigger asChild>
                         <button
                           className="absolute right-3 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-zinc-500 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0"
@@ -199,8 +208,13 @@ export function AppSidebar({
                           <EllipsisVertical />
                         </button>
                       </DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                          <DropdownMenuItem onClick={() => onNewTab(project.id)}>
+                        <DropdownMenuContent onCloseAutoFocus={focusTerminalOnMenuClose}>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              armFocusTerminal();
+                              onNewTab(project.id);
+                            }}
+                          >
                             <Plus />
                             New Session
                           </DropdownMenuItem>

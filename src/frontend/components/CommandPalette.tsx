@@ -10,6 +10,7 @@ import { useFileSearch, type FileSearchResult } from "../hooks/use-file-search";
 import { useRecentFiles } from "../hooks/use-recent-files";
 import { useSymbolSearch } from "../hooks/use-symbol-search";
 import { modifierSymbol } from "../utils/platform";
+import { useFocusTerminalOnClose } from "../hooks/use-focus-terminal-on-close";
 import type { SymbolEntry } from "../../lib/symbols/types";
 import {
   CommandDialog,
@@ -65,6 +66,7 @@ export function CommandPalette() {
   const [symbolMode, setSymbolMode] = useState(false);
   const modLabel = modifierSymbol();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const { arm: armFocusTerminal, disarm: disarmFocusTerminal, onCloseAutoFocus: focusTerminalOnClose } = useFocusTerminalOnClose(() => terminalRef.current?.focus());
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -80,6 +82,12 @@ export function CommandPalette() {
       setSymbolMode(false);
     }
   }, [open]);
+
+  // Reopening the palette during its exit animation cancels the close, so a
+  // pending arm from "New Session" would otherwise leak into the next close.
+  useEffect(() => {
+    if (open) disarmFocusTerminal();
+  }, [open, disarmFocusTerminal]);
 
   const { data: fileSearchData, isLoading: fileSearchLoading } = useFileSearch(
     currentSessionId ?? null,
@@ -130,6 +138,7 @@ export function CommandPalette() {
       description="Search for sessions, commands, or files"
       // Symbol results are ranked server-side; let cmdk filter/sort everything else.
       shouldFilter={!symbolMode}
+      onCloseAutoFocus={focusTerminalOnClose}
     >
       <CommandInput
         placeholder={symbolMode ? "Search symbols by name…" : "Search sessions, commands, files..."}
@@ -203,13 +212,13 @@ export function CommandPalette() {
           <CommandItem
             value="new session"
             onSelect={() => {
+              armFocusTerminal();
               const { id, name } = createSession();
               navigate({
                 to: "/sessions/$slug",
                 params: { slug: buildSessionSlug({ id, name }) },
               });
               setOpen(false);
-              setTimeout(() => terminalRef.current?.focus(), 100);
             }}
           >
             <Plus className="size-4" />
@@ -301,7 +310,11 @@ export function CommandPalette() {
               key={session.id}
               value={`${session.name} ${session.title ?? ""} ${session.id}`}
               onSelect={() => {
-                navigate(sessionNavTarget(session));
+                const target = sessionNavTarget(session);
+                // Switching lands on the session's last tab; only claim focus when
+                // that is the terminal — a diff/file/git tab wants its own focus.
+                if (target.to === "/sessions/$slug") armFocusTerminal();
+                navigate(target);
                 setOpen(false);
               }}
             >
