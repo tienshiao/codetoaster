@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import * as os from "os";
-import { Session } from "./session";
+import { Session, sanitizeSize } from "./session";
 import type { ClientInfo, ProjectInfo, SessionInfo, WebSocketData } from "./types";
 import * as db from "../db";
 
@@ -166,8 +166,8 @@ export class SessionManager {
     sessionId: string,
     clientId: string,
     ws: ServerWebSocket<WebSocketData>,
-    cols: number,
-    rows: number
+    cols?: number,
+    rows?: number
   ): Session | undefined {
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -180,7 +180,7 @@ export class SessionManager {
     const client: ClientInfo = {
       id: clientId,
       ws,
-      size: { cols, rows },
+      size: sanitizeSize(cols, rows),
     };
 
     session.addClient(client);

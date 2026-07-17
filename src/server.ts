@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, basename } from "node:path";
 import index from "./frontend/index.html";
 import { sessionManager } from "./lib/xtmux/session-manager";
+import { sanitizeSize } from "./lib/xtmux/session";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
 import { diffRoutes } from "./api/diff";
@@ -248,8 +249,12 @@ export function startServer(options?: ServerOptions) {
         switch (parsed.type) {
           case "create": {
             const { sessionId, name, cols, rows, projectId, afterSessionId } = parsed;
-            sessionManager.createSession(sessionId, name || sessionId, cols, rows, projectId, afterSessionId).then(
-              (session) => {
+            // The PTY needs a concrete initial size, so fall back to 80x24 for
+            // malformed values; attachClient re-sanitizes the raw cols/rows so a
+            // fabricated size never enters negotiation as the creator's own.
+            const size = sanitizeSize(cols, rows) ?? { cols: 80, rows: 24 };
+            sessionManager.createSession(sessionId, name || sessionId, size.cols, size.rows, projectId, afterSessionId).then(
+              () => {
                 sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
                 ws.data.sessionId = sessionId;
                 sessionManager.broadcastSessionList();

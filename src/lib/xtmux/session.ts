@@ -3,6 +3,21 @@ import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import type { ClientInfo, ServerMessage, WebSocketData } from "./types";
 
+// Validate a client-reported terminal size. Messages are parsed from the wire,
+// so cols/rows can be anything (null, NaN, 0, floats, absurd values) — treat
+// everything that isn't a workable integer pair as "no measurement" rather
+// than letting it into smallest-wins negotiation, where Math.min would coerce
+// it and resize every client's terminal to garbage.
+export function sanitizeSize(cols: unknown, rows: unknown): { cols: number; rows: number } | null {
+  if (
+    typeof cols !== "number" || !Number.isInteger(cols) || cols < 2 || cols > 10000 ||
+    typeof rows !== "number" || !Number.isInteger(rows) || rows < 1 || rows > 10000
+  ) {
+    return null;
+  }
+  return { cols, rows };
+}
+
 export class Session {
   public readonly id: string;
   public name: string;
@@ -210,8 +225,9 @@ export class Session {
 
   updateClientSize(clientId: string, cols: number, rows: number): void {
     const client = this.clients.get(clientId);
-    if (client) {
-      client.size = { cols, rows };
+    const size = sanitizeSize(cols, rows);
+    if (client && size) {
+      client.size = size;
       this.recalculateSize();
     }
   }
@@ -341,13 +357,20 @@ export class Session {
       return;
     }
 
-    // Smallest-wins strategy
+    // Smallest-wins strategy. Clients that haven't measured their terminal
+    // yet (size === null) don't constrain the size; if no client has
+    // measured, keep the current size.
     let cols = Infinity;
     let rows = Infinity;
 
     for (const client of this.clients.values()) {
+      if (!client.size) continue;
       cols = Math.min(cols, client.size.cols);
       rows = Math.min(rows, client.size.rows);
+    }
+
+    if (cols === Infinity || rows === Infinity) {
+      return;
     }
 
     // Only resize if changed

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
+import { useCallback, useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -16,7 +16,10 @@ export interface TerminalSize {
 export interface TerminalHandle {
   handleMessage: (message: any) => void;
   send: (msg: object) => void;
-  getSize: () => TerminalSize;
+  // Last size measured against a visible container, or null if the terminal
+  // has never been visible. The grid's own cols/rows track the session's
+  // negotiated size, not this client's, so they are never reported.
+  getSize: () => TerminalSize | null;
   resetAttached: () => void;
   focus: () => void;
   getSearchAddon: () => SearchAddon | null;
@@ -43,6 +46,10 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     const resizeHudTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hasInitialFitRef = useRef(false);
     const wasHiddenRef = useRef(false);
+    // Last size measured against a visible container. The grid itself tracks
+    // the session's negotiated size (or the 80×24 default before the first
+    // fit), which is not this client's own size.
+    const lastMeasuredSizeRef = useRef<TerminalSize | null>(null);
     const { theme: terminalTheme, cssFontFamily, fontSize } = useTerminalTheme();
     const terminalThemeRef = useRef(terminalTheme);
     terminalThemeRef.current = terminalTheme;
@@ -60,6 +67,28 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     sendMessageRef.current = sendMessage;
     onFileDropRef.current = onFileDrop;
     onSearchOpenRef.current = onSearchOpen;
+
+    // Fit and report the measured size, but only while the container is
+    // actually laid out. Fitting inside a display:none subtree makes FitAddon
+    // misread the container's "100%" computed height as 100px and shrink the
+    // grid to ~9×5, which smallest-wins negotiation then imposes on every
+    // other client. A skipped fit is picked up by the ResizeObserver when the
+    // container becomes visible again.
+    const fitIfVisible = useCallback((): TerminalSize | null => {
+      const term = termRef.current;
+      const fitAddon = fitAddonRef.current;
+      const container = containerRef.current;
+      if (!term || !fitAddon || !container) return null;
+      if (container.clientWidth === 0 || container.clientHeight === 0) {
+        wasHiddenRef.current = true;
+        return null;
+      }
+      fitAddon.fit();
+      const size = { cols: term.cols, rows: term.rows };
+      lastMeasuredSizeRef.current = size;
+      onSizeChangeRef.current(size);
+      return size;
+    }, []);
 
     // Expose methods to parent
     useImperativeHandle(ref, () => ({
@@ -102,10 +131,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
             // The restore resizes the grid to the session's stored size, which may not
             // match this client's container. Fitting ensures the grid fills the container,
             // and onSizeChange sends the actual size to the server for negotiation.
-            if (fitAddonRef.current) {
-              fitAddonRef.current.fit();
-              onSizeChangeRef.current({ cols: term.cols, rows: term.rows });
-            }
+            fitIfVisible();
             break;
 
           case "data":
@@ -131,10 +157,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
           sendMessageRef.current(msg);
         }
       },
-      getSize: () => {
-        const term = termRef.current;
-        return term ? { cols: term.cols, rows: term.rows } : { cols: 80, rows: 24 };
-      },
+      getSize: () => lastMeasuredSizeRef.current,
       resetAttached: () => {
         attachedRef.current = false;
       },
@@ -142,7 +165,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         termRef.current?.focus();
       },
       getSearchAddon: () => searchAddonRef.current,
-    }), []);
+    }), [fitIfVisible]);
 
     // Initialize terminal - runs once
     useEffect(() => {
@@ -163,11 +186,15 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       term.loadAddon(webLinksAddon);
       term.loadAddon(searchAddon);
       term.open(container);
-      fitAddon.fit();
 
       termRef.current = term;
       fitAddonRef.current = fitAddon;
       searchAddonRef.current = searchAddon;
+
+      // The page can load directly on a non-terminal tab route, mounting the
+      // terminal inside a display:none subtree — fitIfVisible skips that case.
+      // Its onSizeChange is a no-op here: no session is attached yet at mount.
+      fitIfVisible();
 
       // Handle terminal bell
       const bellDisposable = term.onBell(() => {
@@ -211,15 +238,10 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         return true;
       });
 
-      // Handle resize (skip when container is hidden/zero-sized to avoid corruption)
+      // Handle resize (fitIfVisible skips hidden/zero-sized to avoid corruption)
       const resizeObserver = new ResizeObserver(() => {
-        if (container.clientWidth === 0 || container.clientHeight === 0) {
-          wasHiddenRef.current = true;
-          return;
-        }
-        fitAddon.fit();
-        const size = { cols: term.cols, rows: term.rows };
-        onSizeChangeRef.current(size);
+        const size = fitIfVisible();
+        if (!size) return;
         if (!hasInitialFitRef.current || wasHiddenRef.current) {
           hasInitialFitRef.current = true;
           wasHiddenRef.current = false;
@@ -286,7 +308,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         fitAddonRef.current = null;
         searchAddonRef.current = null;
       };
-    }, [onReady]);
+    }, [onReady, fitIfVisible]);
 
     // Apply terminal theme changes reactively
     useEffect(() => {
@@ -298,24 +320,20 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     // Apply font changes reactively
     useEffect(() => {
       const term = termRef.current;
-      const fitAddon = fitAddonRef.current;
-      if (!term || !fitAddon) return;
+      if (!term) return;
       term.options.fontFamily = cssFontFamily;
       document.fonts.load(`16px ${cssFontFamily}`).then(() => {
-        fitAddon.fit();
-        onSizeChangeRef.current({ cols: term.cols, rows: term.rows });
+        fitIfVisible();
       });
-    }, [cssFontFamily]);
+    }, [cssFontFamily, fitIfVisible]);
 
     // Apply font size changes reactively
     useEffect(() => {
       const term = termRef.current;
-      const fitAddon = fitAddonRef.current;
-      if (!term || !fitAddon) return;
+      if (!term) return;
       term.options.fontSize = fontSize || 15;
-      fitAddon.fit();
-      onSizeChangeRef.current({ cols: term.cols, rows: term.rows });
-    }, [fontSize]);
+      fitIfVisible();
+    }, [fontSize, fitIfVisible]);
 
     return (
       <div

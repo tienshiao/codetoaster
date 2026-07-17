@@ -11,7 +11,7 @@ export interface ProjectInfo {
 // Client -> Server messages
 export type ClientMessage =
   | { type: "create"; sessionId: string; name?: string; cols: number; rows: number; projectId?: string; afterSessionId?: string }
-  | { type: "attach"; sessionId: string; cols: number; rows: number }
+  | { type: "attach"; sessionId: string; cols?: number; rows?: number }
   | { type: "detach" }
   | { type: "input"; data: string }
   | { type: "resize"; cols: number; rows: number }
@@ -50,7 +50,9 @@ export interface SessionInfo {
 export interface ClientInfo {
   id: string;
   ws: ServerWebSocket<WebSocketData>;
-  size: { cols: number; rows: number };
+  // null until the client has measured its terminal against a visible
+  // container; sizeless clients don't constrain smallest-wins negotiation
+  size: { cols: number; rows: number } | null;
 }
 
 export interface WebSocketData {

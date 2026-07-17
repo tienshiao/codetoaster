@@ -192,11 +192,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (terminalReadyRef.current) {
         send({ type: "list" });
 
-        // Re-attach to the session that was active before disconnect
+        // Re-attach to the session that was active before disconnect. Omit the
+        // size when the terminal has never been visibly measured (e.g. the
+        // page loaded on the diff tab) so it doesn't constrain negotiation.
         const sessionId = currentSessionIdRef.current;
         if (sessionId) {
-          const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-          send({ type: "attach", sessionId, cols: size.cols, rows: size.rows });
+          const size = terminalRef.current?.getSize();
+          send({ type: "attach", sessionId, ...(size ?? {}) });
         }
       }
     },
@@ -293,8 +295,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         send({ type: "detach" });
       }
 
-      const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-      send({ type: "attach", sessionId: id, cols: size.cols, rows: size.rows });
+      const size = terminalRef.current?.getSize();
+      send({ type: "attach", sessionId: id, ...(size ?? {}) });
       if (isViewingTerminalRef.current) {
         send({ type: "acknowledge", sessionId: id });
       }
