@@ -253,35 +253,108 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       });
       resizeObserver.observe(container);
 
-      // Touch scrolling workaround (fixed in xterm.js 6.1.0, remove when upgraded)
+      // Touch scrolling workaround (fixed in xterm.js 6.1.0, remove when upgraded).
+      // xterm 6.0's viewport is a VS Code SmoothScrollableElement, which listens
+      // for wheel but not touch, so a finger drag scrolls nothing on its own.
       const screenEl = container.querySelector('.xterm-screen') as HTMLElement | null;
       let touchStartY = 0;
       let accumulatedDelta = 0;
-      const lineHeight = term.options.lineHeight
-        ? Math.ceil(term.options.lineHeight * (term.options.fontSize ?? 15))
-        : (term.options.fontSize ?? 15);
-      const handleTouchStart = (e: TouchEvent) => {
-        const touch = e.touches[0];
-        if (e.touches.length === 1 && touch) {
-          touchStartY = touch.clientY;
-          accumulatedDelta = 0;
+      // Rendered cell height in CSS pixels. Measured per gesture rather than
+      // derived from fontSize, which ignores the renderer's line-height rounding.
+      const rowHeight = (): number => {
+        // term.resize() updates term.rows synchronously but the screen element's
+        // height only on the renderer's next frame, so a gesture starting inside
+        // that window measures rows against the previous geometry. Reject a
+        // result that can't be a cell height rather than scrolling at 8x.
+        const fontSize = term.options.fontSize ?? 15;
+        const measured = screenEl && term.rows ? screenEl.clientHeight / term.rows : 0;
+        const plausible = measured >= fontSize * 0.5 && measured <= fontSize * 3;
+        return plausible ? measured : fontSize * 1.2;
+      };
+      let lineHeight = rowHeight();
+      // Apps living in the alt buffer (Claude Code's alt-screen renderer, vim,
+      // tmux) scroll themselves: there is no scrollback for scrollLines to move,
+      // so the drag has to reach them as wheel input. Dispatching a real wheel
+      // event lets xterm pick the encoding — an SGR wheel report when the app has
+      // mouse tracking on, cursor keys when it doesn't.
+      const scrollByLines = (lines: number, touch: Touch) => {
+        const mouseMode = term.modes.mouseTrackingMode;
+        const wheelGoesToApp = mouseMode !== 'none' && mouseMode !== 'x10';
+        if (!wheelGoesToApp && term.buffer.active.type === 'normal') {
+          term.scrollLines(lines);
+          return;
+        }
+        // One event per line: xterm emits a single wheel report per event no
+        // matter how large the delta is, so a batched delta would scroll by one.
+        const step = Math.sign(lines);
+        for (let i = 0; i < Math.abs(lines); i++) {
+          screenEl?.dispatchEvent(new WheelEvent("wheel", {
+            deltaY: step,
+            deltaMode: WheelEvent.DOM_DELTA_LINE,
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+            bubbles: true,
+            cancelable: true,
+          }));
         }
       };
+      // A two-finger drag scrolls like a one-finger drag, so a pinch has to be
+      // told apart from one or zooming becomes impossible anywhere over the
+      // terminal. Fingers separating further than the gesture has travelled is
+      // a pinch; once classified it stays a pinch, and the browser handles it.
+      const PINCH_SLOP_PX = 24;
+      const touchSpan = (e: TouchEvent): number | null => {
+        const [a, b] = [e.touches[0], e.touches[1]];
+        return a && b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : null;
+      };
+      let gestureStartY = 0;
+      let startSpan: number | null = null;
+      let isPinching = false;
+      const handleTouchStart = (e: TouchEvent) => {
+        const touch = e.touches[0];
+        if (!touch) return;
+        touchStartY = touch.clientY;
+        gestureStartY = touch.clientY;
+        accumulatedDelta = 0;
+        lineHeight = rowHeight();
+        startSpan = touchSpan(e);
+        isPinching = false;
+      };
       const handleTouchMove = (e: TouchEvent) => {
-        if (e.touches.length !== 1) return;
-        const touch = e.touches[0]!;
+        const touch = e.touches[0];
+        if (!touch) return;
+        const span = touchSpan(e);
+        if (!isPinching && span !== null && startSpan !== null) {
+          const spread = Math.abs(span - startSpan);
+          isPinching = spread > PINCH_SLOP_PX && spread > Math.abs(touch.clientY - gestureStartY);
+        }
+        if (isPinching) return;
+        // Swallow every drag we do handle, multi-touch included: an unhandled
+        // one pans the page, which on iOS rubber-bands the whole terminal.
         e.preventDefault();
         const deltaY = touchStartY - touch.clientY;
         touchStartY = touch.clientY;
         accumulatedDelta += deltaY;
         const lines = Math.trunc(accumulatedDelta / lineHeight);
         if (lines !== 0) {
-          term.scrollLines(lines);
+          scrollByLines(lines, touch);
           accumulatedDelta -= lines * lineHeight;
         }
       };
+      // Lifting one finger of a multi-touch drag promotes another to touches[0];
+      // re-anchor on it so the position jump isn't read as a scroll.
+      const handleTouchEnd = (e: TouchEvent) => {
+        const touch = e.touches[0];
+        if (!touch) return;
+        touchStartY = touch.clientY;
+        gestureStartY = touch.clientY;
+        accumulatedDelta = 0;
+        startSpan = touchSpan(e);
+      };
       screenEl?.addEventListener("touchstart", handleTouchStart, { passive: true });
       screenEl?.addEventListener("touchmove", handleTouchMove, { passive: false });
+      screenEl?.addEventListener("touchend", handleTouchEnd, { passive: true });
+      screenEl?.addEventListener("touchcancel", handleTouchEnd, { passive: true });
 
       // Handle paste with files (screenshots, copied files)
       const handlePaste = (e: ClipboardEvent) => {
@@ -302,6 +375,8 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         if (resizeHudTimeoutRef.current) clearTimeout(resizeHudTimeoutRef.current);
         screenEl?.removeEventListener("touchstart", handleTouchStart);
         screenEl?.removeEventListener("touchmove", handleTouchMove);
+        screenEl?.removeEventListener("touchend", handleTouchEnd);
+        screenEl?.removeEventListener("touchcancel", handleTouchEnd);
         container.removeEventListener("paste", handlePaste, true);
         term.dispose();
         termRef.current = null;
@@ -338,7 +413,10 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     return (
       <div
         className="relative w-full h-full p-2"
-        style={{ backgroundColor: terminalTheme?.background ?? '#000' }}
+        // touchAction: the terminal owns panning inside it — the browser's
+        // default would scroll the page out from under a drag — but pinch-zoom
+        // stays with the browser, since a drag can turn out to be one.
+        style={{ backgroundColor: terminalTheme?.background ?? '#000', touchAction: 'pinch-zoom' }}
         onDragEnter={(e) => {
           e.preventDefault();
           dragCounterRef.current++;

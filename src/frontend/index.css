@@ -228,6 +228,10 @@
 html, body, #root {
   width: 100%;
   height: 100%;
+  /* The app is a fixed-height shell; without this iOS rubber-bands the whole
+     page when a gesture overscrolls one of the inner scroll areas. Y only —
+     the shorthand would also kill horizontal swipe-to-navigate. */
+  overscroll-behavior-y: none;
 }
 
 /* Rendered Markdown preview (file view) */
