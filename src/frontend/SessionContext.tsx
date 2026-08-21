@@ -10,7 +10,7 @@ import {
 import { useMatches } from "@tanstack/react-router";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
 import { generateUUID } from "./utils/uuid";
-import type { NameSource } from "../lib/xtmux/naming";
+import { sessionDisplayName, type NameSource } from "../lib/xtmux/naming";
 import { useWebSocket } from "./hooks/use-websocket";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { removeRecentFiles } from "./hooks/use-recent-files";
@@ -75,13 +75,13 @@ function fireWebNotification(
   title: string,
   body: string,
   tag: string,
+  sessionLabel?: string,
   sessionName?: string,
-  sessionTitle?: string,
 ) {
   if (!("Notification" in window)) return;
   if (Notification.permission === "granted") {
-    // Build a metadata line like "session-1 — vim"
-    const metaParts = [sessionName, sessionTitle].filter(Boolean);
+    // Build a metadata line like "Implementing latch naming — codetoaster · main"
+    const metaParts = [...new Set([sessionLabel, sessionName].filter(Boolean))];
     const metaLine = metaParts.length > 0 ? metaParts.join(" — ") : undefined;
     const fullBody = [metaLine, body].filter(Boolean).join("\n") || undefined;
 
@@ -172,8 +172,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           message.title,
           message.body,
           `codetoaster-${message.sessionId}`,
+          session ? sessionDisplayName(session) : undefined,
           session?.name,
-          session?.title,
         );
       }
       return;

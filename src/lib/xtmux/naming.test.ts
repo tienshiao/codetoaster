@@ -1,9 +1,9 @@
 import { test, expect, describe } from "bun:test";
 import {
-  deriveTitleName,
-  formatProvisionalName,
+  formatDerivedName,
+  meaningfulTitle,
+  sessionDisplayName,
   stripDecoration,
-  titleAddsInfo,
   uniqueName,
 } from "./naming";
 
@@ -26,63 +26,80 @@ describe("stripDecoration", () => {
   });
 });
 
-describe("deriveTitleName", () => {
-  test("latches onto a title with real content", () => {
-    expect(deriveTitleName("✳ Implementing latch naming")).toBe("Implementing latch naming");
-    expect(deriveTitleName("bun test --watch")).toBe("bun test --watch");
-    expect(deriveTitleName("foo.ts (~/Projects/x) - VIM")).toBe("foo.ts (~/Projects/x) - VIM");
+describe("meaningfulTitle", () => {
+  test("accepts a title with real content", () => {
+    expect(meaningfulTitle("✳ Implementing latch naming")).toBe("Implementing latch naming");
+    expect(meaningfulTitle("bun test --watch")).toBe("bun test --watch");
+    expect(meaningfulTitle("foo.ts (~/Projects/x) - VIM")).toBe("foo.ts (~/Projects/x) - VIM");
   });
 
   test("rejects the default titles shells emit", () => {
-    expect(deriveTitleName("tma@laptop: ~/Projects/codetoaster")).toBeNull();
-    expect(deriveTitleName("fish ~/P/codetoaster")).toBeNull();
-    expect(deriveTitleName("/Users/tma/Projects/codetoaster")).toBeNull();
-    expect(deriveTitleName("")).toBeNull();
-    expect(deriveTitleName("   ")).toBeNull();
+    expect(meaningfulTitle("tma@laptop: ~/Projects/codetoaster")).toBeNull();
+    expect(meaningfulTitle("fish ~/P/codetoaster")).toBeNull();
+    expect(meaningfulTitle("/Users/tma/Projects/codetoaster")).toBeNull();
+    expect(meaningfulTitle("")).toBeNull();
+    expect(meaningfulTitle("   ")).toBeNull();
+    expect(meaningfulTitle(undefined)).toBeNull();
   });
 
-  test("rejects a bare program name so a better title can still land", () => {
-    expect(deriveTitleName("claude")).toBeNull();
-    expect(deriveTitleName("vim")).toBeNull();
-  });
-
-  test("rejects a title that only repeats the provisional name", () => {
-    expect(deriveTitleName("codetoaster · main", "codetoaster · main")).toBeNull();
-    expect(deriveTitleName("Codetoaster · Main", "codetoaster · main")).toBeNull();
+  test("rejects a bare program name, which says less than dir and branch", () => {
+    expect(meaningfulTitle("claude")).toBeNull();
+    expect(meaningfulTitle("vim")).toBeNull();
   });
 
   test("truncates an overlong title", () => {
-    const name = deriveTitleName(`${"word ".repeat(30)}end`)!;
+    const name = meaningfulTitle(`${"word ".repeat(30)}end`)!;
     expect(name.length).toBe(60);
     expect(name.endsWith("…")).toBe(true);
   });
 });
 
-describe("titleAddsInfo", () => {
-  test("false once the name has latched onto that title", () => {
-    expect(titleAddsInfo("Implementing latch naming", "✳ Implementing latch naming")).toBe(false);
+describe("sessionDisplayName", () => {
+  test("shows the title over a derived name", () => {
+    expect(sessionDisplayName({
+      name: "codetoaster · main",
+      nameSource: "derived",
+      title: "✳ Implementing latch naming",
+    })).toBe("Implementing latch naming");
   });
 
-  test("true while the name is still provisional", () => {
-    expect(titleAddsInfo("codetoaster · main", "✳ Implementing latch naming")).toBe(true);
+  test("follows the title as it changes — nothing is frozen", () => {
+    const session = { name: "codetoaster · main", nameSource: "derived" as const };
+    expect(sessionDisplayName({ ...session, title: "Claude Code" })).toBe("Claude Code");
+    expect(sessionDisplayName({ ...session, title: "✳ Wiring the parser" })).toBe("Wiring the parser");
   });
 
-  test("false for an empty title", () => {
-    expect(titleAddsInfo("codetoaster · main", "")).toBe(false);
+  test("falls back to the derived name when the title says nothing", () => {
+    const session = { name: "codetoaster · main", nameSource: "derived" as const };
+    expect(sessionDisplayName({ ...session, title: "fish ~/P/codetoaster" })).toBe("codetoaster · main");
+    expect(sessionDisplayName({ ...session, title: "" })).toBe("codetoaster · main");
+    expect(sessionDisplayName(session)).toBe("codetoaster · main");
+  });
+
+  test("an explicit rename outranks any title", () => {
+    expect(sessionDisplayName({
+      name: "Billing spike",
+      nameSource: "manual",
+      title: "✳ Implementing latch naming",
+    })).toBe("Billing spike");
+  });
+
+  test("treats a missing nameSource as derived, so an optimistic row still shows its title", () => {
+    expect(sessionDisplayName({ name: "New Session", title: "bun test --watch" })).toBe("bun test --watch");
   });
 });
 
-describe("formatProvisionalName", () => {
+describe("formatDerivedName", () => {
   test("joins directory and branch", () => {
-    expect(formatProvisionalName("codetoaster", "split-view")).toBe("codetoaster · split-view");
+    expect(formatDerivedName("codetoaster", "split-view")).toBe("codetoaster · split-view");
   });
 
   test("omits the branch outside a repo", () => {
-    expect(formatProvisionalName("Downloads")).toBe("Downloads");
+    expect(formatDerivedName("Downloads")).toBe("Downloads");
   });
 
   test("falls back when the cwd is unknown", () => {
-    expect(formatProvisionalName(undefined)).toBe("Shell");
+    expect(formatDerivedName(undefined)).toBe("Shell");
   });
 });
 

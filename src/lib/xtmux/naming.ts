@@ -1,18 +1,27 @@
-// Session names are derived rather than random. A session is born with a
-// provisional "<dir> · <branch>" label, then latches onto the first terminal
-// title (OSC 0/2) that carries real information — the titles Claude Code, vim,
-// ssh and friends set deliberately. Latching is permanent: a name that keeps
-// changing under you is as hard to remember as a random one. A manual rename
-// opts out of derivation entirely.
+// A session shows the most specific thing known about it at any moment, in
+// this order: an explicit rename, else the terminal's own title (OSC 0/2) when
+// that title says something, else a derived "<dir> · <branch>" label.
 //
-// Kept free of imports so the frontend can share the redundancy check without
-// pulling node builtins into the bundle; the filesystem and git lookups that
-// feed formatProvisionalName live in session-manager.
+// Nothing is frozen. The title is live, so a session follows its program from
+// "Claude Code" to whatever task that program is describing, and falls back to
+// the derived label when the title goes quiet again. That live projection is
+// what keeps sessions distinguishable — an earlier design latched the name onto
+// the first usable title, which meant every Claude Code session froze on the
+// generic startup title before any task existed.
+//
+// The two are kept apart on purpose. `name` is stable identity: it is what the
+// URL slug and the CLI's name matching are built from, so it must not churn
+// every time a program repaints its title. The display label is derived at
+// render time and never stored.
+//
+// Kept free of imports so the frontend can share the projection without pulling
+// node builtins into the bundle; the filesystem and git lookups that feed
+// formatDerivedName live in session-manager.
 
-// Where a session's current name came from. "provisional" is the derived
-// "<dir> · <branch>" label and is the only state a terminal title will still
-// replace; "latched" and "manual" are both terminal.
-export type NameSource = "provisional" | "latched" | "manual";
+// Where a session's stored `name` came from. "manual" is a deliberate rename
+// and outranks the terminal title; "derived" is the "<dir> · <branch>" label
+// and yields to any title that carries real content.
+export type NameSource = "derived" | "manual";
 
 const MAX_NAME_LENGTH = 60;
 const NAME_SEPARATOR = " · ";
@@ -55,9 +64,10 @@ export function stripDecoration(rawTitle: string): string {
   return normalized;
 }
 
-// The name a title would latch to, or null if the title says nothing a
-// provisional name doesn't already say.
-export function deriveTitleName(rawTitle: string, provisionalName?: string): string | null {
+// The label a title is worth showing as, or null if it says less than the
+// derived name already does.
+export function meaningfulTitle(rawTitle: string | undefined): string | null {
+  if (!rawTitle) return null;
   const stripped = stripDecoration(rawTitle);
   if (!stripped) return null;
 
@@ -69,32 +79,36 @@ export function deriveTitleName(rawTitle: string, provisionalName?: string): str
     return bare.length > 0 && !USER_AT_HOST_RE.test(bare) && !isPathLike(bare);
   });
 
-  // Two words minimum. A bare program name ("claude", "vim") is what the shell
-  // reports the instant a command starts; holding out for a second word is
-  // what lets the latch land on "foo.ts (~/x) - VIM" instead of "vim", and on
-  // a Claude Code task description instead of "claude".
+  // Two words minimum. A bare program name ("vim", "node") is what the shell
+  // reports the instant a command starts, and says strictly less than the
+  // directory and branch the derived name already carries.
   if (content.length < 2) return null;
 
-  const name = truncate(stripped, MAX_NAME_LENGTH);
-  if (provisionalName && name.toLowerCase() === provisionalName.toLowerCase()) return null;
-  return name;
+  return truncate(stripped, MAX_NAME_LENGTH);
 }
 
-// Whether a title is worth showing alongside a name. False once a name has
-// latched onto that same title, so the sidebar doesn't print it twice.
-export function titleAddsInfo(name: string, rawTitle: string): boolean {
-  const stripped = stripDecoration(rawTitle);
-  if (!stripped) return false;
-  return truncate(stripped, MAX_NAME_LENGTH).toLowerCase() !== name.toLowerCase();
+// What to show for a session, at render time. An explicit rename outranks the
+// title — having renamed a session, you should not watch the name you chose
+// get painted over by whatever the program inside is doing.
+export function sessionDisplayName(session: {
+  name: string;
+  nameSource?: NameSource;
+  title?: string;
+}): string {
+  if (session.nameSource === "manual") return session.name;
+  return meaningfulTitle(session.title) ?? session.name;
 }
 
-export function formatProvisionalName(dirLabel: string | undefined, branch?: string): string {
+export function formatDerivedName(dirLabel: string | undefined, branch?: string): string {
   const base = dirLabel || "Shell";
   return branch ? `${base}${NAME_SEPARATOR}${branch}` : base;
 }
 
 // Sessions in the same repo and branch would otherwise collide, and two
-// identically-named tabs are exactly the problem derived names are meant to fix.
+// identically-named tabs are exactly the problem derived names are meant to
+// fix. Applies to the stored name only: live titles are left alone, since a
+// suffix that appears and disappears as programs repaint is worse than a
+// momentary duplicate.
 export function uniqueName(base: string, existing: Iterable<string>): string {
   const taken = new Set(existing);
   if (!taken.has(base)) return base;

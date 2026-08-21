@@ -45,6 +45,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
+import { sessionDisplayName } from "../lib/xtmux/naming";
 import type { SessionInfo, ProjectInfo } from "./SessionContext";
 
 function projectColorVars(color: string): React.CSSProperties | undefined {
@@ -289,7 +290,7 @@ export function AppSidebar({
                                     isActive={sessionActivity[session.id] ?? false}
                                     hasNotification={session.hasNotification ?? false}
                                   />
-                                  <span className="flex-1 truncate text-[13px]">{session.name}</span>
+                                  <span className="flex-1 truncate text-[13px]">{sessionDisplayName(session)}</span>
                                 </Link>
                               </SidebarMenuButton>
                             </TerminalPreview>

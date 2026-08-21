@@ -2,6 +2,7 @@ import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { useSession } from "../SessionContext";
 import { parseSessionSlug } from "../utils/slug";
+import { sessionDisplayName } from "../../lib/xtmux/naming";
 import { SessionLayout } from "../App";
 
 export const Route = createFileRoute("/sessions/$slug")({
@@ -17,9 +18,11 @@ function SessionComponent() {
   // Update page title based on current session
   const currentSession = sessions.find((s) => s.id === currentSessionId);
   useEffect(() => {
-    const label = currentSession?.title || currentSession?.name;
+    // Same projection the sidebar uses, so a rename wins over the terminal
+    // title here too rather than the tab disagreeing with every other surface.
+    const label = currentSession ? sessionDisplayName(currentSession) : undefined;
     document.title = label ? `${label} — CodeToaster` : "CodeToaster";
-  }, [currentSession?.title, currentSession?.name]);
+  }, [currentSession?.title, currentSession?.name, currentSession?.nameSource]);
 
   // Attach to session when slug changes (only if session exists)
   useEffect(() => {

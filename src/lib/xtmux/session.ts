@@ -22,7 +22,7 @@ export function sanitizeSize(cols: unknown, rows: unknown): { cols: number; rows
 export class Session {
   public readonly id: string;
   public name: string;
-  public nameSource: NameSource = "provisional";
+  public nameSource: NameSource = "derived";
   public readonly createdAt: number;
   private proc: Subprocess;
   private terminal: Terminal;

@@ -5,7 +5,7 @@ import { useTerminalPreview } from "../hooks/use-terminal-preview";
 import { useTerminalTheme } from "../hooks/use-terminal-theme";
 import { sessionNavTarget } from "../utils/session-nav";
 import { StatusDot } from "./StatusDot";
-import { titleAddsInfo } from "../../lib/xtmux/naming";
+import { sessionDisplayName } from "../../lib/xtmux/naming";
 
 export function TabSwitcher() {
   const {
@@ -225,7 +225,7 @@ export function TabSwitcher() {
                 <div className="flex flex-col min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium truncate">
-                      {session.name}
+                      {sessionDisplayName(session)}
                     </span>
                     {session.id === currentSessionId && (
                       <span className="text-[10px] text-muted-foreground">
@@ -233,9 +233,9 @@ export function TabSwitcher() {
                       </span>
                     )}
                   </div>
-                  {session.title && titleAddsInfo(session.name, session.title) && (
+                  {sessionDisplayName(session) !== session.name && (
                     <span className="text-xs text-muted-foreground truncate">
-                      {session.title}
+                      {session.name}
                     </span>
                   )}
                 </div>

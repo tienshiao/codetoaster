@@ -3,7 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { Session, sanitizeSize } from "./session";
 import type { ClientInfo, ProjectInfo, SessionInfo, WebSocketData } from "./types";
-import { deriveTitleName, formatProvisionalName, uniqueName } from "./naming";
+import { formatDerivedName, uniqueName } from "./naming";
 import { gitSpawn } from "../../api/utils";
 import * as db from "../db";
 
@@ -14,7 +14,7 @@ function expandTilde(filepath: string): string {
   return filepath;
 }
 
-// The directory half of a provisional name. The home directory and the root
+// The directory half of a derived name. The home directory and the root
 // both basename to something useless ("tma", ""), so they get spelled out.
 export function dirLabel(cwd: string | undefined): string | undefined {
   if (!cwd) return undefined;
@@ -155,15 +155,15 @@ export class SessionManager {
       }
     }
     // Spelled out rather than left undefined: the PTY inherits this directory
-    // either way, but the provisional name can only describe a cwd it knows.
+    // either way, but the derived name can only describe a cwd it knows.
     if (!cwd) cwd = process.cwd();
 
-    // A caller-supplied name is a deliberate choice and never derived over;
-    // otherwise the session opens under "<dir> · <branch>" and waits for a
-    // terminal title worth latching onto.
+    // A caller-supplied name is a deliberate choice and outranks the terminal
+    // title; otherwise the session gets the derived "<dir> · <branch>" label,
+    // which any title with real content will display over.
     const resolvedName = name
       ?? uniqueName(
-        formatProvisionalName(dirLabel(cwd), await branchLabel(cwd)),
+        formatDerivedName(dirLabel(cwd), await branchLabel(cwd)),
         this.sessionNames(),
       );
 
@@ -172,8 +172,9 @@ export class SessionManager {
     session.onExit(() => {
       this.broadcastSessionList();
     });
+    // The title is part of every session list, and clients project it over the
+    // name at render time — so a title change only has to be broadcast.
     session.onTitleChange(() => {
-      this.latchName(session);
       this.broadcastSessionList();
     });
     session.onActivityChange((sessionId, active) => {
@@ -300,27 +301,10 @@ export class SessionManager {
     return true;
   }
 
-  // Excludes by id, not by name: a session must not be compared against its
-  // own name, but it must still be compared against a namesake that a manual
-  // rename happened to create.
-  private sessionNames(excludeId?: string): string[] {
-    const names: string[] = [];
-    for (const session of this.sessions.values()) {
-      if (session.id !== excludeId) names.push(session.name);
-    }
-    return names;
+  private sessionNames(): string[] {
+    return [...this.sessions.values()].map((session) => session.name);
   }
 
-  // Latch a provisional name onto the first terminal title that carries real
-  // information. Once latched the name is frozen — a name that keeps changing
-  // is no more memorable than a random one.
-  private latchName(session: Session): void {
-    if (session.nameSource !== "provisional") return;
-    const candidate = deriveTitleName(session.title, session.name);
-    if (!candidate) return;
-    session.name = uniqueName(candidate, this.sessionNames(session.id));
-    session.nameSource = "latched";
-  }
 
   acknowledgeSession(sessionId: string): void {
     const session = this.sessions.get(sessionId);
