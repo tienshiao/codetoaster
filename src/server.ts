@@ -342,7 +342,7 @@ export function startServer(options?: ServerOptions) {
 
           case "createProject": {
             try {
-              sessionManager.createProject(parsed.id, parsed.name, parsed.initialPath, parsed.color);
+              sessionManager.createProject(parsed.id, parsed.name, parsed.initialPath);
             } catch (e: any) {
               sendError(ws, e.message);
             }
@@ -350,7 +350,7 @@ export function startServer(options?: ServerOptions) {
           }
 
           case "updateProject": {
-            const updated = sessionManager.updateProject(parsed.id, parsed.name, parsed.initialPath, parsed.color);
+            const updated = sessionManager.updateProject(parsed.id, parsed.name, parsed.initialPath);
             if (!updated) {
               sendError(ws, `Project "${parsed.id}" not found`);
             }

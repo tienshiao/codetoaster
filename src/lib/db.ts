@@ -6,7 +6,6 @@ export interface ProjectRow {
   id: string;
   name: string;
   initial_path: string;
-  color: string;
   sort_order: number;
 }
 
@@ -29,6 +28,16 @@ const migrations: Migration[] = [
         )
       `);
       db.run(`INSERT INTO projects (id, name, sort_order) VALUES ('general', 'General', 0)`);
+    },
+  },
+  {
+    // Project colors were removed: they tinted session rows and the top bar,
+    // which turned out to be noise rather than signal. Migration 001 is left
+    // as it was — history is append-only — so this drops the column from
+    // databases that already ran it.
+    name: "002_drop_project_color",
+    up(db) {
+      db.run(`ALTER TABLE projects DROP COLUMN color`);
     },
   },
 ];
@@ -80,8 +89,8 @@ export function getAllProjects(): ProjectRow[] {
 
 export function createProject(project: ProjectRow): void {
   getDb().run(
-    "INSERT INTO projects (id, name, initial_path, color, sort_order) VALUES (?, ?, ?, ?, ?)",
-    [project.id, project.name, project.initial_path, project.color, project.sort_order],
+    "INSERT INTO projects (id, name, initial_path, sort_order) VALUES (?, ?, ?, ?)",
+    [project.id, project.name, project.initial_path, project.sort_order],
   );
 }
 

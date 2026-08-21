@@ -231,10 +231,6 @@ html, body, #root {
 }
 
 /* Project color tint — base background from project color */
-.project-tint {
-  background-color: var(--project-bg);
-}
-
 /* Rendered Markdown preview (file view) */
 .markdown-preview {
   line-height: 1.6;

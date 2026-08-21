@@ -33,7 +33,6 @@ export interface ProjectInfo {
   id: string;
   name: string;
   initialPath: string;
-  color: string;
   sessionIds: string[];
 }
 
@@ -55,8 +54,8 @@ interface SessionContextValue {
   closeSession: (id: string) => void;
   renameSession: (id: string, name: string) => void;
   reorderSessions: (projects: Array<{ id: string; sessionIds: string[] }>) => void;
-  createProject: (name: string, initialPath: string, color: string) => { id: string };
-  updateProject: (id: string, name: string, initialPath: string, color: string) => void;
+  createProject: (name: string, initialPath: string) => { id: string };
+  updateProject: (id: string, name: string, initialPath: string) => void;
   deleteProject: (id: string) => void;
   handleTerminalReady: () => void;
   handleSizeChange: (size: TerminalSize) => void;
@@ -422,19 +421,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
-  const createProject = useCallback((name: string, initialPath: string, color: string): { id: string } => {
+  const createProject = useCallback((name: string, initialPath: string): { id: string } => {
     const id = generateUUID();
-    setProjects((prev) => [...prev, { id, name, initialPath, color, sessionIds: [] }]);
-    send({ type: "createProject", id, name, initialPath, color });
+    setProjects((prev) => [...prev, { id, name, initialPath, sessionIds: [] }]);
+    send({ type: "createProject", id, name, initialPath });
     return { id };
   }, [send]);
 
   const updateProject = useCallback(
-    (id: string, name: string, initialPath: string, color: string) => {
+    (id: string, name: string, initialPath: string) => {
       setProjects((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, name, initialPath, color } : p))
+        prev.map((p) => (p.id === id ? { ...p, name, initialPath } : p))
       );
-      send({ type: "updateProject", id, name, initialPath, color });
+      send({ type: "updateProject", id, name, initialPath });
     },
     [send],
   );

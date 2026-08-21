@@ -56,7 +56,7 @@ async function resolveBranch(cwd: string): Promise<string | undefined> {
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
-  private projects: ProjectInfo[] = [{ id: "general", name: "General", initialPath: "", color: "", sessionIds: [] }];
+  private projects: ProjectInfo[] = [{ id: "general", name: "General", initialPath: "", sessionIds: [] }];
   private clientToSession: Map<string, string> = new Map();
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
 
@@ -66,12 +66,11 @@ export class SessionManager {
       id: row.id,
       name: row.name,
       initialPath: row.initial_path,
-      color: row.color,
       sessionIds: [],
     }));
     // Ensure General always exists
     if (!this.projects.some((p) => p.id === "general")) {
-      this.projects.unshift({ id: "general", name: "General", initialPath: "", color: "", sessionIds: [] });
+      this.projects.unshift({ id: "general", name: "General", initialPath: "", sessionIds: [] });
     }
   }
 
@@ -101,23 +100,22 @@ export class SessionManager {
     }));
   }
 
-  createProject(id: string, name: string, initialPath: string, color: string): void {
+  createProject(id: string, name: string, initialPath: string): void {
     if (this.projects.some((p) => p.id === id)) {
       throw new Error(`Project "${id}" already exists`);
     }
     const sortOrder = this.projects.length;
-    db.createProject({ id, name, initial_path: initialPath, color, sort_order: sortOrder });
-    this.projects.push({ id, name, initialPath, color, sessionIds: [] });
+    db.createProject({ id, name, initial_path: initialPath, sort_order: sortOrder });
+    this.projects.push({ id, name, initialPath, sessionIds: [] });
     this.broadcastSessionList();
   }
 
-  updateProject(id: string, name: string, initialPath: string, color: string): boolean {
+  updateProject(id: string, name: string, initialPath: string): boolean {
     const project = this.projects.find((p) => p.id === id);
     if (!project) return false;
-    db.updateProject(id, { name, initial_path: initialPath, color });
+    db.updateProject(id, { name, initial_path: initialPath });
     project.name = name;
     project.initialPath = initialPath;
-    project.color = color;
     this.broadcastSessionList();
     return true;
   }

@@ -47,14 +47,6 @@ import {
 } from "./components/ui/alert-dialog";
 import type { SessionInfo, ProjectInfo } from "./SessionContext";
 
-function projectColorVars(color: string): React.CSSProperties | undefined {
-  if (!color) return undefined;
-  return {
-    "--project-bg": `color-mix(in srgb, ${color} 8%, transparent)`,
-    "--sidebar-accent": `color-mix(in srgb, ${color} 18%, transparent)`,
-  } as React.CSSProperties;
-}
-
 interface AppSidebarProps {
   sessions: SessionInfo[];
   sessionLabels: Map<string, string>;
@@ -68,8 +60,8 @@ interface AppSidebarProps {
   onRenameSession: (id: string, name: string) => void;
   onReorder: (projects: Array<{ id: string; sessionIds: string[] }>) => void;
   onAcknowledge: (id: string) => void;
-  onCreateProject: (name: string, initialPath: string, color: string) => void;
-  onUpdateProject: (id: string, name: string, initialPath: string, color: string) => void;
+  onCreateProject: (name: string, initialPath: string) => void;
+  onUpdateProject: (id: string, name: string, initialPath: string) => void;
   onDeleteProject: (id: string) => void;
   onFocusTerminal: () => void;
 }
@@ -166,11 +158,6 @@ export function AppSidebar({
                       onNewTab(project.id);
                     }}
                   >
-                    {project.color ? (
-                      <span className="size-2.5 rounded-full shrink-0" style={{ backgroundColor: project.color }} />
-                    ) : (
-                      <span className="size-2.5 shrink-0" />
-                    )}
                     {project.name}
                   </DropdownMenuItem>
                 ))}
@@ -191,9 +178,9 @@ export function AppSidebar({
               <Collapsible
                 open={!isCollapsed}
               >
-                <SidebarGroup className="p-0" style={projectColorVars(project.color)}>
+                <SidebarGroup className="p-0">
                   <div
-                    className={`group/project relative flex items-center gap-1 h-8 px-2 pr-8 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none ${project.color ? "project-tint" : ""} ${isProjectDropTarget(project.id) ? "bg-sidebar-accent ring-1 ring-inset ring-blue-500 rounded" : ""}`}
+                    className={`group/project relative flex items-center gap-1 h-8 px-2 pr-8 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none ${isProjectDropTarget(project.id) ? "bg-sidebar-accent ring-1 ring-inset ring-blue-500 rounded" : ""}`}
                     {...projectDragProps}
                   >
                     <button
@@ -249,7 +236,6 @@ export function AppSidebar({
                         return (
                           <SidebarMenuItem
                             key={session.id}
-                            className={project.color ? "project-tint" : ""}
                             {...getSessionDragProps(session.id, project.id, indexInProject)}
                           >
                             {getSessionDropIndicator(project.id, indexInProject) && (
@@ -376,11 +362,11 @@ export function AppSidebar({
         mode={projectDialogState?.mode ?? "create"}
         project={projectDialogState?.project ?? null}
         open={projectDialogState !== null}
-        onSave={(name, initialPath, color) => {
+        onSave={(name, initialPath) => {
           if (projectDialogState?.mode === "edit" && projectDialogState.project) {
-            onUpdateProject(projectDialogState.project.id, name, initialPath, color);
+            onUpdateProject(projectDialogState.project.id, name, initialPath);
           } else {
-            onCreateProject(name, initialPath, color);
+            onCreateProject(name, initialPath);
           }
         }}
         onClose={() => setProjectDialogState(null)}

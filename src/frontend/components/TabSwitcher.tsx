@@ -10,7 +10,6 @@ export function TabSwitcher() {
   const {
     sessions,
     sessionLabels,
-    projects,
     mruSessionIds,
     currentSessionId,
     isConnected,
@@ -179,9 +178,6 @@ export function TabSwitcher() {
 
   if (!isOpen) return null;
 
-  const getProjectForSession = (sessionId: string) =>
-    projects.find((p) => p.sessionIds.includes(sessionId));
-
   const previewHtml = selectedSession ? getPreview(selectedSession.id) : null;
   const bg = theme?.background ?? "#1e1e1e";
   const fg = theme?.foreground ?? "#d4d4d4";
@@ -195,7 +191,6 @@ export function TabSwitcher() {
             Switch Session
           </div>
           {mruSessions.map((session, index) => {
-            const project = getProjectForSession(session.id);
             const isSelected = index === selectedIndex;
             return (
               <div
@@ -239,12 +234,6 @@ export function TabSwitcher() {
                     </span>
                   )}
                 </div>
-                {project && project.id !== "general" && (
-                  <span
-                    className="shrink-0 w-2 h-2 rounded-full"
-                    style={{ backgroundColor: project.color }}
-                  />
-                )}
               </div>
             );
           })}

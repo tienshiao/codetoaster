@@ -5,7 +5,6 @@ export interface ProjectInfo {
   id: string;
   name: string;
   initialPath: string;
-  color: string;
   sessionIds: string[];
 }
 
@@ -21,8 +20,8 @@ export type ClientMessage =
   | { type: "rename"; sessionId: string; name: string }
   | { type: "acknowledge"; sessionId: string }
   | { type: "reorder"; projects: Array<{ id: string; sessionIds: string[] }> }
-  | { type: "createProject"; id: string; name: string; initialPath: string; color: string }
-  | { type: "updateProject"; id: string; name: string; initialPath: string; color: string }
+  | { type: "createProject"; id: string; name: string; initialPath: string }
+  | { type: "updateProject"; id: string; name: string; initialPath: string }
   | { type: "deleteProject"; id: string };
 
 // Server -> Client messages
