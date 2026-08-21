@@ -45,7 +45,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
-import { titleAddsInfo } from "../lib/xtmux/naming";
 import type { SessionInfo, ProjectInfo } from "./SessionContext";
 
 function projectColorVars(color: string): React.CSSProperties | undefined {
@@ -200,10 +199,13 @@ export function AppSidebar({
                       <ChevronRight className={`size-3.5 shrink-0 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
                       <span className="flex-1 truncate">{project.name}</span>
                     </button>
+                    {/* Mirrors SidebarMenuAction's showOnHover: hidden until the row is
+                        hovered or focused, but only from md up — a touch device has no
+                        hover, so below that breakpoint it stays visible. */}
                     <DropdownMenu onOpenChange={(open) => { if (open) disarmFocusTerminal(); }}>
                       <DropdownMenuTrigger asChild>
                         <button
-                          className="absolute right-3 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-zinc-500 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0"
+                          className="absolute right-3 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-zinc-500 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0 md:opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100 data-[state=open]:opacity-100"
                           draggable={false}
                         >
                           <EllipsisVertical />
@@ -257,7 +259,7 @@ export function AppSidebar({
                               <SidebarMenuButton
                                 asChild
                                 isActive={isActive}
-                                className="rounded-none py-2.5 h-auto items-start"
+                                className="rounded-none"
                               >
                                 <Link
                                   draggable={false}
@@ -286,22 +288,14 @@ export function AppSidebar({
                                     isExited={!!session.exited}
                                     isActive={sessionActivity[session.id] ?? false}
                                     hasNotification={session.hasNotification ?? false}
-                                    className="translate-y-[6px]"
                                   />
-                                  <span className="flex flex-col overflow-hidden flex-1">
-                                    <span className="text-[13px] overflow-hidden text-ellipsis whitespace-nowrap">
-                                      {session.name}
-                                    </span>
-                                    <span className="text-[11px] text-zinc-500 overflow-hidden text-ellipsis whitespace-nowrap">
-                                      {session.title && titleAddsInfo(session.name, session.title) ? session.title : "\u00A0"}
-                                    </span>
-                                  </span>
+                                  <span className="flex-1 truncate text-[13px]">{session.name}</span>
                                 </Link>
                               </SidebarMenuButton>
                             </TerminalPreview>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <SidebarMenuAction className="right-3 text-zinc-500" draggable={false}>
+                                <SidebarMenuAction className="right-3 text-zinc-500" showOnHover draggable={false}>
                                   <EllipsisVertical />
                                 </SidebarMenuAction>
                               </DropdownMenuTrigger>
