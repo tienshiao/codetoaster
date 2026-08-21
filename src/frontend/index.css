@@ -230,7 +230,6 @@ html, body, #root {
   height: 100%;
 }
 
-/* Project color tint — base background from project color */
 /* Rendered Markdown preview (file view) */
 .markdown-preview {
   line-height: 1.6;

@@ -303,7 +303,6 @@ export class SessionManager {
     return [...this.sessions.values()].map((session) => session.name);
   }
 
-
   acknowledgeSession(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session && session.hasNotification) {

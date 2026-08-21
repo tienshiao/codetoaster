@@ -370,8 +370,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const renameSession = useCallback(
     (id: string, name: string) => {
       send({ type: "rename", sessionId: id, name });
+      // nameSource moves with the name: without it the optimistic row still
+      // reads as "derived", so the label keeps projecting the terminal title
+      // over the name just chosen until the server echoes the list back — and
+      // for as long as the socket is down, since the send is only queued.
       setSessions((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, name } : s))
+        prev.map((s) => (s.id === id ? { ...s, name, nameSource: "manual" } : s))
       );
     },
     [send],

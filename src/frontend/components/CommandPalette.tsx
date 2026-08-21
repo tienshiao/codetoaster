@@ -369,14 +369,9 @@ export function CommandPalette() {
     <RenameDialog
       item={renameItem}
       title="Rename Session"
-      onRename={(id, name) => {
-        doRenameSession(id, name);
-        if (id === currentSessionId) {
-          // keep the current tab; a plain /sessions/$slug navigation would
-          // kick a rename on the diff/file tab back to terminal
-          navigate({ ...sessionNavTarget({ id, name }), replace: true });
-        }
-      }}
+      // No navigation: SessionLayout re-projects the slug from the new name,
+      // keeping the current tab and its search params untouched.
+      onRename={doRenameSession}
       onClose={() => setRenameItem(null)}
     />
   </>

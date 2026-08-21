@@ -33,8 +33,12 @@ export function RenameDialog({
   }, [item?.id]);
 
   const handleSubmit = () => {
+    // No "unchanged" short-circuit: the field is seeded with the label on
+    // screen, which for a session showing its terminal title is not the stored
+    // name. Confirming that seed unedited is exactly how you pin the current
+    // title as the name, so it has to reach onRename.
     const trimmed = renameName.trim();
-    if (item && trimmed && trimmed !== item.name) {
+    if (item && trimmed) {
       onRename(item.id, trimmed);
     }
     onClose();

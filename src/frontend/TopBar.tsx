@@ -15,22 +15,18 @@ interface TopBarProps {
   hasSession: boolean;
   name: string | undefined;
   label: string | undefined;
-  title: string | undefined;
   onUpload?: (files: File[]) => void;
   onFocusTerminal?: () => void;
   activeTab?: TabType;
   onTabChange?: (tab: TabType) => void;
 }
 
-export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSession, name, label: labelProp, title, onUpload, onFocusTerminal, activeTab = "terminal", onTabChange }: TopBarProps) {
+export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSession, name, label, onUpload, onFocusTerminal, activeTab = "terminal", onTabChange }: TopBarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { open, openMobile, isMobile } = useSidebar();
   const { sessions } = useSession();
   const sidebarClosed = isMobile ? !openMobile : !open;
   const hasAnyNotification = sessions.some(s => s.hasNotification);
-
-
-  const label = labelProp ?? title;
 
   return (
     <div

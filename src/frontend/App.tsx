@@ -6,7 +6,7 @@ import { XTerminal } from "./Terminal";
 import { useSession } from "./SessionContext";
 import { useUploadFiles } from "./hooks/use-upload-mutation";
 import { buildSessionSlug, parseSessionSlug } from "./utils/slug";
-import { sessionNavTarget, tabNavTarget, closeNavTarget, TAB_ROUTES } from "./utils/session-nav";
+import { tabNavTarget, closeNavTarget, TAB_ROUTES } from "./utils/session-nav";
 import { setLastTab } from "./view-state-store";
 import type { TabType } from "./types/tab";
 import {
@@ -75,10 +75,12 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
   }, [routeSessionId, currentTab]);
 
   // The slug carries the session name, but the name is not known at creation:
-  // the server derives it from cwd and branch, then latches it onto the first
-  // terminal title that says something. Re-project the slug whenever it falls
-  // behind so the readable half of the URL catches up instead of staying
-  // pinned to the placeholder the session was created under.
+  // the client sends none and the server derives "<dir> · <branch>" from the
+  // resolved cwd. Re-project the slug whenever it falls behind — after that
+  // derived name arrives, or after a rename — so the readable half of the URL
+  // catches up instead of staying pinned to the placeholder the session was
+  // created under. (The live terminal title never moves the slug: it is a
+  // render-time label, not the stored name.)
   //
   // Search params pass through untouched: for the file and git tabs the URL is
   // the source of truth for the selection, so rebuilding the target from the
@@ -152,14 +154,13 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
 
   const handleRenameSession = useCallback(
     (id: string, newName: string) => {
+      // No navigation here: the new name lands in `sessions`, which moves
+      // canonicalSlug, and the re-projection effect above rewrites the slug in
+      // place. Navigating via sessionNavTarget instead would rebuild the search
+      // params from the view-state store and can resurrect a stale file.
       renameSession(id, newName);
-      if (id === currentSessionId) {
-        // sessionNavTarget keeps the current tab; a plain /sessions/$slug
-        // navigation would kick a rename on the diff/file tab back to terminal
-        navigate({ ...sessionNavTarget({ id, name: newName }), replace: true });
-      }
     },
-    [currentSessionId, renameSession, navigate],
+    [renameSession],
   );
 
   const handleFileDrop = useCallback(
@@ -221,7 +222,6 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           hasSession={!!currentSession}
           name={currentSession?.name}
           label={currentSessionId ? sessionLabels.get(currentSessionId) : undefined}
-          title={currentSession?.title}
           onUpload={handleFileDrop}
           onFocusTerminal={() => terminalRef.current?.focus()}
           activeTab={currentTab}

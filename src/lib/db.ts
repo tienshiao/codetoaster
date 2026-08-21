@@ -37,7 +37,17 @@ const migrations: Migration[] = [
     // databases that already ran it.
     name: "002_drop_project_color",
     up(db) {
-      db.run(`ALTER TABLE projects DROP COLUMN color`);
+      // Best-effort: a leftover column is inert (nothing reads it, and inserts
+      // rely on its DEFAULT), whereas a throw here aborts the transaction, so
+      // the migration is never recorded and every subsequent start fails the
+      // same way — an unusable daemon over a column nobody looks at.
+      const columns = db.query(`PRAGMA table_info(projects)`).all() as { name: string }[];
+      if (!columns.some((c) => c.name === "color")) return;
+      try {
+        db.run(`ALTER TABLE projects DROP COLUMN color`);
+      } catch (e) {
+        console.warn("Could not drop the unused projects.color column:", e);
+      }
     },
   },
 ];
