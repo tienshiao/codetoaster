@@ -10,7 +10,7 @@ import {
 import { useMatches } from "@tanstack/react-router";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
 import { generateUUID } from "./utils/uuid";
-import { generateSessionName } from "./utils/nameGenerator";
+import type { NameSource } from "../lib/xtmux/naming";
 import { useWebSocket } from "./hooks/use-websocket";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { removeRecentFiles } from "./hooks/use-recent-files";
@@ -19,6 +19,7 @@ import { clearViewState, retainViewStates } from "./view-state-store";
 export interface SessionInfo {
   id: string;
   name: string;
+  nameSource?: NameSource;
   title?: string;
   createdAt: number;
   size: { cols: number; rows: number };
@@ -317,7 +318,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     const sessionId = generateSessionId();
-    const name = generateSessionName(sessionsRef.current.map(s => s.name));
+    // The server names the session: it is the side that knows the resolved cwd
+    // and branch, and it owns the terminal title the name later latches onto.
+    // This placeholder only labels the optimistic row until that list arrives.
+    const name = "New Session";
     const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
 
     // Derive project from current session if not explicitly provided
@@ -327,7 +331,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (currentProject) resolvedProjectId = currentProject.id;
     }
 
-    send({ type: "create", sessionId, name, cols: size.cols, rows: size.rows, projectId: resolvedProjectId, afterSessionId });
+    send({ type: "create", sessionId, cols: size.cols, rows: size.rows, projectId: resolvedProjectId, afterSessionId });
     setCurrentSessionId(sessionId);
     pushMru(sessionId);
     setSessions((prev) => [

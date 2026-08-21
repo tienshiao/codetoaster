@@ -12,6 +12,7 @@ import { useSymbolSearch } from "../hooks/use-symbol-search";
 import { modifierSymbol } from "../utils/platform";
 import { useFocusTerminalOnClose } from "../hooks/use-focus-terminal-on-close";
 import type { SymbolEntry } from "../../lib/symbols/types";
+import { titleAddsInfo } from "../../lib/xtmux/naming";
 import {
   CommandDialog,
   CommandInput,
@@ -325,7 +326,7 @@ export function CommandPalette() {
                   <span className="text-muted-foreground ml-1">(current)</span>
                 )}
               </span>
-              {session.title && (
+              {session.title && titleAddsInfo(session.name, session.title) && (
                 <span className="text-muted-foreground ml-auto truncate text-xs">
                   {session.title}
                 </span>

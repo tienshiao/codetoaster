@@ -5,6 +5,7 @@ import { useTerminalPreview } from "../hooks/use-terminal-preview";
 import { useTerminalTheme } from "../hooks/use-terminal-theme";
 import { sessionNavTarget } from "../utils/session-nav";
 import { StatusDot } from "./StatusDot";
+import { titleAddsInfo } from "../../lib/xtmux/naming";
 
 export function TabSwitcher() {
   const {
@@ -232,7 +233,7 @@ export function TabSwitcher() {
                       </span>
                     )}
                   </div>
-                  {session.title && (
+                  {session.title && titleAddsInfo(session.name, session.title) && (
                     <span className="text-xs text-muted-foreground truncate">
                       {session.title}
                     </span>

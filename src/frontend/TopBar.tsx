@@ -6,6 +6,7 @@ import { SidebarTrigger, useSidebar } from "./components/ui/sidebar";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { useSession } from "./SessionContext";
 import type { TabType } from "./types/tab";
+import { titleAddsInfo } from "../lib/xtmux/naming";
 
 interface TopBarProps {
   isConnected: boolean;
@@ -49,8 +50,13 @@ export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSe
       </div>
       {hasSession && <StatusDot isConnected={isConnected} isExited={isExited} isActive={isActive} hasNotification={hasNotification} />}
       {name && <span className="shrink-0">{name}</span>}
-      {name && title && <span className="text-muted-foreground/50">—</span>}
-      {title && <span className="truncate">{title}</span>}
+      {name && title && titleAddsInfo(name, title) && (
+        <>
+          <span className="text-muted-foreground/50">—</span>
+          <span className="truncate">{title}</span>
+        </>
+      )}
+      {!name && title && <span className="truncate">{title}</span>}
       {hasSession && (
         <>
           <input

@@ -83,7 +83,8 @@ Server sends: `attached`, `restore`, `data`, `resize`, `exit`, `error`, `session
 
 ## Key Patterns
 
-- Sessions use slug URLs: `{slugified-name}-{uuid}`
+- Sessions use slug URLs: `{slugified-name}-{uuid}` (lookup keys off the uuid, so a name change only alters the slug cosmetically)
+- Session names are derived server-side in `lib/xtmux/naming.ts`: a provisional `{dir} · {branch}` label at creation, then a permanent latch onto the first terminal title (OSC 0/2) carrying real content. A manual rename is terminal. `naming.ts` is import-free so the frontend can share `titleAddsInfo`
 - Terminal size negotiation: smallest-wins across all connected clients
 - Server maintains authoritative terminal state via `@xterm/headless` + serialization addon
 - Frontend queues WebSocket messages until terminal is mounted

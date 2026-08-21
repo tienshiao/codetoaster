@@ -2,6 +2,7 @@ import type { Subprocess } from "bun";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import type { ClientInfo, ServerMessage, WebSocketData } from "./types";
+import type { NameSource } from "./naming";
 
 // Validate a client-reported terminal size. Messages are parsed from the wire,
 // so cols/rows can be anything (null, NaN, 0, floats, absurd values) — treat
@@ -21,6 +22,7 @@ export function sanitizeSize(cols: unknown, rows: unknown): { cols: number; rows
 export class Session {
   public readonly id: string;
   public name: string;
+  public nameSource: NameSource = "provisional";
   public readonly createdAt: number;
   private proc: Subprocess;
   private terminal: Terminal;

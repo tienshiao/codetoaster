@@ -45,6 +45,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
+import { titleAddsInfo } from "../lib/xtmux/naming";
 import type { SessionInfo, ProjectInfo } from "./SessionContext";
 
 function projectColorVars(color: string): React.CSSProperties | undefined {
@@ -292,7 +293,7 @@ export function AppSidebar({
                                       {session.name}
                                     </span>
                                     <span className="text-[11px] text-zinc-500 overflow-hidden text-ellipsis whitespace-nowrap">
-                                      {session.title || "\u00A0"}
+                                      {session.title && titleAddsInfo(session.name, session.title) ? session.title : "\u00A0"}
                                     </span>
                                   </span>
                                 </Link>

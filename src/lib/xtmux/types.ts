@@ -1,4 +1,5 @@
 import type { ServerWebSocket } from "bun";
+import type { NameSource } from "./naming";
 
 export interface ProjectInfo {
   id: string;
@@ -39,6 +40,7 @@ export type ServerMessage =
 export interface SessionInfo {
   id: string;
   name: string;
+  nameSource: NameSource;
   title: string;
   clientCount: number;
   size: { cols: number; rows: number };

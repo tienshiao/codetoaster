@@ -1,7 +1,10 @@
 import type { ServerWebSocket } from "bun";
 import * as os from "os";
+import * as path from "path";
 import { Session, sanitizeSize } from "./session";
 import type { ClientInfo, ProjectInfo, SessionInfo, WebSocketData } from "./types";
+import { deriveTitleName, formatProvisionalName, uniqueName } from "./naming";
+import { gitSpawn } from "../../api/utils";
 import * as db from "../db";
 
 function expandTilde(filepath: string): string {
@@ -9,6 +12,46 @@ function expandTilde(filepath: string): string {
     return os.homedir() + filepath.slice(1);
   }
   return filepath;
+}
+
+// The directory half of a provisional name. The home directory and the root
+// both basename to something useless ("tma", ""), so they get spelled out.
+export function dirLabel(cwd: string | undefined): string | undefined {
+  if (!cwd) return undefined;
+  // Resolve first: expandTilde("~/") yields a trailing separator, which would
+  // otherwise slip past the home-directory check and basename to "tma".
+  const resolved = path.resolve(cwd);
+  if (resolved === os.homedir()) return "~";
+  return path.basename(resolved) || "/";
+}
+
+// Naming must never be the reason a session fails to open. git may be missing
+// from the daemon's PATH — Bun.spawn throws outright rather than exiting 127 —
+// and a git on a stalled network mount or contending for index.lock can hang
+// indefinitely. Either way the session falls back to its directory alone.
+const BRANCH_LOOKUP_TIMEOUT_MS = 2000;
+
+async function branchLabel(cwd: string): Promise<string | undefined> {
+  try {
+    return await Promise.race([
+      resolveBranch(cwd),
+      Bun.sleep(BRANCH_LOOKUP_TIMEOUT_MS).then(() => undefined),
+    ]);
+  } catch {
+    return undefined;
+  }
+}
+
+// Detached HEAD reports the literal "HEAD", which says less than the short sha
+// it is sitting on.
+async function resolveBranch(cwd: string): Promise<string | undefined> {
+  const { stdout, exitCode } = await gitSpawn(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  if (exitCode !== 0) return undefined;
+  const branch = stdout.trim();
+  if (!branch) return undefined;
+  if (branch !== "HEAD") return branch;
+  const short = await gitSpawn(cwd, ["rev-parse", "--short", "HEAD"]);
+  return short.exitCode === 0 ? short.stdout.trim() || undefined : undefined;
 }
 
 export class SessionManager {
@@ -92,7 +135,7 @@ export class SessionManager {
     return true;
   }
 
-  async createSession(id: string, name: string, cols: number, rows: number, projectId?: string, afterSessionId?: string): Promise<Session> {
+  async createSession(id: string, name: string | undefined, cols: number, rows: number, projectId?: string, afterSessionId?: string): Promise<Session> {
     if (this.sessions.has(id)) {
       throw new Error(`Session "${id}" already exists`);
     }
@@ -111,12 +154,26 @@ export class SessionManager {
         cwd = expandTilde(project.initialPath);
       }
     }
+    // Spelled out rather than left undefined: the PTY inherits this directory
+    // either way, but the provisional name can only describe a cwd it knows.
+    if (!cwd) cwd = process.cwd();
 
-    const session = new Session(id, name, cols, rows, cwd);
+    // A caller-supplied name is a deliberate choice and never derived over;
+    // otherwise the session opens under "<dir> · <branch>" and waits for a
+    // terminal title worth latching onto.
+    const resolvedName = name
+      ?? uniqueName(
+        formatProvisionalName(dirLabel(cwd), await branchLabel(cwd)),
+        this.sessionNames(),
+      );
+
+    const session = new Session(id, resolvedName, cols, rows, cwd);
+    if (name) session.nameSource = "manual";
     session.onExit(() => {
       this.broadcastSessionList();
     });
     session.onTitleChange(() => {
+      this.latchName(session);
       this.broadcastSessionList();
     });
     session.onActivityChange((sessionId, active) => {
@@ -237,8 +294,32 @@ export class SessionManager {
     const session = this.sessions.get(id);
     if (!session) return false;
     session.name = name;
+    // An explicit rename opts the session out of derivation for good.
+    session.nameSource = "manual";
     this.broadcastSessionList();
     return true;
+  }
+
+  // Excludes by id, not by name: a session must not be compared against its
+  // own name, but it must still be compared against a namesake that a manual
+  // rename happened to create.
+  private sessionNames(excludeId?: string): string[] {
+    const names: string[] = [];
+    for (const session of this.sessions.values()) {
+      if (session.id !== excludeId) names.push(session.name);
+    }
+    return names;
+  }
+
+  // Latch a provisional name onto the first terminal title that carries real
+  // information. Once latched the name is frozen — a name that keeps changing
+  // is no more memorable than a random one.
+  private latchName(session: Session): void {
+    if (session.nameSource !== "provisional") return;
+    const candidate = deriveTitleName(session.title, session.name);
+    if (!candidate) return;
+    session.name = uniqueName(candidate, this.sessionNames(session.id));
+    session.nameSource = "latched";
   }
 
   acknowledgeSession(sessionId: string): void {
@@ -253,6 +334,7 @@ export class SessionManager {
     return {
       id: session.id,
       name: session.name,
+      nameSource: session.nameSource,
       title: session.title,
       clientCount: session.getClientCount(),
       size: session.getSize(),

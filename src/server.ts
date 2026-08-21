@@ -253,7 +253,7 @@ export function startServer(options?: ServerOptions) {
             // malformed values; attachClient re-sanitizes the raw cols/rows so a
             // fabricated size never enters negotiation as the creator's own.
             const size = sanitizeSize(cols, rows) ?? { cols: 80, rows: 24 };
-            sessionManager.createSession(sessionId, name || sessionId, size.cols, size.rows, projectId, afterSessionId).then(
+            sessionManager.createSession(sessionId, name || undefined, size.cols, size.rows, projectId, afterSessionId).then(
               () => {
                 sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
                 ws.data.sessionId = sessionId;
