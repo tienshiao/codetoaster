@@ -166,7 +166,7 @@ export function AppSidebar({
           )}
         </div>
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="gap-3 pt-3">
         {projects.map((project, projectIndex) => {
           const isCollapsed = collapsedProjects.has(project.id);
           const projectDragProps = getProjectDragProps(project.id);
@@ -180,7 +180,7 @@ export function AppSidebar({
               >
                 <SidebarGroup className="p-0">
                   <div
-                    className={`group/project relative flex items-center gap-1 h-8 px-2 pr-8 text-xs font-semibold text-zinc-500 hover:bg-sidebar-accent select-none ${isProjectDropTarget(project.id) ? "bg-sidebar-accent ring-1 ring-inset ring-blue-500 rounded" : ""}`}
+                    className={`group/project relative flex items-center gap-1 h-7 px-2 pr-8 text-[11px] font-semibold tracking-wide text-zinc-500 hover:bg-sidebar-accent select-none ${isProjectDropTarget(project.id) ? "bg-sidebar-accent ring-1 ring-inset ring-blue-500 rounded" : ""}`}
                     {...projectDragProps}
                   >
                     <button
@@ -196,7 +196,7 @@ export function AppSidebar({
                     <DropdownMenu onOpenChange={(open) => { if (open) disarmFocusTerminal(); }}>
                       <DropdownMenuTrigger asChild>
                         <button
-                          className="absolute right-3 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-zinc-500 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0 md:opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100 data-[state=open]:opacity-100"
+                          className="absolute right-3 top-1 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-zinc-500 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0 md:opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100 data-[state=open]:opacity-100"
                           draggable={false}
                         >
                           <EllipsisVertical />
@@ -228,7 +228,7 @@ export function AppSidebar({
                       </DropdownMenu>
                   </div>
                   <CollapsibleContent>
-                    <SidebarMenu className="gap-0">
+                    <SidebarMenu className="gap-0.5 px-2">
                       {project.sessionIds.map((sessionId, indexInProject) => {
                         const session = sessionMap.get(sessionId);
                         if (!session) return null;
@@ -239,7 +239,7 @@ export function AppSidebar({
                             {...getSessionDragProps(session.id, project.id, indexInProject)}
                           >
                             {getSessionDropIndicator(project.id, indexInProject) && (
-                              <div className="h-0.5 bg-blue-500 rounded mx-2" />
+                              <div className="h-0.5 bg-blue-500 rounded" />
                             )}
                             <TerminalPreview
                               sessionId={session.id}
@@ -249,7 +249,7 @@ export function AppSidebar({
                               <SidebarMenuButton
                                 asChild
                                 isActive={isActive}
-                                className="rounded-none"
+                                className="rounded-md pl-4"
                               >
                                 <Link
                                   draggable={false}
@@ -279,13 +279,13 @@ export function AppSidebar({
                                     isActive={sessionActivity[session.id] ?? false}
                                     hasNotification={session.hasNotification ?? false}
                                   />
-                                  <span className="flex-1 truncate text-[13px]">{sessionLabels.get(session.id) ?? session.name}</span>
+                                  <span className="flex-1 truncate">{sessionLabels.get(session.id) ?? session.name}</span>
                                 </Link>
                               </SidebarMenuButton>
                             </TerminalPreview>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <SidebarMenuAction className="right-3 text-zinc-500" showOnHover draggable={false}>
+                                <SidebarMenuAction className="right-1 text-zinc-500" showOnHover draggable={false}>
                                   <EllipsisVertical />
                                 </SidebarMenuAction>
                               </DropdownMenuTrigger>
@@ -306,7 +306,7 @@ export function AppSidebar({
                             </DropdownMenu>
                             {getSessionDropIndicatorAfterLast(project.id) &&
                               indexInProject === project.sessionIds.length - 1 && (
-                              <div className="h-0.5 bg-blue-500 rounded mx-2" />
+                              <div className="h-0.5 bg-blue-500 rounded" />
                             )}
                           </SidebarMenuItem>
                         );
