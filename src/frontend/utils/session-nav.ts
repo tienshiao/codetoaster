@@ -3,6 +3,18 @@ import { getViewState } from "../view-state-store";
 import type { TabType } from "../types/tab";
 import type { GitViewMode } from "../types/git";
 
+/**
+ * The route path for each tab. Exported so a caller that only wants to swap
+ * the slug can name its current route explicitly: relative navigation would
+ * resolve against /sessions/$slug and silently drop a /file or /git segment.
+ */
+export const TAB_ROUTES = {
+  terminal: "/sessions/$slug",
+  diff: "/sessions/$slug/diff",
+  file: "/sessions/$slug/file",
+  git: "/sessions/$slug/git",
+} as const satisfies Record<TabType, string>;
+
 export type SessionNavTarget =
   | { to: "/sessions/$slug"; params: { slug: string } }
   | { to: "/sessions/$slug/diff"; params: { slug: string } }

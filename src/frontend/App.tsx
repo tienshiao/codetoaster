@@ -6,7 +6,7 @@ import { XTerminal } from "./Terminal";
 import { useSession } from "./SessionContext";
 import { useUploadFiles } from "./hooks/use-upload-mutation";
 import { buildSessionSlug, parseSessionSlug } from "./utils/slug";
-import { sessionNavTarget, tabNavTarget, closeNavTarget } from "./utils/session-nav";
+import { sessionNavTarget, tabNavTarget, closeNavTarget, TAB_ROUTES } from "./utils/session-nav";
 import { setLastTab } from "./view-state-store";
 import type { TabType } from "./types/tab";
 import {
@@ -73,6 +73,32 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
   useEffect(() => {
     if (routeSessionId) setLastTab(routeSessionId, currentTab);
   }, [routeSessionId, currentTab]);
+
+  // The slug carries the session name, but the name is not known at creation:
+  // the server derives it from cwd and branch, then latches it onto the first
+  // terminal title that says something. Re-project the slug whenever it falls
+  // behind so the readable half of the URL catches up instead of staying
+  // pinned to the placeholder the session was created under.
+  //
+  // Search params pass through untouched: for the file and git tabs the URL is
+  // the source of truth for the selection, so rebuilding the target from the
+  // view-state store could resurrect a stale file or drop ?line=. The route is
+  // named explicitly rather than relatively for the same reason — a relative
+  // navigation resolves against /sessions/$slug and would drop the tab
+  // segment. Always replaces: a name landing is not a navigation, and the id
+  // that lookups key off is unchanged, so this never re-attaches.
+  const routeSlug = slugMatch ? (slugMatch.params as { slug: string }).slug : null;
+  const routeSession = sessions.find((s) => s.id === routeSessionId);
+  const canonicalSlug = routeSession ? buildSessionSlug(routeSession) : null;
+  useEffect(() => {
+    if (!routeSlug || !canonicalSlug || routeSlug === canonicalSlug) return;
+    navigate({
+      to: TAB_ROUTES[currentTab],
+      params: { slug: canonicalSlug },
+      search: (prev: Record<string, unknown>) => prev,
+      replace: true,
+    });
+  }, [routeSlug, canonicalSlug, currentTab, navigate]);
 
   const [searchOpen, setSearchOpen] = useState(false);
 
