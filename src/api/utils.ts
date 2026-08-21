@@ -47,10 +47,33 @@ export async function listGitFiles(dir: string, { cached = true }: { cached?: bo
 // Run git via Bun.spawn (not Bun.$) so large output streams through a pipe
 // rather than buffering in a shell — Bun.$ deadlocks when many concurrent shells
 // each buffer large stdout (e.g. multi-MB files or patch output).
-export async function gitSpawn(dir: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
+export interface GitSpawnOptions {
+  // Kill the child if it has not exited within this many milliseconds. git can
+  // block indefinitely — a stalled network mount, a contended index.lock — and
+  // an abandoned child holds its stdout pipe for the life of the daemon.
+  // Racing the promise is not enough: the loser keeps running.
+  //
+  // A killed child exits 143 (128 + SIGTERM), so the usual `exitCode !== 0`
+  // check treats a timeout as a failed lookup without any special casing.
+  timeoutMs?: number;
+}
+
+export async function gitSpawn(
+  dir: string,
+  args: string[],
+  options?: GitSpawnOptions,
+): Promise<{ stdout: string; exitCode: number }> {
   const proc = Bun.spawn(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "ignore" });
-  const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-  return { stdout, exitCode };
+  const timer =
+    options?.timeoutMs === undefined ? null : setTimeout(() => proc.kill(), options.timeoutMs);
+  try {
+    // The kill ends both awaits: stdout hits EOF and exited resolves, so this
+    // never outlives the child.
+    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    return { stdout, exitCode };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // Raw-bytes variant of gitSpawn for blob content that must not be decoded as

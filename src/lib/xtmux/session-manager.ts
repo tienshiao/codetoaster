@@ -31,27 +31,30 @@ export function dirLabel(cwd: string | undefined): string | undefined {
 // indefinitely. Either way the session falls back to its directory alone.
 const BRANCH_LOOKUP_TIMEOUT_MS = 2000;
 
+// The budget is for the whole lookup, not per command: a detached HEAD costs
+// two git calls, and racing each one separately would let a wedged repo hold
+// session creation for twice as long. gitSpawn kills the child it gives up on,
+// so nothing is left running behind us.
 async function branchLabel(cwd: string): Promise<string | undefined> {
+  const deadline = Date.now() + BRANCH_LOOKUP_TIMEOUT_MS;
+  const remainingMs = () => Math.max(1, deadline - Date.now());
   try {
-    return await Promise.race([
-      resolveBranch(cwd),
-      Bun.sleep(BRANCH_LOOKUP_TIMEOUT_MS).then(() => undefined),
-    ]);
+    const head = await gitSpawn(cwd, ["rev-parse", "--abbrev-ref", "HEAD"], {
+      timeoutMs: remainingMs(),
+    });
+    if (head.exitCode !== 0) return undefined;
+    const branch = head.stdout.trim();
+    if (!branch) return undefined;
+    // Detached HEAD reports the literal "HEAD", which says less than the short
+    // sha it is sitting on.
+    if (branch !== "HEAD") return branch;
+    const short = await gitSpawn(cwd, ["rev-parse", "--short", "HEAD"], {
+      timeoutMs: remainingMs(),
+    });
+    return short.exitCode === 0 ? short.stdout.trim() || undefined : undefined;
   } catch {
     return undefined;
   }
-}
-
-// Detached HEAD reports the literal "HEAD", which says less than the short sha
-// it is sitting on.
-async function resolveBranch(cwd: string): Promise<string | undefined> {
-  const { stdout, exitCode } = await gitSpawn(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  if (exitCode !== 0) return undefined;
-  const branch = stdout.trim();
-  if (!branch) return undefined;
-  if (branch !== "HEAD") return branch;
-  const short = await gitSpawn(cwd, ["rev-parse", "--short", "HEAD"]);
-  return short.exitCode === 0 ? short.stdout.trim() || undefined : undefined;
 }
 
 export class SessionManager {
