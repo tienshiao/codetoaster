@@ -45,7 +45,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
-import { sessionDisplayName } from "../lib/xtmux/naming";
 import type { SessionInfo, ProjectInfo } from "./SessionContext";
 
 function projectColorVars(color: string): React.CSSProperties | undefined {
@@ -58,6 +57,7 @@ function projectColorVars(color: string): React.CSSProperties | undefined {
 
 interface AppSidebarProps {
   sessions: SessionInfo[];
+  sessionLabels: Map<string, string>;
   projects: ProjectInfo[];
   currentSessionId: string | null;
   isConnected: boolean;
@@ -76,6 +76,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({
   sessions,
+  sessionLabels,
   projects,
   currentSessionId,
   isConnected,
@@ -120,8 +121,10 @@ export function AppSidebar({
   const renameItem = useMemo(() => {
     if (!renameTarget) return null;
     const s = sessionMap.get(renameTarget.id);
-    return s ? { id: s.id, name: s.name } : null;
-  }, [renameTarget, sessionMap]);
+    // Seed with the label on screen, not the stored name: renaming a session
+    // showing a live title should start from that title.
+    return s ? { id: s.id, name: sessionLabels.get(s.id) ?? s.name } : null;
+  }, [renameTarget, sessionMap, sessionLabels]);
 
   const toggleProject = (projectId: string) => {
     setCollapsedProjects((prev) => {
@@ -290,7 +293,7 @@ export function AppSidebar({
                                     isActive={sessionActivity[session.id] ?? false}
                                     hasNotification={session.hasNotification ?? false}
                                   />
-                                  <span className="flex-1 truncate text-[13px]">{sessionDisplayName(session)}</span>
+                                  <span className="flex-1 truncate text-[13px]">{sessionLabels.get(session.id) ?? session.name}</span>
                                 </Link>
                               </SidebarMenuButton>
                             </TerminalPreview>

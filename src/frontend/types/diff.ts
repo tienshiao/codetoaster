@@ -1,9 +1,3 @@
-export interface DiffResponse {
-  diff: string;
-  directory: string;
-  hash: string;
-}
-
 export type { SyntaxTokenType } from '../../types/highlight';
 import type { SyntaxTokenType } from '../../types/highlight';
 
@@ -39,17 +33,6 @@ export interface FileDiff {
   deletions: number;
   isBinary?: boolean;
   isImage?: boolean;
-}
-
-export interface ContextRequest {
-  filePath: string;
-  startLine: number;
-  endLine: number;
-}
-
-export interface ContextResponse {
-  lines: { lineNum: number; content: string }[];
-  hasMore: boolean;
 }
 
 export interface HunkExpansionState {

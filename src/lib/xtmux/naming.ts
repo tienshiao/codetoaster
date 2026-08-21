@@ -87,16 +87,45 @@ export function meaningfulTitle(rawTitle: string | undefined): string | null {
   return truncate(stripped, MAX_NAME_LENGTH);
 }
 
-// What to show for a session, at render time. An explicit rename outranks the
-// title — having renamed a session, you should not watch the name you chose
-// get painted over by whatever the program inside is doing.
-export function sessionDisplayName(session: {
+export interface DisplayableSession {
+  id: string;
   name: string;
   nameSource?: NameSource;
   title?: string;
-}): string {
-  if (session.nameSource === "manual") return session.name;
-  return meaningfulTitle(session.title) ?? session.name;
+}
+
+// Labels for a whole session list, keyed by id. An explicit rename outranks the
+// title — having renamed a session, you should not watch the name you chose get
+// painted over by whatever the program inside is doing.
+//
+// A title earns the label only if it is unique. Programs that report a fixed
+// title — Claude Code sits on a bare "Claude Code" until it has a task — would
+// otherwise collapse every session running them into identical rows, which is
+// the failure a derived name exists to prevent. When a title is shared, the
+// sessions holding it fall back to their stable "<dir> · <branch>" names, which
+// are unique by construction, and reclaim their titles as those diverge.
+//
+// Uniqueness is judged against manual names too: a title matching a name the
+// user chose is just as ambiguous as one matching another title.
+export function sessionDisplayNames(sessions: readonly DisplayableSession[]): Map<string, string> {
+  const key = (label: string) => label.toLowerCase();
+  const candidates = sessions.map((session) =>
+    session.nameSource === "manual" ? null : meaningfulTitle(session.title),
+  );
+
+  const counts = new Map<string, number>();
+  sessions.forEach((session, i) => {
+    const label = candidates[i] ?? session.name;
+    counts.set(key(label), (counts.get(key(label)) ?? 0) + 1);
+  });
+
+  const labels = new Map<string, string>();
+  sessions.forEach((session, i) => {
+    const candidate = candidates[i] ?? null;
+    const ambiguous = candidate !== null && (counts.get(key(candidate)) ?? 0) > 1;
+    labels.set(session.id, ambiguous ? session.name : (candidate ?? session.name));
+  });
+  return labels;
 }
 
 export function formatDerivedName(dirLabel: string | undefined, branch?: string): string {

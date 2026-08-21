@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import {
   formatDerivedName,
   meaningfulTitle,
-  sessionDisplayName,
+  sessionDisplayNames,
   stripDecoration,
   uniqueName,
 } from "./naming";
@@ -54,38 +54,69 @@ describe("meaningfulTitle", () => {
   });
 });
 
-describe("sessionDisplayName", () => {
+describe("sessionDisplayNames", () => {
+  const labels = (sessions: Parameters<typeof sessionDisplayNames>[0]) =>
+    sessions.map((s) => sessionDisplayNames(sessions).get(s.id));
+
   test("shows the title over a derived name", () => {
-    expect(sessionDisplayName({
-      name: "codetoaster · main",
-      nameSource: "derived",
-      title: "✳ Implementing latch naming",
-    })).toBe("Implementing latch naming");
+    expect(labels([
+      { id: "a", name: "codetoaster · main", nameSource: "derived", title: "✳ Implementing latch naming" },
+    ])).toEqual(["Implementing latch naming"]);
   });
 
   test("follows the title as it changes — nothing is frozen", () => {
-    const session = { name: "codetoaster · main", nameSource: "derived" as const };
-    expect(sessionDisplayName({ ...session, title: "Claude Code" })).toBe("Claude Code");
-    expect(sessionDisplayName({ ...session, title: "✳ Wiring the parser" })).toBe("Wiring the parser");
+    const at = (title: string) =>
+      labels([{ id: "a", name: "codetoaster · main", nameSource: "derived", title }])[0];
+    expect(at("Claude Code")).toBe("Claude Code");
+    expect(at("✳ Wiring the parser")).toBe("Wiring the parser");
   });
 
   test("falls back to the derived name when the title says nothing", () => {
-    const session = { name: "codetoaster · main", nameSource: "derived" as const };
-    expect(sessionDisplayName({ ...session, title: "fish ~/P/codetoaster" })).toBe("codetoaster · main");
-    expect(sessionDisplayName({ ...session, title: "" })).toBe("codetoaster · main");
-    expect(sessionDisplayName(session)).toBe("codetoaster · main");
+    const at = (title?: string) =>
+      labels([{ id: "a", name: "codetoaster · main", nameSource: "derived", title }])[0];
+    expect(at("fish ~/P/codetoaster")).toBe("codetoaster · main");
+    expect(at("")).toBe("codetoaster · main");
+    expect(at()).toBe("codetoaster · main");
   });
 
   test("an explicit rename outranks any title", () => {
-    expect(sessionDisplayName({
-      name: "Billing spike",
-      nameSource: "manual",
-      title: "✳ Implementing latch naming",
-    })).toBe("Billing spike");
+    expect(labels([
+      { id: "a", name: "Billing spike", nameSource: "manual", title: "✳ Implementing latch naming" },
+    ])).toEqual(["Billing spike"]);
   });
 
-  test("treats a missing nameSource as derived, so an optimistic row still shows its title", () => {
-    expect(sessionDisplayName({ name: "New Session", title: "bun test --watch" })).toBe("bun test --watch");
+  test("treats a missing nameSource as derived", () => {
+    expect(labels([{ id: "a", name: "New Session", title: "bun test --watch" }])).toEqual(["bun test --watch"]);
+  });
+
+  test("a shared title identifies nothing, so those sessions show their names", () => {
+    expect(labels([
+      { id: "a", name: "codetoaster · main", nameSource: "derived", title: "Claude Code" },
+      { id: "b", name: "codetoaster · main 2", nameSource: "derived", title: "Claude Code" },
+      { id: "c", name: "video-toaster · main", nameSource: "derived", title: "Claude Code" },
+    ])).toEqual(["codetoaster · main", "codetoaster · main 2", "video-toaster · main"]);
+  });
+
+  test("a session reclaims its title as soon as it is the only one holding it", () => {
+    expect(labels([
+      { id: "a", name: "codetoaster · main", nameSource: "derived", title: "✳ Wiring the parser" },
+      { id: "b", name: "codetoaster · main 2", nameSource: "derived", title: "Claude Code" },
+      { id: "c", name: "video-toaster · main", nameSource: "derived", title: "Claude Code" },
+    ])).toEqual(["Wiring the parser", "codetoaster · main 2", "video-toaster · main"]);
+  });
+
+  test("collision is judged case-insensitively, as the slug would be", () => {
+    expect(labels([
+      { id: "a", name: "codetoaster · main", nameSource: "derived", title: "Claude Code" },
+      { id: "b", name: "codetoaster · main 2", nameSource: "derived", title: "claude code" },
+    ])).toEqual(["codetoaster · main", "codetoaster · main 2"]);
+  });
+
+  test("a title colliding with a manual name is ambiguous too", () => {
+    expect(labels([
+      { id: "a", name: "Claude Code", nameSource: "manual", title: "" },
+      { id: "b", name: "codetoaster · main", nameSource: "derived", title: "Claude Code" },
+    ])).toEqual(["Claude Code", "codetoaster · main"]);
   });
 });
 

@@ -5,11 +5,11 @@ import { useTerminalPreview } from "../hooks/use-terminal-preview";
 import { useTerminalTheme } from "../hooks/use-terminal-theme";
 import { sessionNavTarget } from "../utils/session-nav";
 import { StatusDot } from "./StatusDot";
-import { sessionDisplayName } from "../../lib/xtmux/naming";
 
 export function TabSwitcher() {
   const {
     sessions,
+    sessionLabels,
     projects,
     mruSessionIds,
     currentSessionId,
@@ -225,7 +225,7 @@ export function TabSwitcher() {
                 <div className="flex flex-col min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium truncate">
-                      {sessionDisplayName(session)}
+                      {sessionLabels.get(session.id) ?? session.name}
                     </span>
                     {session.id === currentSessionId && (
                       <span className="text-[10px] text-muted-foreground">
@@ -233,7 +233,7 @@ export function TabSwitcher() {
                       </span>
                     )}
                   </div>
-                  {sessionDisplayName(session) !== session.name && (
+                  {(sessionLabels.get(session.id) ?? session.name) !== session.name && (
                     <span className="text-xs text-muted-foreground truncate">
                       {session.name}
                     </span>

@@ -78,10 +78,6 @@ export function getAllProjects(): ProjectRow[] {
   return getDb().query("SELECT * FROM projects ORDER BY sort_order").all() as ProjectRow[];
 }
 
-export function getProject(id: string): ProjectRow | null {
-  return (getDb().query("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow) ?? null;
-}
-
 export function createProject(project: ProjectRow): void {
   getDb().run(
     "INSERT INTO projects (id, name, initial_path, color, sort_order) VALUES (?, ?, ?, ?, ?)",
@@ -117,9 +113,3 @@ export function updateProjectOrder(projects: { id: string; sort_order: number }[
   runAll();
 }
 
-export function closeDatabase(): void {
-  if (db) {
-    db.close();
-    db = null;
-  }
-}

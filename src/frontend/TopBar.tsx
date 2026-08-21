@@ -6,7 +6,6 @@ import { SidebarTrigger, useSidebar } from "./components/ui/sidebar";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { useSession } from "./SessionContext";
 import type { TabType } from "./types/tab";
-import { sessionDisplayName, type NameSource } from "../lib/xtmux/naming";
 
 interface TopBarProps {
   isConnected: boolean;
@@ -15,7 +14,7 @@ interface TopBarProps {
   hasNotification: boolean;
   hasSession: boolean;
   name: string | undefined;
-  nameSource: NameSource | undefined;
+  label: string | undefined;
   title: string | undefined;
   onUpload?: (files: File[]) => void;
   onFocusTerminal?: () => void;
@@ -23,7 +22,7 @@ interface TopBarProps {
   onTabChange?: (tab: TabType) => void;
 }
 
-export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSession, name, nameSource, title, onUpload, onFocusTerminal, activeTab = "terminal", onTabChange }: TopBarProps) {
+export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSession, name, label: labelProp, title, onUpload, onFocusTerminal, activeTab = "terminal", onTabChange }: TopBarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { open, openMobile, isMobile } = useSidebar();
   const { sessions, projects, currentSessionId } = useSession();
@@ -36,7 +35,7 @@ export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSe
     : undefined;
   const projectColor = currentProject?.color;
 
-  const label = name ? sessionDisplayName({ name, nameSource, title }) : title;
+  const label = labelProp ?? title;
 
   return (
     <div

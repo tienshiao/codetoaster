@@ -24,11 +24,11 @@ import { TerminalSearchBar } from "./components/TerminalSearchBar";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import "./index.css";
-import { sessionDisplayName } from "../lib/xtmux/naming";
 
 export function SessionLayout({ showNotFound = false, children }: { showNotFound?: boolean; children?: ReactNode }) {
   const {
     sessions,
+    sessionLabels,
     projects,
     currentSessionId,
     isConnected,
@@ -196,6 +196,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     <>
       <AppSidebar
         sessions={sessions}
+        sessionLabels={sessionLabels}
         projects={projects}
         currentSessionId={currentSessionId}
         isConnected={isConnected}
@@ -219,7 +220,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           hasNotification={currentSession?.hasNotification ?? false}
           hasSession={!!currentSession}
           name={currentSession?.name}
-          nameSource={currentSession?.nameSource}
+          label={currentSessionId ? sessionLabels.get(currentSessionId) : undefined}
           title={currentSession?.title}
           onUpload={handleFileDrop}
           onFocusTerminal={() => terminalRef.current?.focus()}
@@ -283,7 +284,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           <AlertDialogHeader>
             <AlertDialogTitle>Close session?</AlertDialogTitle>
             <AlertDialogDescription>
-              "{closeConfirmSession ? sessionDisplayName(closeConfirmSession) : "Session"}" is still running. Closing it will terminate the process.
+              "{closeConfirmSessionId ? sessionLabels.get(closeConfirmSessionId) ?? closeConfirmSession?.name ?? "Session" : "Session"}" is still running. Closing it will terminate the process.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

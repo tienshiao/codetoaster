@@ -4,13 +4,14 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
   type ReactNode,
 } from "react";
 import { useMatches } from "@tanstack/react-router";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
 import { generateUUID } from "./utils/uuid";
-import { sessionDisplayName, type NameSource } from "../lib/xtmux/naming";
+import { sessionDisplayNames, type NameSource } from "../lib/xtmux/naming";
 import { useWebSocket } from "./hooks/use-websocket";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { removeRecentFiles } from "./hooks/use-recent-files";
@@ -46,6 +47,9 @@ interface SessionContextValue {
   sessionActivity: Record<string, boolean>;
   lastActivityAt: React.RefObject<Record<string, number>>;
   terminalRef: React.RefObject<TerminalHandle | null>;
+  // Labels for every session, keyed by id. Computed over the whole list so a
+  // title shared by several sessions falls back to their stable names.
+  sessionLabels: Map<string, string>;
   attachSession: (id: string) => void;
   createSession: (projectId?: string) => { id: string; name: string };
   closeSession: (id: string) => void;
@@ -172,7 +176,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           message.title,
           message.body,
           `codetoaster-${message.sessionId}`,
-          session ? sessionDisplayName(session) : undefined,
+          sessionDisplayNames(sessionsRef.current).get(message.sessionId),
           session?.name,
         );
       }
@@ -469,6 +473,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
+  const sessionLabels = useMemo(() => sessionDisplayNames(sessions), [sessions]);
+
   return (
     <SessionContext.Provider
       value={{
@@ -480,6 +486,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sessionsLoaded,
         sessionActivity,
         lastActivityAt,
+        sessionLabels,
         terminalRef,
         attachSession,
         createSession,

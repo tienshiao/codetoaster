@@ -12,7 +12,6 @@ import { useSymbolSearch } from "../hooks/use-symbol-search";
 import { modifierSymbol } from "../utils/platform";
 import { useFocusTerminalOnClose } from "../hooks/use-focus-terminal-on-close";
 import type { SymbolEntry } from "../../lib/symbols/types";
-import { sessionDisplayName } from "../../lib/xtmux/naming";
 import {
   CommandDialog,
   CommandInput,
@@ -54,7 +53,7 @@ function HighlightedPath({ path, indices }: FileSearchResult) {
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
-  const { sessions, currentSessionId, createSession, closeSession, renameSession: doRenameSession, terminalRef } = useSession();
+  const { sessions, sessionLabels, currentSessionId, createSession, closeSession, renameSession: doRenameSession, terminalRef } = useSession();
   const { toggleSidebar } = useSidebar();
   const [renameItem, setRenameItem] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
@@ -252,7 +251,7 @@ export function CommandPalette() {
               const session = sessions.find((s) => s.id === currentSessionId);
               if (!session) return;
               setOpen(false);
-              setRenameItem({ id: session.id, name: session.name });
+              setRenameItem({ id: session.id, name: sessionLabels.get(session.id) ?? session.name });
             }}
           >
             <Pencil className="size-4" />
@@ -321,12 +320,12 @@ export function CommandPalette() {
             >
               <TerminalSquare className="size-4" />
               <span>
-                {sessionDisplayName(session)}
+                {sessionLabels.get(session.id) ?? session.name}
                 {session.id === currentSessionId && (
                   <span className="text-muted-foreground ml-1">(current)</span>
                 )}
               </span>
-              {sessionDisplayName(session) !== session.name && (
+              {(sessionLabels.get(session.id) ?? session.name) !== session.name && (
                 <span className="text-muted-foreground ml-auto truncate text-xs">
                   {session.name}
                 </span>
