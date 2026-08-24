@@ -1,8 +1,5 @@
 import { useMemo, useRef, useEffect, useLayoutEffect, type MouseEvent } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { Element } from "hast";
-import { MermaidDiagram } from "./MermaidDiagram";
+import { MarkdownPreview } from "./MarkdownPreview";
 import { syntaxTokensFor } from "../../utils/wordDiff";
 import { getLanguageFromPath } from "../../utils/languageDetection";
 import { FileIcon } from "../diff/FileIcon";
@@ -13,16 +10,6 @@ import { symbolAtPoint } from "../../utils/symbolClick";
 import { useModifierHeld } from "../../hooks/use-modifier-held";
 import { useSymbolHighlight } from "../../hooks/use-symbol-highlight";
 import { maybeShowSymbolTip } from "../../utils/tips";
-
-/** Source text of a ```mermaid fence, given the hast node of its <pre>. */
-function extractMermaidSource(node: Element | undefined): string | null {
-  const child = node?.children[0];
-  if (!child || child.type !== "element" || child.tagName !== "code") return null;
-  const className = child.properties.className;
-  if (!Array.isArray(className) || !className.includes("language-mermaid")) return null;
-  const text = child.children[0];
-  return text?.type === "text" ? text.value : null;
-}
 
 interface FileContentProps {
   filePath: string;
@@ -64,18 +51,33 @@ export function FileContent({
     if (onSymbolClick && content && !content.isBinary) maybeShowSymbolTip();
   }, [content, onSymbolClick]);
 
+  // The rendered preview and the tokenized source view are mutually exclusive,
+  // so each derivation below is gated on this: whole-file work for the branch
+  // that won't render is pure waste (the git file browser, which never enables
+  // the preview, would otherwise join every file it opens into a second copy).
+  const showMarkdown = !!markdownPreview && langConfig?.name === "Markdown";
+
   // Per-line tokens: prefer server tree-sitter tokens, but only when they
   // reconstruct the line exactly (guards against a stale diff/content race or an
   // unsupported grammar); otherwise fall back to the client regex tokenizer.
   // syntaxTokensFor centralizes that choice (shared with the diff view).
   const lineTokens = useMemo<LineTokens[]>(() => {
-    if (!content || content.isBinary) return [];
+    if (showMarkdown || !content || content.isBinary) return [];
     const serverTokens = content.tokens;
     return content.lines.map((line, i) =>
       syntaxTokensFor(line.content, serverTokens?.[i] ?? null, langConfig)
         ?? [{ text: line.content, type: null }],
     );
-  }, [content, langConfig]);
+  }, [content, langConfig, showMarkdown]);
+
+  // Joined source for the markdown preview, memoized so MarkdownPreview's memo
+  // actually holds across re-renders that don't change the file.
+  const markdownSource = useMemo(
+    () => (showMarkdown && content && !content.isBinary
+      ? content.lines.map((line) => line.content).join("\n")
+      : ""),
+    [content, showMarkdown],
+  );
 
   // Restore scroll once the lines have rendered (content arrives async, and
   // the scroll container only exists in the text branch below)
@@ -166,27 +168,14 @@ export function FileContent({
     );
   }
 
-  if (markdownPreview && langConfig?.name === "Markdown") {
+  if (showMarkdown) {
     return (
       <div
         ref={scrollRef}
         className="overflow-auto h-full"
         onScroll={(e) => onScrollTopChange?.(e.currentTarget.scrollTop)}
       >
-        <div className="markdown-preview max-w-3xl px-6 py-4 text-sm">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              pre({ node, ...props }) {
-                const mermaidSource = extractMermaidSource(node);
-                if (mermaidSource !== null) return <MermaidDiagram source={mermaidSource} />;
-                return <pre {...props} />;
-              },
-            }}
-          >
-            {lines.map((line) => line.content).join("\n")}
-          </ReactMarkdown>
-        </div>
+        <MarkdownPreview source={markdownSource} />
       </div>
     );
   }
