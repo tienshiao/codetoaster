@@ -64,6 +64,12 @@ export function stripDecoration(rawTitle: string): string {
   return normalized;
 }
 
+// How many words a spaceless token spells out. Separator runs and edge
+// separators contribute nothing, so "--watch" is one word, not two.
+function slugParts(token: string): number {
+  return token.split(/[-_]+/).filter(Boolean).length;
+}
+
 // The label a title is worth showing as, or null if it says less than the
 // derived name already does.
 export function meaningfulTitle(rawTitle: string | undefined): string | null {
@@ -82,7 +88,13 @@ export function meaningfulTitle(rawTitle: string | undefined): string | null {
   // Two words minimum. A bare program name ("vim", "node") is what the shell
   // reports the instant a command starts, and says strictly less than the
   // directory and branch the derived name already carries.
-  if (content.length < 2) return null;
+  //
+  // One word can still be a description rather than a command: a program that
+  // titles itself with a slug ("setup-scheduler-staging-env") is spaceless but
+  // says plenty. Three segments is the line — it clears the hyphenated binaries
+  // a shell reports the same way ("docker-compose", "tree-sitter-cli") without
+  // demanding the slug contain a space it never has.
+  if (content.length < 2 && slugParts(content[0] ?? "") < 3) return null;
 
   return truncate(stripped, MAX_NAME_LENGTH);
 }

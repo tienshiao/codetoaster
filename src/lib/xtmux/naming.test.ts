@@ -45,6 +45,17 @@ describe("meaningfulTitle", () => {
   test("rejects a bare program name, which says less than dir and branch", () => {
     expect(meaningfulTitle("claude")).toBeNull();
     expect(meaningfulTitle("vim")).toBeNull();
+    expect(meaningfulTitle("docker-compose")).toBeNull();
+  });
+
+  test("accepts a spaceless slug, which is a description", () => {
+    expect(meaningfulTitle("\u2733 setup-scheduler-staging-env")).toBe("setup-scheduler-staging-env");
+    expect(meaningfulTitle("wire_marbi_update_cron")).toBe("wire_marbi_update_cron");
+  });
+
+  test("a slug still loses to the shell filters that precede it", () => {
+    expect(meaningfulTitle("fish ~/Projects/marbi/marbi-cloud")).toBeNull();
+    expect(meaningfulTitle("/Users/tma/some-long-path/here")).toBeNull();
   });
 
   test("truncates an overlong title", () => {
