@@ -62,6 +62,18 @@ The prompt goes through `argv`, not written into the PTY after startup — `Bun.
 takes an array, so newlines and quotes need no escaping and there is no race against
 the agent's startup paint.
 
+**The environment must be scrubbed before spawning.** A daemon started from inside a
+Claude Code session inherits `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
+`CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_MESSAGING_*`,
+`CLAUDE_PID`, `CLAUDE_EFFORT`, and today's `Pty` spawn passes `{...process.env}`
+straight through. The child then boots with *transcript saving disabled*
+("⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker"), which
+means no transcript on disk and therefore **nothing to resume** — the one thing v2 is
+built on. Strip `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT` and everything matching
+`CLAUDE_CODE_*` from the agent PTY's environment. This is easy to miss because it only
+bites when the daemon itself was launched from an agent session — i.e. during exactly
+the development loop we use.
+
 Because we pass `--session-id`, we know the conversation id *before* the process
 starts. This is the answer to "how would we know the session ID to resume?" — we
 assign it.
@@ -118,9 +130,16 @@ Constraints on the reporter, which must be treated as hard requirements:
 
 ### 4.3 Resuming
 
-`claude --resume <agent_session_id>` in the task's cwd. If the stored id is unusable
-(transcript pruned, `--session-id` rejected as already-used, version skew), fall back in
-order:
+`claude --resume <agent_session_id>` in the task's cwd. Resume keeps the same
+conversation id (verified), so the task row needs no update on a normal resume.
+
+**A used session id cannot be reused.** `claude --session-id <uuid>` on an id that
+already has a transcript fails with `Session ID <uuid> is already in use.` So the
+"start fresh" fallback below must allocate a *new* uuid and write it to the task row —
+restarting with the stored id fails a second time and would strand the task in a
+retry loop.
+
+If the stored id is unusable (transcript pruned, version skew), fall back in order:
 
 1. `claude --continue` — "most recent conversation in this directory". With
    worktree-per-task, one directory holds exactly one conversation, so this is
@@ -131,17 +150,24 @@ order:
    A task that cannot resume must degrade to something the user can act on, never to a
    broken terminal.
 
-### 4.4 Assumptions still to verify (Phase 2 spike)
+### 4.4 Verified (Phase 0 spike, Claude Code 2.1.247)
 
-- `SessionStart.source` values beyond `startup` — we expect `resume`, `clear`,
-  `compact`. Only `startup` was observed. The `/clear` story depends on `clear` firing
-  with a fresh `session_id`.
-- Whether `--settings` **merges** with the user's own hooks or shadows them. It is
-  documented as an additional settings source, and the injected hooks fired, but a user
-  with their own `Stop` hook must keep it. If it shadows, we must instead merge the
-  user's resolved settings into the per-task file ourselves.
-- Whether `--session-id` errors when the uuid already exists on disk (matters for the
-  resume-after-failed-resume path).
+All of these were open assumptions when this doc was drafted; each was checked against
+a live agent, twice where the first result was misleading.
+
+| Question | Answer |
+|---|---|
+| Does `--settings` merge with the user's own hooks, or shadow them? | **Merges.** A project-level `SessionStart` hook and an injected one both fired on the same start. A user's hooks survive. |
+| Does `/clear` report itself? | **Yes.** `SessionEnd` on the old id, then `SessionStart` with `source: "clear"` and a **new** `session_id`, and a new transcript file. The §4.2 story holds. |
+| Does resume report itself? | **Yes** — `SessionStart` with `source: "resume"`, same `session_id`. |
+| Can a used `--session-id` be reused? | **No** — `Session ID <uuid> is already in use.` See §4.3. |
+| Does a PTY-spawned agent behave like a terminal one? | Only after the environment is scrubbed (§4.1). Unscrubbed, it silently disables transcript saving. |
+
+The `/clear` test is the cautionary one: the first run showed *no* `SessionStart`, which
+read as "`/clear` is invisible to us" and would have sent the design chasing transcript
+scanning. The real cause was the inherited env marker — the agent was running degraded.
+Worth remembering when a future spike produces a tidy negative result: check that the
+subject is healthy before believing it.
 
 ## 5. Server architecture
 
@@ -557,9 +583,9 @@ thin tab hosts over the layouts they already delegate to), `CommandPalette.tsx`
 Each phase should end with the branch running, which keeps the big bang from becoming a
 big bang *at merge time*.
 
-- **Phase 0 — Spike.** Multiplexed WebSocket + two terminals on one page, no tasks, no
-  persistence. Proves §5.3 and the negotiation rules. Also confirm the §4.4 open
-  questions.
+- **Phase 0 — Spike.** Two halves. The agent-integration half is **done** — see the
+  §4.4 table. The remaining half: multiplexed WebSocket + two terminals on one page, no
+  tasks, no persistence, proving §5.3 and the negotiation rules.
 - **Phase 1 — Task model.** Migrations, `TaskStore`, `Pty` extraction, `TaskManager`,
   `resolveTaskRoot`, `/api/tasks/*` route rename. v1 UI can stay bolted on top to keep
   the branch runnable.
