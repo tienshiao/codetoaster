@@ -72,13 +72,16 @@ child. The child then boots with transcript saving disabled ("⚠ Transcript sav
 off — inherited CLAUDE_CODE_CHILD_SESSION marker") — no transcript on disk, and
 therefore nothing to resume.
 
-That is mostly a development hazard: it is how this was found, and `bun run dev` from
-an agent session hits it every time. The runtime tail is narrower but real — in a
-product whose job is running Claude Code, "the daemon is wedged, restart it" is a
-plausible thing for an agent to do from inside a task, and that path re-poisons it.
-The daemon is long-lived, so one bad start quietly degrades every task it spawns
-afterwards, and the symptom (resume fails) surfaces far from the cause. Filtering a
-handful of env keys is a much smaller cost than the debugging session it prevents.
+This is mostly a development hazard — it is how it was found, and `bun run dev` from an
+agent session hits it every time. The narrow runtime case is a *first* start from
+inside an agent session: someone already in Claude Code who starts the daemon from
+there, with no daemon running to conflict with. A restart from inside a task is not a
+case, because it cannot happen — the restarting agent's own PTY dies with the daemon
+partway through, taking the restart command with it (verified below).
+
+The daemon is long-lived, so one poisoned start quietly degrades every task it spawns
+afterwards, with a symptom (resume fails) that surfaces nowhere near the cause.
+Filtering a handful of env keys costs less than the debugging session it prevents.
 
 Because we pass `--session-id`, we know the conversation id *before* the process
 starts. This is the answer to "how would we know the session ID to resume?" — we
@@ -341,7 +344,10 @@ every PTY of the task, `lifecycle = 'suspended'`, broadcast.
 
 Manual harvest is the same path minus the guards (with a confirm when `busy`). Daemon
 restart needs no work beyond honesty: on boot, every `live` row becomes `suspended`,
-since its PTY died with the parent. That single line converts today's "restart nukes
+since its PTY died with the parent. **Verified** — when the daemon exits without
+killing its sessions (what `/api/shutdown` does today), closing the PTY masters takes
+down both the session shells and their background children, so there are no orphaned
+agents to reap and no risk of a resumed task colliding with a still-running one. That single line converts today's "restart nukes
 everything" into "restart suspends everything, resume on click" — and makes `bun --hot`
 development far less hostile.
 
