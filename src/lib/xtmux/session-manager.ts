@@ -60,7 +60,10 @@ async function branchLabel(cwd: string): Promise<string | undefined> {
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private projects: ProjectInfo[] = [{ id: "general", name: "General", initialPath: "", sessionIds: [] }];
-  private clientToSession: Map<string, string> = new Map();
+  // A client holds one attachment per session it is showing — one terminal
+  // tab each. It never shows the same session twice, so the set never needs to
+  // distinguish two views of one session (docs/v2-architecture.md §5.3).
+  private clientSessions: Map<string, Set<string>> = new Map();
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
 
   loadProjects(): void {
@@ -233,9 +236,9 @@ export class SessionManager {
       return undefined;
     }
 
-    // Detach from any existing session first
-    this.detachClient(clientId);
-
+    // Attaching no longer detaches whatever the client had open: a client can
+    // hold several sessions at once. Re-attaching to a session it already holds
+    // is still valid (a remount) and replaces the entry, which re-sends restore.
     const client: ClientInfo = {
       id: clientId,
       ws,
@@ -243,25 +246,37 @@ export class SessionManager {
     };
 
     session.addClient(client);
-    this.clientToSession.set(clientId, sessionId);
+    let held = this.clientSessions.get(clientId);
+    if (!held) {
+      held = new Set();
+      this.clientSessions.set(clientId, held);
+    }
+    held.add(sessionId);
     return session;
   }
 
-  detachClient(clientId: string): void {
-    const sessionId = this.clientToSession.get(clientId);
-    if (sessionId) {
-      const session = this.sessions.get(sessionId);
-      session?.removeClient(clientId);
-      this.clientToSession.delete(clientId);
+  /** Detach one session, or every session the client holds when omitted (the
+   * socket closed). */
+  detachClient(clientId: string, sessionId?: string): void {
+    const held = this.clientSessions.get(clientId);
+    if (!held) return;
+    const targets = sessionId === undefined ? [...held] : held.has(sessionId) ? [sessionId] : [];
+    for (const id of targets) {
+      this.sessions.get(id)?.removeClient(clientId);
+      held.delete(id);
     }
+    if (held.size === 0) this.clientSessions.delete(clientId);
   }
 
-  getClientSession(clientId: string): Session | undefined {
-    const sessionId = this.clientToSession.get(clientId);
-    if (sessionId) {
-      return this.sessions.get(sessionId);
-    }
-    return undefined;
+  /** The session only if this client is actually attached to it — an unattached
+   * client must not be able to write to a session by naming it. */
+  getClientSession(clientId: string, sessionId: string): Session | undefined {
+    if (!this.clientSessions.get(clientId)?.has(sessionId)) return undefined;
+    return this.sessions.get(sessionId);
+  }
+
+  getClientSessionIds(clientId: string): string[] {
+    return [...(this.clientSessions.get(clientId) ?? [])];
   }
 
   killSession(id: string): boolean {
@@ -282,10 +297,11 @@ export class SessionManager {
       }
     }
 
-    // Remove all client mappings for this session
-    for (const [clientId, sessionId] of this.clientToSession) {
-      if (sessionId === id) {
-        this.clientToSession.delete(clientId);
+    // Remove this session from every client that held it, dropping clients
+    // left holding nothing.
+    for (const [clientId, held] of this.clientSessions) {
+      if (held.delete(id) && held.size === 0) {
+        this.clientSessions.delete(clientId);
       }
     }
 
@@ -339,13 +355,10 @@ export class SessionManager {
     return result;
   }
 
-  getConnections(): Array<{ clientId: string; sessionId: string | null }> {
-    const result: Array<{ clientId: string; sessionId: string | null }> = [];
+  getConnections(): Array<{ clientId: string; sessionIds: string[] }> {
+    const result: Array<{ clientId: string; sessionIds: string[] }> = [];
     for (const clientId of this.connectedClients.keys()) {
-      result.push({
-        clientId,
-        sessionId: this.clientToSession.get(clientId) ?? null,
-      });
+      result.push({ clientId, sessionIds: this.getClientSessionIds(clientId) });
     }
     return result;
   }

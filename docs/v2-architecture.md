@@ -280,6 +280,19 @@ bearing rather than incidental:
   grid collapse. `last_size_cols/rows` persists this across a harvest so a resumed task
   respawns at the size it had.
 
+**Status: implemented and proven (Phase 0).** `SessionManager` now holds
+`clientSessions: Map<clientId, Set<sessionId>>`, attaching no longer detaches what the
+client already had, and `getClientSession(clientId, sessionId)` treats attachment as
+authorization — naming a session you never attached to gets you an error, not a writable
+PTY. `updateClientSize` gained the null case that hidden tabs need. Covered by
+`src/lib/xtmux/multiplex.test.ts` (12 tests over the §9 rules) and verified end-to-end:
+one socket, two live shells, output correctly routed by session with no cross-talk.
+
+One deliberate deferral: the wire still says `sessionId`, not `ptyId`. A v1 session *is*
+a PTY, so the rename belongs with the `Pty` extraction in Phase 1 — doing it here would
+have mixed a mechanical rename across every frontend file into the change that actually
+carries the risk.
+
 **Task CRUD moves off the WebSocket to HTTP.** Creating a task can create a worktree,
 run git, and fail in interesting ways; that wants status codes and a response body, not
 a fire-and-forget socket message with an `error` string. `POST /api/tasks`,
@@ -553,11 +566,11 @@ thin tab hosts over the layouts they already delegate to), `CommandPalette.tsx`
 
 ## 9. Risks
 
-1. **Multiplexed PTY protocol.** The riskiest server change; a mistake shows up as
-   another client's terminal resizing to 9×5. Mitigation: extend
-   `session.test.ts`/`session-manager.test.ts` with multi-view cases before the frontend
-   depends on it — hidden-tab-reports-null, two-clients-one-pty, zero-attachments-keeps-
-   size, detach-recalculates, and one-client-attaches-many-ptys.
+1. ~~**Multiplexed PTY protocol.**~~ **Retired in Phase 0.** The negotiation rules that
+   would have shown up as another client's terminal resizing to 9×5 are now pinned by
+   `multiplex.test.ts`: hidden-tab-reports-null, two-clients-one-pty,
+   zero-attachments-keeps-size, detach-recalculates, one-client-attaches-many-ptys,
+   plus input isolation between sessions. Re-check these whenever `Pty` is extracted.
 2. **Resume fidelity.** `claude --resume` repaints from scratch; the snapshot and the
    resumed screen will not agree. The two-phase restore (§5.5) makes that honest instead
    of glitchy. Resume *failure* must land on an actionable card, never a dead terminal.
@@ -583,9 +596,10 @@ thin tab hosts over the layouts they already delegate to), `CommandPalette.tsx`
 Each phase should end with the branch running, which keeps the big bang from becoming a
 big bang *at merge time*.
 
-- **Phase 0 — Spike.** Two halves. The agent-integration half is **done** — see the
-  §4.4 table. The remaining half: multiplexed WebSocket + two terminals on one page, no
-  tasks, no persistence, proving §5.3 and the negotiation rules.
+- **Phase 0 — Spike. Done.** Both halves: the agent-integration findings in §4.4, and
+  the multiplexed WebSocket in §5.3 — one client now holds many sessions at once, proven
+  by unit tests and an end-to-end two-terminal socket run. The v1 UI was carried across
+  the protocol change rather than left broken, so the branch still runs.
 - **Phase 1 — Task model.** Migrations, `TaskStore`, `Pty` extraction, `TaskManager`,
   `resolveTaskRoot`, `/api/tasks/*` route rename. v1 UI can stay bolted on top to keep
   the branch runnable.

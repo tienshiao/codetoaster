@@ -256,7 +256,6 @@ export function startServer(options?: ServerOptions) {
             sessionManager.createSession(sessionId, name || undefined, size.cols, size.rows, projectId, afterSessionId).then(
               () => {
                 sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
-                ws.data.sessionId = sessionId;
                 sessionManager.broadcastSessionList();
               },
               (e: any) => {
@@ -269,32 +268,31 @@ export function startServer(options?: ServerOptions) {
           case "attach": {
             const { sessionId, cols, rows } = parsed;
             const session = sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
-            if (session) {
-              ws.data.sessionId = sessionId;
-            } else {
+            if (!session) {
               sendError(ws, `Session "${sessionId}" not found`);
             }
             break;
           }
 
           case "detach": {
-            sessionManager.detachClient(clientId);
-            ws.data.sessionId = null;
+            // No sessionId detaches everything: what a client sends when it is
+            // going away rather than closing one tab.
+            sessionManager.detachClient(clientId, parsed.sessionId);
             break;
           }
 
           case "input": {
-            const session = sessionManager.getClientSession(clientId);
+            const session = sessionManager.getClientSession(clientId, parsed.sessionId);
             if (session) {
               session.write(parsed.data);
             } else {
-              sendError(ws, "Not attached to a session");
+              sendError(ws, `Not attached to session "${parsed.sessionId}"`);
             }
             break;
           }
 
           case "resize": {
-            const session = sessionManager.getClientSession(clientId);
+            const session = sessionManager.getClientSession(clientId, parsed.sessionId);
             if (session) {
               session.updateClientSize(clientId, parsed.cols, parsed.rows);
             }
@@ -380,10 +378,7 @@ export function startServer(options?: ServerOptions) {
       const url = new URL(req.url);
       if (url.pathname === "/terminal") {
         const upgraded = server.upgrade(req, {
-          data: {
-            clientId: generateClientId(),
-            sessionId: null,
-          },
+          data: { clientId: generateClientId() },
         });
         if (upgraded) return;
         return new Response("WebSocket upgrade failed", { status: 400 });

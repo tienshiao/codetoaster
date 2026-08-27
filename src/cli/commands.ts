@@ -159,7 +159,7 @@ export async function cmdConnections(port: number): Promise<void> {
   const res = await fetch(`${getBaseUrl(port)}/api/connections`);
   const connections = (await res.json()) as Array<{
     clientId: string;
-    sessionId: string | null;
+    sessionIds: string[];
   }>;
 
   if (connections.length === 0) {
@@ -167,10 +167,11 @@ export async function cmdConnections(port: number): Promise<void> {
     return;
   }
 
-  const headers = ["CLIENT", "SESSION"];
+  // A client can hold several sessions at once now — one per open terminal.
+  const headers = ["CLIENT", "SESSIONS"];
   const rows = connections.map((c) => [
     c.clientId,
-    c.sessionId ? formatSessionId(c.sessionId) : "(detached)",
+    c.sessionIds.length > 0 ? c.sessionIds.map(formatSessionId).join(", ") : "(detached)",
   ]);
 
   console.log(formatTable(headers, rows));

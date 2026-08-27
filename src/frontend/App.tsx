@@ -232,6 +232,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           <div className={currentTab !== "terminal" ? 'hidden' : 'relative h-full'}>
             <XTerminal
               ref={terminalRef}
+              sessionId={currentSessionId}
               onSizeChange={handleSizeChange}
               onReady={handleTerminalReady}
               sendMessage={handleSendMessage}

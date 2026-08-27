@@ -26,6 +26,10 @@ export interface TerminalHandle {
 }
 
 interface XTerminalProps {
+  // The session this terminal is showing. Input and resize are addressed by
+  // it: the socket now carries several sessions at once, so "the client's
+  // session" is no longer a thing the server can infer.
+  sessionId: string | null;
   onSizeChange: (size: TerminalSize) => void;
   onReady: () => void;
   sendMessage: (msg: object) => void;
@@ -34,7 +38,7 @@ interface XTerminalProps {
 }
 
 export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
-  function XTerminal({ onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen }, ref) {
+  function XTerminal({ sessionId, onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -59,6 +63,8 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     fontSizeRef.current = fontSize;
 
     // Store callbacks in refs
+    const sessionIdRef = useRef(sessionId);
+    sessionIdRef.current = sessionId;
     const onSizeChangeRef = useRef(onSizeChange);
     const sendMessageRef = useRef(sendMessage);
     const onFileDropRef = useRef(onFileDrop);
@@ -203,16 +209,20 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
 
       // Handle terminal input
       const dataDisposable = term.onData((data) => {
-        if (attachedRef.current) {
-          sendMessageRef.current({ type: "input", data });
+        if (attachedRef.current && sessionIdRef.current) {
+          sendMessageRef.current({ type: "input", sessionId: sessionIdRef.current, data });
         }
       });
 
       // Handle shift-enter and Cmd/Ctrl+F for search
       term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
         if (ev.key === "Enter" && ev.shiftKey) {
-          if (ev.type === "keydown" && attachedRef.current) {
-            sendMessageRef.current({ type: "input", data: String.fromCharCode(10) });
+          if (ev.type === "keydown" && attachedRef.current && sessionIdRef.current) {
+            sendMessageRef.current({
+              type: "input",
+              sessionId: sessionIdRef.current,
+              data: String.fromCharCode(10),
+            });
           }
           return false;
         }

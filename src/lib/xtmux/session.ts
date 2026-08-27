@@ -141,7 +141,7 @@ export class Session {
           // Write to headless terminal (authoritative state)
           this.terminal.write(str);
           // Broadcast to all connected clients
-          this.broadcast({ type: "data", data: str });
+          this.broadcast({ type: "data", sessionId: this.id, data: str });
           // Track activity
           if (!this.isActive) {
             this.isActive = true;
@@ -158,7 +158,7 @@ export class Session {
         this.exited = true;
         this.exitCode = exitCode ?? 0;
         this.onExitCallback?.(this.exitCode);
-        this.broadcast({ type: "exit", code: this.exitCode });
+        this.broadcast({ type: "exit", sessionId: this.id, code: this.exitCode });
       },
     });
   }
@@ -199,6 +199,7 @@ export class Session {
     // Send restore with serialized content (for scrollback history)
     this.send(client, {
       type: "restore",
+      sessionId: this.id,
       data: serialized,
       size: this.size,
       cursor,
@@ -209,7 +210,7 @@ export class Session {
 
     // If session already exited, inform the new client
     if (this.exited) {
-      this.send(client, { type: "exit", code: this.exitCode ?? 0 });
+      this.send(client, { type: "exit", sessionId: this.id, code: this.exitCode ?? 0 });
     }
 
     // Add client to broadcast list
@@ -225,10 +226,21 @@ export class Session {
     this.recalculateSize();
   }
 
-  updateClientSize(clientId: string, cols: number, rows: number): void {
+  // A null cols/rows pair clears this client's measurement rather than being
+  // rejected as garbage: a terminal whose tab was just hidden must stop
+  // constraining negotiation, but stays attached and keeps receiving output.
+  // Anything else unparseable is still ignored outright (sanitizeSize).
+  updateClientSize(clientId: string, cols: number | null, rows: number | null): void {
     const client = this.clients.get(clientId);
+    if (!client) return;
+    if (cols === null || rows === null) {
+      if (client.size === null) return;
+      client.size = null;
+      this.recalculateSize();
+      return;
+    }
     const size = sanitizeSize(cols, rows);
-    if (client && size) {
+    if (size) {
       client.size = size;
       this.recalculateSize();
     }
@@ -382,7 +394,7 @@ export class Session {
       this.proc.terminal?.resize(cols, rows);
 
       // Notify all clients of the new size
-      this.broadcast({ type: "resize", cols, rows });
+      this.broadcast({ type: "resize", sessionId: this.id, cols, rows });
     }
   }
 

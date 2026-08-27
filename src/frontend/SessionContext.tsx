@@ -182,6 +182,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // Terminal messages now name the session they belong to. Drop the ones for
+    // a session this client is no longer showing — output from the session we
+    // just switched away from is still in flight, and painting it into the new
+    // session's grid is exactly the corruption the addressing exists to avoid.
+    if (
+      (message.type === "data" ||
+        message.type === "restore" ||
+        message.type === "resize" ||
+        message.type === "exit") &&
+      message.sessionId !== currentSessionIdRef.current
+    ) {
+      return;
+    }
+
     // Forward terminal-related messages to terminal
     if (terminalRef.current) {
       terminalRef.current.handleMessage(message);
@@ -227,8 +241,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const handleSizeChange = useCallback(
     (size: TerminalSize) => {
-      if (currentSessionIdRef.current) {
-        send({ type: "resize", cols: size.cols, rows: size.rows });
+      const sessionId = currentSessionIdRef.current;
+      if (sessionId) {
+        send({ type: "resize", sessionId, cols: size.cols, rows: size.rows });
       }
     },
     [send],
@@ -296,9 +311,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       terminalRef.current?.resetAttached();
 
       if (currentSessionIdRef.current) {
-        send({ type: "detach" });
+        send({ type: "detach", sessionId: currentSessionIdRef.current });
       }
 
+      // Written synchronously, not left to the syncing effect: `restore` for
+      // the new session can arrive before React re-renders, and the message
+      // filter above would drop it as belonging to someone else.
+      currentSessionIdRef.current = id;
       const size = terminalRef.current?.getSize();
       send({ type: "attach", sessionId: id, ...(size ?? {}) });
       if (isViewingTerminalRef.current) {
@@ -317,10 +336,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const afterSessionId = projectId ? undefined : (currentSessionIdRef.current || undefined);
 
     if (currentSessionIdRef.current) {
-      send({ type: "detach" });
+      send({ type: "detach", sessionId: currentSessionIdRef.current });
     }
 
     const sessionId = generateSessionId();
+    currentSessionIdRef.current = sessionId;
     // The server names the session: it is the side that knows the resolved cwd
     // and branch, and it owns the terminal title the name later latches onto.
     // This placeholder only labels the optimistic row until that list arrives.
