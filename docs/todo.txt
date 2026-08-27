@@ -1,0 +1,47 @@
+TODO:
+- git worktree support
+- process browser?
+- conemu osc 9 sub commands
+- vapid web push notifications?
+- mobile - terminal does not resize for keyboard
+- diffview - not mobile responsive
+
+
+DONE:
+- tailwindcss
+- top bar with connection status and title (later will have additional controls)
+- add a way to confirmation the close of a session if not exited
+- notifications
+- mobile responsive - sidebar should be collapsible
+- add a way to rename sessions
+- drag and drop files
+- paste image
+- drag and drop to reorder sessions/projects
+- projects/folders
+- settings
+  - fonts? nerd fonts? bundle?
+- color schemes
+- detach daemon process
+- cmdline commands similar to tmux
+  - list sessions
+  - kill session
+  - list connections
+  - open web ui
+  - run in foreground
+  - stop daemon
+- update readme
+- selecting a tab should focus the terminal
+- non-existent sessions should show a message
+- code review UI
+- sidebar header buttons are not clickable on ios
+- can't see the mouseover menus on ios
+- unable to scroll xtermjs on ios
+- closed sidebar - add notification indicator/dot to button when there are notifications
+- mobile - cannot close settings modal
+- convert folders to projects
+  - default path
+  - color for folder
+  - color for sessions
+- persist sessions/projects order
+- project edit - directory picker
+- diffview scroll bar
