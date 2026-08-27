@@ -62,17 +62,23 @@ The prompt goes through `argv`, not written into the PTY after startup — `Bun.
 takes an array, so newlines and quotes need no escaping and there is no race against
 the agent's startup paint.
 
-**The environment must be scrubbed before spawning.** A daemon started from inside a
-Claude Code session inherits `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
-`CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_MESSAGING_*`,
-`CLAUDE_PID`, `CLAUDE_EFFORT`, and today's `Pty` spawn passes `{...process.env}`
-straight through. The child then boots with *transcript saving disabled*
-("⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker"), which
-means no transcript on disk and therefore **nothing to resume** — the one thing v2 is
-built on. Strip `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT` and everything matching
-`CLAUDE_CODE_*` from the agent PTY's environment. This is easy to miss because it only
-bites when the daemon itself was launched from an agent session — i.e. during exactly
-the development loop we use.
+**Scrub the inherited Claude Code env vars before spawning** — cheap insurance, not a
+normal-path requirement. A daemon started the usual way (the user's shell, launchd,
+systemd) has no `CLAUDE_CODE_*` in its environment and the scrub does nothing. But a
+daemon started *from inside* an agent session inherits `CLAUDECODE`,
+`CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_*`,
+`CLAUDE_PID`, `CLAUDE_EFFORT`, and `Pty` passes `{...process.env}` straight to the
+child. The child then boots with transcript saving disabled ("⚠ Transcript saving is
+off — inherited CLAUDE_CODE_CHILD_SESSION marker") — no transcript on disk, and
+therefore nothing to resume.
+
+That is mostly a development hazard: it is how this was found, and `bun run dev` from
+an agent session hits it every time. The runtime tail is narrower but real — in a
+product whose job is running Claude Code, "the daemon is wedged, restart it" is a
+plausible thing for an agent to do from inside a task, and that path re-poisons it.
+The daemon is long-lived, so one bad start quietly degrades every task it spawns
+afterwards, and the symptom (resume fails) surfaces far from the cause. Filtering a
+handful of env keys is a much smaller cost than the debugging session it prevents.
 
 Because we pass `--session-id`, we know the conversation id *before* the process
 starts. This is the answer to "how would we know the session ID to resume?" — we
@@ -161,7 +167,7 @@ a live agent, twice where the first result was misleading.
 | Does `/clear` report itself? | **Yes.** `SessionEnd` on the old id, then `SessionStart` with `source: "clear"` and a **new** `session_id`, and a new transcript file. The §4.2 story holds. |
 | Does resume report itself? | **Yes** — `SessionStart` with `source: "resume"`, same `session_id`. |
 | Can a used `--session-id` be reused? | **No** — `Session ID <uuid> is already in use.` See §4.3. |
-| Does a PTY-spawned agent behave like a terminal one? | Only after the environment is scrubbed (§4.1). Unscrubbed, it silently disables transcript saving. |
+| Does a PTY-spawned agent behave like a terminal one? | Yes — unless the daemon inherited Claude Code's env markers, which disables transcript saving in the child (§4.1). Only reachable when the daemon is launched from inside an agent session. |
 
 The `/clear` test is the cautionary one: the first run showed *no* `SessionStart`, which
 read as "`/clear` is invisible to us" and would have sent the design chasing transcript
