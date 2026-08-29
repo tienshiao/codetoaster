@@ -420,8 +420,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // there is nothing to add optimistically — only a terminal to attach to.
   const createSession = useCallback(
     async (projectId?: string): Promise<{ id: string; name: string } | null> => {
-      // Only inherit position/cwd when no explicit project is targeted (e.g. Cmd+T)
-      const afterTaskId = projectId ? undefined : (currentSessionIdRef.current || undefined);
+      // Only inherit position/cwd when no explicit project is targeted (e.g. Cmd+T).
+      // Checked against the list rather than trusted: the server 404s an
+      // afterTaskId it cannot find, which fails the whole create over what is
+      // only a positioning hint — and the ref outlives the task whenever
+      // another client (or `codetoaster kill`) closes the one we are showing.
+      const current = currentSessionIdRef.current;
+      const afterTaskId =
+        !projectId && current && sessionsRef.current.some((s) => s.id === current)
+          ? current
+          : undefined;
 
       // Derive project from current session if not explicitly provided
       let resolvedProjectId = projectId;
