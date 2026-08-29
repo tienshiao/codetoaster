@@ -23,6 +23,22 @@ function SessionComponent() {
     document.title = label ? `${label} — CodeToaster` : "CodeToaster";
   }, [currentSessionId, sessionLabels]);
 
+  // Reset lastSlugRef when slug changes so re-attach works after navigating
+  // away and back.
+  //
+  // Declared *before* the attach effect, which is the whole of what makes it a
+  // reset rather than a saboteur: effects run in declaration order, so with
+  // this second it ran in the same commit as the attach it had just latched
+  // and put the latch straight back to null. The attach effect then fired
+  // again on the next `sessions` delta — which arrive constantly, from every
+  // activity transition — while `attached` for the first one was still in
+  // flight, so `attachSession` could not recognise its own attachment and
+  // re-sent it. Every create and every switch cost a second attach, a second
+  // `restore`, and the terminal reset that goes with it.
+  useEffect(() => {
+    lastSlugRef.current = null;
+  }, [slug]);
+
   // Attach to session when slug changes (only if session exists)
   useEffect(() => {
     if (!isConnected || !sessionsLoaded) return;
@@ -38,11 +54,6 @@ function SessionComponent() {
     // ptyId does land, and the terminal would never attach.
     if (attachSession(id)) lastSlugRef.current = slug;
   }, [slug, isConnected, sessionsLoaded, sessions, attachSession]);
-
-  // Reset lastSlugRef when slug changes so re-attach works after navigating away and back
-  useEffect(() => {
-    lastSlugRef.current = null;
-  }, [slug]);
 
   // And when the socket drops. The attachment did not survive it, so the slug
   // is no longer handled — without this the latch above keeps the effect from

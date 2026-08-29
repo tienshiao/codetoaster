@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useMatches } from "@tanstack/react-router";
+import { toast } from "sonner";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
 import { generateUUID } from "./utils/uuid";
 import { sessionDisplayNames, type NameSource } from "../lib/xtmux/naming";
@@ -38,6 +39,17 @@ export interface SessionInfo {
   clientCount: number;
   exited?: boolean;
   hasNotification?: boolean;
+}
+
+// A refused create has to reach the user, not just the console. Every caller
+// answers `null` by quietly doing nothing — no navigation, no new tab — so a
+// $SHELL that has left PATH, or a project whose initialPath was deleted, made
+// "New Session" a button that visibly does nothing at all. Under the v1 socket
+// `create`, the server's refusal came back as an `error` frame the terminal
+// painted into the grid, so the failure was at least visible.
+function reportCreateFailure(reason: string): void {
+  console.error("Could not create the task:", reason);
+  toast.error("Could not create the session", { description: reason });
 }
 
 function fromTask(task: TaskInfo): SessionInfo {
@@ -487,12 +499,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         });
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
-          console.error("Could not create the task:", body.error ?? response.statusText);
+          reportCreateFailure(body.error ?? response.statusText);
           return null;
         }
         task = await response.json();
       } catch (e) {
-        console.error("Could not create the task:", e);
+        reportCreateFailure(e instanceof Error ? e.message : String(e));
         return null;
       }
 
