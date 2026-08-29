@@ -5,6 +5,7 @@ import { parseArgs } from "util";
     args: Bun.argv.slice(2),
     options: {
       port: { type: "string", short: "p" },
+      host: { type: "string" },
       db: { type: "string" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
@@ -55,14 +56,17 @@ import { parseArgs } from "util";
 
   const port = typeof values.port === "string" ? parseInt(values.port, 10) : parseInt(process.env.PORT || "4000", 10);
   const dbPath = typeof values.db === "string" ? values.db : undefined;
+  // Loopback unless asked otherwise: the daemon starts agents in the user's
+  // repositories with nothing in front of it, so reachability is opt-in.
+  const hostname = typeof values.host === "string" ? values.host : undefined;
 
   switch (command) {
     case "":
-      await cmdStart(port, dbPath);
+      await cmdStart(port, dbPath, hostname);
       break;
     case "foreground":
     case "fg":
-      await cmdForeground(port, dbPath);
+      await cmdForeground(port, dbPath, hostname);
       break;
     case "list":
     case "ls":

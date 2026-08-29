@@ -12,6 +12,13 @@ function pidFilePath(port: number): string {
 export interface PidInfo {
   pid: number;
   port: number;
+  /** Where this daemon can actually be reached, written by the daemon itself.
+   * The CLI cannot assume loopback: `--host` binds one address exclusively, so
+   * a daemon started on a LAN address refuses `http://localhost:<port>`
+   * outright — and a CLI that only knew the port would report the healthy
+   * daemon it had just started as not responding. Optional because a pid file
+   * written by an older build has no such field, where loopback is right. */
+  origin?: string;
 }
 
 function ensureConfigDir(): void {
@@ -29,9 +36,16 @@ export function readPidFile(port: number): PidInfo | null {
   }
 }
 
-export function writePidFile(pid: number, port: number): void {
+export function writePidFile(pid: number, port: number, origin?: string): void {
   ensureConfigDir();
-  fs.writeFileSync(pidFilePath(port), JSON.stringify({ pid, port }));
+  fs.writeFileSync(pidFilePath(port), JSON.stringify({ pid, port, origin }));
+}
+
+/** How to talk to the daemon on a port: what it recorded about itself, and
+ * loopback when it recorded nothing. Every CLI command goes through this rather
+ * than assembling a localhost URL, so `--host` moves the whole CLI with it. */
+export function daemonBaseUrl(port: number): string {
+  return readPidFile(port)?.origin ?? `http://localhost:${port}`;
 }
 
 export function removePidFile(port: number): void {
@@ -51,7 +65,7 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
-export function spawnDaemon(port: number, dbPath?: string): void {
+export function spawnDaemon(port: number, dbPath?: string, hostname?: string): void {
   ensureConfigDir();
 
   // Build the command to run the server in foreground mode.
@@ -67,6 +81,12 @@ export function spawnDaemon(port: number, dbPath?: string): void {
 
   if (dbPath) {
     cmd.push("--db", dbPath);
+  }
+
+  // Passed through, so a daemon started in the background binds what the user
+  // asked for rather than quietly falling back to loopback.
+  if (hostname) {
+    cmd.push("--host", hostname);
   }
 
   const logFd = fs.openSync(LOG_FILE, "a");
@@ -101,7 +121,7 @@ export async function listAllInstances(): Promise<InstanceInfo[]> {
       if (isProcessRunning(info.pid)) {
         let reachable = false;
         try {
-          const res = await fetch(`http://localhost:${info.port}/api/ping`);
+          const res = await fetch(`${info.origin ?? `http://localhost:${info.port}`}/api/ping`);
           reachable = res.ok;
         } catch {}
         instances.push({ pid: info.pid, port: info.port, reachable });

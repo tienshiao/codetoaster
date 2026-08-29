@@ -6,12 +6,18 @@ import {
   spawnDaemon,
   getLogFile,
   listAllInstances,
+  daemonBaseUrl,
 } from "./daemon";
 import { formatTable, formatAge, formatSessionId } from "./format";
-import { startServer } from "../server";
+import { startServer, reachableOrigin } from "../server";
 
+// Asked of the daemon rather than assumed. `--host` binds one address
+// exclusively, so a daemon on a LAN address refuses `http://localhost:<port>`
+// and every command here would report a perfectly healthy daemon as not
+// running — `start` loudest of all, which polls, gives up, and exits 1 on the
+// daemon it just launched.
 function getBaseUrl(port: number): string {
-  return `http://localhost:${port}`;
+  return daemonBaseUrl(port);
 }
 
 async function isDaemonReachable(port: number): Promise<boolean> {
@@ -23,7 +29,7 @@ async function isDaemonReachable(port: number): Promise<boolean> {
   }
 }
 
-export async function cmdStart(port: number, dbPath?: string): Promise<void> {
+export async function cmdStart(port: number, dbPath?: string, hostname?: string): Promise<void> {
   const pidInfo = readPidFile(port);
   if (pidInfo && isProcessRunning(pidInfo.pid)) {
     if (await isDaemonReachable(port)) {
@@ -37,7 +43,7 @@ export async function cmdStart(port: number, dbPath?: string): Promise<void> {
     removePidFile(port);
   }
 
-  spawnDaemon(port, dbPath);
+  spawnDaemon(port, dbPath, hostname);
 
   // Wait for daemon to become reachable (first attempt after longer delay for HTML bundling)
   const maxAttempts = 15;
@@ -56,12 +62,17 @@ export async function cmdStart(port: number, dbPath?: string): Promise<void> {
   process.exit(1);
 }
 
-export async function cmdForeground(port: number, dbPath?: string): Promise<void> {
-  const server = startServer({ port, dbPath });
-  writePidFile(process.pid, port);
+export async function cmdForeground(port: number, dbPath?: string, hostname?: string): Promise<void> {
+  const server = startServer({ port, dbPath, hostname });
+  // The origin goes in the pid file because the daemon is the only party that
+  // knows it: `--port 0` resolves late, and `--host` decides whether loopback
+  // is reachable at all. Everything else — the CLI on this machine, and the
+  // hooks the agents run — reads it back from there.
+  const boundPort = server.port ?? port;
+  writePidFile(process.pid, boundPort, reachableOrigin(hostname, boundPort));
 
   const cleanup = () => {
-    removePidFile(port);
+    removePidFile(boundPort);
     process.exit(0);
   };
   process.on("SIGTERM", cleanup);
@@ -271,7 +282,9 @@ export async function cmdInstances(): Promise<void> {
     String(i.port),
     String(i.pid),
     i.reachable ? "running" : "not responding",
-    `http://localhost:${i.port}`,
+    // The URL that instance actually answers on, which is not loopback once
+    // someone has bound `--host`.
+    daemonBaseUrl(i.port),
   ]);
 
   console.log(formatTable(headers, rows));
@@ -296,6 +309,7 @@ Commands:
 Options:
   --port <port>   Server port (default: 4000, or PORT env)
   --db <path>     Database path (default: ~/.codetoaster/data.db)
+  --host <addr>   Address to bind (default: 127.0.0.1; widen at your own risk)
   --version       Show version
   --help          Show this help message`);
 }

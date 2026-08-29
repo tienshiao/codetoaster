@@ -14,6 +14,13 @@ import { gitRoutes } from "./api/git";
 import { highlightRoutes } from "./api/highlight";
 import { symbolRoutes } from "./api/symbols";
 import { initDatabase } from "./lib/db";
+import {
+  configureOriginGuard,
+  crossOriginRefusal,
+  guardApiRoutes,
+  guardRoute,
+  isSameOriginRequest,
+} from "./api/origin";
 
 let clientIdCounter = 0;
 const startTime = Date.now();
@@ -32,13 +39,33 @@ function sendError(ws: { send: (data: string) => void }, message: string): void 
   ws.send(JSON.stringify({ type: "error", message }));
 }
 
+/** Where a daemon bound to `hostname` can actually be reached.
+ *
+ * A wildcard is an instruction to listen everywhere, not an address to connect
+ * to, so it resolves to loopback. A concrete bind is reachable at exactly the
+ * name the user gave and *only* there — which is the whole reason this exists:
+ * `--host 192.168.1.20` makes `http://localhost:<port>` refuse the connection,
+ * and anything that assumed loopback (the CLI, the hook reporter) would call a
+ * healthy daemon dead. */
+export function reachableOrigin(hostname: string | undefined, port: number): string {
+  const wildcard = !hostname || hostname === "0.0.0.0" || hostname === "::";
+  const host = wildcard ? "localhost" : hostname;
+  const bracketed = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${bracketed}:${port}`;
+}
+
 export interface ServerOptions {
   port?: number;
   dbPath?: string;
+  /** What to bind. Loopback by default: the daemon spawns agents in the user's
+   * repositories with no authentication in front of it, so being reachable
+   * from the network is something to opt into, not out of. */
+  hostname?: string;
 }
 
 export function startServer(options?: ServerOptions) {
   const PORT = options?.port ?? parseInt(process.env.PORT || "4000", 10);
+  const HOSTNAME = options?.hostname ?? "127.0.0.1";
 
   // Initialize database
   const dbPath = options?.dbPath ?? `${process.env.HOME ?? "."}/.codetoaster/data.db`;
@@ -51,8 +78,13 @@ export function startServer(options?: ServerOptions) {
     console.log(`Suspended ${suspended} task${suspended === 1 ? "" : "s"} left live by the previous run`);
   }
 
+  // Read lazily, not computed here: `--port 0` means the real port does not
+  // exist until `serve()` has returned.
+  const selfOrigin = (): string => reachableOrigin(HOSTNAME, server.port ?? PORT);
+
   const server = serve<WebSocketData>({
     port: PORT,
+    hostname: HOSTNAME,
     routes: {
       // Mount the SPA on a hidden UUID path so Bun handles bundling/hashing.
       // The wildcard route below proxies to it with proper cache headers.
@@ -65,9 +97,15 @@ export function startServer(options?: ServerOptions) {
           if (assetExtRe.test(url.pathname)) {
             return new Response("Not found", { status: 404 });
           }
-          // Proxy to the internal SPA path and set no-cache on the HTML
-          const spaUrl = new URL(spaPath, url.origin);
-          const response = await fetch(spaUrl);
+          // The Host header is not a place to look up our own address. Bun
+          // builds `req.url` from it, so `new URL(spaPath, url.origin)` sent
+          // the daemon to fetch whatever host the caller named and then served
+          // that body as its own HTML: `curl -H "Host: attacker.example" /`
+          // returned the attacker's page from this origin, which is both a
+          // request the daemon made on someone else's behalf and a way to run
+          // their script inside our origin. Addressed to the listener instead,
+          // which is the one thing we actually know.
+          const response = await fetch(new URL(spaPath, selfOrigin()));
           const headers = new Headers(response.headers);
           headers.set("Cache-Control", "no-cache");
           return new Response(response.body, {
@@ -77,7 +115,7 @@ export function startServer(options?: ServerOptions) {
         },
       },
 
-      "/api/tasks/:id/preview": {
+      "/api/tasks/:id/preview": guardRoute({
         GET(req: Request & { params: { id: string } }) {
           const session = taskManager.primaryPty(req.params.id);
           if (!session) {
@@ -91,9 +129,9 @@ export function startServer(options?: ServerOptions) {
             headers: { "Content-Type": "text/html; charset=utf-8" },
           });
         },
-      },
+      }),
 
-      "/api/tasks/:id/upload": {
+      "/api/tasks/:id/upload": guardRoute({
         async POST(req: Request & { params: { id: string } }) {
           const session = taskManager.primaryPty(req.params.id);
           if (!session) {
@@ -116,9 +154,9 @@ export function startServer(options?: ServerOptions) {
           session.write(paths.join(" "));
           return Response.json({ paths });
         },
-      },
+      }),
 
-      "/api/directories": {
+      "/api/directories": guardRoute({
         async GET(req: Request) {
           try {
             const url = new URL(req.url);
@@ -170,17 +208,21 @@ export function startServer(options?: ServerOptions) {
             return Response.json({ parent: "", directories: [], home: "" });
           }
         },
-      },
+      }),
 
-      ...taskRoutes,
-      ...hookRoutes,
-      ...diffRoutes,
-      ...fileRoutes,
-      ...gitRoutes,
-      ...highlightRoutes,
-      ...symbolRoutes,
+      // Guarded as one table, so a route added to any of them is guarded by
+      // construction rather than by someone remembering (TASK-42).
+      ...guardApiRoutes({
+        ...taskRoutes,
+        ...hookRoutes,
+        ...diffRoutes,
+        ...fileRoutes,
+        ...gitRoutes,
+        ...highlightRoutes,
+        ...symbolRoutes,
+      }),
 
-      "/api/ping": {
+      "/api/ping": guardRoute({
         GET() {
           const version = typeof __VERSION__ !== "undefined" ? __VERSION__ : "dev";
           const gitHash = typeof __GIT_HASH__ !== "undefined" ? __GIT_HASH__ : "";
@@ -192,15 +234,15 @@ export function startServer(options?: ServerOptions) {
             sessions: taskManager.listTasks().length,
           });
         },
-      },
+      }),
 
-      "/api/connections": {
+      "/api/connections": guardRoute({
         GET() {
           return Response.json(taskManager.getConnections());
         },
-      },
+      }),
 
-      "/api/shutdown": {
+      "/api/shutdown": guardRoute({
         POST() {
           setTimeout(() => {
             removePidFile(PORT);
@@ -208,7 +250,7 @@ export function startServer(options?: ServerOptions) {
           }, 100);
           return Response.json({ status: "shutting down" });
         },
-      },
+      }),
     },
 
     websocket: {
@@ -324,6 +366,10 @@ export function startServer(options?: ServerOptions) {
     fetch(req, server) {
       const url = new URL(req.url);
       if (url.pathname === "/terminal") {
+        // The same check the API gets. Without it the socket is a way round
+        // the guard rather than a thing behind it: it takes `create` and
+        // `input` for any terminal a client attaches to.
+        if (!isSameOriginRequest(req)) return crossOriginRefusal();
         const upgraded = server.upgrade(req, {
           data: { clientId: generateClientId() },
         });
@@ -344,7 +390,12 @@ export function startServer(options?: ServerOptions) {
   // report to port 0 has nowhere to send its hooks (§4.2). Still before any
   // task can be created — nothing can reach the create route until serve()
   // has returned.
-  taskManager.setPort(server.port ?? PORT);
+  taskManager.setPort(server.port ?? PORT, selfOrigin());
+  // The guard needs to know what we actually answer to before it can tell a
+  // Host header naming this daemon from one naming somewhere an attacker
+  // controls. Same reason as the line above for doing it here: `--port 0`
+  // means the port is not knowable until now.
+  configureOriginGuard({ port: server.port ?? PORT, hostname: HOSTNAME });
 
   return server;
 }

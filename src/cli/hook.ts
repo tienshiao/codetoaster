@@ -37,6 +37,12 @@ export async function cmdHook(): Promise<void> {
     // Not our agent — someone ran `codetoaster hook` by hand, or the settings
     // file outlived the daemon that wrote it. Nothing to report it to.
     if (!taskId || !port) return;
+    // Where the daemon told us it answers. Loopback is only the default, not a
+    // safe assumption: `--host` binds one address exclusively, so a daemon on a
+    // LAN address refuses `http://localhost:<port>` and every hook would be
+    // dropped — leaving the task list back on the output-activity guess these
+    // hooks exist to replace, silently, since we never report a failure.
+    const origin = process.env.CODETOASTER_ORIGIN || `http://localhost:${port}`;
 
     const payload = await readStdin(DEADLINE_MS);
     // Nothing to say. An empty body is not a state transition, and posting one
@@ -52,7 +58,7 @@ export async function cmdHook(): Promise<void> {
     // reporter is transport, not a validator, and one that quietly dropped
     // what it could not read would hide a payload change behind exactly the
     // tidy negative result §4.4 warns about.
-    await fetch(`http://localhost:${port}/api/tasks/${encodeURIComponent(taskId)}/hook`, {
+    await fetch(`${origin}/api/tasks/${encodeURIComponent(taskId)}/hook`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: payload,
