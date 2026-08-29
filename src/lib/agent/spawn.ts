@@ -21,7 +21,22 @@ export type AgentTask = Pick<
   "agent_session_id" | "initial_prompt" | "model" | "permission_mode"
 >;
 
+/** How the conversation is opened.
+ *
+ *  `start`    — a new one, on an id we chose (§4.1).
+ *  `resume`   — the stored one, by id (§4.3).
+ *  `continue` — whatever the most recent conversation in this directory is,
+ *               for when the stored id is unusable. With worktree-per-task
+ *               that directory holds exactly one conversation, which is what
+ *               makes the fallback unambiguous rather than a guess. */
+export type AgentMode = "start" | "resume" | "continue";
+
 export interface AgentCommandOptions {
+  mode?: AgentMode;
+  /** For `resume`: the conversation to open, when it is not the one on the
+   * row — the transcript scan (§4.3, rung 3) finds an id the row has never
+   * held. */
+  sessionId?: string;
   /** The per-task settings.json that carries our hooks. Left out while there
    * is no file to point at: `--settings` on a missing path fails the start,
    * and TASK-9 is what writes one. */
@@ -39,17 +54,24 @@ export interface AgentCommandOptions {
 // resume path reuse the builder without inheriting a start path's side
 // effects.
 export function buildAgentCommand(task: AgentTask, options: AgentCommandOptions = {}): string[] {
-  // We choose the conversation id up front so we know what to resume before
-  // the process exists (§4.1). Reaching here without one means the caller
-  // skipped that, and the task would be unresumable the moment it started —
-  // worth failing the spawn over, since the symptom otherwise surfaces days
-  // later as a resume that cannot find anything.
-  if (!task.agent_session_id) {
-    throw new Error("Cannot start an agent for a task with no agent_session_id");
+  const mode = options.mode ?? "start";
+  const sessionId = options.sessionId ?? task.agent_session_id;
+  // `continue` names no conversation — that is the whole point of it. The
+  // other two do, and reaching them without one means the caller skipped
+  // allocating it: the task would be unresumable the moment it started, and
+  // the symptom surfaces days later as a resume that finds nothing.
+  if (mode !== "continue" && !sessionId) {
+    throw new Error(`Cannot ${mode} an agent for a task with no agent_session_id`);
   }
 
   const bin = options.bin ?? (process.env.CODETOASTER_AGENT_BIN || "claude");
-  const command = [bin, "--session-id", task.agent_session_id];
+  const command = [bin];
+  // We choose the conversation id up front so we know what to resume before
+  // the process exists (§4.1). Resuming asks for that same id back, and a
+  // resume keeps it (verified), so the row needs no update on the normal path.
+  if (mode === "start") command.push("--session-id", sessionId!);
+  else if (mode === "resume") command.push("--resume", sessionId!);
+  else command.push("--continue");
   if (options.settingsPath) command.push("--settings", options.settingsPath);
   if (task.model) command.push("--model", task.model);
   if (task.permission_mode) command.push("--permission-mode", task.permission_mode);
@@ -64,7 +86,11 @@ export function buildAgentCommand(task: AgentTask, options: AgentCommandOptions 
   // that opens with a dash ("--- notes", "-v2 approach") is otherwise read as
   // a flag and the agent exits with `unknown option` before the task has drawn
   // a single character. Argv needs no quoting, but it does need the separator.
-  if (task.initial_prompt) command.push("--", task.initial_prompt);
+  //
+  // Only on a fresh start. A resumed conversation already holds the prompt
+  // that opened it; submitting it again would replay the task's first turn
+  // every time it came back.
+  if (mode === "start" && task.initial_prompt) command.push("--", task.initial_prompt);
   return command;
 }
 

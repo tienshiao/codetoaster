@@ -113,6 +113,52 @@ export const taskRoutes = {
     },
   },
 
+  "/api/tasks/:id/resume": {
+    // Reopening a suspended task (§4.3). HTTP rather than a socket message for
+    // the same reason create is: it spawns a process, walks a fallback ladder,
+    // and can end in a state the caller has to act on — all of which want a
+    // status code and a body.
+    async POST(req: Request & { params: { id: string } }) {
+      const body = (await readJsonBody(req)) ?? {};
+      const fresh = body.fresh;
+      if (fresh !== undefined && typeof fresh !== "boolean") {
+        return badRequest(`"fresh" must be a boolean`);
+      }
+      const cols = optionalSize(body.cols);
+      const rows = optionalSize(body.rows);
+      if (cols === null || rows === null) return badRequest(`"cols" and "rows" must be numbers`);
+
+      const existing = taskManager.getTask(req.params.id);
+      if (!existing) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      // An archived task has had its worktree removed and its files cleaned up
+      // (TASK-31). Reopening one is a restore, not a resume.
+      if (existing.lifecycle === "archived") {
+        return Response.json({ error: "Task is archived" }, { status: 409 });
+      }
+
+      try {
+        await taskManager.resumeTask(req.params.id, {
+          fresh: fresh === true,
+          cols: cols ?? undefined,
+          rows: rows ?? undefined,
+        });
+      } catch (e: any) {
+        return Response.json(
+          { error: e?.message ?? "Could not resume the task" },
+          { status: 500 },
+        );
+      }
+
+      taskManager.broadcastTasks();
+      // 200 either way, including the could-not-resume landing: the task is
+      // there, and its agent_state says what happened. A failed resume is a
+      // state the user can act on, not an HTTP error.
+      return Response.json(taskManager.taskInfo(req.params.id));
+    },
+  },
+
   "/api/tasks/:id": {
     async PATCH(req: Request & { params: { id: string } }) {
       const body = await readJsonBody(req);

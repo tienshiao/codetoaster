@@ -63,8 +63,13 @@ export type TitleSource = "derived" | "manual";
 // project directory, `evicted` for one whose worktree we removed to reclaim
 // disk (restorable), `missing` for one removed behind our back.
 export type WorktreeState = "none" | "present" | "evicted" | "missing";
+// `unknown` is "we cannot tell" — no hook has ever reported for this task
+// (TASK-12). `could_not_resume` is the different, sharper thing: we tried
+// every way of reopening the conversation and none of them worked, so the card
+// has a button to offer rather than a shrug (§4.3).
 export type AgentState =
-  | "starting" | "busy" | "idle" | "needs_attention" | "compacting" | "exited" | "unknown";
+  | "starting" | "busy" | "idle" | "needs_attention" | "compacting" | "exited"
+  | "unknown" | "could_not_resume";
 export type Lifecycle = "live" | "suspended" | "archived";
 
 interface Migration {

@@ -9,7 +9,14 @@ import { uniqueName } from "../xtmux/naming";
 import * as db from "../db";
 import type { TaskRow } from "../db";
 import { TaskStore } from "./store";
-import { buildAgentCommand, taskDir, taskEnv } from "../agent/spawn";
+import { buildAgentCommand, taskDir, taskEnv, type AgentMode } from "../agent/spawn";
+import {
+  canResumeSessionId,
+  continueIsSafe,
+  findResumableTranscript,
+  sessionIdFromTranscript,
+  transcriptExists,
+} from "../agent/transcripts";
 import { writeTaskSettings } from "../agent/settings";
 import { transitionFor, type HookPayload } from "../agent/hook-state";
 import { deriveTitle, resolveRepoRoot } from "./derive";
@@ -71,6 +78,14 @@ export class TaskManager {
   private hookSeen: Set<string> = new Set();
   private hookGraceTimers: Map<string, Timer> = new Map();
   private hookGraceMs = 10_000;
+  private startTimeoutMs = 4_000;
+  // The resume in flight for a task, if any. Resuming is what a client does on
+  // the way to opening a task, so two of them can easily overlap — and the
+  // whole ladder is awaited, so the "is it already running?" check below is
+  // separated from the spawn by several awaits. Without this, two concurrent
+  // resumes both see no PTY and both start an agent on the same conversation
+  // in the same directory, one of which is unreachable and never killed.
+  private resuming: Map<string, Promise<TaskRow | undefined>> = new Map();
   // What `codetoaster hook` has to POST back to (§4.2), handed over by
   // startServer. Undefined until then: a manager with no server in front of it
   // — a test — has no port to name, and an agent spawned from one simply
@@ -118,6 +133,12 @@ export class TaskManager {
    * one; short enough that a task never sits on `starting` for good. */
   setHookGrace(ms: number): void {
     this.hookGraceMs = ms;
+  }
+
+  /** How long a resume waits to see whether the agent came up before deciding
+   * it did (§4.3). Only the cap — a hook or an exit settles it sooner. */
+  setStartTimeout(ms: number): void {
+    this.startTimeoutMs = ms;
   }
 
   loadProjects(): void {
@@ -299,6 +320,13 @@ export class TaskManager {
     held.add(pty.id);
 
     pty.onExit((code) => {
+      // Only if this is still the task's terminal. A rung of the resume ladder
+      // that did not work out is killed on the way to the next one, and its
+      // exit callback lands afterwards — asynchronously, and therefore after
+      // the successful rung has already written `starting`. Without this, a
+      // task that resumed perfectly well on the second attempt advertises the
+      // first attempt's death for the rest of its life.
+      if (this.ptyToTask.get(pty.id) !== taskId) return;
       this.store.update(taskId, { agent_state: "exited", exit_code: code });
       this.broadcastTask(taskId);
     });
@@ -367,6 +395,212 @@ export class TaskManager {
       clearTimeout(timer);
       this.hookGraceTimers.delete(taskId);
     }
+  }
+
+  // ----------------------------------------------------------------- resume
+
+  /** Spawn an agent for a task that already has a row, wire it up, and start
+   * its hook clock. Shared by the create path and every rung of the resume
+   * ladder, so a resumed agent gets the same settings file, the same scrubbed
+   * environment and the same task-id plumbing as a fresh one. */
+  private async spawnAgent(
+    row: TaskRow,
+    options: { mode: AgentMode; sessionId?: string; cols?: number; rows?: number },
+  ): Promise<Pty> {
+    // The question both users of this flag ask is "has the agent that is
+    // running now reported?", not "has anything ever reported for this task".
+    // A task resumed inside a daemon that already saw its hooks would
+    // otherwise start out as if the new process had already checked in:
+    // awaitAgentStart would return true before the process had drawn a
+    // character, and the very first rung of the ladder would be declared a
+    // success however dead it was.
+    this.hookSeen.delete(row.id);
+    const settingsPath = await writeTaskSettings(row.id);
+    const pty = this.ptys.spawn(
+      buildAgentCommand(row, { mode: options.mode, sessionId: options.sessionId, settingsPath }),
+      {
+        cols: options.cols,
+        rows: options.rows,
+        cwd: row.cwd,
+        env: taskEnv(process.env, { taskId: row.id, port: this.port }),
+      },
+    );
+    this.adopt(pty, row.id);
+    this.armHookGrace(row.id);
+    return pty;
+  }
+
+  /** Whether the agent actually came up.
+   *
+   * Decided by the hook, not by a timer: any hook at all means the process got
+   * far enough to load our settings and run one, which is a far sharper signal
+   * than "it has not exited yet". A PTY that exits first is the failure — a
+   * `--resume` on an id with no conversation prints one line and exits 1
+   * (verified). The cap resolves as success on purpose: an agent running with
+   * hooks disabled reports nothing however well it is doing, and killing a
+   * working terminal because it was quiet would be the worse mistake. */
+  private awaitAgentStart(taskId: string, pty: Pty): Promise<boolean> {
+    const capMs = this.startTimeoutMs;
+    if (this.hookSeen.has(taskId)) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const finish = (started: boolean) => {
+        clearInterval(poll);
+        clearTimeout(cap);
+        resolve(started);
+      };
+      const poll = setInterval(() => {
+        if (this.hookSeen.has(taskId)) finish(true);
+        else if (pty.exited) finish(false);
+      }, 25);
+      const cap = setTimeout(() => finish(true), capMs);
+    });
+  }
+
+  /** Take back a PTY that did not work out, so the next rung starts clean. */
+  private discardPty(pty: Pty, taskId: string): void {
+    this.ptys.kill(pty.id);
+    this.ptyToTask.delete(pty.id);
+    this.taskPtys.get(taskId)?.delete(pty.id);
+    this.hookSeen.delete(taskId);
+    this.disarmHookGrace(taskId);
+  }
+
+  /** Reopen a suspended task (§4.3). Undefined when there is no such task.
+   *
+   * The whole ladder is walked before this returns, because the answer carries
+   * the ptyId a client attaches to: falling back after someone attached would
+   * leave them holding a terminal that is being killed. */
+  async resumeTask(
+    taskId: string,
+    options: { fresh?: boolean; cols?: number; rows?: number } = {},
+  ): Promise<TaskRow | undefined> {
+    const row = this.store.get(taskId);
+    if (!row) return undefined;
+    // Already running. Resuming is what a client does on the way to opening a
+    // task, so it has to be safe to ask for twice.
+    if (this.primaryPty(taskId)) return row;
+    // …including twice at once. The ladder is awaited end to end, so a second
+    // caller arriving mid-flight would otherwise pass the check above and
+    // start a second agent; it joins the first one's answer instead.
+    const inFlight = this.resuming.get(taskId);
+    if (inFlight) return inFlight;
+
+    const attempt = this.runResumeLadder(taskId, row, options).finally(() => {
+      this.resuming.delete(taskId);
+    });
+    this.resuming.set(taskId, attempt);
+    return attempt;
+  }
+
+  private async runResumeLadder(
+    taskId: string,
+    initial: TaskRow,
+    options: { fresh?: boolean; cols?: number; rows?: number },
+  ): Promise<TaskRow | undefined> {
+    let row = initial;
+    const size = {
+      // The grid the task had when it was suspended, so its output does not
+      // reflow on the way back (§5.3).
+      cols: options.cols ?? row.last_size_cols ?? DEFAULT_SIZE.cols,
+      rows: options.rows ?? row.last_size_rows ?? DEFAULT_SIZE.rows,
+    };
+
+    for (const attempt of this.resumeLadder(row, options.fresh === true)) {
+      if (attempt.mint) {
+        // A used id cannot be reused — `--session-id` on one that already has
+        // a transcript fails with "already in use", so starting fresh on the
+        // stored id would fail a second time and strand the task in a retry
+        // loop (§4.3). The new id goes on the row before the spawn, so a
+        // crash between the two leaves something resumable rather than a row
+        // pointing at a conversation that was never opened.
+        this.store.update(taskId, { agent_session_id: crypto.randomUUID() });
+        row = this.store.get(taskId)!;
+      }
+
+      // The row is carrying the last process's verdict on itself: `exited`
+      // with an exit code from the agent that went away, `could_not_resume`
+      // from a resume that already failed, or `exited` from the rung before
+      // this one. None of those survive a spawn, and none of them are states
+      // anything else revisits — `inferState` only speaks about
+      // starting/unknown/busy/idle, and the hook grace timer only downgrades
+      // `starting`. Left alone, a resumed task whose agent reports no hooks
+      // would read as dead for the rest of its life.
+      row = this.store.update(taskId, { agent_state: "starting", exit_code: null }) ?? row;
+
+      let pty: Pty;
+      try {
+        pty = await this.spawnAgent(row, { ...attempt, ...size });
+      } catch {
+        // The binary is missing or unrunnable: no rung will do better.
+        break;
+      }
+
+      if (await this.awaitAgentStart(taskId, pty)) {
+        this.store.update(taskId, { lifecycle: "live", last_active_at: Date.now() });
+        // The in-memory grouping only ever held the tasks *this* run created,
+        // and a task worth resuming is by definition one it did not. Without
+        // this the task is live and has a terminal, but `listTasks` — which
+        // walks projects, not rows — cannot see it, so the very next
+        // `broadcastTasks` sends every client a snapshot with the task they
+        // just resumed missing from it.
+        this.ensureInProject(taskId);
+        this.broadcastTask(taskId);
+        return this.store.get(taskId);
+      }
+      this.discardPty(pty, taskId);
+    }
+
+    // Nothing worked. The task is not a dead terminal and not a lie about
+    // being live — it is a card with a button on it (§4.3).
+    this.store.update(taskId, { agent_state: "could_not_resume" });
+    this.broadcastTask(taskId);
+    return this.store.get(taskId);
+  }
+
+  /** The rungs to try, in order (§4.3). A fresh start is not a rung — it is
+   * the user choosing to stop trying. */
+  private resumeLadder(
+    row: TaskRow,
+    fresh: boolean,
+  ): Array<{ mode: AgentMode; sessionId?: string; mint?: boolean }> {
+    if (fresh) return [{ mode: "start", mint: true }];
+
+    const ladder: Array<{ mode: AgentMode; sessionId?: string; mint?: boolean }> = [];
+    // Offered only when a transcript for that id is actually there. This has
+    // to be decided up front rather than discovered: a `--resume` on an id
+    // with no conversation exits 1 down a pipe, but in a PTY it prints the
+    // error and keeps running, so a doomed rung is indistinguishable from a
+    // healthy one once it has started.
+    if (row.agent_session_id && canResumeSessionId(row, row.agent_session_id)) {
+      ladder.push({ mode: "resume", sessionId: row.agent_session_id });
+    }
+    // The conversation the task itself last reported, when that is not the one
+    // the row names. The row's id can go stale — a `/clear` we missed, a
+    // hand-edited database — while `transcript_path` came from the agent's own
+    // SessionStart and names its file directly. Resuming by id from that
+    // filename is both precise and cheap, and it is the rung that recovers a
+    // task whose stored id no longer means anything.
+    const reported = sessionIdFromTranscript(row.transcript_path);
+    if (reported && reported !== row.agent_session_id && transcriptExists(row.transcript_path)) {
+      ladder.push({ mode: "resume", sessionId: reported });
+    }
+    // "The most recent conversation in this directory" — but only when that is
+    // demonstrably this task's. §4.3 calls `--continue` unambiguous on the
+    // strength of worktree-per-task, and until worktrees land (m-4) a
+    // directory can hold several conversations: another task's, or the one
+    // belonging to whoever is running an agent there by hand. Verified the
+    // hard way — a resume in this repo picked up the conversation of the
+    // session doing the work. Opening someone else's conversation is worse
+    // than not resuming at all.
+    if (continueIsSafe(row)) ladder.push({ mode: "continue" });
+    // Last: a conversation we have never been told about, found by looking.
+    // Whatever opens reports its own SessionStart, and the row picks the id up
+    // from the hook — so a successful rung here heals what sent us down it.
+    const found = findResumableTranscript(row, { notThis: row.agent_session_id });
+    if (found && !ladder.some((rung) => rung.sessionId === found.sessionId)) {
+      ladder.push({ mode: "resume", sessionId: found.sessionId });
+    }
+    return ladder;
   }
 
   /** Apply one hook payload to a task (§4.2). False when there is no such
@@ -625,6 +859,20 @@ export class TaskManager {
       return options.projectId;
     }
     return "general";
+  }
+
+  /** Put a task into the sidebar grouping if it is not there already, by the
+   * project its row names. What a task created by a previous daemon needs
+   * before it can appear in `listTasks` at all — `loadProjects` starts every
+   * project empty, since the ordering is the only thing the rows do not
+   * record. */
+  private ensureInProject(taskId: string): void {
+    if (this.projects.some((p) => p.taskIds.includes(taskId))) return;
+    const projectId = this.store.get(taskId)?.project_id;
+    const project =
+      this.projects.find((p) => p.id === projectId) ??
+      this.projects.find((p) => p.id === "general");
+    project?.taskIds.push(taskId);
   }
 
   private placeInProject(taskId: string, options: CreateTaskOptions): void {
