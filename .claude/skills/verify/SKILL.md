@@ -21,15 +21,20 @@ when `curl -s -o /dev/null -w "%{http_code}" http://localhost:4599/` → 200.
 Sessions are created over the WebSocket protocol, not HTTP. Endpoint is
 `ws://localhost:4599/terminal`. Minimal client (run with `bun`):
 
+Terminal messages are addressed by `ptyId` (protocol v2, §5.3 — a v1 session
+*is* a PTY, so this is the same id the HTTP routes take). One socket can hold
+several PTYs at once; every `input`/`resize`/`detach` must name the one it
+means, and naming a PTY you never attached to is rejected.
+
 ```ts
 const ws = new WebSocket("ws://localhost:4599/terminal");
-const sessionId = crypto.randomUUID();
+const ptyId = crypto.randomUUID();
 ws.onopen = () =>
-  ws.send(JSON.stringify({ type: "create", sessionId, name: "verify", cols: 120, rows: 30 }));
+  ws.send(JSON.stringify({ type: "create", ptyId, name: "verify", cols: 120, rows: 30 }));
 ws.onmessage = (ev) => {
   const msg = JSON.parse(String(ev.data));
-  if (msg.type === "attached" && msg.sessionId === sessionId) {
-    console.log(sessionId);
+  if (msg.type === "attached" && msg.ptyId === ptyId) {
+    console.log(ptyId);
     ws.send(JSON.stringify({ type: "detach" }));
     process.exit(0);
   }
@@ -57,5 +62,9 @@ import bundling error surfaces as a failed/erroring chunk request.
 ## Gotchas
 
 - `bun run dev` spawns tsr + tsc watchers — use `foreground` directly for verification.
+- `--db` picks up the migration harness, so a fresh file is a free check that
+  migrations apply cleanly: open it with `bun:sqlite` and read `applied_migrations`.
+- Write the driver to a file and run `bun <file>`; `bun -e` with top-level
+  `await` and a live WebSocket has hung here.
 - Kill the server with TaskStop/SIGTERM when done; sessions' PTYs die with it.
 - `git/file?file=<directory>` returns git's tree listing as text (200), not 404.

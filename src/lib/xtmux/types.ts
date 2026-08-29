@@ -9,24 +9,30 @@ export interface ProjectInfo {
 }
 
 // Client -> Server messages
+//
+// Terminal traffic is addressed by ptyId, the id of the pseudo-terminal it
+// belongs to. One client can hold several PTYs open at once (one per terminal
+// tab), and never shows the same PTY twice — so clientId stays unique within a
+// PTY's client map and no separate view id is needed, which is what makes
+// `${clientId}:${ptyId}` a sufficient connection address
+// (docs/v2-architecture.md §5.3).
+//
+// In v1 a session *is* a PTY, so these are still one id. The names diverge in
+// Phase 1 proper, when a task gains its own id and can outlive its process.
 export type ClientMessage =
-  | { type: "create"; sessionId: string; name?: string; cols: number; rows: number; projectId?: string; afterSessionId?: string }
-  // Every terminal message is addressed by sessionId: one client can hold
-  // several sessions open at once (one per terminal tab). A client never shows
-  // the same session twice, so clientId stays unique within a session's client
-  // map and no separate view id is needed. See docs/v2-architecture.md §5.3.
-  | { type: "attach"; sessionId: string; cols?: number; rows?: number }
-  // Without a sessionId, detaches the client from every session it holds.
-  | { type: "detach"; sessionId?: string }
-  | { type: "input"; sessionId: string; data: string }
-  // null cols/rows mean "this client is no longer measuring the session" — a
+  | { type: "create"; ptyId: string; name?: string; cols: number; rows: number; projectId?: string; afterSessionId?: string }
+  | { type: "attach"; ptyId: string; cols?: number; rows?: number }
+  // Without a ptyId, detaches the client from every PTY it holds.
+  | { type: "detach"; ptyId?: string }
+  | { type: "input"; ptyId: string; data: string }
+  // null cols/rows mean "this client is no longer measuring this PTY" — a
   // terminal in a hidden tab, which must keep receiving output without
   // constraining smallest-wins negotiation with its stale layout.
-  | { type: "resize"; sessionId: string; cols: number | null; rows: number | null }
+  | { type: "resize"; ptyId: string; cols: number | null; rows: number | null }
   | { type: "list" }
-  | { type: "kill"; sessionId: string }
-  | { type: "rename"; sessionId: string; name: string }
-  | { type: "acknowledge"; sessionId: string }
+  | { type: "kill"; ptyId: string }
+  | { type: "rename"; ptyId: string; name: string }
+  | { type: "acknowledge"; ptyId: string }
   | { type: "reorder"; projects: Array<{ id: string; sessionIds: string[] }> }
   | { type: "createProject"; id: string; name: string; initialPath: string }
   | { type: "updateProject"; id: string; name: string; initialPath: string }
@@ -34,15 +40,15 @@ export type ClientMessage =
 
 // Server -> Client messages
 export type ServerMessage =
-  | { type: "attached"; sessionId: string }
-  | { type: "restore"; sessionId: string; data: string; size: { cols: number; rows: number }; cursor: { x: number; y: number }; cursorHidden: boolean; mouseEncoding: string }
-  | { type: "data"; sessionId: string; data: string }
-  | { type: "resize"; sessionId: string; cols: number; rows: number }
-  | { type: "exit"; sessionId: string; code: number }
+  | { type: "attached"; ptyId: string }
+  | { type: "restore"; ptyId: string; data: string; size: { cols: number; rows: number }; cursor: { x: number; y: number }; cursorHidden: boolean; mouseEncoding: string }
+  | { type: "data"; ptyId: string; data: string }
+  | { type: "resize"; ptyId: string; cols: number; rows: number }
+  | { type: "exit"; ptyId: string; code: number }
   | { type: "error"; message: string }
   | { type: "sessions"; list: SessionInfo[]; projects: ProjectInfo[] }
-  | { type: "activity"; sessionId: string; active: boolean }
-  | { type: "notification"; sessionId: string; title: string; body: string };
+  | { type: "activity"; ptyId: string; active: boolean }
+  | { type: "notification"; ptyId: string; title: string; body: string };
 
 export interface SessionInfo {
   id: string;

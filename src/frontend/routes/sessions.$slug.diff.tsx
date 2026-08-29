@@ -16,7 +16,10 @@ function DiffRoute() {
 
   const handleSubmit = useCallback(
     (promptText: string) => {
-      handleSendMessage({ type: "input", data: promptText });
+      // Addressed explicitly: since one client can hold several PTYs, the
+      // server no longer has a notion of "the client's session" to fall back
+      // on, and an unaddressed input is dropped.
+      handleSendMessage({ type: "input", ptyId: id, data: promptText });
       navigate({
         to: "/sessions/$slug",
         params: { slug },
@@ -24,7 +27,7 @@ function DiffRoute() {
       // Focus terminal after navigation
       setTimeout(() => terminalRef.current?.focus(), 100);
     },
-    [handleSendMessage, navigate, slug, terminalRef]
+    [handleSendMessage, id, navigate, slug, terminalRef]
   );
 
   // key by session id: without it the component survives $slug-only route

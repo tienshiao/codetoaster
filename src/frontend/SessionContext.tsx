@@ -16,6 +16,7 @@ import { useWebSocket } from "./hooks/use-websocket";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { removeRecentFiles } from "./hooks/use-recent-files";
 import { clearViewState, retainViewStates } from "./view-state-store";
+import type { ClientMessage, ServerMessage } from "../lib/xtmux/types";
 
 export interface SessionInfo {
   id: string;
@@ -59,7 +60,7 @@ interface SessionContextValue {
   deleteProject: (id: string) => void;
   handleTerminalReady: () => void;
   handleSizeChange: (size: TerminalSize) => void;
-  handleSendMessage: (msg: object) => void;
+  handleSendMessage: (msg: ClientMessage) => void;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -112,7 +113,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const sessionsRef = useRef<SessionInfo[]>([]);
   const projectsRef = useRef<ProjectInfo[]>([]);
   const messageQueueRef = useRef<any[]>([]);
-  const sendRef = useRef<(msg: object) => void>(() => {});
+  const sendRef = useRef<(msg: ClientMessage) => void>(() => {});
 
   // Derive whether the user is viewing the terminal (not the diff tab)
   const matches = useMatches();
@@ -135,10 +136,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     projectsRef.current = projects;
   }, [projects]);
 
-  const onMessage = useCallback((message: any) => {
+  const onMessage = useCallback((message: ServerMessage) => {
     if (message.type === "sessions") {
-      const list = message.list as SessionInfo[];
-      setSessions(list);
+      setSessions(message.list as SessionInfo[]);
       if (message.projects) {
         setProjects(message.projects as ProjectInfo[]);
       }
@@ -147,51 +147,65 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     if (message.type === "attached") {
-      setCurrentSessionId(message.sessionId);
+      // `create` resolves asynchronously on the server (it resolves a cwd and
+      // shells out to git for the branch label), so this can arrive for a PTY
+      // the user has already switched away from. Adopting it would point the
+      // UI at a session whose `restore` the filter below just dropped — the
+      // grid would still be showing the other one, and keystrokes would go
+      // somewhere the user cannot see. Hand the attachment back instead, so
+      // the abandoned PTY stops constraining size negotiation and counting us
+      // as a viewer.
+      if (message.ptyId !== currentSessionIdRef.current) {
+        sendRef.current({ type: "detach", ptyId: message.ptyId });
+        return;
+      }
+      setCurrentSessionId(message.ptyId);
     }
 
     if (message.type === "activity") {
-      setSessionActivity(prev => ({ ...prev, [message.sessionId]: message.active }));
+      const { ptyId } = message;
+      setSessionActivity(prev => ({ ...prev, [ptyId]: message.active }));
       if (message.active) {
-        lastActivityAt.current[message.sessionId] = Date.now();
+        lastActivityAt.current[ptyId] = Date.now();
       }
       return;
     }
 
     if (message.type === "notification") {
+      const { ptyId } = message;
       const isViewingThisSession =
-        message.sessionId === currentSessionIdRef.current
+        ptyId === currentSessionIdRef.current
         && document.hasFocus()
         && isViewingTerminalRef.current;
 
       if (isViewingThisSession) {
-        sendRef.current({ type: "acknowledge", sessionId: message.sessionId });
+        sendRef.current({ type: "acknowledge", ptyId });
       } else {
         playNotificationSound();
       }
       if (!document.hasFocus()) {
-        const session = sessionsRef.current.find((s) => s.id === message.sessionId);
+        const session = sessionsRef.current.find((s) => s.id === ptyId);
         fireWebNotification(
           message.title,
           message.body,
-          `codetoaster-${message.sessionId}`,
-          sessionDisplayNames(sessionsRef.current).get(message.sessionId),
+          `codetoaster-${ptyId}`,
+          sessionDisplayNames(sessionsRef.current).get(ptyId),
           session?.name,
         );
       }
       return;
     }
 
-    // Terminal messages now name the session they belong to. Drop the ones for
-    // a session this client is no longer showing — output from the session we
-    // just switched away from is still in flight, and painting it into the new
+    // Terminal messages name the PTY they belong to. Drop the ones for a PTY
+    // this client is no longer showing — output from the session we just
+    // switched away from is still in flight, and painting it into the new
     // session's grid is exactly the corruption the addressing exists to avoid.
     if (
       (message.type === "data" ||
         message.type === "restore" ||
         message.type === "resize" ||
         message.type === "exit") &&
-      message.sessionId !== currentSessionIdRef.current
+      message.ptyId !== currentSessionIdRef.current
     ) {
       return;
     }
@@ -216,7 +230,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const sessionId = currentSessionIdRef.current;
         if (sessionId) {
           const size = terminalRef.current?.getSize();
-          send({ type: "attach", sessionId, ...(size ?? {}) });
+          send({ type: "attach", ptyId: sessionId, ...(size ?? {}) });
         }
       }
     },
@@ -243,14 +257,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     (size: TerminalSize) => {
       const sessionId = currentSessionIdRef.current;
       if (sessionId) {
-        send({ type: "resize", sessionId, cols: size.cols, rows: size.rows });
+        send({ type: "resize", ptyId: sessionId, cols: size.cols, rows: size.rows });
       }
     },
     [send],
   );
 
   const handleSendMessage = useCallback(
-    (msg: object) => {
+    (msg: ClientMessage) => {
       send(msg);
     },
     [send],
@@ -275,7 +289,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (!sessionId) return;
       const session = sessionsRef.current.find((s) => s.id === sessionId);
       if (session?.hasNotification) {
-        sendRef.current({ type: "acknowledge", sessionId });
+        sendRef.current({ type: "acknowledge", ptyId: sessionId });
       }
     };
     window.addEventListener("focus", handleFocus);
@@ -289,7 +303,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (sessionId) {
         const session = sessionsRef.current.find(s => s.id === sessionId);
         if (session?.hasNotification) {
-          sendRef.current({ type: "acknowledge", sessionId });
+          sendRef.current({ type: "acknowledge", ptyId: sessionId });
         }
       }
     }
@@ -303,7 +317,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       if (id === currentSessionIdRef.current) {
         if (isViewingTerminalRef.current) {
-          send({ type: "acknowledge", sessionId: id });
+          send({ type: "acknowledge", ptyId: id });
         }
         return;
       }
@@ -311,7 +325,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       terminalRef.current?.resetAttached();
 
       if (currentSessionIdRef.current) {
-        send({ type: "detach", sessionId: currentSessionIdRef.current });
+        send({ type: "detach", ptyId: currentSessionIdRef.current });
       }
 
       // Written synchronously, not left to the syncing effect: `restore` for
@@ -319,9 +333,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // filter above would drop it as belonging to someone else.
       currentSessionIdRef.current = id;
       const size = terminalRef.current?.getSize();
-      send({ type: "attach", sessionId: id, ...(size ?? {}) });
+      send({ type: "attach", ptyId: id, ...(size ?? {}) });
       if (isViewingTerminalRef.current) {
-        send({ type: "acknowledge", sessionId: id });
+        send({ type: "acknowledge", ptyId: id });
       }
       setCurrentSessionId(id);
       pushMru(id);
@@ -336,7 +350,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const afterSessionId = projectId ? undefined : (currentSessionIdRef.current || undefined);
 
     if (currentSessionIdRef.current) {
-      send({ type: "detach", sessionId: currentSessionIdRef.current });
+      send({ type: "detach", ptyId: currentSessionIdRef.current });
     }
 
     const sessionId = generateSessionId();
@@ -354,7 +368,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (currentProject) resolvedProjectId = currentProject.id;
     }
 
-    send({ type: "create", sessionId, cols: size.cols, rows: size.rows, projectId: resolvedProjectId, afterSessionId });
+    send({ type: "create", ptyId: sessionId, cols: size.cols, rows: size.rows, projectId: resolvedProjectId, afterSessionId });
     setCurrentSessionId(sessionId);
     pushMru(sessionId);
     setSessions((prev) => [
@@ -389,7 +403,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const renameSession = useCallback(
     (id: string, name: string) => {
-      send({ type: "rename", sessionId: id, name });
+      send({ type: "rename", ptyId: id, name });
       // nameSource moves with the name: without it the optimistic row still
       // reads as "derived", so the label keeps projecting the terminal title
       // over the name just chosen until the server echoes the list back — and
@@ -484,7 +498,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       removeRecentFiles(id);
       clearViewState(id);
-      send({ type: "kill", sessionId: id });
+      send({ type: "kill", ptyId: id });
 
       if (id === currentSessionIdRef.current) {
         terminalRef.current?.resetAttached();

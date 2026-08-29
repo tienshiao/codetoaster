@@ -1,9 +1,9 @@
 import type { ServerWebSocket } from "bun";
 import * as os from "os";
 import * as path from "path";
-import { Session, sanitizeSize } from "./session";
+import { Pty, sanitizeSize } from "./pty";
 import type { ClientInfo, ProjectInfo, SessionInfo, WebSocketData } from "./types";
-import { formatDerivedName, uniqueName } from "./naming";
+import { formatDerivedName, uniqueName, type NameSource } from "./naming";
 import { gitSpawn } from "../../api/utils";
 import * as db from "../db";
 
@@ -57,8 +57,18 @@ async function branchLabel(cwd: string): Promise<string | undefined> {
   }
 }
 
+// What v1 called a session: a PTY plus the label the UI shows for it. The
+// name lives out here rather than on the PTY because it is a property of the
+// work, not of the process — in v2 it becomes a column on the task row, and a
+// task keeps its name across the process being harvested and respawned.
+interface SessionRecord {
+  pty: Pty;
+  name: string;
+  nameSource: NameSource;
+}
+
 export class SessionManager {
-  private sessions: Map<string, Session> = new Map();
+  private sessions: Map<string, SessionRecord> = new Map();
   private projects: ProjectInfo[] = [{ id: "general", name: "General", initialPath: "", sessionIds: [] }];
   // A client holds one attachment per session it is showing — one terminal
   // tab each. It never shows the same session twice, so the set never needs to
@@ -86,6 +96,13 @@ export class SessionManager {
 
   unregisterClient(clientId: string): void {
     this.connectedClients.delete(clientId);
+  }
+
+  /** Whether the client's socket is still open. Worth asking before acting on
+   * anything that resolved asynchronously: attaching a closed socket puts a
+   * ClientInfo nothing will ever remove into the PTY's broadcast list. */
+  isClientConnected(clientId: string): boolean {
+    return this.connectedClients.has(clientId);
   }
 
   broadcastToAll(message: object): void {
@@ -139,7 +156,7 @@ export class SessionManager {
     return true;
   }
 
-  async createSession(id: string, name: string | undefined, cols: number, rows: number, projectId?: string, afterSessionId?: string): Promise<Session> {
+  async createSession(id: string, name: string | undefined, cols: number, rows: number, projectId?: string, afterSessionId?: string): Promise<Pty> {
     if (this.sessions.has(id)) {
       throw new Error(`Session "${id}" already exists`);
     }
@@ -149,7 +166,7 @@ export class SessionManager {
     if (afterSessionId) {
       const afterSession = this.sessions.get(afterSessionId);
       if (afterSession) {
-        cwd = await afterSession.getCwd();
+        cwd = await afterSession.pty.getCwd();
       }
     }
     if (!cwd && projectId) {
@@ -171,24 +188,30 @@ export class SessionManager {
         this.sessionNames(),
       );
 
-    const session = new Session(id, resolvedName, cols, rows, cwd);
-    if (name) session.nameSource = "manual";
-    session.onExit(() => {
+    // A v1 session is a plain login shell. The Pty takes a command vector
+    // rather than assuming one, which is what lets v2 spawn `claude …` through
+    // the same class.
+    const pty = new Pty(id, [process.env.SHELL || "bash"], cols, rows, { cwd });
+    pty.onExit(() => {
       this.broadcastSessionList();
     });
     // The title is part of every session list, and clients project it over the
     // name at render time — so a title change only has to be broadcast.
-    session.onTitleChange(() => {
+    pty.onTitleChange(() => {
       this.broadcastSessionList();
     });
-    session.onActivityChange((sessionId, active) => {
-      this.broadcastToAll({ type: "activity", sessionId, active });
+    pty.onActivityChange((ptyId, active) => {
+      this.broadcastToAll({ type: "activity", ptyId, active });
     });
-    session.onNotification((sessionId, title, body) => {
-      this.broadcastToAll({ type: "notification", sessionId, title, body });
+    pty.onNotification((ptyId, title, body) => {
+      this.broadcastToAll({ type: "notification", ptyId, title, body });
       this.broadcastSessionList();
     });
-    this.sessions.set(id, session);
+    this.sessions.set(id, {
+      pty,
+      name: resolvedName,
+      nameSource: name ? "manual" : "derived",
+    });
 
     // Determine target project and insertion position
     let targetProject: ProjectInfo | undefined;
@@ -217,11 +240,11 @@ export class SessionManager {
       targetProject.sessionIds.push(id);
     }
 
-    return session;
+    return pty;
   }
 
-  getSession(id: string): Session | undefined {
-    return this.sessions.get(id);
+  getSession(id: string): Pty | undefined {
+    return this.sessions.get(id)?.pty;
   }
 
   attachClient(
@@ -230,9 +253,9 @@ export class SessionManager {
     ws: ServerWebSocket<WebSocketData>,
     cols?: number,
     rows?: number
-  ): Session | undefined {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
+  ): Pty | undefined {
+    const pty = this.sessions.get(sessionId)?.pty;
+    if (!pty) {
       return undefined;
     }
 
@@ -245,14 +268,14 @@ export class SessionManager {
       size: sanitizeSize(cols, rows),
     };
 
-    session.addClient(client);
+    pty.addClient(client);
     let held = this.clientSessions.get(clientId);
     if (!held) {
       held = new Set();
       this.clientSessions.set(clientId, held);
     }
     held.add(sessionId);
-    return session;
+    return pty;
   }
 
   /** Detach one session, or every session the client holds when omitted (the
@@ -262,7 +285,7 @@ export class SessionManager {
     if (!held) return;
     const targets = sessionId === undefined ? [...held] : held.has(sessionId) ? [sessionId] : [];
     for (const id of targets) {
-      this.sessions.get(id)?.removeClient(clientId);
+      this.sessions.get(id)?.pty.removeClient(clientId);
       held.delete(id);
     }
     if (held.size === 0) this.clientSessions.delete(clientId);
@@ -270,9 +293,9 @@ export class SessionManager {
 
   /** The session only if this client is actually attached to it — an unattached
    * client must not be able to write to a session by naming it. */
-  getClientSession(clientId: string, sessionId: string): Session | undefined {
+  getClientSession(clientId: string, sessionId: string): Pty | undefined {
     if (!this.clientSessions.get(clientId)?.has(sessionId)) return undefined;
-    return this.sessions.get(sessionId);
+    return this.sessions.get(sessionId)?.pty;
   }
 
   getClientSessionIds(clientId: string): string[] {
@@ -280,12 +303,12 @@ export class SessionManager {
   }
 
   killSession(id: string): boolean {
-    const session = this.sessions.get(id);
-    if (!session) {
+    const record = this.sessions.get(id);
+    if (!record) {
       return false;
     }
 
-    session.kill();
+    record.pty.kill();
     this.sessions.delete(id);
 
     // Remove from project
@@ -309,38 +332,39 @@ export class SessionManager {
   }
 
   renameSession(id: string, name: string): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
-    session.name = name;
+    const record = this.sessions.get(id);
+    if (!record) return false;
+    record.name = name;
     // An explicit rename opts the session out of derivation for good.
-    session.nameSource = "manual";
+    record.nameSource = "manual";
     this.broadcastSessionList();
     return true;
   }
 
   private sessionNames(): string[] {
-    return [...this.sessions.values()].map((session) => session.name);
+    return [...this.sessions.values()].map((record) => record.name);
   }
 
   acknowledgeSession(sessionId: string): void {
-    const session = this.sessions.get(sessionId);
-    if (session && session.hasNotification) {
-      session.acknowledge();
+    const pty = this.sessions.get(sessionId)?.pty;
+    if (pty && pty.hasNotification) {
+      pty.acknowledge();
       this.broadcastSessionList();
     }
   }
 
-  private sessionToInfo(session: Session): SessionInfo {
+  private sessionToInfo(record: SessionRecord): SessionInfo {
+    const { pty } = record;
     return {
-      id: session.id,
-      name: session.name,
-      nameSource: session.nameSource,
-      title: session.title,
-      clientCount: session.getClientCount(),
-      size: session.getSize(),
-      createdAt: session.createdAt,
-      exited: session.exited,
-      hasNotification: session.hasNotification,
+      id: pty.id,
+      name: record.name,
+      nameSource: record.nameSource,
+      title: pty.title,
+      clientCount: pty.getClientCount(),
+      size: pty.getSize(),
+      createdAt: pty.createdAt,
+      exited: pty.exited,
+      hasNotification: pty.hasNotification,
     };
   }
 
@@ -348,8 +372,8 @@ export class SessionManager {
     const result: SessionInfo[] = [];
     for (const project of this.projects) {
       for (const id of project.sessionIds) {
-        const session = this.sessions.get(id);
-        if (session) result.push(this.sessionToInfo(session));
+        const record = this.sessions.get(id);
+        if (record) result.push(this.sessionToInfo(record));
       }
     }
     return result;

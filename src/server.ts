@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, basename } from "node:path";
 import index from "./frontend/index.html";
 import { sessionManager } from "./lib/xtmux/session-manager";
-import { sanitizeSize } from "./lib/xtmux/session";
+import { sanitizeSize } from "./lib/xtmux/pty";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
 import { diffRoutes } from "./api/diff";
@@ -248,14 +248,21 @@ export function startServer(options?: ServerOptions) {
 
         switch (parsed.type) {
           case "create": {
-            const { sessionId, name, cols, rows, projectId, afterSessionId } = parsed;
+            const { ptyId, name, cols, rows, projectId, afterSessionId } = parsed;
             // The PTY needs a concrete initial size, so fall back to 80x24 for
             // malformed values; attachClient re-sanitizes the raw cols/rows so a
             // fabricated size never enters negotiation as the creator's own.
             const size = sanitizeSize(cols, rows) ?? { cols: 80, rows: 24 };
-            sessionManager.createSession(sessionId, name || undefined, size.cols, size.rows, projectId, afterSessionId).then(
+            sessionManager.createSession(ptyId, name || undefined, size.cols, size.rows, projectId, afterSessionId).then(
               () => {
-                sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
+                // The socket can close while the session is being created —
+                // its `close` already ran detachClient, so attaching now would
+                // leave a dead client in the PTY's broadcast list for good,
+                // pinning smallest-wins negotiation to a size nobody is
+                // showing and reporting a viewer that isn't there.
+                if (sessionManager.isClientConnected(clientId)) {
+                  sessionManager.attachClient(ptyId, clientId, ws, cols, rows);
+                }
                 sessionManager.broadcastSessionList();
               },
               (e: any) => {
@@ -266,35 +273,35 @@ export function startServer(options?: ServerOptions) {
           }
 
           case "attach": {
-            const { sessionId, cols, rows } = parsed;
-            const session = sessionManager.attachClient(sessionId, clientId, ws, cols, rows);
-            if (!session) {
-              sendError(ws, `Session "${sessionId}" not found`);
+            const { ptyId, cols, rows } = parsed;
+            const pty = sessionManager.attachClient(ptyId, clientId, ws, cols, rows);
+            if (!pty) {
+              sendError(ws, `Session "${ptyId}" not found`);
             }
             break;
           }
 
           case "detach": {
-            // No sessionId detaches everything: what a client sends when it is
+            // No ptyId detaches everything: what a client sends when it is
             // going away rather than closing one tab.
-            sessionManager.detachClient(clientId, parsed.sessionId);
+            sessionManager.detachClient(clientId, parsed.ptyId);
             break;
           }
 
           case "input": {
-            const session = sessionManager.getClientSession(clientId, parsed.sessionId);
-            if (session) {
-              session.write(parsed.data);
+            const pty = sessionManager.getClientSession(clientId, parsed.ptyId);
+            if (pty) {
+              pty.write(parsed.data);
             } else {
-              sendError(ws, `Not attached to session "${parsed.sessionId}"`);
+              sendError(ws, `Not attached to session "${parsed.ptyId}"`);
             }
             break;
           }
 
           case "resize": {
-            const session = sessionManager.getClientSession(clientId, parsed.sessionId);
-            if (session) {
-              session.updateClientSize(clientId, parsed.cols, parsed.rows);
+            const pty = sessionManager.getClientSession(clientId, parsed.ptyId);
+            if (pty) {
+              pty.updateClientSize(clientId, parsed.cols, parsed.rows);
             }
             break;
           }
@@ -311,25 +318,25 @@ export function startServer(options?: ServerOptions) {
           }
 
           case "kill": {
-            const killed = sessionManager.killSession(parsed.sessionId);
+            const killed = sessionManager.killSession(parsed.ptyId);
             if (killed) {
               sessionManager.broadcastSessionList();
             } else {
-              sendError(ws, `Session "${parsed.sessionId}" not found`);
+              sendError(ws, `Session "${parsed.ptyId}" not found`);
             }
             break;
           }
 
           case "rename": {
-            const renamed = sessionManager.renameSession(parsed.sessionId, parsed.name);
+            const renamed = sessionManager.renameSession(parsed.ptyId, parsed.name);
             if (!renamed) {
-              sendError(ws, `Session "${parsed.sessionId}" not found`);
+              sendError(ws, `Session "${parsed.ptyId}" not found`);
             }
             break;
           }
 
           case "acknowledge": {
-            sessionManager.acknowledgeSession(parsed.sessionId);
+            sessionManager.acknowledgeSession(parsed.ptyId);
             break;
           }
 

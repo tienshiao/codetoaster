@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import type { ClientMessage, ServerMessage } from "../../lib/xtmux/types";
 
 interface UseWebSocketOptions {
-  onMessage: (message: any) => void;
+  onMessage: (message: ServerMessage) => void;
   onConnect: () => void;
   onDisconnect?: () => void;
 }
@@ -20,7 +21,7 @@ export function useWebSocket({ onMessage, onConnect, onDisconnect }: UseWebSocke
   onConnectRef.current = onConnect;
   onDisconnectRef.current = onDisconnect;
 
-  const send = useCallback((msg: object) => {
+  const send = useCallback((msg: ClientMessage) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));

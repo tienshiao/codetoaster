@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { sanitizeSize } from "./session";
+import { sanitizeSize } from "./pty";
 
 test("accepts workable integer sizes", () => {
   expect(sanitizeSize(80, 24)).toEqual({ cols: 80, rows: 24 });

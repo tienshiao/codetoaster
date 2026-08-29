@@ -207,7 +207,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
         onCloseTab={handleCloseTab}
         onRenameSession={handleRenameSession}
         onReorder={reorderSessions}
-        onAcknowledge={(id) => handleSendMessage({ type: "acknowledge", sessionId: id })}
+        onAcknowledge={(id) => handleSendMessage({ type: "acknowledge", ptyId: id })}
         onCreateProject={createProject}
         onUpdateProject={updateProject}
         onDeleteProject={deleteProject}
@@ -232,7 +232,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           <div className={currentTab !== "terminal" ? 'hidden' : 'relative h-full'}>
             <XTerminal
               ref={terminalRef}
-              sessionId={currentSessionId}
+              ptyId={currentSessionId}
               onSizeChange={handleSizeChange}
               onReady={handleTerminalReady}
               sendMessage={handleSendMessage}

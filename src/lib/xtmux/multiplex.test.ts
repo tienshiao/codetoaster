@@ -15,8 +15,8 @@ function fakeClient() {
     ws,
     received,
     of: (type: string) => received.filter((m) => m.type === type) as any[],
-    sessionIdsSeen: (type: string) =>
-      new Set(received.filter((m) => m.type === type).map((m: any) => m.sessionId)),
+    ptyIdsSeen: (type: string) =>
+      new Set(received.filter((m) => m.type === type).map((m: any) => m.ptyId)),
   };
 }
 
@@ -73,7 +73,7 @@ describe("one client, many sessions", () => {
     m.getSession("b")!.write("echo beta\n");
 
     const sawBoth = await waitFor(() => {
-      const ids = client.sessionIdsSeen("data");
+      const ids = client.ptyIdsSeen("data");
       return ids.has("a") && ids.has("b");
     });
     expect(sawBoth).toBe(true);
@@ -81,7 +81,7 @@ describe("one client, many sessions", () => {
     // Every terminal-addressed message carries its session, so a client with
     // several terminals open can route without guessing.
     for (const type of ["restore", "data"]) {
-      for (const msg of client.of(type)) expect(typeof msg.sessionId).toBe("string");
+      for (const msg of client.of(type)) expect(typeof msg.ptyId).toBe("string");
     }
   });
 
@@ -111,7 +111,7 @@ describe("one client, many sessions", () => {
     expect(m.getClientSessionIds("c1")).toEqual(["b"]);
     expect(m.getSession("a")!.getClientCount()).toBe(0);
 
-    // No sessionId means the socket is going away: drop everything.
+    // No ptyId means the socket is going away: drop everything.
     m.detachClient("c1");
     expect(m.getClientSessionIds("c1")).toEqual([]);
     expect(m.getSession("b")!.getClientCount()).toBe(0);

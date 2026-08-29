@@ -6,6 +6,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Upload } from "lucide-react";
 import { useTerminalTheme } from "./hooks/use-terminal-theme";
 import { playBellSound } from "./hooks/use-notification-sound";
+import type { ClientMessage, ServerMessage } from "../lib/xtmux/types";
 import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalSize {
@@ -14,8 +15,8 @@ export interface TerminalSize {
 }
 
 export interface TerminalHandle {
-  handleMessage: (message: any) => void;
-  send: (msg: object) => void;
+  handleMessage: (message: ServerMessage) => void;
+  send: (msg: ClientMessage) => void;
   // Last size measured against a visible container, or null if the terminal
   // has never been visible. The grid's own cols/rows track the session's
   // negotiated size, not this client's, so they are never reported.
@@ -29,16 +30,16 @@ interface XTerminalProps {
   // The session this terminal is showing. Input and resize are addressed by
   // it: the socket now carries several sessions at once, so "the client's
   // session" is no longer a thing the server can infer.
-  sessionId: string | null;
+  ptyId: string | null;
   onSizeChange: (size: TerminalSize) => void;
   onReady: () => void;
-  sendMessage: (msg: object) => void;
+  sendMessage: (msg: ClientMessage) => void;
   onFileDrop?: (files: File[]) => void;
   onSearchOpen?: () => void;
 }
 
 export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
-  function XTerminal({ sessionId, onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen }, ref) {
+  function XTerminal({ ptyId, onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -63,8 +64,8 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     fontSizeRef.current = fontSize;
 
     // Store callbacks in refs
-    const sessionIdRef = useRef(sessionId);
-    sessionIdRef.current = sessionId;
+    const ptyIdRef = useRef(ptyId);
+    ptyIdRef.current = ptyId;
     const onSizeChangeRef = useRef(onSizeChange);
     const sendMessageRef = useRef(sendMessage);
     const onFileDropRef = useRef(onFileDrop);
@@ -98,7 +99,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
 
     // Expose methods to parent
     useImperativeHandle(ref, () => ({
-      handleMessage: (message: any) => {
+      handleMessage: (message: ServerMessage) => {
         const term = termRef.current;
         if (!term) return;
 
@@ -158,7 +159,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
             break;
         }
       },
-      send: (msg: object) => {
+      send: (msg: ClientMessage) => {
         if (attachedRef.current) {
           sendMessageRef.current(msg);
         }
@@ -209,18 +210,18 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
 
       // Handle terminal input
       const dataDisposable = term.onData((data) => {
-        if (attachedRef.current && sessionIdRef.current) {
-          sendMessageRef.current({ type: "input", sessionId: sessionIdRef.current, data });
+        if (attachedRef.current && ptyIdRef.current) {
+          sendMessageRef.current({ type: "input", ptyId: ptyIdRef.current, data });
         }
       });
 
       // Handle shift-enter and Cmd/Ctrl+F for search
       term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
         if (ev.key === "Enter" && ev.shiftKey) {
-          if (ev.type === "keydown" && attachedRef.current && sessionIdRef.current) {
+          if (ev.type === "keydown" && attachedRef.current && ptyIdRef.current) {
             sendMessageRef.current({
               type: "input",
-              sessionId: sessionIdRef.current,
+              ptyId: ptyIdRef.current,
               data: String.fromCharCode(10),
             });
           }

@@ -1,8 +1,7 @@
 import type { Subprocess } from "bun";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
-import type { ClientInfo, ServerMessage, WebSocketData } from "./types";
-import type { NameSource } from "./naming";
+import type { ClientInfo, ServerMessage } from "./types";
 
 // Validate a client-reported terminal size. Messages are parsed from the wire,
 // so cols/rows can be anything (null, NaN, 0, floats, absurd values) — treat
@@ -19,14 +18,28 @@ export function sanitizeSize(cols: unknown, rows: unknown): { cols: number; rows
   return { cols, rows };
 }
 
-export class Session {
+export interface PtyOptions {
+  cwd?: string;
+  // Merged over the PTY's own defaults ({ ...process.env, TERM }), so a caller
+  // can both add variables and remove inherited ones by naming them undefined.
+  env?: Record<string, string | undefined>;
+}
+
+// A pseudo-terminal and the authoritative view of what it has painted. It
+// knows nothing about tasks, naming, or worktrees: what it is running is a
+// command vector its owner chose — `claude …` for an agent, $SHELL for a plain
+// terminal — and who it is for is a set of attached clients.
+export class Pty {
   public readonly id: string;
-  public name: string;
-  public nameSource: NameSource = "derived";
   public readonly createdAt: number;
   private proc: Subprocess;
   private terminal: Terminal;
   private serializeAddon: SerializeAddon;
+  // Keyed by connection, `${clientId}:${ptyId}` — the address a terminal view
+  // has on the wire (docs/v2-architecture.md §5.3). A client shows any given
+  // PTY at most once, so clientId alone would still be unique inside one PTY's
+  // map; spelling out the full key keeps an entry meaningful when it is read
+  // outside the PTY that holds it.
   private clients: Map<string, ClientInfo> = new Map();
   private size: { cols: number; rows: number };
   public title: string = "";
@@ -36,15 +49,15 @@ export class Session {
   private activityTimeout: Timer | null = null;
   private onExitCallback?: (code: number) => void;
   private onTitleChangeCallback?: () => void;
-  private onActivityChangeCallback?: (sessionId: string, active: boolean) => void;
+  private onActivityChangeCallback?: (ptyId: string, active: boolean) => void;
   public hasNotification = false;
-  private onNotificationCallback?: (sessionId: string, title: string, body: string) => void;
+  private onNotificationCallback?: (ptyId: string, title: string, body: string) => void;
   private pendingOsc99: Map<string, { title: string; body: string }> = new Map();
   private decoder = new TextDecoder();
 
-  constructor(id: string, name: string, cols: number, rows: number, cwd?: string) {
+  constructor(id: string, command: string[], cols: number, rows: number, options: PtyOptions = {}) {
+    if (command.length === 0) throw new Error("Pty needs a command to run");
     this.id = id;
-    this.name = name;
     this.createdAt = Date.now();
     this.size = { cols, rows };
 
@@ -129,9 +142,9 @@ export class Session {
     });
 
     // Spawn PTY
-    this.proc = Bun.spawn([process.env.SHELL || "bash"], {
-      cwd: cwd || undefined,
-      env: { ...process.env, TERM: "xterm-256color" },
+    this.proc = Bun.spawn(command, {
+      cwd: options.cwd || undefined,
+      env: { ...process.env, TERM: "xterm-256color", ...options.env },
       terminal: {
         cols: this.size.cols,
         rows: this.size.rows,
@@ -141,7 +154,7 @@ export class Session {
           // Write to headless terminal (authoritative state)
           this.terminal.write(str);
           // Broadcast to all connected clients
-          this.broadcast({ type: "data", sessionId: this.id, data: str });
+          this.broadcast({ type: "data", ptyId: this.id, data: str });
           // Track activity
           if (!this.isActive) {
             this.isActive = true;
@@ -158,7 +171,7 @@ export class Session {
         this.exited = true;
         this.exitCode = exitCode ?? 0;
         this.onExitCallback?.(this.exitCode);
-        this.broadcast({ type: "exit", sessionId: this.id, code: this.exitCode });
+        this.broadcast({ type: "exit", ptyId: this.id, code: this.exitCode });
       },
     });
   }
@@ -171,11 +184,11 @@ export class Session {
     this.onTitleChangeCallback = callback;
   }
 
-  onActivityChange(callback: (sessionId: string, active: boolean) => void): void {
+  onActivityChange(callback: (ptyId: string, active: boolean) => void): void {
     this.onActivityChangeCallback = callback;
   }
 
-  onNotification(callback: (sessionId: string, title: string, body: string) => void): void {
+  onNotification(callback: (ptyId: string, title: string, body: string) => void): void {
     this.onNotificationCallback = callback;
   }
 
@@ -199,22 +212,22 @@ export class Session {
     // Send restore with serialized content (for scrollback history)
     this.send(client, {
       type: "restore",
-      sessionId: this.id,
+      ptyId: this.id,
       data: serialized,
       size: this.size,
       cursor,
       cursorHidden,
       mouseEncoding,
     });
-    this.send(client, { type: "attached", sessionId: this.id });
+    this.send(client, { type: "attached", ptyId: this.id });
 
     // If session already exited, inform the new client
     if (this.exited) {
-      this.send(client, { type: "exit", sessionId: this.id, code: this.exitCode ?? 0 });
+      this.send(client, { type: "exit", ptyId: this.id, code: this.exitCode ?? 0 });
     }
 
     // Add client to broadcast list
-    this.clients.set(client.id, client);
+    this.clients.set(this.connectionKey(client.id), client);
 
     // Recalculate terminal size
     this.recalculateSize();
@@ -222,8 +235,12 @@ export class Session {
   }
 
   removeClient(clientId: string): void {
-    this.clients.delete(clientId);
+    this.clients.delete(this.connectionKey(clientId));
     this.recalculateSize();
+  }
+
+  private connectionKey(clientId: string): string {
+    return `${clientId}:${this.id}`;
   }
 
   // A null cols/rows pair clears this client's measurement rather than being
@@ -231,7 +248,7 @@ export class Session {
   // constraining negotiation, but stays attached and keeps receiving output.
   // Anything else unparseable is still ignored outright (sanitizeSize).
   updateClientSize(clientId: string, cols: number | null, rows: number | null): void {
-    const client = this.clients.get(clientId);
+    const client = this.clients.get(this.connectionKey(clientId));
     if (!client) return;
     if (cols === null || rows === null) {
       if (client.size === null) return;
@@ -394,7 +411,7 @@ export class Session {
       this.proc.terminal?.resize(cols, rows);
 
       // Notify all clients of the new size
-      this.broadcast({ type: "resize", sessionId: this.id, cols, rows });
+      this.broadcast({ type: "resize", ptyId: this.id, cols, rows });
     }
   }
 
