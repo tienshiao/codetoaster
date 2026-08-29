@@ -31,6 +31,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     sessionLabels,
     projects,
     currentSessionId,
+    currentPtyId,
     isConnected,
     sessionActivity,
     lastActivityAt,
@@ -207,7 +208,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
         onCloseTab={handleCloseTab}
         onRenameSession={handleRenameSession}
         onReorder={reorderSessions}
-        onAcknowledge={(id) => handleSendMessage({ type: "acknowledge", ptyId: id })}
+        onAcknowledge={(id) => handleSendMessage({ type: "acknowledge", taskId: id })}
         onCreateProject={createProject}
         onUpdateProject={updateProject}
         onDeleteProject={deleteProject}
@@ -232,7 +233,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           <div className={currentTab !== "terminal" ? 'hidden' : 'relative h-full'}>
             <XTerminal
               ref={terminalRef}
-              ptyId={currentSessionId}
+              ptyId={currentPtyId}
               onSizeChange={handleSizeChange}
               onReady={handleTerminalReady}
               sendMessage={handleSendMessage}

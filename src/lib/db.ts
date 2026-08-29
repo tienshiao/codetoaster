@@ -190,6 +190,12 @@ function getDb(): Database {
   return db;
 }
 
+/** The shared handle, for stores that take their own database rather than
+ * going through the helpers here. */
+export function getDatabase(): Database {
+  return getDb();
+}
+
 // Bring a database up to the current schema. Split out from initDatabase so it
 // can be driven against a database that isn't the process-wide singleton —
 // which is the only way to test the upgrade path from a v1 file.
@@ -233,16 +239,20 @@ export function initDatabase(dbPath: string): void {
   applyMigrations(db);
 }
 
-export function getAllProjects(): ProjectRow[] {
-  return getDb().query("SELECT * FROM projects ORDER BY sort_order").all() as ProjectRow[];
+// Each of these takes the database to act on, defaulting to the process-wide
+// one. A caller holding its own handle — a test, or a manager built against a
+// specific file — must not read projects out of one database and tasks out of
+// another.
+export function getAllProjects(database: Database = getDb()): ProjectRow[] {
+  return database.query("SELECT * FROM projects ORDER BY sort_order").all() as ProjectRow[];
 }
 
 // Only the identity columns: everything v2 added to `projects` is a default
 // that is set later, through updateProject, if it is ever set at all.
 export type NewProject = Pick<ProjectRow, "id" | "name" | "initial_path" | "sort_order">;
 
-export function createProject(project: NewProject): void {
-  getDb().run(
+export function createProject(project: NewProject, database: Database = getDb()): void {
+  database.run(
     "INSERT INTO projects (id, name, initial_path, sort_order) VALUES (?, ?, ?, ?)",
     [project.id, project.name, project.initial_path, project.sort_order],
   );
@@ -258,7 +268,7 @@ const UPDATABLE_PROJECT_COLUMNS: ReadonlySet<string> = new Set([
   "default_permission_mode", "setup_command", "worktree_copy", "worktree_default",
 ]);
 
-export function updateProject(id: string, fields: Partial<Omit<ProjectRow, "id">>): void {
+export function updateProject(id: string, fields: Partial<Omit<ProjectRow, "id">>, database: Database = getDb()): void {
   const sets: string[] = [];
   const values: any[] = [];
   for (const [key, value] of Object.entries(fields)) {
@@ -271,16 +281,19 @@ export function updateProject(id: string, fields: Partial<Omit<ProjectRow, "id">
   }
   if (sets.length === 0) return;
   values.push(id);
-  getDb().run(`UPDATE projects SET ${sets.join(", ")} WHERE id = ?`, values);
+  database.run(`UPDATE projects SET ${sets.join(", ")} WHERE id = ?`, values);
 }
 
-export function deleteProject(id: string): void {
-  getDb().run("DELETE FROM projects WHERE id = ?", [id]);
+export function deleteProject(id: string, database: Database = getDb()): void {
+  database.run("DELETE FROM projects WHERE id = ?", [id]);
 }
 
-export function updateProjectOrder(projects: { id: string; sort_order: number }[]): void {
-  const stmt = getDb().prepare("UPDATE projects SET sort_order = ? WHERE id = ?");
-  const runAll = getDb().transaction(() => {
+export function updateProjectOrder(
+  projects: { id: string; sort_order: number }[],
+  database: Database = getDb(),
+): void {
+  const stmt = database.prepare("UPDATE projects SET sort_order = ? WHERE id = ?");
+  const runAll = database.transaction(() => {
     for (const p of projects) {
       stmt.run(p.sort_order, p.id);
     }

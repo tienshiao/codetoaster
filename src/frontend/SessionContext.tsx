@@ -16,10 +16,20 @@ import { useWebSocket } from "./hooks/use-websocket";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { removeRecentFiles } from "./hooks/use-recent-files";
 import { clearViewState, retainViewStates } from "./view-state-store";
-import type { ClientMessage, ServerMessage } from "../lib/xtmux/types";
+import type { ClientMessage, ProjectInfo as WireProject, ServerMessage, TaskInfo } from "../lib/xtmux/types";
 
+// The v1 shape, kept so the sidebar, palette, tab switcher and routes need no
+// change while the server moves to tasks. This whole adapter — SessionInfo,
+// the two `fromTask`/`fromWireProject` mappings, and the sessionIds naming —
+// goes away with TASK-20's TaskContext.
 export interface SessionInfo {
+  /** The task id: what the URL, the HTTP routes and every task-addressed
+   * message use. */
   id: string;
+  /** The terminal to attach to, or null once a task has no live process.
+   * Distinct from `id`, and read rather than assumed — a resumed task will get
+   * a fresh PTY while staying the same task. */
+  ptyId: string | null;
   name: string;
   nameSource?: NameSource;
   title?: string;
@@ -28,6 +38,28 @@ export interface SessionInfo {
   clientCount: number;
   exited?: boolean;
   hasNotification?: boolean;
+}
+
+function fromTask(task: TaskInfo): SessionInfo {
+  return {
+    id: task.id,
+    ptyId: task.ptyId,
+    // The task's stored label is what v1 called the session name; the live
+    // terminal title is what naming.ts projects over it.
+    name: task.title,
+    nameSource: task.titleSource,
+    title: task.terminalTitle,
+    createdAt: task.createdAt,
+    size: task.size,
+    clientCount: task.clientCount,
+    exited: task.exited,
+    hasNotification: task.hasNotification,
+  };
+}
+
+function fromWireProject(project: WireProject): ProjectInfo {
+  const { taskIds, ...rest } = project;
+  return { ...rest, sessionIds: taskIds };
 }
 
 export interface ProjectInfo {
@@ -41,6 +73,9 @@ interface SessionContextValue {
   sessions: SessionInfo[];
   projects: ProjectInfo[];
   currentSessionId: string | null;
+  /** The terminal behind the current task — what terminal-addressed messages
+   * name. Separate from currentSessionId, which names the task. */
+  currentPtyId: string | null;
   mruSessionIds: string[];
   isConnected: boolean;
   sessionsLoaded: boolean;
@@ -103,6 +138,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentPtyId, setCurrentPtyId] = useState<string | null>(null);
   const [mruSessionIds, setMruSessionIds] = useState<string[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessionActivity, setSessionActivity] = useState<Record<string, boolean>>({});
@@ -110,6 +146,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const terminalRef = useRef<TerminalHandle | null>(null);
   const terminalReadyRef = useRef(false);
   const currentSessionIdRef = useRef<string | null>(null);
+  // The terminal this client is currently showing. Terminal traffic is
+  // filtered against it, and it is set from the server's `attached` rather
+  // than assumed from the task id — the two are separate ids.
+  const attachedPtyRef = useRef<string | null>(null);
   const sessionsRef = useRef<SessionInfo[]>([]);
   const projectsRef = useRef<ProjectInfo[]>([]);
   const messageQueueRef = useRef<any[]>([]);
@@ -137,75 +177,96 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [projects]);
 
   const onMessage = useCallback((message: ServerMessage) => {
-    if (message.type === "sessions") {
-      setSessions(message.list as SessionInfo[]);
+    if (message.type === "tasks") {
+      setSessions(message.list.map(fromTask));
       if (message.projects) {
-        setProjects(message.projects as ProjectInfo[]);
+        setProjects(message.projects.map(fromWireProject));
       }
       setSessionsLoaded(true);
       return;
     }
 
+    // One row changed. Upsert rather than replace: a delta arrives for a task
+    // the list may not carry yet (the optimistic row from create), and dropping
+    // it would lose the server's resolved title and ptyId.
+    if (message.type === "task") {
+      const next = fromTask(message.task);
+      setSessions((prev) => {
+        const i = prev.findIndex((s) => s.id === next.id);
+        if (i === -1) return [...prev, next];
+        const copy = [...prev];
+        copy[i] = next;
+        return copy;
+      });
+      return;
+    }
+
     if (message.type === "attached") {
       // `create` resolves asynchronously on the server (it resolves a cwd and
-      // shells out to git for the branch label), so this can arrive for a PTY
+      // shells out to git for the branch label), so this can arrive for a task
       // the user has already switched away from. Adopting it would point the
-      // UI at a session whose `restore` the filter below just dropped — the
-      // grid would still be showing the other one, and keystrokes would go
+      // UI at a task whose `restore` the filter below just dropped — the grid
+      // would still be showing the other one, and keystrokes would go
       // somewhere the user cannot see. Hand the attachment back instead, so
-      // the abandoned PTY stops constraining size negotiation and counting us
-      // as a viewer.
-      if (message.ptyId !== currentSessionIdRef.current) {
+      // the abandoned terminal stops constraining size negotiation and
+      // counting us as a viewer.
+      //
+      // Judged on taskId, which is why the message carries it: the client
+      // tracks which task it is showing, and cannot map a ptyId onto one until
+      // the list arrives — which is after this.
+      if (message.taskId !== currentSessionIdRef.current) {
         sendRef.current({ type: "detach", ptyId: message.ptyId });
         return;
       }
-      setCurrentSessionId(message.ptyId);
+      attachedPtyRef.current = message.ptyId;
+      setCurrentPtyId(message.ptyId);
+      setCurrentSessionId(message.taskId);
     }
 
     if (message.type === "activity") {
-      const { ptyId } = message;
-      setSessionActivity(prev => ({ ...prev, [ptyId]: message.active }));
+      const { taskId } = message;
+      setSessionActivity(prev => ({ ...prev, [taskId]: message.active }));
       if (message.active) {
-        lastActivityAt.current[ptyId] = Date.now();
+        lastActivityAt.current[taskId] = Date.now();
       }
       return;
     }
 
     if (message.type === "notification") {
-      const { ptyId } = message;
+      const { taskId } = message;
       const isViewingThisSession =
-        ptyId === currentSessionIdRef.current
+        taskId === currentSessionIdRef.current
         && document.hasFocus()
         && isViewingTerminalRef.current;
 
       if (isViewingThisSession) {
-        sendRef.current({ type: "acknowledge", ptyId });
+        sendRef.current({ type: "acknowledge", taskId });
       } else {
         playNotificationSound();
       }
       if (!document.hasFocus()) {
-        const session = sessionsRef.current.find((s) => s.id === ptyId);
+        const session = sessionsRef.current.find((s) => s.id === taskId);
         fireWebNotification(
           message.title,
           message.body,
-          `codetoaster-${ptyId}`,
-          sessionDisplayNames(sessionsRef.current).get(ptyId),
+          `codetoaster-${taskId}`,
+          sessionDisplayNames(sessionsRef.current).get(taskId),
           session?.name,
         );
       }
       return;
     }
 
-    // Terminal messages name the PTY they belong to. Drop the ones for a PTY
-    // this client is no longer showing — output from the session we just
+    // Terminal messages name the PTY they belong to. Drop the ones for a
+    // terminal this client is no longer showing — output from the task we just
     // switched away from is still in flight, and painting it into the new
-    // session's grid is exactly the corruption the addressing exists to avoid.
+    // task's grid is exactly the corruption the addressing exists to avoid.
     if (
       (message.type === "data" ||
         message.type === "restore" ||
         message.type === "resize" ||
         message.type === "exit") &&
-      message.ptyId !== currentSessionIdRef.current
+      message.ptyId !== attachedPtyRef.current
     ) {
       return;
     }
@@ -227,10 +288,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // Re-attach to the session that was active before disconnect. Omit the
         // size when the terminal has never been visibly measured (e.g. the
         // page loaded on the diff tab) so it doesn't constrain negotiation.
-        const sessionId = currentSessionIdRef.current;
-        if (sessionId) {
+        const taskId = currentSessionIdRef.current;
+        const ptyId = sessionsRef.current.find((s) => s.id === taskId)?.ptyId;
+        if (ptyId) {
           const size = terminalRef.current?.getSize();
-          send({ type: "attach", ptyId: sessionId, ...(size ?? {}) });
+          send({ type: "attach", ptyId, ...(size ?? {}) });
         }
       }
     },
@@ -255,9 +317,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const handleSizeChange = useCallback(
     (size: TerminalSize) => {
-      const sessionId = currentSessionIdRef.current;
-      if (sessionId) {
-        send({ type: "resize", ptyId: sessionId, cols: size.cols, rows: size.rows });
+      const ptyId = attachedPtyRef.current;
+      if (ptyId) {
+        send({ type: "resize", ptyId, cols: size.cols, rows: size.rows });
       }
     },
     [send],
@@ -289,7 +351,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (!sessionId) return;
       const session = sessionsRef.current.find((s) => s.id === sessionId);
       if (session?.hasNotification) {
-        sendRef.current({ type: "acknowledge", ptyId: sessionId });
+        sendRef.current({ type: "acknowledge", taskId: sessionId });
       }
     };
     window.addEventListener("focus", handleFocus);
@@ -303,7 +365,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (sessionId) {
         const session = sessionsRef.current.find(s => s.id === sessionId);
         if (session?.hasNotification) {
-          sendRef.current({ type: "acknowledge", ptyId: sessionId });
+          sendRef.current({ type: "acknowledge", taskId: sessionId });
         }
       }
     }
@@ -317,25 +379,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       if (id === currentSessionIdRef.current) {
         if (isViewingTerminalRef.current) {
-          send({ type: "acknowledge", ptyId: id });
+          send({ type: "acknowledge", taskId: id });
         }
         return;
       }
 
+      // The route only attaches once the list has loaded, so the task's
+      // terminal is known by the time we get here.
+      const ptyId = sessionsRef.current.find((s) => s.id === id)?.ptyId;
+      if (!ptyId) return;
+
       terminalRef.current?.resetAttached();
 
-      if (currentSessionIdRef.current) {
-        send({ type: "detach", ptyId: currentSessionIdRef.current });
+      if (attachedPtyRef.current) {
+        send({ type: "detach", ptyId: attachedPtyRef.current });
       }
 
-      // Written synchronously, not left to the syncing effect: `restore` for
-      // the new session can arrive before React re-renders, and the message
-      // filter above would drop it as belonging to someone else.
+      // Written synchronously, not left to the syncing effect: `attached` for
+      // the new task can arrive before React re-renders, and the handler above
+      // would hand the attachment straight back as belonging to someone else.
       currentSessionIdRef.current = id;
       const size = terminalRef.current?.getSize();
-      send({ type: "attach", ptyId: id, ...(size ?? {}) });
+      send({ type: "attach", ptyId, ...(size ?? {}) });
       if (isViewingTerminalRef.current) {
-        send({ type: "acknowledge", ptyId: id });
+        send({ type: "acknowledge", taskId: id });
       }
       setCurrentSessionId(id);
       pushMru(id);
@@ -349,8 +416,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // Only inherit position/cwd when no explicit project is targeted (e.g. Cmd+T)
     const afterSessionId = projectId ? undefined : (currentSessionIdRef.current || undefined);
 
-    if (currentSessionIdRef.current) {
-      send({ type: "detach", ptyId: currentSessionIdRef.current });
+    if (attachedPtyRef.current) {
+      send({ type: "detach", ptyId: attachedPtyRef.current });
+      attachedPtyRef.current = null;
+      setCurrentPtyId(null);
     }
 
     const sessionId = generateSessionId();
@@ -368,13 +437,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (currentProject) resolvedProjectId = currentProject.id;
     }
 
-    send({ type: "create", ptyId: sessionId, cols: size.cols, rows: size.rows, projectId: resolvedProjectId, afterSessionId });
+    send({ type: "create", taskId: sessionId, cols: size.cols, rows: size.rows, projectId: resolvedProjectId, afterTaskId: afterSessionId });
     setCurrentSessionId(sessionId);
     pushMru(sessionId);
     setSessions((prev) => [
       ...prev,
       {
         id: sessionId,
+        // Unknown until the server answers: it is the side that spawns the
+        // terminal. The `task` delta fills it in.
+        ptyId: null,
         name,
         createdAt: Date.now(),
         size: { cols: size.cols, rows: size.rows },
@@ -403,7 +475,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const renameSession = useCallback(
     (id: string, name: string) => {
-      send({ type: "rename", ptyId: id, name });
+      send({ type: "rename", taskId: id, title: name });
       // nameSource moves with the name: without it the optimistic row still
       // reads as "derived", so the label keeps projecting the terminal title
       // over the name just chosen until the server echoes the list back — and
@@ -454,7 +526,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         }
         return reordered;
       });
-      send({ type: "reorder", projects: orderedProjects });
+      send({
+        type: "reorder",
+        projects: orderedProjects.map(({ id, sessionIds }) => ({ id, taskIds: sessionIds })),
+      });
     },
     [send],
   );
@@ -498,10 +573,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       removeRecentFiles(id);
       clearViewState(id);
-      send({ type: "kill", ptyId: id });
+      send({ type: "kill", taskId: id });
 
       if (id === currentSessionIdRef.current) {
         terminalRef.current?.resetAttached();
+        // The terminal went with the task: leaving these set would keep the
+        // killed PTY's `exit` past the message filter and address the next
+        // resize at a process that no longer exists.
+        attachedPtyRef.current = null;
+        setCurrentPtyId(null);
         setCurrentSessionId(null);
       }
 
@@ -518,6 +598,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sessions,
         projects,
         currentSessionId,
+        currentPtyId,
         mruSessionIds,
         isConnected,
         sessionsLoaded,

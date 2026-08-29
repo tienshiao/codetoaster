@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, basename } from "node:path";
 import index from "./frontend/index.html";
-import { sessionManager } from "./lib/xtmux/session-manager";
+import { taskManager } from "./lib/tasks/manager";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
 import { diffRoutes } from "./api/diff";
@@ -41,7 +41,13 @@ export function startServer(options?: ServerOptions) {
   // Initialize database
   const dbPath = options?.dbPath ?? `${process.env.HOME ?? "."}/.codetoaster/data.db`;
   initDatabase(dbPath);
-  sessionManager.loadProjects();
+  taskManager.loadProjects();
+  // Every `live` row is a lie at boot: the PTYs died with the previous daemon
+  // (§5.5). Suspending them is the whole of what a restart needs.
+  const suspended = taskManager.reconcileOnBoot();
+  if (suspended > 0) {
+    console.log(`Suspended ${suspended} task${suspended === 1 ? "" : "s"} left live by the previous run`);
+  }
 
   const server = serve<WebSocketData>({
     port: PORT,
@@ -71,12 +77,14 @@ export function startServer(options?: ServerOptions) {
 
       "/api/sessions": {
         async GET() {
-          const sessions = sessionManager.listSessions();
+          const tasks = taskManager.listTasks();
           const withCwd = await Promise.all(
-            sessions.map(async (s) => {
-              const session = sessionManager.getSession(s.id);
-              const cwd = session ? await session.getCwd() : undefined;
-              return { ...s, cwd: cwd ?? null };
+            tasks.map(async (task) => {
+              const pty = task.ptyId ? taskManager.getPty(task.ptyId) : undefined;
+              // The row's cwd is authoritative; the live one only tells us the
+              // agent has wandered somewhere else since (§5.4).
+              const cwd = (await pty?.getCwd()) ?? taskManager.getTask(task.id)?.cwd;
+              return { ...task, cwd: cwd ?? null };
             })
           );
           return Response.json(withCwd);
@@ -85,10 +93,8 @@ export function startServer(options?: ServerOptions) {
 
       "/api/sessions/:id": {
         DELETE(req: Request & { params: { id: string } }) {
-          const id = req.params.id;
-          const killed = sessionManager.killSession(id);
-          if (killed) {
-            sessionManager.broadcastSessionList();
+          if (taskManager.closeTask(req.params.id)) {
+            taskManager.broadcastTasks();
             return Response.json({ success: true });
           }
           return Response.json({ error: "Session not found" }, { status: 404 });
@@ -97,7 +103,7 @@ export function startServer(options?: ServerOptions) {
 
       "/api/sessions/:id/preview": {
         GET(req: Request & { params: { id: string } }) {
-          const session = sessionManager.getSession(req.params.id);
+          const session = taskManager.primaryPty(req.params.id);
           if (!session) {
             return new Response("Session not found", { status: 404 });
           }
@@ -113,7 +119,7 @@ export function startServer(options?: ServerOptions) {
 
       "/api/sessions/:id/upload": {
         async POST(req: Request & { params: { id: string } }) {
-          const session = sessionManager.getSession(req.params.id);
+          const session = taskManager.primaryPty(req.params.id);
           if (!session) {
             return Response.json({ error: "Session not found" }, { status: 404 });
           }
@@ -202,14 +208,14 @@ export function startServer(options?: ServerOptions) {
             version: version + (gitHash ? ` (${gitHash})` : ""),
             pid: process.pid,
             uptime: Math.floor((Date.now() - startTime) / 1000),
-            sessions: sessionManager.listSessions().length,
+            sessions: taskManager.listTasks().length,
           });
         },
       },
 
       "/api/connections": {
         GET() {
-          return Response.json(sessionManager.getConnections());
+          return Response.json(taskManager.getConnections());
         },
       },
 
@@ -226,7 +232,7 @@ export function startServer(options?: ServerOptions) {
 
     websocket: {
       open(ws) {
-        sessionManager.registerClient(ws.data.clientId, ws);
+        taskManager.registerClient(ws.data.clientId, ws);
       },
 
       message(ws, message) {
@@ -247,18 +253,21 @@ export function startServer(options?: ServerOptions) {
 
         switch (parsed.type) {
           case "create": {
-            const { ptyId, name, cols, rows, projectId, afterSessionId } = parsed;
-            sessionManager.createSession(ptyId, name || undefined, cols, rows, projectId, afterSessionId).then(
-              () => {
-                // The socket can close while the session is being created —
-                // its `close` already ran detachClient, so attaching now would
+            const { taskId, title, cols, rows, projectId, afterTaskId } = parsed;
+            taskManager.createTask({
+              id: taskId, title: title || undefined, cols, rows, projectId, afterTaskId,
+            }).then(
+              (task) => {
+                // The socket can close while the task is being created — its
+                // `close` already ran detachClient, so attaching now would
                 // leave a dead client in the PTY's broadcast list for good,
                 // pinning smallest-wins negotiation to a size nobody is
                 // showing and reporting a viewer that isn't there.
-                if (sessionManager.isClientConnected(clientId)) {
-                  sessionManager.attachClient(ptyId, clientId, ws, cols, rows);
+                const ptyId = taskManager.primaryPty(task.id)?.id;
+                if (ptyId && taskManager.isClientConnected(clientId)) {
+                  taskManager.attachClient(ptyId, clientId, ws, cols, rows);
                 }
-                sessionManager.broadcastSessionList();
+                taskManager.broadcastTasks();
               },
               (e: any) => {
                 sendError(ws, e.message);
@@ -269,9 +278,9 @@ export function startServer(options?: ServerOptions) {
 
           case "attach": {
             const { ptyId, cols, rows } = parsed;
-            const pty = sessionManager.attachClient(ptyId, clientId, ws, cols, rows);
+            const pty = taskManager.attachClient(ptyId, clientId, ws, cols, rows);
             if (!pty) {
-              sendError(ws, `Session "${ptyId}" not found`);
+              sendError(ws, `Terminal "${ptyId}" not found`);
             }
             break;
           }
@@ -279,64 +288,62 @@ export function startServer(options?: ServerOptions) {
           case "detach": {
             // No ptyId detaches everything: what a client sends when it is
             // going away rather than closing one tab.
-            sessionManager.detachClient(clientId, parsed.ptyId);
+            taskManager.detachClient(clientId, parsed.ptyId);
             break;
           }
 
           case "input": {
-            if (!sessionManager.writeToSession(clientId, parsed.ptyId, parsed.data)) {
-              sendError(ws, `Not attached to session "${parsed.ptyId}"`);
+            if (!taskManager.writeToPty(clientId, parsed.ptyId, parsed.data)) {
+              sendError(ws, `Not attached to terminal "${parsed.ptyId}"`);
             }
             break;
           }
 
           case "resize": {
-            sessionManager.resizeSession(clientId, parsed.ptyId, parsed.cols, parsed.rows);
+            taskManager.resizePty(clientId, parsed.ptyId, parsed.cols, parsed.rows);
             break;
           }
 
           case "list": {
             ws.send(
               JSON.stringify({
-                type: "sessions",
-                list: sessionManager.listSessions(),
-                projects: sessionManager.getProjects(),
+                type: "tasks",
+                list: taskManager.listTasks(),
+                projects: taskManager.getProjects(),
               })
             );
             break;
           }
 
           case "kill": {
-            const killed = sessionManager.killSession(parsed.ptyId);
-            if (killed) {
-              sessionManager.broadcastSessionList();
+            if (taskManager.closeTask(parsed.taskId)) {
+              taskManager.broadcastTasks();
             } else {
-              sendError(ws, `Session "${parsed.ptyId}" not found`);
+              sendError(ws, `Task "${parsed.taskId}" not found`);
             }
             break;
           }
 
           case "rename": {
-            const renamed = sessionManager.renameSession(parsed.ptyId, parsed.name);
-            if (!renamed) {
-              sendError(ws, `Session "${parsed.ptyId}" not found`);
+            if (!taskManager.renameTask(parsed.taskId, parsed.title)) {
+              sendError(ws, `Task "${parsed.taskId}" not found`);
             }
             break;
           }
 
           case "acknowledge": {
-            sessionManager.acknowledgeSession(parsed.ptyId);
+            taskManager.acknowledgeTask(parsed.taskId);
             break;
           }
 
           case "reorder": {
-            sessionManager.reorderProjects(parsed.projects);
+            taskManager.reorderProjects(parsed.projects);
             break;
           }
 
           case "createProject": {
             try {
-              sessionManager.createProject(parsed.id, parsed.name, parsed.initialPath);
+              taskManager.createProject(parsed.id, parsed.name, parsed.initialPath);
             } catch (e: any) {
               sendError(ws, e.message);
             }
@@ -344,7 +351,7 @@ export function startServer(options?: ServerOptions) {
           }
 
           case "updateProject": {
-            const updated = sessionManager.updateProject(parsed.id, parsed.name, parsed.initialPath);
+            const updated = taskManager.updateProject(parsed.id, parsed.name, parsed.initialPath);
             if (!updated) {
               sendError(ws, `Project "${parsed.id}" not found`);
             }
@@ -352,7 +359,7 @@ export function startServer(options?: ServerOptions) {
           }
 
           case "deleteProject": {
-            const deleted = sessionManager.deleteProject(parsed.id);
+            const deleted = taskManager.deleteProject(parsed.id);
             if (!deleted) {
               sendError(ws, `Cannot delete project "${parsed.id}"`);
             }
@@ -365,8 +372,8 @@ export function startServer(options?: ServerOptions) {
       },
 
       close(ws) {
-        sessionManager.detachClient(ws.data.clientId);
-        sessionManager.unregisterClient(ws.data.clientId);
+        taskManager.detachClient(ws.data.clientId);
+        taskManager.unregisterClient(ws.data.clientId);
       },
     },
 

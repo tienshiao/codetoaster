@@ -12,14 +12,18 @@ function DiffRoute() {
   const { slug } = Route.useParams();
   const { id } = parseSessionSlug(slug);
   const navigate = useNavigate();
-  const { handleSendMessage, terminalRef } = useSession();
+  const { handleSendMessage, terminalRef, sessions } = useSession();
+  // Read, not assumed from the task id: input is addressed by terminal, and a
+  // task's PTY only happens to share its id today. Since one client can hold
+  // several PTYs, the server has no notion of "the client's session" to fall
+  // back on, and an input naming the wrong id is dropped.
+  const ptyId = sessions.find((s) => s.id === id)?.ptyId ?? null;
 
   const handleSubmit = useCallback(
     (promptText: string) => {
-      // Addressed explicitly: since one client can hold several PTYs, the
-      // server no longer has a notion of "the client's session" to fall back
-      // on, and an unaddressed input is dropped.
-      handleSendMessage({ type: "input", ptyId: id, data: promptText });
+      if (ptyId) {
+        handleSendMessage({ type: "input", ptyId, data: promptText });
+      }
       navigate({
         to: "/sessions/$slug",
         params: { slug },
@@ -27,7 +31,7 @@ function DiffRoute() {
       // Focus terminal after navigation
       setTimeout(() => terminalRef.current?.focus(), 100);
     },
-    [handleSendMessage, id, navigate, slug, terminalRef]
+    [handleSendMessage, ptyId, navigate, slug, terminalRef]
   );
 
   // key by session id: without it the component survives $slug-only route

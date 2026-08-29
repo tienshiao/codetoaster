@@ -16,7 +16,7 @@
 //
 // Kept free of imports so the frontend can share the projection without pulling
 // node builtins into the bundle; the filesystem and git lookups that feed
-// formatDerivedName live in session-manager.
+// formatDerivedName live in lib/tasks/derive.
 
 // Where a session's stored `name` came from. "manual" is a deliberate rename
 // and outranks the terminal title; "derived" is the "<dir> · <branch>" label

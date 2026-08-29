@@ -77,10 +77,12 @@ export async function cmdList(port: number): Promise<void> {
   }
 
   const res = await fetch(`${getBaseUrl(port)}/api/sessions`);
+  // The v2 shape: `title` is the task's stored label (v1's `name`), and
+  // `terminalTitle` is what the program inside is calling itself (v1's `title`).
   const sessions = (await res.json()) as Array<{
     id: string;
-    name: string;
     title: string;
+    terminalTitle: string;
     clientCount: number;
     size: { cols: number; rows: number } | null;
     createdAt: number;
@@ -103,8 +105,8 @@ export async function cmdList(port: number): Promise<void> {
   const headers = ["ID", "NAME", "TITLE", "CWD", "CLIENTS", "SIZE", "AGE", "STATUS"];
   const rows = sessions.map((s) => [
     formatSessionId(s.id),
-    s.name,
-    s.title || "",
+    s.title,
+    s.terminalTitle || "",
     formatCwd(s.cwd),
     String(s.clientCount),
     s.size ? `${s.size.cols}x${s.size.rows}` : "-",
@@ -122,12 +124,12 @@ export async function cmdKill(target: string, port: number): Promise<void> {
   }
 
   const res = await fetch(`${getBaseUrl(port)}/api/sessions`);
-  const sessions = (await res.json()) as Array<{ id: string; name: string }>;
+  const sessions = (await res.json()) as Array<{ id: string; title: string }>;
 
   // Match by name (exact), id prefix, or full id
   const match = sessions.find(
     (s) =>
-      s.name === target ||
+      s.title === target ||
       s.id === target ||
       s.id.startsWith(target) ||
       formatSessionId(s.id).startsWith(target)
@@ -143,7 +145,7 @@ export async function cmdKill(target: string, port: number): Promise<void> {
   });
 
   if (killRes.ok) {
-    console.log(`Killed session "${match.name}" (${formatSessionId(match.id)})`);
+    console.log(`Killed session "${match.title}" (${formatSessionId(match.id)})`);
   } else {
     console.error("Failed to kill session.");
     process.exit(1);
@@ -159,7 +161,7 @@ export async function cmdConnections(port: number): Promise<void> {
   const res = await fetch(`${getBaseUrl(port)}/api/connections`);
   const connections = (await res.json()) as Array<{
     clientId: string;
-    sessionIds: string[];
+    ptyIds: string[];
   }>;
 
   if (connections.length === 0) {
@@ -168,10 +170,10 @@ export async function cmdConnections(port: number): Promise<void> {
   }
 
   // A client can hold several sessions at once now — one per open terminal.
-  const headers = ["CLIENT", "SESSIONS"];
+  const headers = ["CLIENT", "TERMINALS"];
   const rows = connections.map((c) => [
     c.clientId,
-    c.sessionIds.length > 0 ? c.sessionIds.map(formatSessionId).join(", ") : "(detached)",
+    c.ptyIds.length > 0 ? c.ptyIds.map(formatSessionId).join(", ") : "(detached)",
   ]);
 
   console.log(formatTable(headers, rows));

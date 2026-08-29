@@ -1,14 +1,17 @@
 import path from "node:path";
-import { sessionManager } from "../lib/xtmux/session-manager";
+import { taskManager } from "../lib/tasks/manager";
 
+// Still resolved through the live terminal. TASK-6 moves this onto the task
+// row as resolveTaskRoot, which is what lets a suspended task's diff, file and
+// git views keep working with no process to ask.
 export async function resolveSessionGitRoot(
   sessionId: string
 ): Promise<{ dir: string } | { error: Response }> {
-  const session = sessionManager.getSession(sessionId);
-  if (!session) {
+  const task = taskManager.getTask(sessionId);
+  if (!task) {
     return { error: Response.json({ error: "Session not found" }, { status: 404 }) };
   }
-  const cwd = await session.getCwd();
+  const cwd = (await taskManager.primaryPty(sessionId)?.getCwd()) ?? task.cwd;
   if (!cwd) {
     return { error: Response.json({ error: "Cannot determine session CWD" }, { status: 400 }) };
   }

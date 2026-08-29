@@ -219,7 +219,9 @@ export class Pty {
       cursorHidden,
       mouseEncoding,
     });
-    this.send(client, { type: "attached", ptyId: this.id });
+    // `attached` is not sent from here: it names the task this terminal
+    // belongs to, and a Pty has no notion of one. TaskManager sends it once
+    // the attachment is recorded.
 
     // If session already exited, inform the new client
     if (this.exited) {

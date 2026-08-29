@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import * as os from "os";
-import { dirLabel } from "./session-manager";
+import { dirLabel } from "./derive";
 
 describe("dirLabel", () => {
   test("uses the directory basename", () => {
