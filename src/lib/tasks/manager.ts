@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
+import * as fs from "fs";
 import * as os from "os";
 import type { Pty } from "../xtmux/pty";
 import { PtyManager } from "../xtmux/pty-manager";
@@ -8,7 +9,8 @@ import { uniqueName } from "../xtmux/naming";
 import * as db from "../db";
 import type { TaskRow } from "../db";
 import { TaskStore } from "./store";
-import { buildAgentCommand, taskEnv } from "../agent/spawn";
+import { buildAgentCommand, taskDir, taskEnv } from "../agent/spawn";
+import { writeTaskSettings } from "../agent/settings";
 import { deriveTitle, resolveRepoRoot } from "./derive";
 
 function expandTilde(filepath: string): string {
@@ -222,9 +224,27 @@ export class TaskManager {
     // throws outright when the command is missing from PATH, and a row left
     // over from that is in no project, absent from every list, and blocks its
     // own id from ever being used again.
+    // Before the spawn, because `--settings` names it: the agent reads the file
+    // at startup, and a task whose hooks were written afterwards would run its
+    // first session reporting nothing (§4.2). Skipped when the caller brought
+    // its own command — a plain shell has no hooks to install.
+    let settingsPath: string | undefined;
+    if (!options.command) {
+      try {
+        settingsPath = await writeTaskSettings(id);
+      } catch (e) {
+        this.store.delete(id);
+        // Bun.write creates the task directory before it writes the file, so a
+        // failure part-way through leaves one behind exactly as a failed spawn
+        // does — and with the row gone, nothing will ever read it again.
+        fs.rmSync(taskDir(id), { recursive: true, force: true });
+        throw e;
+      }
+    }
+
     let pty: Pty;
     try {
-      pty = this.ptys.spawn(options.command ?? buildAgentCommand(row), {
+      pty = this.ptys.spawn(options.command ?? buildAgentCommand(row, { settingsPath }), {
         id: options.ptyId,
         cols: options.cols,
         rows: options.rows,
@@ -237,6 +257,11 @@ export class TaskManager {
       });
     } catch (e) {
       this.store.delete(id);
+      // The settings we just wrote go with the row. Nothing will ever read
+      // that directory again — its task does not exist, and its id can never
+      // be issued a second time — so leaving it behind leaks a directory per
+      // failed create.
+      if (settingsPath) fs.rmSync(taskDir(id), { recursive: true, force: true });
       throw e;
     }
     this.adopt(pty, id);

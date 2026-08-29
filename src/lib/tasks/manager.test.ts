@@ -1,10 +1,14 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import type { ServerWebSocket } from "bun";
 import { applyMigrations } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import type { ServerMessage, WebSocketData } from "../xtmux/types";
+import { taskDir, taskSettingsPath } from "../agent/spawn";
 
 // A client socket that records what the server sent it.
 function fakeClient(id = "c1") {
@@ -123,6 +127,70 @@ describe("creating a task", () => {
       }
       await Bun.file(out).delete().catch(() => {});
     }
+  });
+
+  test("writes the hook settings before the agent starts, and points --settings at them", async () => {
+    const { manager } = newManager();
+    // A stand-in agent that records the argv it was given and then sits on the
+    // PTY, so the settings path can be read off the command line the real
+    // binary would have received.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-agent-"));
+    const argvFile = path.join(dir, "argv");
+    const bin = path.join(dir, "fake-agent");
+    fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > ${argvFile}\nexec cat\n`);
+    fs.chmodSync(bin, 0o755);
+
+    const previousBin = process.env.CODETOASTER_AGENT_BIN;
+    process.env.CODETOASTER_AGENT_BIN = bin;
+    const id = `test-${crypto.randomUUID()}`;
+    try {
+      await manager.createTask({ id });
+      expect(await waitFor(() => fs.existsSync(argvFile) && fs.statSync(argvFile).size > 0)).toBe(true);
+
+      const argv = fs.readFileSync(argvFile, "utf8").trim().split("\n");
+      expect(argv).toContain("--settings");
+      const settingsPath = argv[argv.indexOf("--settings") + 1];
+      expect(settingsPath).toBe(taskSettingsPath(id));
+
+      // Already on disk by the time the agent was handed the path: a file
+      // written after the spawn would leave the first session reporting
+      // nothing.
+      const parsed = JSON.parse(fs.readFileSync(settingsPath!, "utf8"));
+      expect(Object.keys(parsed.hooks)).toContain("SessionStart");
+      expect(parsed.hooks.Stop[0].hooks[0].command).toEndWith(" hook");
+    } finally {
+      if (previousBin === undefined) delete process.env.CODETOASTER_AGENT_BIN;
+      else process.env.CODETOASTER_AGENT_BIN = previousBin;
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(taskDir(id), { recursive: true, force: true });
+    }
+  });
+
+  test("a failed spawn takes the settings directory with the row", async () => {
+    const { manager, store } = newManager();
+    const previousBin = process.env.CODETOASTER_AGENT_BIN;
+    process.env.CODETOASTER_AGENT_BIN = "/nonexistent/codetoaster-not-an-agent";
+    const id = `test-${crypto.randomUUID()}`;
+    try {
+      await expect(manager.createTask({ id })).rejects.toThrow();
+      expect(store.get(id)).toBeUndefined();
+      // Nothing will ever read that directory again, and the id cannot be
+      // issued a second time.
+      expect(fs.existsSync(taskDir(id))).toBe(false);
+    } finally {
+      if (previousBin === undefined) delete process.env.CODETOASTER_AGENT_BIN;
+      else process.env.CODETOASTER_AGENT_BIN = previousBin;
+      fs.rmSync(taskDir(id), { recursive: true, force: true });
+    }
+  });
+
+  // A caller that brings its own command is not running an agent, so there are
+  // no hooks to install for it.
+  test("writes no settings for a task given its own command", async () => {
+    const { manager } = newManager();
+    const id = `test-${crypto.randomUUID()}`;
+    await manager.createTask({ id, command: shell() });
+    expect(fs.existsSync(taskDir(id))).toBe(false);
   });
 
   test("derives a title from the cwd, and a caller's title outranks it", async () => {

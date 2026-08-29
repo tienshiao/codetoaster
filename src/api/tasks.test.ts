@@ -5,6 +5,7 @@ import * as path from "path";
 import { initDatabase } from "../lib/db";
 import { taskManager } from "../lib/tasks/manager";
 import { taskRoutes } from "./tasks";
+import { taskDir } from "../lib/agent/spawn";
 
 // Driven through a real Bun.serve, so the params, status codes and JSON bodies
 // under test are the ones a client actually gets.
@@ -35,6 +36,13 @@ beforeAll(() => {
 
 afterEach(async () => {
   for (const task of taskManager.listTasks()) taskManager.closeTask(task.id);
+  // Closing a task deliberately leaves its settings directory alone — §6 makes
+  // close a suspend, and only archive is destructive (TASK-31) — and a test
+  // that deleted its own task is already gone from listTasks. So cleanup runs
+  // off what was created, not off what is still live.
+  for (const id of created.splice(0)) {
+    fs.rmSync(taskDir(id), { recursive: true, force: true });
+  }
   // Killed PTYs write from onExit a tick later; let that land before the next
   // test, and before afterAll takes the database away.
   await Bun.sleep(50);
@@ -47,12 +55,22 @@ afterAll(() => {
   fs.rmSync(dbDir, { recursive: true, force: true });
 });
 
-function post(body: unknown, url = "/api/tasks") {
-  return fetch(`${base}${url}`, {
+// Every task id the route handed back, so afterEach can clear the directories
+// they left in ~/.codetoaster/tasks.
+const created: string[] = [];
+
+async function post(body: unknown, url = "/api/tasks") {
+  const res = await fetch(`${base}${url}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
+  if (res.status === 201) {
+    // Read off a clone: the caller still gets an unconsumed body.
+    const task = await res.clone().json();
+    if (typeof task?.id === "string") created.push(task.id);
+  }
+  return res;
 }
 
 function patch(id: string, body: unknown) {
