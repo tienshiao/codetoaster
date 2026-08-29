@@ -326,24 +326,36 @@ export class TaskManager {
   /** The one thing a live PTY is still better at than the row: noticing the
    * agent has cd'd somewhere unexpected (§5.4). Opportunistic — callers ask
    * when they happen to be listing tasks anyway, and a suspended task simply
-   * has nothing to report. Re-resolves repo_root only when the directory
-   * actually moved, since that is a git call. */
+   * has nothing to report. Re-resolves repo_root when the directory moved, or
+   * when the row is still carrying a null root, since that is a git call. */
   async refreshCwd(taskId: string): Promise<string | undefined> {
     const task = this.store.get(taskId);
     if (!task) return undefined;
     const live = await this.primaryPty(taskId)?.getCwd();
-    if (!live || live === task.cwd) return task.cwd;
+    const moved = !!live && live !== task.cwd;
+    // A null root is the one value worth re-asking about even when nothing
+    // moved, because this is the only thing that ever revisits it. createTask
+    // has to record "the lookup could not run" (git contending on index.lock,
+    // a stalled mount) as "no repository" — there is no earlier value for it
+    // to keep — and `git init` inside a task's own directory is a repository
+    // appearing under a cwd that never changes. Either way the task's diff,
+    // file and git routes would 400 for the rest of its life. Re-asking costs
+    // one `rev-parse` that exits 128 immediately when the answer really is no.
+    if (!moved && task.repo_root !== null) return task.cwd;
+
     // undefined means the lookup could not be performed (git unavailable, or
     // slow enough to hit the timeout). Keeping the root we already had is the
-    // only safe answer: nothing re-resolves it once cwd stops moving, so
-    // writing null here would 400 the task's data routes for good.
-    const repoRoot = await resolveRepoRoot(live);
+    // only safe answer: writing null on an absent answer would 400 the task's
+    // data routes until something moves.
+    const resolved = await resolveRepoRoot(live ?? task.cwd);
+    const repoRoot = resolved === undefined || resolved === task.repo_root ? undefined : resolved;
+    if (!moved && repoRoot === undefined) return task.cwd;
     this.store.update(taskId, {
-      cwd: live,
+      ...(moved ? { cwd: live } : {}),
       ...(repoRoot === undefined ? {} : { repo_root: repoRoot }),
     });
     this.broadcastTask(taskId);
-    return live;
+    return live ?? task.cwd;
   }
 
   renameTask(taskId: string, title: string): boolean {

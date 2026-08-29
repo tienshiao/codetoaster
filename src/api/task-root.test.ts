@@ -114,6 +114,29 @@ describe("refreshCwd", () => {
     expect(taskManager.refreshCwd("parked")).resolves.toBe("/repo/elsewhere");
   });
 
+  // A null root is not an answer that ages well: createTask records a git that
+  // never replied as "no repository", and `git init` happens under a cwd that
+  // never moves. Nothing else revisits the column, so a task stuck on null
+  // would 400 its diff, file and git routes for good.
+  test("re-resolves a null root even though the directory never moved", async () => {
+    row("rootless", { repo_root: null, cwd: process.cwd() });
+
+    expect(await taskManager.refreshCwd("rootless")).toBe(process.cwd());
+    expect(store.get("rootless")!.repo_root).toBeTruthy();
+    expect(fs.existsSync(path.join(store.get("rootless")!.repo_root!, ".git"))).toBe(true);
+  });
+
+  // Still null after re-asking is not a write, and must not broadcast a row
+  // that did not change — every list would otherwise push a delta per task
+  // that simply is not in a repository.
+  test("a directory that really is not a repository stays null without a write", async () => {
+    row("outside", { repo_root: null, cwd: os.tmpdir() });
+    const before = store.get("outside")!;
+
+    expect(await taskManager.refreshCwd("outside")).toBe(os.tmpdir());
+    expect(store.get("outside")).toEqual(before);
+  });
+
   test("an unknown task reports nothing", () => {
     expect(taskManager.refreshCwd("nope")).resolves.toBeUndefined();
   });
