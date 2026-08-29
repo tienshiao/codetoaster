@@ -438,7 +438,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (currentProject) resolvedProjectId = currentProject.id;
       }
 
-      const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
+      // Null when the terminal has never been visibly measured (e.g. the page
+      // loaded on the diff tab). The PTY still needs a concrete initial grid,
+      // so the create falls back — but the attach below must not, or a
+      // fabricated 80x24 enters smallest-wins negotiation as this client's
+      // real measurement and clamps every other viewer of the new task.
+      const measured = terminalRef.current?.getSize() ?? null;
+      const size = measured ?? { cols: 80, rows: 24 };
       let task: TaskInfo;
       try {
         const response = await fetch("/api/tasks", {
@@ -483,7 +489,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setCurrentSessionId(task.id);
       pushMru(task.id);
       if (task.ptyId) {
-        send({ type: "attach", ptyId: task.ptyId, cols: size.cols, rows: size.rows });
+        send({ type: "attach", ptyId: task.ptyId, ...(measured ?? {}) });
       }
       return { id: task.id, name: session.name };
     },
