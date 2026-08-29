@@ -1,8 +1,9 @@
 import type { ServerWebSocket } from "bun";
 import * as os from "os";
 import * as path from "path";
-import { Pty, sanitizeSize } from "./pty";
-import type { ClientInfo, ProjectInfo, SessionInfo, WebSocketData } from "./types";
+import type { Pty } from "./pty";
+import { PtyManager } from "./pty-manager";
+import type { ProjectInfo, SessionInfo, WebSocketData } from "./types";
 import { formatDerivedName, uniqueName, type NameSource } from "./naming";
 import { gitSpawn } from "../../api/utils";
 import * as db from "../db";
@@ -57,23 +58,23 @@ async function branchLabel(cwd: string): Promise<string | undefined> {
   }
 }
 
-// What v1 called a session: a PTY plus the label the UI shows for it. The
-// name lives out here rather than on the PTY because it is a property of the
-// work, not of the process — in v2 it becomes a column on the task row, and a
-// task keeps its name across the process being harvested and respawned.
-interface SessionRecord {
-  pty: Pty;
+// The label the UI shows for a session. It lives out here rather than on the
+// PTY because a name is a property of the work, not of the process — in v2 it
+// becomes a column on the task row, and a task keeps its name across the
+// process being harvested and respawned.
+interface SessionName {
   name: string;
   nameSource: NameSource;
 }
 
+// The policy half of the split (docs/v2-architecture.md §5.2): projects,
+// names, and what to broadcast when something changes. Every live process and
+// every client attachment belongs to the PtyManager it holds — this class
+// never touches a PTY it did not ask for by id.
 export class SessionManager {
-  private sessions: Map<string, SessionRecord> = new Map();
+  private ptys = new PtyManager();
+  private names: Map<string, SessionName> = new Map();
   private projects: ProjectInfo[] = [{ id: "general", name: "General", initialPath: "", sessionIds: [] }];
-  // A client holds one attachment per session it is showing — one terminal
-  // tab each. It never shows the same session twice, so the set never needs to
-  // distinguish two views of one session (docs/v2-architecture.md §5.3).
-  private clientSessions: Map<string, Set<string>> = new Map();
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
 
   loadProjects(): void {
@@ -156,18 +157,18 @@ export class SessionManager {
     return true;
   }
 
-  async createSession(id: string, name: string | undefined, cols: number, rows: number, projectId?: string, afterSessionId?: string): Promise<Pty> {
-    if (this.sessions.has(id)) {
+  // cols/rows are the creator's raw measurement — spawn sanitizes them and
+  // falls back on its own, so a malformed pair costs a default grid rather
+  // than the session.
+  async createSession(id: string, name: string | undefined, cols?: number, rows?: number, projectId?: string, afterSessionId?: string): Promise<Pty> {
+    if (this.ptys.has(id)) {
       throw new Error(`Session "${id}" already exists`);
     }
 
     // Inherit cwd from afterSessionId's session, or from project's initialPath
     let cwd: string | undefined;
     if (afterSessionId) {
-      const afterSession = this.sessions.get(afterSessionId);
-      if (afterSession) {
-        cwd = await afterSession.pty.getCwd();
-      }
+      cwd = await this.ptys.get(afterSessionId)?.getCwd();
     }
     if (!cwd && projectId) {
       const project = this.projects.find((p) => p.id === projectId);
@@ -191,7 +192,7 @@ export class SessionManager {
     // A v1 session is a plain login shell. The Pty takes a command vector
     // rather than assuming one, which is what lets v2 spawn `claude …` through
     // the same class.
-    const pty = new Pty(id, [process.env.SHELL || "bash"], cols, rows, { cwd });
+    const pty = this.ptys.spawn([process.env.SHELL || "bash"], { id, cols, rows, cwd });
     pty.onExit(() => {
       this.broadcastSessionList();
     });
@@ -207,11 +208,7 @@ export class SessionManager {
       this.broadcastToAll({ type: "notification", ptyId, title, body });
       this.broadcastSessionList();
     });
-    this.sessions.set(id, {
-      pty,
-      name: resolvedName,
-      nameSource: name ? "manual" : "derived",
-    });
+    this.names.set(id, { name: resolvedName, nameSource: name ? "manual" : "derived" });
 
     // Determine target project and insertion position
     let targetProject: ProjectInfo | undefined;
@@ -244,7 +241,7 @@ export class SessionManager {
   }
 
   getSession(id: string): Pty | undefined {
-    return this.sessions.get(id)?.pty;
+    return this.ptys.get(id);
   }
 
   attachClient(
@@ -254,62 +251,39 @@ export class SessionManager {
     cols?: number,
     rows?: number
   ): Pty | undefined {
-    const pty = this.sessions.get(sessionId)?.pty;
-    if (!pty) {
-      return undefined;
-    }
-
-    // Attaching no longer detaches whatever the client had open: a client can
-    // hold several sessions at once. Re-attaching to a session it already holds
-    // is still valid (a remount) and replaces the entry, which re-sends restore.
-    const client: ClientInfo = {
-      id: clientId,
-      ws,
-      size: sanitizeSize(cols, rows),
-    };
-
-    pty.addClient(client);
-    let held = this.clientSessions.get(clientId);
-    if (!held) {
-      held = new Set();
-      this.clientSessions.set(clientId, held);
-    }
-    held.add(sessionId);
-    return pty;
+    return this.ptys.attach(sessionId, clientId, ws, cols, rows);
   }
 
   /** Detach one session, or every session the client holds when omitted (the
    * socket closed). */
   detachClient(clientId: string, sessionId?: string): void {
-    const held = this.clientSessions.get(clientId);
-    if (!held) return;
-    const targets = sessionId === undefined ? [...held] : held.has(sessionId) ? [sessionId] : [];
-    for (const id of targets) {
-      this.sessions.get(id)?.pty.removeClient(clientId);
-      held.delete(id);
-    }
-    if (held.size === 0) this.clientSessions.delete(clientId);
+    this.ptys.detach(clientId, sessionId);
   }
 
-  /** The session only if this client is actually attached to it — an unattached
-   * client must not be able to write to a session by naming it. */
-  getClientSession(clientId: string, sessionId: string): Pty | undefined {
-    if (!this.clientSessions.get(clientId)?.has(sessionId)) return undefined;
-    return this.sessions.get(sessionId)?.pty;
+  /** False when the client is not attached to the session it named —
+   * attachment is the authorization, so the caller can report it rather than
+   * dropping the keystroke silently. */
+  writeToSession(clientId: string, sessionId: string, data: string): boolean {
+    return this.ptys.write(clientId, sessionId, data);
+  }
+
+  /** False on the same unattached-client check as writeToSession. A stale
+   * resize is not worth an error reply — a client that just detached will
+   * re-measure on its next attach — but the answer is the layer below's to
+   * give, not this one's to swallow. */
+  resizeSession(clientId: string, sessionId: string, cols: number | null, rows: number | null): boolean {
+    return this.ptys.resize(clientId, sessionId, cols, rows);
   }
 
   getClientSessionIds(clientId: string): string[] {
-    return [...(this.clientSessions.get(clientId) ?? [])];
+    return this.ptys.clientPtyIds(clientId);
   }
 
   killSession(id: string): boolean {
-    const record = this.sessions.get(id);
-    if (!record) {
+    if (!this.ptys.kill(id)) {
       return false;
     }
-
-    record.pty.kill();
-    this.sessions.delete(id);
+    this.names.delete(id);
 
     // Remove from project
     for (const project of this.projects) {
@@ -320,19 +294,11 @@ export class SessionManager {
       }
     }
 
-    // Remove this session from every client that held it, dropping clients
-    // left holding nothing.
-    for (const [clientId, held] of this.clientSessions) {
-      if (held.delete(id) && held.size === 0) {
-        this.clientSessions.delete(clientId);
-      }
-    }
-
     return true;
   }
 
   renameSession(id: string, name: string): boolean {
-    const record = this.sessions.get(id);
+    const record = this.names.get(id);
     if (!record) return false;
     record.name = name;
     // An explicit rename opts the session out of derivation for good.
@@ -342,23 +308,22 @@ export class SessionManager {
   }
 
   private sessionNames(): string[] {
-    return [...this.sessions.values()].map((record) => record.name);
+    return [...this.names.values()].map((record) => record.name);
   }
 
   acknowledgeSession(sessionId: string): void {
-    const pty = this.sessions.get(sessionId)?.pty;
+    const pty = this.ptys.get(sessionId);
     if (pty && pty.hasNotification) {
       pty.acknowledge();
       this.broadcastSessionList();
     }
   }
 
-  private sessionToInfo(record: SessionRecord): SessionInfo {
-    const { pty } = record;
+  private sessionToInfo(pty: Pty, label: SessionName): SessionInfo {
     return {
       id: pty.id,
-      name: record.name,
-      nameSource: record.nameSource,
+      name: label.name,
+      nameSource: label.nameSource,
       title: pty.title,
       clientCount: pty.getClientCount(),
       size: pty.getSize(),
@@ -372,8 +337,9 @@ export class SessionManager {
     const result: SessionInfo[] = [];
     for (const project of this.projects) {
       for (const id of project.sessionIds) {
-        const record = this.sessions.get(id);
-        if (record) result.push(this.sessionToInfo(record));
+        const pty = this.ptys.get(id);
+        const label = this.names.get(id);
+        if (pty && label) result.push(this.sessionToInfo(pty, label));
       }
     }
     return result;
@@ -388,7 +354,7 @@ export class SessionManager {
   }
 
   reorderProjects(orderedProjects: Array<{ id: string; sessionIds: string[] }>): void {
-    const validSessionIds = new Set(this.sessions.keys());
+    const validSessionIds = new Set(this.ptys.ids());
     const existingProjectMap = new Map(this.projects.map((p) => [p.id, p]));
     const seenProjects = new Set<string>();
     const seenSessions = new Set<string>();

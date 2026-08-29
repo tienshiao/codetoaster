@@ -23,8 +23,10 @@ Sessions are created over the WebSocket protocol, not HTTP. Endpoint is
 
 Terminal messages are addressed by `ptyId` (protocol v2, §5.3 — a v1 session
 *is* a PTY, so this is the same id the HTTP routes take). One socket can hold
-several PTYs at once; every `input`/`resize`/`detach` must name the one it
-means, and naming a PTY you never attached to is rejected.
+several PTYs at once, so `input` and `resize` must name the one they mean, and
+naming a PTY you never attached to is rejected. `detach` names one too, except
+that omitting `ptyId` drops every PTY the socket holds — what the sample below
+does on its way out.
 
 ```ts
 const ws = new WebSocket("ws://localhost:4599/terminal");

@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import { dirname, basename } from "node:path";
 import index from "./frontend/index.html";
 import { sessionManager } from "./lib/xtmux/session-manager";
-import { sanitizeSize } from "./lib/xtmux/pty";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
 import { diffRoutes } from "./api/diff";
@@ -249,11 +248,7 @@ export function startServer(options?: ServerOptions) {
         switch (parsed.type) {
           case "create": {
             const { ptyId, name, cols, rows, projectId, afterSessionId } = parsed;
-            // The PTY needs a concrete initial size, so fall back to 80x24 for
-            // malformed values; attachClient re-sanitizes the raw cols/rows so a
-            // fabricated size never enters negotiation as the creator's own.
-            const size = sanitizeSize(cols, rows) ?? { cols: 80, rows: 24 };
-            sessionManager.createSession(ptyId, name || undefined, size.cols, size.rows, projectId, afterSessionId).then(
+            sessionManager.createSession(ptyId, name || undefined, cols, rows, projectId, afterSessionId).then(
               () => {
                 // The socket can close while the session is being created —
                 // its `close` already ran detachClient, so attaching now would
@@ -289,20 +284,14 @@ export function startServer(options?: ServerOptions) {
           }
 
           case "input": {
-            const pty = sessionManager.getClientSession(clientId, parsed.ptyId);
-            if (pty) {
-              pty.write(parsed.data);
-            } else {
+            if (!sessionManager.writeToSession(clientId, parsed.ptyId, parsed.data)) {
               sendError(ws, `Not attached to session "${parsed.ptyId}"`);
             }
             break;
           }
 
           case "resize": {
-            const pty = sessionManager.getClientSession(clientId, parsed.ptyId);
-            if (pty) {
-              pty.updateClientSize(clientId, parsed.cols, parsed.rows);
-            }
+            sessionManager.resizeSession(clientId, parsed.ptyId, parsed.cols, parsed.rows);
             break;
           }
 
