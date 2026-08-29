@@ -1,0 +1,12 @@
+/* Tailwind entry for /design-sync — see build-css.mjs.
+ *
+ * Wraps the app's real stylesheet so preview files count as scannable source.
+ * Tailwind 4 only emits utilities it finds in scanned sources, so a class used
+ * ONLY in a preview (gap-2.5, hover:bg-accent, ...) would otherwise have no CSS
+ * and the card would silently render unspaced/unstyled.
+ *
+ * Wrapping moves the auto-detection base to this directory, so both roots are
+ * declared explicitly. */
+@import "../src/frontend/index.css";
+@source "../src/frontend";
+@source "./previews";

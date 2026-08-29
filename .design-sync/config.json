@@ -1,0 +1,137 @@
+{
+  "projectId": "35252c15-c5af-4c85-a1de-1f14ea2bbf5e",
+  "shape": "package",
+  "pkg": "codetoaster",
+  "globalName": "CodeToaster",
+  "entry": ".design-sync/ds-entry.tsx",
+  "srcDir": "src/frontend",
+  "tsconfig": "tsconfig.json",
+  "extraEntries": [
+    "@tanstack/react-query",
+    "@tanstack/react-router"
+  ],
+  "buildCmd": "node .design-sync/build-css.mjs",
+  "cssEntry": ".design-sync/.cache/tailwind.css",
+  "docsDir": ".design-sync/docs",
+  "readmeHeader": ".design-sync/conventions.md",
+  "componentSrcMap": {
+    "AlertDialog": "src/frontend/components/ui/alert-dialog.tsx",
+    "Button": "src/frontend/components/ui/button.tsx",
+    "Collapsible": "src/frontend/components/ui/collapsible.tsx",
+    "Command": "src/frontend/components/ui/command.tsx",
+    "Dialog": "src/frontend/components/ui/dialog.tsx",
+    "DropdownMenu": "src/frontend/components/ui/dropdown-menu.tsx",
+    "Input": "src/frontend/components/ui/input.tsx",
+    "Popover": "src/frontend/components/ui/popover.tsx",
+    "Select": "src/frontend/components/ui/select.tsx",
+    "Separator": "src/frontend/components/ui/separator.tsx",
+    "Sheet": "src/frontend/components/ui/sheet.tsx",
+    "Sidebar": "src/frontend/components/ui/sidebar.tsx",
+    "Skeleton": "src/frontend/components/ui/skeleton.tsx",
+    "Tabs": "src/frontend/components/ui/tabs.tsx",
+    "Textarea": "src/frontend/components/ui/textarea.tsx",
+    "Toaster": "src/frontend/components/ui/sonner.tsx",
+    "Tooltip": "src/frontend/components/ui/tooltip.tsx",
+    "CommandPalette": "src/frontend/components/CommandPalette.tsx",
+    "DirectoryPickerDialog": "src/frontend/components/DirectoryPickerDialog.tsx",
+    "FilterInput": "src/frontend/components/FilterInput.tsx",
+    "HelpButton": "src/frontend/components/HelpDialog.tsx",
+    "InitialPathAutocomplete": "src/frontend/components/InitialPathAutocomplete.tsx",
+    "ProjectDialog": "src/frontend/components/ProjectDialog.tsx",
+    "RenameDialog": "src/frontend/components/RenameDialog.tsx",
+    "SettingsButton": "src/frontend/components/SettingsDialog.tsx",
+    "StatusDot": "src/frontend/components/StatusDot.tsx",
+    "SymbolPopover": "src/frontend/components/SymbolPopover.tsx",
+    "TabSwitcher": "src/frontend/components/TabSwitcher.tsx",
+    "TerminalPreview": "src/frontend/components/TerminalPreview.tsx",
+    "TerminalSearchBar": "src/frontend/components/TerminalSearchBar.tsx"
+  },
+  "overrides": {
+    "Sidebar": {
+      "cardMode": "column",
+      "viewport": "900x520"
+    },
+    "Tabs": {
+      "cardMode": "column"
+    },
+    "Dialog": {
+      "cardMode": "single",
+      "primaryStory": "RenameSession"
+    },
+    "AlertDialog": {
+      "cardMode": "single",
+      "primaryStory": "CloseSession"
+    },
+    "Sheet": {
+      "cardMode": "single",
+      "primaryStory": "SessionDetails"
+    },
+    "DropdownMenu": {
+      "cardMode": "single",
+      "primaryStory": "SessionActions"
+    },
+    "Popover": {
+      "cardMode": "single",
+      "primaryStory": "SymbolLookup"
+    },
+    "Tooltip": {
+      "cardMode": "single",
+      "primaryStory": "Sides"
+    },
+    "DirectoryPickerDialog": {
+      "cardMode": "single",
+      "primaryStory": "BrowsingToAProject"
+    },
+    "HelpButton": {
+      "cardMode": "single",
+      "primaryStory": "ShortcutReference"
+    },
+    "ProjectDialog": {
+      "cardMode": "single",
+      "primaryStory": "CreateProject"
+    },
+    "RenameDialog": {
+      "cardMode": "single",
+      "primaryStory": "RenameSession"
+    },
+    "SettingsButton": {
+      "cardMode": "single",
+      "primaryStory": "PreferencesDialog"
+    },
+    "SymbolPopover": {
+      "cardMode": "single",
+      "primaryStory": "DefinitionsAndReferences"
+    },
+    "Select": {
+      "cardMode": "single",
+      "primaryStory": "Open"
+    },
+    "Skeleton": {
+      "cardMode": "column"
+    },
+    "Toaster": {
+      "cardMode": "column"
+    },
+    "InitialPathAutocomplete": {
+      "cardMode": "column"
+    },
+    "Input": {
+      "cardMode": "column"
+    },
+    "Textarea": {
+      "cardMode": "column"
+    },
+    "Collapsible": {
+      "cardMode": "column"
+    },
+    "Separator": {
+      "cardMode": "column"
+    },
+    "Command": {
+      "cardMode": "column"
+    },
+    "TerminalSearchBar": {
+      "cardMode": "column"
+    }
+  }
+}
