@@ -20,16 +20,20 @@ function DiffRoute() {
   const ptyId = sessions.find((s) => s.id === id)?.ptyId ?? null;
 
   const handleSubmit = useCallback(
-    (promptText: string) => {
-      if (ptyId) {
-        handleSendMessage({ type: "input", ptyId, data: promptText });
-      }
+    (promptText: string): boolean => {
+      // No terminal, no delivery. Said out loud so the caller keeps the
+      // review: a task whose agent has exited has no PTY, and silently
+      // swallowing the prompt while the comments were cleared threw the whole
+      // review away with nothing to show for it.
+      if (!ptyId) return false;
+      handleSendMessage({ type: "input", ptyId, data: promptText });
       navigate({
         to: "/sessions/$slug",
         params: { slug },
       });
       // Focus terminal after navigation
       setTimeout(() => terminalRef.current?.focus(), 100);
+      return true;
     },
     [handleSendMessage, ptyId, navigate, slug, terminalRef]
   );

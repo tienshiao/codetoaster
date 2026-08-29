@@ -29,7 +29,10 @@ import { Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
 
 interface DiffViewProps {
   sessionId: string;
-  onSubmit: (promptText: string) => void;
+  /** False when the prompt could not be delivered — a task whose agent has
+   * exited has no terminal to send it to. The review is kept in that case
+   * rather than cleared, since the user's comments are the only copy. */
+  onSubmit: (promptText: string) => boolean;
 }
 
 const CONTEXT_LINES = 20;
@@ -222,10 +225,11 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
 
   const handleConfirmSubmit = useCallback(() => {
     setShowSubmitDialog(false);
-    onSubmit(promptText);
-    // Comments persist in the view-state store across unmounts, so drop them
-    // explicitly — otherwise the next submit would resend the same feedback
-    clearComments();
+    // Only once it has actually gone somewhere. Comments persist in the
+    // view-state store across unmounts, so they have to be dropped explicitly
+    // or the next submit resends the same feedback — but dropping them on a
+    // submit that went nowhere destroys a review the user cannot get back.
+    if (onSubmit(promptText)) clearComments();
   }, [onSubmit, promptText, clearComments]);
 
   // Stable scroll persistence handles for the layout's restore/persist/reseed.

@@ -163,18 +163,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     isViewingTerminalRef.current = !isDiff;
   }, [isDiff]);
 
-  // Keep refs in sync with state
-  useEffect(() => {
-    currentSessionIdRef.current = currentSessionId;
-  }, [currentSessionId]);
+  // The ref is written here, with the state, and never by an effect syncing it
+  // afterwards. That sync was a bug the moment `attached` started handing back
+  // any attachment for a task it is not showing: effects run child-first, so
+  // the route's attach effect could set the ref to the task it was opening,
+  // and the provider's sync effect would then run in the same commit and put
+  // the *previous* render's value back. An `attached` frame arriving in that
+  // window is judged against a task the user already left, so the client
+  // detaches the terminal it just asked for and nothing retries.
+  const setCurrentSession = useCallback((id: string | null) => {
+    currentSessionIdRef.current = id;
+    setCurrentSessionId(id);
+  }, []);
 
-  useEffect(() => {
-    sessionsRef.current = sessions;
-  }, [sessions]);
-
-  useEffect(() => {
-    projectsRef.current = projects;
-  }, [projects]);
+  // Assigned during render, not from an effect, for the same reason
+  // `sendRef` is below. Effects run child-first, so a route's attach effect
+  // reads these in the same commit that produced them — and a version behind
+  // is exactly wrong on the commit that matters: the one where a reconnect has
+  // just delivered a fresh list because every ptyId in the old one is dead.
+  // Attaching to the remembered id then draws `Terminal "…" not found` into
+  // the grid, and nothing tries again.
+  sessionsRef.current = sessions;
+  projectsRef.current = projects;
 
   const onMessage = useCallback((message: ServerMessage) => {
     if (message.type === "tasks") {
@@ -220,7 +230,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
       attachedPtyRef.current = message.ptyId;
       setCurrentPtyId(message.ptyId);
-      setCurrentSessionId(message.taskId);
+      setCurrentSession(message.taskId);
     }
 
     if (message.type === "activity") {
@@ -283,18 +293,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     onMessage,
     onConnect: () => {
       if (terminalReadyRef.current) {
+        // Ask, and re-attach off the answer rather than from here. The list we
+        // are holding is the one from before the socket dropped, and a
+        // reconnect is exactly when its ptyIds stop being true: a daemon
+        // restart (or `bun run dev` reloading one) keeps every task row but
+        // gives them all new terminals, or none at all until they are resumed.
+        // Attaching to a remembered ptyId then draws `Terminal "…" not found`
+        // into the user's grid — an `error` frame is not addressed to a PTY, so
+        // the filter below cannot drop it — and nothing tries again. The route
+        // effect re-attaches when the fresh list lands, which is the only
+        // moment a ptyId is known to be real.
         send({ type: "list" });
-
-        // Re-attach to the session that was active before disconnect. Omit the
-        // size when the terminal has never been visibly measured (e.g. the
-        // page loaded on the diff tab) so it doesn't constrain negotiation.
-        const taskId = currentSessionIdRef.current;
-        const ptyId = sessionsRef.current.find((s) => s.id === taskId)?.ptyId;
-        if (ptyId) {
-          const size = terminalRef.current?.getSize();
-          send({ type: "attach", ptyId, ...(size ?? {}) });
-        }
       }
+      // Whatever we held, we no longer hold: the server forgot this client
+      // when the socket closed. Said out loud so `attachSession` can tell a
+      // live attachment from a remembered one.
+      attachedPtyRef.current = null;
+      setCurrentPtyId(null);
     },
     onDisconnect: () => {
       setSessionsLoaded(false);
@@ -382,14 +397,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // terminal stays dark.
   const attachSession = useCallback(
     (id: string): boolean => {
-      if (id === currentSessionIdRef.current) {
+      const ptyId = sessionsRef.current.find((s) => s.id === id)?.ptyId;
+
+      // Nothing to do only when this really is the terminal we are holding.
+      // Being on the same task is not enough: after a reconnect the attachment
+      // is gone and the task's ptyId is usually a new one, and a check on the
+      // task id alone answered "already attached" to the one call that could
+      // have recovered it — leaving the only task the user was looking at as
+      // the one task with no way back.
+      if (id === currentSessionIdRef.current && ptyId && attachedPtyRef.current === ptyId) {
         if (isViewingTerminalRef.current) {
           send({ type: "acknowledge", taskId: id });
         }
         return true;
       }
 
-      const ptyId = sessionsRef.current.find((s) => s.id === id)?.ptyId;
       if (!ptyId) return false;
 
       terminalRef.current?.resetAttached();
@@ -397,21 +419,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (attachedPtyRef.current) {
         send({ type: "detach", ptyId: attachedPtyRef.current });
       }
+      // Let go of it here rather than waiting for `attached` to name the new
+      // one. Output the server dispatched before it processed that detach is
+      // still on the wire, and it carries the old ptyId — which, while this
+      // still pointed at it, passed the filter below and painted the terminal
+      // we just left into the grid being prepared for this one.
+      attachedPtyRef.current = null;
+      setCurrentPtyId(null);
 
-      // Written synchronously, not left to the syncing effect: `attached` for
-      // the new task can arrive before React re-renders, and the handler above
-      // would hand the attachment straight back as belonging to someone else.
-      currentSessionIdRef.current = id;
+      // Written synchronously: `attached` for the new task can arrive before
+      // React re-renders, and the handler above would hand the attachment
+      // straight back as belonging to someone else.
       const size = terminalRef.current?.getSize();
+      setCurrentSession(id);
       send({ type: "attach", ptyId, ...(size ?? {}) });
       if (isViewingTerminalRef.current) {
         send({ type: "acknowledge", taskId: id });
       }
-      setCurrentSessionId(id);
       pushMru(id);
       return true;
     },
-    [send, pushMru],
+    [send, pushMru, setCurrentSession],
   );
 
   // Creating a task is a request now, not a message: it resolves a directory,
@@ -485,15 +513,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       );
       // Written before the attach: `attached` comes back naming this task, and
       // the handler hands back any attachment for a task it is not showing.
-      currentSessionIdRef.current = task.id;
-      setCurrentSessionId(task.id);
+      setCurrentSession(task.id);
       pushMru(task.id);
       if (task.ptyId) {
         send({ type: "attach", ptyId: task.ptyId, ...(measured ?? {}) });
       }
       return { id: task.id, name: session.name };
     },
-    [send, pushMru],
+    [send, pushMru, setCurrentSession],
   );
 
   const renameSession = useCallback(
@@ -630,12 +657,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // resize at a process that no longer exists.
         attachedPtyRef.current = null;
         setCurrentPtyId(null);
-        setCurrentSessionId(null);
+        setCurrentSession(null);
       }
 
       setSessions((prev) => prev.filter((s) => s.id !== id));
     },
-    [send],
+    [send, setCurrentSession],
   );
 
   const sessionLabels = useMemo(() => sessionDisplayNames(sessions), [sessions]);

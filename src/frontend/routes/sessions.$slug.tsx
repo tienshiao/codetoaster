@@ -44,6 +44,16 @@ function SessionComponent() {
     lastSlugRef.current = null;
   }, [slug]);
 
+  // And when the socket drops. The attachment did not survive it, so the slug
+  // is no longer handled — without this the latch above keeps the effect from
+  // ever asking again, and the one task the user was actually looking at is
+  // the one task with no way back: its terminal stays dark until they navigate
+  // somewhere else and return. `sessionsLoaded` going false is the disconnect,
+  // seen from here.
+  useEffect(() => {
+    if (!sessionsLoaded) lastSlugRef.current = null;
+  }, [sessionsLoaded]);
+
   const { id } = parseSessionSlug(slug);
   const sessionExists = sessions.some((s) => s.id === id);
   const showNotFound = isConnected && sessionsLoaded && !sessionExists;
