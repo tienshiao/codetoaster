@@ -197,6 +197,11 @@ CREATE TABLE tasks (
   worktree_path         TEXT,                 -- NULL when running in the project dir
   branch                TEXT,
   base_ref              TEXT,
+  worktree_state        TEXT NOT NULL,        -- none|present|evicted|missing (§5.6)
+  wip_ref               TEXT,                 -- refs/codetoaster/wip/<id> while a snapshot exists
+  wip_at                INTEGER,
+  setup_duration_ms     INTEGER,              -- last setup_command run; scales eviction grace
+  pinned                INTEGER NOT NULL DEFAULT 0,  -- exempt from eviction
   agent_session_id      TEXT,                 -- the uuid we passed to --session-id
   transcript_path       TEXT,
   agent_state           TEXT NOT NULL,        -- starting|busy|idle|needs_attention|exited|unknown
@@ -217,7 +222,9 @@ blobs. They live at `~/.codetoaster/tasks/<id>/scrollback.ans`, alongside that t
 `settings.json`.
 
 `projects` gains `default_base_ref`, `default_model`, `default_permission_mode`,
-`worktree_default`.
+`worktree_default`, `setup_command` (run after every `git worktree add`, e.g.
+`bun install`), and `worktree_copy` (ignored files to copy from the project checkout,
+e.g. `.env`).
 
 ### 5.2 `TaskManager` replaces `SessionManager`
 
@@ -363,18 +370,105 @@ dropped from the layout — a choice worth making in the UI, not silently.
 
 ### 5.6 Worktrees
 
-New `lib/worktree.ts`:
-
-- create: `git worktree add <path> -b <branch> <base_ref>`, at
-  `~/.codetoaster/worktrees/<project-slug>/<task-slug>` (outside the repo, so no
-  `.gitignore` interaction).
-- branch naming: `codetoaster/<task-slug>`, with collision suffixing.
-- archive: refuse-with-warning when the worktree is dirty or has unpushed commits, then
-  `git worktree remove` and `git worktree prune`.
-- an orphan sweep on boot for worktrees whose task row is gone.
-
 Worktrees are what let cattle be parallel at all — without them, N tasks in one project
-fight over one checkout's index and HEAD.
+fight over one checkout's index and HEAD. But a worktree is stateful and a task is never
+explicitly closed (§6), so left alone they accumulate without bound. The resolution is
+the same one the PTY got: **the worktree is a materialized cache of the branch.** The
+branch — plus a WIP snapshot ref when the tree is dirty — is the durable artifact;
+the checkout is disposable and rebuildable. Nothing the user cares about lives in a
+process or a directory; it lives in SQLite and in git.
+
+New `lib/worktree/*`:
+
+**Create.** `git worktree add <path> -b <branch> <base_ref>` at
+`~/.codetoaster/worktrees/<project-id>/<task-id>` — outside the repo, so no
+`.gitignore` interaction. The path is derived from **ids, not slugs**: Claude Code keys
+transcripts on the escaped cwd, so a path that moved when a task was renamed would take
+the `--resume` lookup and the `--continue` fallback down with it. The same rule makes
+evict/restore land on the same path. Branch naming: `codetoaster/<task-slug>` with
+collision suffixing. All git that touches a repo's worktree list is serialized per
+`repo_root` — `git worktree add` takes repo locks, and N parallel creations race on the
+collision suffix. After creation (and after every restore) run the project's
+`setup_command` and copy `worktree_copy` files; the output renders in the agent tab
+rather than blocking silently, by spawning the agent as
+`sh -c '<setup> && exec "$@"' sh claude …` so the prompt still travels through argv.
+
+**Three levels of gone**, each strictly downstream of the last:
+
+| Level | Removes | Keeps | Reversible | Trigger |
+|---|---|---|---|---|
+| suspend (§5.5) | PTYs | worktree, row, scrollback | yes | idle / manual / restart |
+| **evict** | the checkout directory | branch, WIP ref, row, scrollback | yes | suspended + grace elapsed, or manual |
+| archive | worktree; branch only if merged or pushed | WIP ref for N days | mostly | explicit, confirmed |
+
+Eviction only has to answer "is this recoverable?" — a suspended task has no PTYs, so
+the harvester's is-anything-running guards are already discharged.
+
+**Dirty trees are evictable.** In-progress cattle are dirty most of the time, so a
+"never evict dirty" rule would leave the sprawl problem unsolved for exactly the tasks
+that accumulate. Instead, snapshot the whole working state into a commit under our own
+ref namespace, built through a throwaway index so the live tree is never mutated:
+
+```sh
+GIT_INDEX_FILE=$tmp git read-tree HEAD
+GIT_INDEX_FILE=$tmp git add -A
+TREE=$(GIT_INDEX_FILE=$tmp git write-tree)
+WIP=$(git commit-tree $TREE -p HEAD -m "codetoaster wip <task-id>")
+git update-ref refs/codetoaster/wip/<task-id> $WIP
+git worktree remove --force <path> && git worktree prune
+```
+
+The ref keeps the objects alive against gc and, living under `refs/codetoaster/*`
+rather than `refs/stash`, never entangles with the user's stash stack. The branch is
+untouched — no synthetic commit in their history, no untracked file promoted to
+tracked. Known simplifications: one tree flattens staged-vs-unstaged, and `git add -A`
+honours `.gitignore`, so ignored build artifacts do not survive — which is why
+`setup_command` / `worktree_copy` are load-bearing, not optional. Verified on a scratch
+repo: a modified tracked file restores as modified, an untracked file as untracked,
+HEAD and branch history intact.
+
+**Restore** is the mirror of agent resume and hides behind the same two-phase banner
+(§5.5, "restoring workspace…"):
+
+```sh
+git worktree add <path> <branch>
+git read-tree -u --reset refs/codetoaster/wip/<task-id>
+git reset --mixed HEAD        # files stay, index returns to HEAD: dirt reads back as dirt
+```
+
+then `setup_command`, then `claude --resume`. **Guard: the branch may have moved.** If
+the user committed to the branch from another checkout between evict and restore, the
+snapshot's parent is a stale HEAD and `read-tree --reset` would overwrite the newer
+commit's changes with old dirt. Restore checks `wip.parent == branch HEAD`; on mismatch
+it restores the clean worktree and offers *apply stale WIP / keep as ref / discard* on
+the task card — broken-but-actionable, never silent.
+
+**Eviction policy** is driven by restore *cost*, not age or disk: grace =
+base (default 7 days) scaled by the last `setup_duration_ms`, so a task whose restore
+re-runs a 90-second install waits far longer than one that restores in 200 ms.
+`pinned` exempts a task outright. A per-project eviction is also available manually.
+
+**Archive always snapshots before destroying** — the WIP ref is written
+unconditionally and kept for N days (default 30), so the confirmation dialog offers a
+recoverable action rather than a bet. Branch deletion uses `git branch -d` semantics:
+only when merged into the base ref or pushed, and the default leans toward keeping,
+since a ref costs nothing next to losing commits. The remote is never touched. A
+separate hard *delete* drops the refs; that is the only truly irreversible operation.
+
+**The card tells the truth.** Each task shows `worktree_state`, dirty file count,
+unpushed commit count, and merged-into-base — cheap (`git status --porcelain`,
+`git rev-list @{u}..`, `git branch --merged`), computed lazily on render or cached per
+harvester tick. A merged task is done; that is the natural set to suggest archiving.
+
+**Boot reconciliation runs both ways**, per project, from `git worktree list
+--porcelain` against task rows:
+
+- directory on disk, no row → remove if clean; if dirty, leave it and surface an
+  *unclaimed worktree* card with a manual delete. Never auto-delete dirty, even orphans.
+- row says `present`, directory gone (user `rm -rf`, disk cleaner, moved repo) →
+  `worktree_state = missing`; restore on open. Branch also gone → a
+  broken-but-actionable card, never a dead terminal.
+- `git worktree prune` afterwards; expire WIP refs past their retention.
 
 ## 6. Task lifecycle
 
@@ -405,7 +499,9 @@ fight over one checkout's index and HEAD.
 ```
 
 Chat products have no "close", and neither should this: closing a task suspends it.
-Archive is the deliberate, confirmed, worktree-cleaning operation.
+Archive is the deliberate, confirmed, worktree-cleaning operation. Eviction (§5.6) is
+not a lifecycle state of its own — it is `worktree_state` on a suspended task, and
+opening the task restores the checkout before resuming the agent.
 
 ## 7. Frontend architecture
 
@@ -571,7 +667,8 @@ goes with that: you don't hand-sort cattle.
 thin tab hosts over the layouts they already delegate to), `CommandPalette.tsx`
 (task-oriented, not session-oriented).
 
-**New:** `lib/tasks/{store,manager,harvester}.ts`, `lib/worktree.ts`, `lib/agent/`
+**New:** `lib/tasks/{store,manager,harvester}.ts`, `lib/worktree/*` (create/remove,
+WIP snapshot/restore, evictor, reconciliation), `lib/agent/`
 (spawn args, settings file generation, hook ingestion), `cli/hook.ts`,
 `frontend/layout-store.ts`, `frontend/components/tabs/*`, `frontend/Composer.tsx`,
 `frontend/components/Explorer.tsx`.
@@ -593,8 +690,10 @@ thin tab hosts over the layouts they already delegate to), `CommandPalette.tsx`
    Claude Code that changes payloads, leaves tasks in `unknown` state. Everything must
    still work degraded: fall back to the v1 output-activity heuristic for busy/idle, and
    to `--continue` for resume. Never let a missing hook make a task unusable.
-5. **Worktree sprawl.** Disk and stale branches. Archive must clean up; boot must sweep
-   orphans; the UI must show which tasks own worktrees.
+5. **Worktree sprawl.** Disk and stale branches. The evict tier (§5.6) is the answer,
+   and it only works if dirty trees are evictable — hence the out-of-branch WIP
+   snapshot. Boot must reconcile both ways; the UI must show which tasks own
+   worktrees and whether they are dirty, unpushed, or merged.
 6. **Mobile regression.** v1 has real accumulated mobile work (touch scrolling in the
    alt buffer, pinch, keyboard viewport, sidebar sheets). Splits are meaningless on a
    phone: below the mobile breakpoint, force a single tab group and render both sidebars
@@ -620,7 +719,8 @@ big bang *at merge time*.
 - **Phase 3 — Harvester.** Idle/manual/restart, scrollback snapshots, two-phase restore.
 - **Phase 4 — New shell.** Composer, task list, tab groups + splits, right-hand
   Explorer, layout store, re-keyed view state. The bulk of the frontend work.
-- **Phase 5 — Worktrees.** Creation options in the composer, archive cleanup, orphan
-  sweep, worktree-aware task cards.
+- **Phase 5 — Worktrees.** Creation options in the composer, WIP snapshot/restore,
+  the evict tier, archive cleanup, two-way boot reconciliation, worktree-aware task
+  cards.
 - **Phase 6 — Polish.** Mobile pass, keyboard shortcuts (tab nav, split, close),
   command palette over tasks and tabs, one-time migration of v1 projects, README.
