@@ -290,6 +290,7 @@ Commands:
   stop            Stop the daemon
   status          Check if daemon is running
   instances       List all running instances (across all ports)
+  hook            Report a Claude Code hook to the daemon (run by the agent)
   help            Show this help message
 
 Options:

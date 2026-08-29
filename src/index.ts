@@ -1,16 +1,4 @@
 import { parseArgs } from "util";
-import {
-  cmdStart,
-  cmdForeground,
-  cmdList,
-  cmdKill,
-  cmdConnections,
-  cmdOpen,
-  cmdStop,
-  cmdStatus,
-  cmdInstances,
-  cmdHelp,
-} from "./cli/commands";
 
 (async () => {
   const { values, positionals } = parseArgs({
@@ -24,6 +12,34 @@ import {
     allowPositionals: true,
     strict: false,
   });
+
+  const command = positionals[0] ?? "";
+
+  // Dispatched before anything reaches ./cli/commands, and by dynamic import:
+  // that module pulls in the server and its entire graph, ~90ms of startup a
+  // hook has no use for. Hooks run synchronously in the agent's path and fire
+  // on every prompt and every stop, so the cheapest possible path through this
+  // file is the point.
+  if (command === "hook") {
+    const { cmdHook } = await import("./cli/hook");
+    await cmdHook();
+    // Always 0, and explicit: a stdin read that outlived its deadline is still
+    // pending, and would otherwise hold the process open past the work.
+    process.exit(0);
+  }
+
+  const {
+    cmdStart,
+    cmdForeground,
+    cmdList,
+    cmdKill,
+    cmdConnections,
+    cmdOpen,
+    cmdStop,
+    cmdStatus,
+    cmdInstances,
+    cmdHelp,
+  } = await import("./cli/commands");
 
   if (values.help) {
     cmdHelp();
@@ -39,7 +55,6 @@ import {
 
   const port = typeof values.port === "string" ? parseInt(values.port, 10) : parseInt(process.env.PORT || "4000", 10);
   const dbPath = typeof values.db === "string" ? values.db : undefined;
-  const command = positionals[0] ?? "";
 
   switch (command) {
     case "":
