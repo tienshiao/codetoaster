@@ -57,6 +57,73 @@ function shell(exitImmediately = false): string[] {
   return exitImmediately ? ["true"] : [process.env.SHELL || "bash"];
 }
 
+// §9's risk 4: an agent run with hooks disabled, or one whose payloads a
+// future version has changed, reports nothing at all. The task list has to
+// stay useful anyway.
+describe("degraded mode, when no hook ever arrives", () => {
+  test("a silent task stops claiming to be starting", async () => {
+    const { manager, store } = newManager();
+    manager.setHookGrace(60);
+    // `cat` sits there producing nothing, so the output heuristic has nothing
+    // to say either — this is the case that would otherwise read `starting`
+    // for the life of the task.
+    await manager.createTask({ id: "t1", command: ["cat"] });
+    expect(store.get("t1")!.agent_state).toBe("starting");
+
+    expect(await waitFor(() => store.get("t1")!.agent_state === "unknown")).toBe(true);
+  });
+
+  test("output stands in for busy and idle", async () => {
+    const { manager, store } = newManager();
+    manager.setHookGrace(60);
+    await manager.createTask({ id: "t1", command: ["sh", "-c", "printf hello; exec cat"] });
+
+    // v1's inference, kept for exactly this case: bytes out means working.
+    expect(await waitFor(() => store.get("t1")!.agent_state === "busy")).toBe(true);
+    // ...and the 300ms trailing debounce closing means it stopped.
+    expect(await waitFor(() => store.get("t1")!.agent_state === "idle")).toBe(true);
+  });
+
+  test("a hook, once seen, outranks anything the terminal does", async () => {
+    const { manager, store } = newManager();
+    manager.setHookGrace(60);
+    await manager.createTask({ id: "t1", command: ["sh", "-c", "sleep 0.2; printf hello; exec cat"] });
+
+    // The agent speaks for itself first...
+    manager.applyHook("t1", { hook_event_name: "Stop", last_assistant_message: "done" });
+    expect(store.get("t1")!.agent_state).toBe("idle");
+
+    // ...and then the terminal paints. A task that is genuinely waiting on the
+    // user must not be called busy because something echoed.
+    await Bun.sleep(700);
+    expect(store.get("t1")!.agent_state).toBe("idle");
+    expect(store.get("t1")!.last_message).toBe("done");
+  });
+
+  test("the first hook cancels the clock, so a live task is never called unknown", async () => {
+    const { manager, store } = newManager();
+    manager.setHookGrace(60);
+    await manager.createTask({ id: "t1", command: ["cat"] });
+    manager.applyHook("t1", { hook_event_name: "UserPromptSubmit" });
+
+    await Bun.sleep(150);
+    expect(store.get("t1")!.agent_state).toBe("busy");
+  });
+
+  test("closing a task takes its clock with it", async () => {
+    const { manager } = newManager();
+    manager.setHookGrace(60);
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    await manager.createTask({ id: "t1", command: ["cat"] });
+    manager.closeTask("t1");
+
+    // Nothing to relabel, and nothing that throws trying.
+    await Bun.sleep(150);
+    expect(client.of("task").filter((m) => m.task?.id === "t1")).toHaveLength(0);
+  });
+});
+
 describe("creating a task", () => {
   test("writes the row, spawns the terminal, and associates the two", async () => {
     const { manager, store } = newManager();

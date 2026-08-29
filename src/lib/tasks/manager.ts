@@ -62,6 +62,15 @@ export class TaskManager {
   private taskPtys: Map<string, Set<string>> = new Map();
   private projects: ProjectInfo[] = [{ id: "general", name: "General", initialPath: "", taskIds: [] }];
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
+  // Which tasks have ever reported a hook, and the timers waiting to find out
+  // (§9, risk 4). Both in memory on purpose: what they guard is a running
+  // PTY's output activity, which is per-process by definition. A task with no
+  // live PTY has no heuristic to fall back to, so a flag that does not survive
+  // a restart is not missing anything — and a resumed task genuinely is
+  // unknown again until its agent reports in.
+  private hookSeen: Set<string> = new Set();
+  private hookGraceTimers: Map<string, Timer> = new Map();
+  private hookGraceMs = 10_000;
   // What `codetoaster hook` has to POST back to (§4.2), handed over by
   // startServer. Undefined until then: a manager with no server in front of it
   // — a test — has no port to name, and an agent spawned from one simply
@@ -102,6 +111,13 @@ export class TaskManager {
    * so its hooks can reach us. Set once, at startup, before any task exists. */
   setPort(port: number): void {
     this.port = port;
+  }
+
+  /** How long a new task has to report its first hook before it is called
+   * `unknown`. Long enough that a slow start is not mistaken for a hookless
+   * one; short enough that a task never sits on `starting` for good. */
+  setHookGrace(ms: number): void {
+    this.hookGraceMs = ms;
   }
 
   loadProjects(): void {
@@ -266,6 +282,7 @@ export class TaskManager {
       throw e;
     }
     this.adopt(pty, id);
+    this.armHookGrace(id);
     this.placeInProject(id, options);
     return row;
   }
@@ -294,6 +311,14 @@ export class TaskManager {
       // Recency is what the task list is ordered by, so it is worth a write —
       // but not a row broadcast, which is what the activity message is for.
       if (active) this.store.update(taskId, { last_active_at: Date.now() });
+      // Degraded mode (§9, risk 4). An agent run with hooks disabled, or one
+      // whose payloads a future version has changed, reports nothing — and a
+      // task list that says `starting` forever is worse than v1's guess. So
+      // for a task that has never reported a hook, output activity stands in
+      // for busy/idle, exactly as v1 inferred it. The moment any hook arrives
+      // this goes back to being about recency alone, and never fights the
+      // agent's own account of itself.
+      if (!this.hookSeen.has(taskId)) this.inferState(taskId, active);
       this.broadcastToAll({ type: "activity", taskId, active });
     });
     pty.onNotification((_ptyId, title, body) => {
@@ -302,12 +327,59 @@ export class TaskManager {
     });
   }
 
+  /** The heuristic's answer, for a task that has no better one. Confined to
+   * the states the heuristic is entitled to speak about: a task that has
+   * exited, or that is waiting on the user, is not idle just because its
+   * terminal went quiet. */
+  private inferState(taskId: string, active: boolean): void {
+    const current = this.store.get(taskId)?.agent_state;
+    if (current !== "starting" && current !== "unknown" && current !== "busy" && current !== "idle") {
+      return;
+    }
+    const next = active ? "busy" : "idle";
+    if (current === next) return;
+    this.store.update(taskId, { agent_state: next });
+    this.broadcastTask(taskId);
+  }
+
+  /** Start the clock on a task's first hook. If none arrives, the task stops
+   * claiming to be `starting` and admits it does not know. */
+  private armHookGrace(taskId: string): void {
+    this.disarmHookGrace(taskId);
+    const timer = setTimeout(() => {
+      this.hookGraceTimers.delete(taskId);
+      if (this.hookSeen.has(taskId)) return;
+      // Only from `starting`. If output activity has already said busy or
+      // idle, that is a better answer than `unknown` and replacing it would
+      // be a downgrade.
+      if (this.store.get(taskId)?.agent_state !== "starting") return;
+      this.store.update(taskId, { agent_state: "unknown" });
+      this.broadcastTask(taskId);
+    }, this.hookGraceMs);
+    // Nothing should be held open waiting to relabel a task.
+    timer.unref?.();
+    this.hookGraceTimers.set(taskId, timer);
+  }
+
+  private disarmHookGrace(taskId: string): void {
+    const timer = this.hookGraceTimers.get(taskId);
+    if (timer) {
+      clearTimeout(timer);
+      this.hookGraceTimers.delete(taskId);
+    }
+  }
+
   /** Apply one hook payload to a task (§4.2). False when there is no such
    * task or the payload moves nothing — both of which the caller answers 2xx,
    * since a hook that reports a problem reports it into the agent's own
    * transcript. */
   applyHook(taskId: string, payload: HookPayload): boolean {
     if (!this.store.get(taskId)) return false;
+    // Recorded before the mapping runs, and for any payload at all: what this
+    // says is "the hooks are wired up", which a payload we do not map answers
+    // just as well as one we do. From here the heuristic stays out of the way.
+    this.hookSeen.add(taskId);
+    this.disarmHookGrace(taskId);
     const update = transitionFor(payload);
     if (!update) return false;
     if (!this.store.update(taskId, update)) return false;
@@ -394,6 +466,10 @@ export class TaskManager {
    * JSON. */
   closeTask(taskId: string): boolean {
     if (!this.store.get(taskId)) return false;
+    // Before the row goes: a timer that outlived its task would wake up to
+    // relabel something that is no longer there.
+    this.disarmHookGrace(taskId);
+    this.hookSeen.delete(taskId);
     for (const ptyId of [...(this.taskPtys.get(taskId) ?? [])]) {
       this.ptys.kill(ptyId);
       this.ptyToTask.delete(ptyId);

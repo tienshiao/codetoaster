@@ -4,6 +4,7 @@ title: Make Pty.getCwd genuinely async so task listing stops blocking the event 
 status: To Do
 assignee: []
 created_date: '2026-08-29 04:34'
+updated_date: '2026-08-29 06:14'
 labels:
   - server
   - performance
@@ -11,7 +12,7 @@ milestone: m-5
 dependencies: []
 documentation:
   - docs/v2-architecture.md
-priority: medium
+priority: high
 ordinal: 40000
 ---
 
@@ -38,3 +39,9 @@ Found while reviewing TASK-8; flagged rather than fixed there because it is nowh
 - [ ] #5 An exited PTY, a dead pid, and a lookup that fails still yield undefined rather than throwing or hanging a request
 - [ ] #6 Tests cover the foreground-pid preference, the shell fallback, and the undefined paths
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Raised to high after the TASK-11 review: the cost is no longer confined to listing. TaskManager.attachClient calls refreshCwd on every terminal attach, so a tab switch runs ps + lsof synchronously on the daemon's event loop, and lsof routinely costs 100-500ms on macOS. It blocks everything, not just the caller: every other task's PTY output, every in-flight HTTP request and the WebSocket pump all stall on it. v1 never paid this on attach.
+<!-- SECTION:NOTES:END -->
