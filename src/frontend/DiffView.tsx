@@ -229,7 +229,16 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
     // view-state store across unmounts, so they have to be dropped explicitly
     // or the next submit resends the same feedback — but dropping them on a
     // submit that went nowhere destroys a review the user cannot get back.
-    if (onSubmit(promptText)) clearComments();
+    if (onSubmit(promptText)) {
+      clearComments();
+      return;
+    }
+    // Keeping the review is only half of it. Without this the dialog simply
+    // closes: no navigation, no message, nothing — and the user has every
+    // reason to believe a review that went nowhere was sent.
+    toast.error("Could not send the review", {
+      description: "This task has no running agent to send it to. Reopen it and try again.",
+    });
   }, [onSubmit, promptText, clearComments]);
 
   // Stable scroll persistence handles for the layout's restore/persist/reseed.

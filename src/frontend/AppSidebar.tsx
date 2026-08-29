@@ -54,6 +54,7 @@ interface AppSidebarProps {
   currentSessionId: string | null;
   isConnected: boolean;
   sessionActivity: Record<string, boolean>;
+  resumingSessionIds: Set<string>;
   lastActivityAt: React.RefObject<Record<string, number>>;
   onNewTab: (projectId?: string) => void;
   onCloseTab: (id: string) => void;
@@ -73,6 +74,7 @@ export function AppSidebar({
   currentSessionId,
   isConnected,
   sessionActivity,
+  resumingSessionIds,
   lastActivityAt,
   onNewTab,
   onCloseTab,
@@ -233,6 +235,12 @@ export function AppSidebar({
                         const session = sessionMap.get(sessionId);
                         if (!session) return null;
                         const isActive = session.id === currentSessionId;
+                        // Suspended is dormant, not gone (§6): the row stays
+                        // exactly where it was and stays clickable — clicking
+                        // it is what resumes it — but it reads quieter than the
+                        // tasks that still have a process behind them.
+                        const isSuspended = session.lifecycle === "suspended";
+                        const isResuming = resumingSessionIds.has(session.id);
                         return (
                           <SidebarMenuItem
                             key={session.id}
@@ -245,6 +253,7 @@ export function AppSidebar({
                               sessionId={session.id}
                               fetchPreview={fetchPreview}
                               getPreview={getPreview}
+                              hasTerminal={!isSuspended}
                             >
                               <SidebarMenuButton
                                 asChild
@@ -277,9 +286,16 @@ export function AppSidebar({
                                     isConnected={isConnected}
                                     isExited={!!session.exited}
                                     isActive={sessionActivity[session.id] ?? false}
+                                    isSuspended={isSuspended}
+                                    isResuming={isResuming}
                                     hasNotification={session.hasNotification ?? false}
                                   />
-                                  <span className="flex-1 truncate">{sessionLabels.get(session.id) ?? session.name}</span>
+                                  <span className={`flex-1 truncate${isSuspended ? " text-muted-foreground" : ""}`}>
+                                    {sessionLabels.get(session.id) ?? session.name}
+                                  </span>
+                                  {isResuming && (
+                                    <span className="text-xs text-muted-foreground">Resuming…</span>
+                                  )}
                                 </Link>
                               </SidebarMenuButton>
                             </TerminalPreview>

@@ -51,6 +51,11 @@ export class Pty {
   private size: { cols: number; rows: number };
   public title: string = "";
   public exited = false;
+  // Whether the headless terminal has been torn down. Not the same thing as
+  // `exited`: a PTY whose process died on its own still holds the buffer the
+  // agent painted its last output into, and that is exactly what a snapshot
+  // wants. Only `kill` ends the buffer.
+  private disposed = false;
   public isActive = false;
   private exitCode: number | null = null;
   private activityTimeout: Timer | null = null;
@@ -218,9 +223,34 @@ export class Pty {
     this.onNotificationCallback?.(this.id, title, body);
   }
 
+  /** The screen and its scrollback as the ANSI a terminal would replay to get
+   * back here — what a reattaching client is restored from, and what the idle
+   * harvester writes to disk (TASK-14, docs/v2-architecture.md §5.1).
+   *
+   * Empty once the terminal is gone rather than throwing. Harvesting is
+   * snapshot-then-kill, so a serialize that lands on the far side of a dispose
+   * is an ordering hazard the caller cannot see coming — and it would throw out
+   * of a background interval, taking the rest of the tick's tasks with it.
+   * Answering "" makes that hazard inert instead of fatal. */
+  serialize(): string {
+    if (this.disposed) return "";
+    return this.serializeAddon.serialize();
+  }
+
+  /** Whether `serialize` still has a terminal behind it. The empty string above
+   * is a safe answer for a client being restored — it repaints nothing — but a
+   * ruinous one for anything that *stores* it: writing "" over a good snapshot
+   * destroys the last screen this PTY ever painted, which is precisely what the
+   * snapshot exists to keep. A caller that persists the answer asks this
+   * first, and treats a torn-down terminal as nothing to write rather than as
+   * an empty screen. */
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
   addClient(client: ClientInfo): void {
     // Serialize BEFORE adding to broadcast list
-    const serialized = this.serializeAddon.serialize();
+    const serialized = this.serialize();
     const buffer = this.terminal.buffer.active;
     const cursor = { x: buffer.cursorX, y: buffer.cursorY };
     const cursorHidden = (this.terminal as any)._core.coreService.isCursorHidden as boolean;
@@ -304,7 +334,13 @@ export class Pty {
       this.proc.terminal?.close();
       this.proc.kill();
     }
-    this.terminal.dispose();
+    // Guarded because kill is safe to ask for twice — the resume ladder
+    // discards a rung that a client is also detaching from — and disposing an
+    // already-disposed terminal is not.
+    if (!this.disposed) {
+      this.disposed = true;
+      this.terminal.dispose();
+    }
   }
 
   async getCwd(): Promise<string | undefined> {
@@ -320,6 +356,29 @@ export class Pty {
       if (fgCwd) return fgCwd;
     }
     return this.cwdForPid(shellPid);
+  }
+
+  /** Whether something other than the terminal's own program holds the
+   * foreground — a command the user left running in a shell tab, an editor, a
+   * build (docs/v2-architecture.md §5.5). What the idle harvester asks before
+   * it kills a task's terminals.
+   *
+   * An answer it could not get is `true`. `getForegroundPid` reports "ps
+   * failed", "ps was killed on the timeout" and "ps said something
+   * unparseable" as the same undefined, and every one of those means we do not
+   * know what is running in there — §9's risk 3 is "when in doubt, do not
+   * harvest", and could-not-tell is doubt. Reading it the other way would make
+   * a wedged mount or a missing `ps` into a reason to kill the user's work,
+   * which is the one failure this whole guard exists to prevent.
+   *
+   * A process that has already exited holds nothing, and is the one case where
+   * "no foreground" is knowledge rather than a guess. */
+  async hasForegroundProcess(): Promise<boolean> {
+    if (this.exited) return false;
+    const shellPid = this.proc.pid;
+    const fgPid = await this.getForegroundPid(shellPid);
+    if (fgPid === undefined) return true;
+    return fgPid !== shellPid;
   }
 
   // Run a helper and hand back what it printed, or "" for anything that went

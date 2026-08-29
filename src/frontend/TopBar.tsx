@@ -11,6 +11,11 @@ interface TopBarProps {
   isConnected: boolean;
   isExited: boolean;
   isActive: boolean;
+  /** The task has no process behind it. Carried all the way up here because
+   * the top bar names the task the user is looking at, and a suspended one
+   * reading as live in the one place that labels it is the same lie the
+   * sidebar dot was fixed to stop telling. */
+  isSuspended?: boolean;
   hasNotification: boolean;
   hasSession: boolean;
   name: string | undefined;
@@ -21,7 +26,7 @@ interface TopBarProps {
   onTabChange?: (tab: TabType) => void;
 }
 
-export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSession, name, label, onUpload, onFocusTerminal, activeTab = "terminal", onTabChange }: TopBarProps) {
+export function TopBar({ isConnected, isExited, isActive, isSuspended = false, hasNotification, hasSession, name, label, onUpload, onFocusTerminal, activeTab = "terminal", onTabChange }: TopBarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { open, openMobile, isMobile } = useSidebar();
   const { sessions } = useSession();
@@ -40,7 +45,7 @@ export function TopBar({ isConnected, isExited, isActive, hasNotification, hasSe
           </span>
         )}
       </div>
-      {hasSession && <StatusDot isConnected={isConnected} isExited={isExited} isActive={isActive} hasNotification={hasNotification} />}
+      {hasSession && <StatusDot isConnected={isConnected} isExited={isExited} isActive={isActive} isSuspended={isSuspended} hasNotification={hasNotification} />}
       {label && <span className="truncate">{label}</span>}
       {/* The stable "<dir> · <branch>" name, kept alongside a live title so the
           session stays placeable when its program renames it. */}

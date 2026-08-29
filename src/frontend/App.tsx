@@ -34,6 +34,10 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     currentPtyId,
     isConnected,
     sessionActivity,
+    resumingSessionIds,
+    restoringSessionId,
+    resumeFailedSessionIds,
+    retryResume,
     lastActivityAt,
     terminalRef,
     createSession,
@@ -46,6 +50,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     handleTerminalReady,
     handleSizeChange,
     handleSendMessage,
+    handleRestoreEnd,
   } = useSession();
   const currentSession = sessions.find((s) => s.id === currentSessionId);
   const uploadMutation = useUploadFiles(currentSessionId ?? undefined);
@@ -177,7 +182,12 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
   const handleCloseTab = useCallback(
     (id: string) => {
       const session = sessions.find((s) => s.id === id);
-      if (session?.exited) {
+      // Suspended counts as nothing to warn about, the same as exited: the
+      // dialog's whole claim is "this is still running, closing it will end
+      // the process", and a suspended task has had its processes taken already
+      // (§6). Asking anyway put a warning about work in progress in front of a
+      // task that has none.
+      if (session?.exited || session?.lifecycle === "suspended") {
         performClose(id);
       } else {
         setCloseConfirmSessionId(id);
@@ -206,6 +216,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
         currentSessionId={currentSessionId}
         isConnected={isConnected}
         sessionActivity={sessionActivity}
+        resumingSessionIds={resumingSessionIds}
         lastActivityAt={lastActivityAt}
         onNewTab={handleNewTab}
         onCloseTab={handleCloseTab}
@@ -222,6 +233,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           isConnected={isConnected}
           isExited={!!currentSession?.exited}
           isActive={isActive}
+          isSuspended={currentSession?.lifecycle === "suspended"}
           hasNotification={currentSession?.hasNotification ?? false}
           hasSession={!!currentSession}
           name={currentSession?.name}
@@ -242,7 +254,63 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
               sendMessage={handleSendMessage}
               onFileDrop={handleFileDrop}
               onSearchOpen={() => setSearchOpen(true)}
+              onRestoreEnd={handleRestoreEnd}
             />
+            {/* The reopen's read-only phase, said out loud (§5.5). An overlay
+                rather than a line written into the grid: the swap resets the
+                terminal, which would wipe anything written there, and until it
+                does the grid is holding the snapshot — a banner typed into it
+                would corrupt the one thing the user came back to see. Sized to
+                stay out of the way for the same reason, and click-through
+                except for the button that is there to be clicked. */}
+            {currentSessionId && resumeFailedSessionIds.has(currentSessionId) ? (
+              <div className="absolute inset-x-0 top-3 z-20 flex justify-center pointer-events-none">
+                <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-zinc-700 bg-zinc-900/95 py-1.5 pl-4 pr-1.5 text-sm text-zinc-300 shadow-lg">
+                  <span>Could not resume this session</span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 rounded-full"
+                    onClick={() => retryResume(currentSessionId)}
+                  >
+                    Try again
+                  </Button>
+                </div>
+              </div>
+            ) : currentSessionId &&
+              (restoringSessionId === currentSessionId || resumingSessionIds.has(currentSessionId)) ? (
+              <div className="absolute inset-x-0 top-3 z-20 flex justify-center pointer-events-none">
+                <div className="flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-900/95 px-4 py-1.5 text-sm text-zinc-300 shadow-lg">
+                  <span className="size-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span>Suspended — resuming…</span>
+                </div>
+              </div>
+            ) : currentSessionId && currentSession?.lifecycle === "suspended" ? (
+              /* The task the user is looking at was suspended out from under
+                 the view — they closed it themselves, another client did, or
+                 the harvester took it. The row survives now (§6), so the slug
+                 still resolves and the route's attach effect stays latched on
+                 an attachment that died with the PTY; clicking the sidebar row
+                 navigates to the slug it is already on and changes nothing.
+                 This is the way back, and it calls the resume directly rather
+                 than trying to make the router re-fire — unlatching there would
+                 re-attach on the next delta and reopen a task the moment it was
+                 closed. */
+              <div className="absolute inset-x-0 top-3 z-20 flex justify-center pointer-events-none">
+                <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-zinc-700 bg-zinc-900/95 py-1.5 pl-4 pr-1.5 text-sm text-zinc-300 shadow-lg">
+                  <span className="size-2 rounded-full border border-zinc-500" />
+                  <span>This session is suspended</span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 rounded-full"
+                    onClick={() => retryResume(currentSessionId)}
+                  >
+                    Reopen
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             {searchOpen && currentTab === "terminal" && searchAddon && (
               <TerminalSearchBar
                 searchAddon={searchAddon}
@@ -289,7 +357,7 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
           <AlertDialogHeader>
             <AlertDialogTitle>Close session?</AlertDialogTitle>
             <AlertDialogDescription>
-              "{closeConfirmSessionId ? sessionLabels.get(closeConfirmSessionId) ?? closeConfirmSession?.name ?? "Session" : "Session"}" is still running. Closing it will terminate the process.
+              "{closeConfirmSessionId ? sessionLabels.get(closeConfirmSessionId) ?? closeConfirmSession?.name ?? "Session" : "Session"}" is still running. Closing it ends the process; the session stays in the sidebar and reopens where it left off.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

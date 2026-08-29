@@ -13,14 +13,22 @@ function IndexComponent() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (isConnected && sessions.length > 0) {
-      const first = sessions[0]!;
-      navigate({
-        to: "/sessions/$slug",
-        params: { slug: buildSessionSlug(first) },
-        replace: true,
-      });
-    }
+    if (!isConnected) return;
+    // A task with something behind it, not simply the first row. Opening a
+    // suspended task resumes it (§6), and this navigation is not the user
+    // asking for that: after a restart `reconcileOnBoot` suspends every task,
+    // so landing on "/" would spawn a `claude --resume` for whichever task
+    // happens to sort first — on every page load, and on every `bun --hot`
+    // reload — and would take back the process the idle harvester had just
+    // reclaimed. Suspended tasks are in the sidebar, one click away, which is
+    // where resuming one belongs.
+    const first = sessions.find((s) => s.lifecycle !== "suspended");
+    if (!first) return;
+    navigate({
+      to: "/sessions/$slug",
+      params: { slug: buildSessionSlug(first) },
+      replace: true,
+    });
   }, [isConnected, sessions, navigate]);
 
   return <SessionLayout />;

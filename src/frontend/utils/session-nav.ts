@@ -65,12 +65,19 @@ export function sessionNavTarget(session: { id: string; name: string }): Session
 }
 
 /**
- * Where to go after closing the current session: the first remaining
- * session's last-viewed tab, or home when none are left.
+ * Where to go after closing the current session: the first remaining session
+ * that still has something behind it, or home when there is none.
+ *
+ * Suspended rows are skipped rather than landed on. Opening a suspended task
+ * resumes it (§6), and closing one task is not the user asking to start an
+ * agent in another — with the sidebar now keeping suspended rows, the first
+ * remaining session is very often one, so closing a tab would silently spawn
+ * `claude --resume` in some dormant task's repository. It stays in the sidebar,
+ * one click away, which is where resuming it belongs.
  */
 export function closeNavTarget(
-  remaining: { id: string; name: string }[],
+  remaining: { id: string; name: string; lifecycle?: string }[],
 ): SessionNavTarget | { to: "/" } {
-  const next = remaining[0];
+  const next = remaining.find((s) => s.lifecycle !== "suspended");
   return next ? sessionNavTarget(next) : { to: "/" };
 }

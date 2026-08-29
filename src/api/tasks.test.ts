@@ -5,7 +5,8 @@ import * as path from "path";
 import { initDatabase } from "../lib/db";
 import { taskManager } from "../lib/tasks/manager";
 import { taskRoutes } from "./tasks";
-import { taskDir } from "../lib/agent/spawn";
+import { taskDir, taskScrollbackPath, taskSettingsPath } from "../lib/agent/spawn";
+import { writeSnapshot } from "../lib/tasks/snapshot";
 
 // Driven through a real Bun.serve, so the params, status codes and JSON bodies
 // under test are the ones a client actually gets.
@@ -35,11 +36,14 @@ beforeAll(() => {
 });
 
 afterEach(async () => {
-  for (const task of taskManager.listTasks()) taskManager.closeTask(task.id);
-  // Closing a task deliberately leaves its settings directory alone — §6 makes
-  // close a suspend, and only archive is destructive (TASK-31) — and a test
-  // that deleted its own task is already gone from listTasks. So cleanup runs
-  // off what was created, not off what is still live.
+  // `deleteTask`, not `closeTask`: close is a suspend now, and a suspended row
+  // stays in `listTasks` — cleaning up with it would leave every task of every
+  // test in the next test's list.
+  for (const task of taskManager.listTasks()) taskManager.deleteTask(task.id);
+  // Deleting a task deliberately leaves its settings directory alone — that is
+  // archive's to remove (TASK-31) — and a test that deleted its own task is
+  // already gone from listTasks. So cleanup runs off what was created, not off
+  // what is still live.
   for (const id of created.splice(0)) {
     fs.rmSync(taskDir(id), { recursive: true, force: true });
   }
@@ -200,8 +204,90 @@ describe("PATCH /api/tasks/:id", () => {
   });
 });
 
+// The two doors, and the whole of what separates them: §6 makes the close
+// button a suspend, and leaves `DELETE` as the interim archive.
+describe("POST /api/tasks/:id/close", () => {
+  test("suspends the task and kills its terminal, without deleting anything", async () => {
+    const created = await (await post({})).json();
+    const res = await fetch(`${base}/api/tasks/${created.id}/close`, { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).lifecycle).toBe("suspended");
+    expect(taskManager.getTask(created.id)).toBeDefined();
+    expect(taskManager.getPty(created.ptyId)).toBeUndefined();
+    // What reopening the task is built out of (AC #5).
+    expect(fs.existsSync(taskSettingsPath(created.id))).toBe(true);
+    expect(fs.existsSync(taskScrollbackPath(created.id))).toBe(true);
+  });
+
+  test("closing an already closed task is not an error", async () => {
+    const created = await (await post({})).json();
+    await fetch(`${base}/api/tasks/${created.id}/close`, { method: "POST" });
+    const res = await fetch(`${base}/api/tasks/${created.id}/close`, { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).lifecycle).toBe("suspended");
+  });
+
+  test("404s for a task that isn't there", async () => {
+    const res = await fetch(`${base}/api/tasks/no-such-task/close`, { method: "POST" });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Unknown task "no-such-task"');
+  });
+});
+
+// The first half of the two-phase reopen (§5.5): what the client paints before
+// the resumed agent exists.
+describe("GET /api/tasks/:id/scrollback", () => {
+  function scrollback(id: string) {
+    return fetch(`${base}/api/tasks/${id}/scrollback`);
+  }
+
+  test("answers the stored screen and the grid it was taken at", async () => {
+    const created = await (await post({ cols: 100, rows: 30 })).json();
+    // The stand-in agent echoes, so this is the closest thing to a screen the
+    // task can be given: what the snapshot has to come back holding.
+    taskManager.primaryPty(created.id)!.write("left off here\r");
+    await Bun.sleep(100);
+    await fetch(`${base}/api/tasks/${created.id}/close`, { method: "POST" });
+
+    const res = await scrollback(created.id);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toContain("left off here");
+    expect(body.size).toEqual({ cols: 100, rows: 30 });
+  });
+
+  test("a task with no stored screen answers data: null, not an error", async () => {
+    const created = await (await post({})).json();
+    const res = await scrollback(created.id);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: null, size: null });
+  });
+
+  test("404s for a task that isn't there — which is not the same answer", async () => {
+    const res = await scrollback("no-such-task");
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Unknown task "no-such-task"');
+  });
+
+  test("a snapshot with no remembered size answers size: null", async () => {
+    // A task never closed has no `last_size_*` on its row, so writing a
+    // snapshot behind its back is the state a pre-TASK-14 suspension leaves:
+    // a screen, and nothing saying what grid it was taken at. The client paints
+    // it at its own measured size rather than a fabricated one.
+    const created = await (await post({})).json();
+    await writeSnapshot(created.id, "an old screen");
+
+    const body = await (await scrollback(created.id)).json();
+    expect(body.data).toBe("an old screen");
+    expect(body.size).toBeNull();
+  });
+});
+
 describe("DELETE /api/tasks/:id", () => {
-  test("closes the task and its terminal", async () => {
+  test("deletes the task and its terminal outright", async () => {
     const created = await (await post({})).json();
     const res = await fetch(`${base}/api/tasks/${created.id}`, { method: "DELETE" });
 

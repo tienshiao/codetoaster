@@ -61,8 +61,14 @@ import { parseArgs } from "util";
   // repositories with nothing in front of it, so reachability is opt-in.
   const hostname = typeof values.host === "string" ? values.host : undefined;
   // Repeatable: a daemon on a wildcard bind cannot know which name reaches it.
+  // Filtered to strings for the same reason `--host` is type-checked above:
+  // under `strict: false`, a flag given no value parses as `true`, not as a
+  // string — `--allowed-host` on its own yields `[true]`, and the guard lowercases
+  // whatever it is handed. Unfiltered, that throws out of `configureOriginGuard`
+  // *after* serve() is listening and reconcileOnBoot has suspended every task,
+  // and before the pid file is written.
   const allowedHosts = Array.isArray(values["allowed-host"])
-    ? (values["allowed-host"] as string[])
+    ? values["allowed-host"].filter((name): name is string => typeof name === "string")
     : undefined;
 
   switch (command) {

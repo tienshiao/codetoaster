@@ -19,7 +19,7 @@ beforeAll(() => {
 });
 
 afterEach(async () => {
-  for (const id of spawned) taskManager.closeTask(id);
+  for (const id of spawned) taskManager.deleteTask(id);
   spawned.length = 0;
   // A killed PTY's onExit lands a tick later and writes to the store. Letting
   // it land here keeps it from firing against a database this file has already

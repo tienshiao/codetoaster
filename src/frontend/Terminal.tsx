@@ -6,6 +6,15 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Upload } from "lucide-react";
 import { useTerminalTheme } from "./hooks/use-terminal-theme";
 import { playBellSound } from "./hooks/use-notification-sound";
+import {
+  IDLE,
+  beginRestore,
+  endRestore,
+  isRestoring,
+  stepRestore,
+  timeoutRestore,
+  type RestorePhase,
+} from "./utils/restore-phase";
 import type { ClientMessage, ServerMessage } from "../lib/xtmux/types";
 import "@xterm/xterm/css/xterm.css";
 
@@ -13,6 +22,13 @@ export interface TerminalSize {
   cols: number;
   rows: number;
 }
+
+// How long a reopened task waits for its agent to say anything before the grid
+// goes live regardless. Generously past the point where an agent that intends
+// to paint has done so — the resume route already waited for the agent's start
+// before handing this client a PTY to attach to — so reaching this means the
+// agent is up and quiet rather than slow.
+const RESTORE_SWAP_TIMEOUT_MS = 5_000;
 
 export interface TerminalHandle {
   handleMessage: (message: ServerMessage) => void;
@@ -22,6 +38,17 @@ export interface TerminalHandle {
   // negotiated size, not this client's, so they are never reported.
   getSize: () => TerminalSize | null;
   resetAttached: () => void;
+  /** Enter the read-only phase of a reopen (§5.5). Paints nothing on its own:
+   * the caller has not fetched the snapshot yet, and the phase has to be
+   * standing before the requests go out so a resume that comes back first is
+   * never painted over. */
+  beginRestore: () => void;
+  /** Paint the stored screen, if the phase is still standing. A snapshot that
+   * loses the race to the agent's first output is dropped rather than written
+   * over live output. */
+  paintSnapshot: (data: string, size: TerminalSize | null) => void;
+  /** Leave the phase with no swap — the resume failed, or the user left. */
+  endRestore: () => void;
   focus: () => void;
   getSearchAddon: () => SearchAddon | null;
 }
@@ -36,10 +63,18 @@ interface XTerminalProps {
   sendMessage: (msg: ClientMessage) => void;
   onFileDrop?: (files: File[]) => void;
   onSearchOpen?: () => void;
+  /** The read-only phase ending on its own: the resumed agent painted (or died
+   * trying), so the grid is live again and the "resuming…" affordance has to
+   * come down. The phase is left from inside `handleMessage`, which nothing
+   * outside can observe. */
+  onRestoreEnd?: () => void;
 }
 
 export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
-  function XTerminal({ ptyId, onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen }, ref) {
+  function XTerminal(
+    { ptyId, onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen, onRestoreEnd },
+    ref,
+  ) {
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -70,10 +105,12 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     const sendMessageRef = useRef(sendMessage);
     const onFileDropRef = useRef(onFileDrop);
     const onSearchOpenRef = useRef(onSearchOpen);
+    const onRestoreEndRef = useRef(onRestoreEnd);
     onSizeChangeRef.current = onSizeChange;
     sendMessageRef.current = sendMessage;
     onFileDropRef.current = onFileDrop;
     onSearchOpenRef.current = onSearchOpen;
+    onRestoreEndRef.current = onRestoreEnd;
 
     // Fit and report the measured size, but only while the container is
     // actually laid out. Fitting inside a display:none subtree makes FitAddon
@@ -97,74 +134,156 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       return size;
     }, []);
 
+    // The reopen's read-only phase, held in a ref rather than state: it gates
+    // input from inside the onData handler, which is installed once and reads
+    // refs, and nothing about it is rendered — the "resuming…" affordance is an
+    // overlay over the container, because RIS would wipe anything written into
+    // the grid and the snapshot underneath is the whole point.
+    const restorePhaseRef = useRef<RestorePhase>(IDLE);
+    // Armed when the reopened task's terminal is attached, and the only thing
+    // standing between a silent agent and a permanently read-only grid. Long
+    // enough that an agent which is going to paint has painted: the resume
+    // route has already waited for its start before this client was told which
+    // PTY to attach to.
+    const restoreTimerRef = useRef<Timer | null>(null);
+
+    const clearRestoreTimer = useCallback(() => {
+      if (restoreTimerRef.current) {
+        clearTimeout(restoreTimerRef.current);
+        restoreTimerRef.current = null;
+      }
+    }, []);
+
+    const applyMessage = useCallback((term: Terminal, message: ServerMessage) => {
+      switch (message.type) {
+        case "attached":
+          // Taken from the message, not left to the `ptyId` prop: the prop
+          // only catches up on the next render, and input is unblocked here
+          // and now. A keystroke in between would be addressed to the
+          // terminal we just switched away from, which the server drops as
+          // unattached — the character is lost and an error paints into the
+          // grid. The next render assigns the same value.
+          ptyIdRef.current = message.ptyId;
+          attachedRef.current = true;
+          term.focus();
+          break;
+
+        case "restore":
+          // Write RIS (Reset to Initial State) through the write buffer rather
+          // than using synchronous term.reset(). term.reset() bypasses the write
+          // buffer, so pending writes from the previous session can re-enable
+          // modes (like mouse tracking) after the reset. RIS via term.write()
+          // is properly ordered: pending old data → RIS → new serialized data.
+          term.write('\x1bc');
+          term.resize(message.size.cols, message.size.rows);
+          if (message.data) {
+            term.write(message.data);
+          }
+          // Restore mouse encoding — the serialize addon preserves the mouse
+          // tracking protocol (e.g. 1002h) but not the encoding mode (e.g.
+          // SGR/1006h). Without this, apps expecting SGR-encoded mouse reports
+          // silently ignore the DEFAULT-encoded ones after a session switch.
+          if (message.mouseEncoding === "SGR") {
+            term.write('\x1b[?1006h');
+          } else if (message.mouseEncoding === "SGR_PIXELS") {
+            term.write('\x1b[?1016h');
+          }
+          // Restore cursor visibility — RIS and the serialize addon both
+          // leave DECTCEM in an undefined state, so set it explicitly from
+          // the server's authoritative value.
+          term.write(message.cursorHidden ? '\x1b[?25l' : '\x1b[?25h');
+          term.write(`\x1b[${message.cursor.y + 1};${message.cursor.x + 1}H`);
+          // Re-fit terminal to actual container size after restoring session content.
+          // The restore resizes the grid to the session's stored size, which may not
+          // match this client's container. Fitting ensures the grid fills the container,
+          // and onSizeChange sends the actual size to the server for negotiation.
+          fitIfVisible();
+          break;
+
+        case "data":
+          term.write(message.data);
+          break;
+
+        case "resize":
+          term.resize(message.cols, message.rows);
+          break;
+
+        case "exit":
+          term.write(`\r\n[Process exited with code ${message.code}]\r\n`);
+          attachedRef.current = false;
+          break;
+
+        case "error":
+          term.write(`\r\n[Error: ${message.message}]\r\n`);
+          break;
+      }
+    }, [fitIfVisible]);
+
+    // The timer's arm of the swap. Same transition the first frame would have
+    // caused, so a grid that goes live on a timeout is in the same state as one
+    // that went live on the agent's own paint.
+    const swapOnTimeout = useCallback(() => {
+      restoreTimerRef.current = null;
+      const term = termRef.current;
+      if (!term || !isRestoring(restorePhaseRef.current)) return;
+      const { state, effects } = timeoutRestore(restorePhaseRef.current);
+      restorePhaseRef.current = state;
+      for (const effect of effects) {
+        if (effect.kind === "reset") term.write('\x1bc');
+        else applyMessage(term, effect.message);
+      }
+      onRestoreEndRef.current?.();
+    }, [applyMessage]);
+
+
     // Expose methods to parent
     useImperativeHandle(ref, () => ({
       handleMessage: (message: ServerMessage) => {
         const term = termRef.current;
         if (!term) return;
 
-        switch (message.type) {
-          case "attached":
-            // Taken from the message, not left to the `ptyId` prop: the prop
-            // only catches up on the next render, and input is unblocked here
-            // and now. A keystroke in between would be addressed to the
-            // terminal we just switched away from, which the server drops as
-            // unattached — the character is lost and an error paints into the
-            // grid. The next render assigns the same value.
-            ptyIdRef.current = message.ptyId;
-            attachedRef.current = true;
-            term.focus();
-            break;
-
-          case "restore":
-            // Write RIS (Reset to Initial State) through the write buffer rather
-            // than using synchronous term.reset(). term.reset() bypasses the write
-            // buffer, so pending writes from the previous session can re-enable
-            // modes (like mouse tracking) after the reset. RIS via term.write()
-            // is properly ordered: pending old data → RIS → new serialized data.
-            term.write('\x1bc');
-            term.resize(message.size.cols, message.size.rows);
-            if (message.data) {
-              term.write(message.data);
-            }
-            // Restore mouse encoding — the serialize addon preserves the mouse
-            // tracking protocol (e.g. 1002h) but not the encoding mode (e.g.
-            // SGR/1006h). Without this, apps expecting SGR-encoded mouse reports
-            // silently ignore the DEFAULT-encoded ones after a session switch.
-            if (message.mouseEncoding === "SGR") {
-              term.write('\x1b[?1006h');
-            } else if (message.mouseEncoding === "SGR_PIXELS") {
-              term.write('\x1b[?1016h');
-            }
-            // Restore cursor visibility — RIS and the serialize addon both
-            // leave DECTCEM in an undefined state, so set it explicitly from
-            // the server's authoritative value.
-            term.write(message.cursorHidden ? '\x1b[?25l' : '\x1b[?25h');
-            term.write(`\x1b[${message.cursor.y + 1};${message.cursor.x + 1}H`);
-            // Re-fit terminal to actual container size after restoring session content.
-            // The restore resizes the grid to the session's stored size, which may not
-            // match this client's container. Fitting ensures the grid fills the container,
-            // and onSizeChange sends the actual size to the server for negotiation.
-            fitIfVisible();
-            break;
-
-          case "data":
-            term.write(message.data);
-            break;
-
-          case "resize":
-            term.resize(message.cols, message.rows);
-            break;
-
-          case "exit":
-            term.write(`\r\n[Process exited with code ${message.code}]\r\n`);
-            attachedRef.current = false;
-            break;
-
-          case "error":
-            term.write(`\r\n[Error: ${message.message}]\r\n`);
-            break;
+        // Idle is the ordinary path and costs one function call: the machine
+        // hands every frame straight back. While a reopen is in flight it is
+        // what holds the freshly spawned PTY's `restore` back until the agent
+        // has something to say, and then swaps the whole grid over in one go.
+        const wasRestoring = isRestoring(restorePhaseRef.current);
+        const { state, effects } = stepRestore(restorePhaseRef.current, message);
+        restorePhaseRef.current = state;
+        for (const effect of effects) {
+          if (effect.kind === "reset") term.write('\x1bc');
+          else applyMessage(term, effect.message);
         }
+        if (wasRestoring && !isRestoring(state)) {
+          clearRestoreTimer();
+          onRestoreEndRef.current?.();
+        } else if (state.phase === "restoring" && state.ptyId && !restoreTimerRef.current) {
+          // Only once the PTY exists: before that the resume may still be
+          // walking its ladder, and each rung has a wait of its own.
+          restoreTimerRef.current = setTimeout(swapOnTimeout, RESTORE_SWAP_TIMEOUT_MS);
+        }
+      },
+      beginRestore: () => {
+        clearRestoreTimer();
+        restorePhaseRef.current = beginRestore();
+      },
+      paintSnapshot: (data: string, size: TerminalSize | null) => {
+        const term = termRef.current;
+        // Only while the phase still stands: the fetch and the resume race each
+        // other, and a snapshot that lost is a picture of the past being drawn
+        // over the agent's live output.
+        if (!term || !isRestoring(restorePhaseRef.current)) return;
+        term.write('\x1bc');
+        // The grid the snapshot was taken at when the row remembers one;
+        // otherwise this client's own measured grid, which is no worse a guess
+        // and usually the right one. A fabricated 80×24 would be neither — it
+        // reflows a screen that was never that wide.
+        const grid = size ?? lastMeasuredSizeRef.current;
+        if (grid) term.resize(grid.cols, grid.rows);
+        if (data) term.write(data);
+      },
+      endRestore: () => {
+        clearRestoreTimer();
+        restorePhaseRef.current = endRestore();
       },
       send: (msg: ClientMessage) => {
         if (attachedRef.current) {
@@ -179,7 +298,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         termRef.current?.focus();
       },
       getSearchAddon: () => searchAddonRef.current,
-    }), [fitIfVisible]);
+    }), [applyMessage]);
 
     // Initialize terminal - runs once
     useEffect(() => {
@@ -216,8 +335,12 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       });
 
       // Handle terminal input
+      // Read-only while a reopen is in flight (§5.5): the grid is holding a
+      // picture of the past, and the PTY it would be typed into is a fresh
+      // agent that has not drawn its prompt yet — so a keystroke would land
+      // somewhere the user cannot see, in a screen they have not been shown.
       const dataDisposable = term.onData((data) => {
-        if (attachedRef.current && ptyIdRef.current) {
+        if (attachedRef.current && !isRestoring(restorePhaseRef.current) && ptyIdRef.current) {
           sendMessageRef.current({ type: "input", ptyId: ptyIdRef.current, data });
         }
       });
@@ -225,7 +348,13 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       // Handle shift-enter and Cmd/Ctrl+F for search
       term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
         if (ev.key === "Enter" && ev.shiftKey) {
-          if (ev.type === "keydown" && attachedRef.current && ptyIdRef.current) {
+          // Gated identically to onData: shift-enter is input by another door.
+          if (
+            ev.type === "keydown" &&
+            attachedRef.current &&
+            !isRestoring(restorePhaseRef.current) &&
+            ptyIdRef.current
+          ) {
             sendMessageRef.current({
               type: "input",
               ptyId: ptyIdRef.current,
@@ -391,6 +520,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         dataDisposable.dispose();
         resizeObserver.disconnect();
         if (resizeHudTimeoutRef.current) clearTimeout(resizeHudTimeoutRef.current);
+        if (restoreTimerRef.current) clearTimeout(restoreTimerRef.current);
         screenEl?.removeEventListener("touchstart", handleTouchStart);
         screenEl?.removeEventListener("touchmove", handleTouchMove);
         screenEl?.removeEventListener("touchend", handleTouchEnd);

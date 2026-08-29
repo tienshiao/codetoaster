@@ -13,13 +13,29 @@
  *
  * Undefined until then, and left undefined by anything that mounts these
  * guards on a server of its own (the tests). That is the safe direction: an
- * unconfigured guard checks no port and accepts only the host names below,
- * which is stricter than the daemon needs, never looser. */
+ * unconfigured guard accepts only the host names below, which is stricter than
+ * the daemon needs, never looser.
+ *
+ * `hostname` is the only field anything reads. The port is recorded because
+ * `configureOriginGuard` is the one place that learns it and a future check may
+ * want it, but nothing compares against it today — same-origin is enforced by
+ * matching Origin to Host, which carries the port already. */
 let bound: { port: number; hostname?: string } | undefined;
 /** Extra names the user has vouched for with --allowed-host. */
 let allowedHosts = new Set<string>();
 /** Hosts already complained about, so a misconfigured setup says so once
- * rather than once per request. */
+ * rather than once per request. Capped, because the key is an attacker-supplied
+ * header: without a bound, a loop sending a distinct `Host` per request grows
+ * this set for the life of the daemon.
+ *
+ * Past the cap the warning stops rather than the recording. Going the other way
+ * — remembering nothing and warning every time — only moves the same unbounded
+ * growth from memory to the daemon's log file, which `spawnDaemon` opens in
+ * append mode and nothing rotates, and puts a synchronous write in the path of
+ * every refused request. Sixty-four distinct bad Host headers is already far
+ * past anything a misconfiguration produces, so what is lost past the cap is a
+ * diagnostic nobody is reading by then. */
+const MAX_WARNED_HOSTS = 64;
 const warnedHosts = new Set<string>();
 
 export function configureOriginGuard(config: {
@@ -43,6 +59,7 @@ export function resetOriginGuard(): void {
  * once per name, with the thing to do about it. */
 function warnAboutRefusedHost(host: string | null): void {
   if (!host || warnedHosts.has(host)) return;
+  if (warnedHosts.size >= MAX_WARNED_HOSTS) return;
   warnedHosts.add(host);
   console.warn(
     `Refused a request addressed to "${host}": not an address this daemon answers to. ` +
@@ -75,9 +92,8 @@ function isUnspoofableName(hostname: string): boolean {
  *
  * So a Host is ours only when it is a name that cannot be pointed somewhere
  * else — an IP literal or `localhost` — or the exact name the user told us to
- * bind, which is theirs to choose and not an attacker's to forge. The port
- * must be ours too: another server on another port of this same machine is a
- * different origin, and one the victim may not trust. */
+ * bind, which is theirs to choose and not an attacker's to forge. The port is
+ * deliberately not part of it; see the note at the check itself. */
 export function isOurHost(host: string | null): boolean {
   if (!host) return false;
   let url: URL;
@@ -110,18 +126,38 @@ export function isOurHost(host: string | null): boolean {
  * first is what keeps the second from being a comparison of two headers the
  * same attacker wrote (see `isOurHost`).
  *
- * A request with no Origin at all is allowed. Browsers always attach one to a
- * cross-origin request, so its absence means the caller is not a browser — the
- * CLI, a curl, the server fetching its own SPA — and cross-site request
- * forgery is a browser-only vector. This is not a claim that non-browser
- * callers are trustworthy; it is that they are a different threat, and one a
- * header cannot address (see the token decision on TASK-42).
+ * A request with no Origin at all is allowed, because its absence usually means
+ * the caller is not a browser — the CLI, a curl, the hook reporter — and
+ * cross-site request forgery is a browser-only vector. This is not a claim that
+ * non-browser callers are trustworthy; it is that they are a different threat,
+ * and one a header cannot address (see the token decision on TASK-42).
+ *
+ * But an absent Origin does *not* prove that on its own, which is why
+ * `fetchSite` is here. Browsers omit Origin from every subresource load — an
+ * `<img>`, a `<script>`, a `<link>`, an `<iframe>` — and from top-level
+ * navigations. So `new Image().src = "http://127.0.0.1:4000/api/tasks"` on any
+ * page the user happens to visit reaches a guarded GET with no Origin to refuse
+ * it, and `GET /api/tasks` runs `ps` and `lsof` per live task: a page that
+ * merely loads forks processes on the user's machine. `Sec-Fetch-Site` is what
+ * closes that, because browsers send it on exactly the requests that carry no
+ * Origin. A caller that sends neither is the non-browser case above and still
+ * passes.
  *
  * A literal "null" origin is refused: that is a sandboxed iframe or a file://
  * page, which is a browser, and never us. */
-export function isSameOrigin(origin: string | null, host: string | null): boolean {
+export function isSameOrigin(
+  origin: string | null,
+  host: string | null,
+  fetchSite: string | null = null,
+): boolean {
   if (!isOurHost(host)) {
     warnAboutRefusedHost(host);
+    return false;
+  }
+  // "same-origin" is our own page; "none" is the user typing the URL or opening
+  // a bookmark. Anything else — "cross-site", "same-site" — is another page
+  // reaching in, whether or not it carried an Origin.
+  if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") {
     return false;
   }
   if (origin === null) return true;
@@ -136,7 +172,11 @@ export function isSameOrigin(origin: string | null, host: string | null): boolea
 }
 
 export function isSameOriginRequest(req: Request): boolean {
-  return isSameOrigin(req.headers.get("origin"), req.headers.get("host"));
+  return isSameOrigin(
+    req.headers.get("origin"),
+    req.headers.get("host"),
+    req.headers.get("sec-fetch-site"),
+  );
 }
 
 export function crossOriginRefusal(): Response {

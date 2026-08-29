@@ -20,6 +20,7 @@ import {
 import { writeTaskSettings } from "../agent/settings";
 import { transitionFor, type HookPayload } from "../agent/hook-state";
 import { deriveTitle, resolveRepoRoot } from "./derive";
+import { removeSnapshot, writeSnapshot } from "./snapshot";
 
 function expandTilde(filepath: string): string {
   if (filepath.startsWith("~/") || filepath === "~") {
@@ -175,11 +176,25 @@ export class TaskManager {
   /** Every `live` row is a lie at boot: closing the PTY masters took every
    * session shell and its children down with the daemon, so nothing survived
    * to be live (§5.5). Marking them suspended is the whole of what a restart
-   * needs — the rows are still there to resume from. */
+   * needs — the rows are still there to resume from.
+   *
+   * "There" now means in the list, which is why the adoption below is part of
+   * the same pass. `loadProjects` starts every project's `taskIds` empty, since
+   * the ordering is the only thing the rows do not record, and `listTasks`
+   * walks that grouping rather than the rows — so without this a restart leaves
+   * every task of the previous run present in the database, suspended, correct
+   * in every column, and invisible. From the user's side that is
+   * indistinguishable from the "restart nukes everything" this replaces.
+   *
+   * By last-active order, oldest first, so the sidebar reads the way it did
+   * before the restart rather than in whatever order SQLite hands rows back. */
   reconcileOnBoot(): number {
     const stale = this.store.list({ lifecycle: "live" });
     for (const task of stale) {
       this.store.update(task.id, { lifecycle: "suspended", agent_state: "unknown" });
+    }
+    for (const task of this.store.list({ lifecycle: ["live", "suspended"] }).reverse()) {
+      this.ensureInProject(task.id);
     }
     return stale.length;
   }
@@ -253,9 +268,16 @@ export class TaskManager {
     const title = options.title
       || uniqueName(await deriveTitle(cwd), this.taskTitles());
 
+    // Resolved once and reused below, rather than asked again after the
+    // settings write and the spawn. `resolveProjectId` keys off `afterTaskId`
+    // still being in some project's `taskIds`, and `deleteTask` splices ids out
+    // of that list — so a task deleted while this create is awaiting would have
+    // the row say one project and the sidebar say General.
+    const projectId = this.resolveProjectId(options);
+
     const row = this.store.create({
       id,
-      project_id: this.resolveProjectId(options),
+      project_id: projectId,
       // Allocated here, before anything starts: passing `--session-id` is how
       // we know what to resume without asking the agent afterwards (§4.1).
       // A used id cannot be reused, so this is minted per task and only ever
@@ -321,7 +343,7 @@ export class TaskManager {
     }
     this.adopt(pty, id);
     this.armHookGrace(id);
-    this.placeInProject(id, options);
+    this.placeInProject(id, projectId, options);
     return row;
   }
 
@@ -383,7 +405,19 @@ export class TaskManager {
     }
     const next = active ? "busy" : "idle";
     if (current === next) return;
-    this.store.update(taskId, { agent_state: next });
+    // `idle_since` is stamped here too, and not only by the hook path: it is
+    // what the idle harvester counts from (TASK-15), and nothing else writes
+    // it for a task running in degraded mode. Left alone, an agent that
+    // reports no hooks inherits whatever the column held from its previous
+    // life — a `Stop` from hours ago, or the value a restart left behind — so
+    // the first time output activity infers `idle` the task is already past
+    // `harvest_after` and is suspended out from under a user who has only just
+    // reopened it. Same restamp, and the same reason, as the `/clear` and
+    // resume case in `transitionFor`.
+    this.store.update(taskId, {
+      agent_state: next,
+      ...(next === "idle" ? { idle_since: Date.now() } : {}),
+    });
     this.broadcastTask(taskId);
   }
 
@@ -493,6 +527,28 @@ export class TaskManager {
   ): Promise<TaskRow | undefined> {
     const row = this.store.get(taskId);
     if (!row) return undefined;
+    // Joined to a resume already in flight *before* anything is inspected. The
+    // ladder adopts each rung's PTY before awaiting `awaitAgentStart`, so for
+    // most of its run there is a live terminal on this task that belongs to a
+    // rung still being judged — and the "already running" test below would read
+    // it as success, answering a second caller with the ptyId of a terminal the
+    // first caller is about to discard. That client attaches to a corpse and
+    // nothing retries. Checked after the ladder too, since it may have finished
+    // between the two.
+    //
+    // A fresh start does not join it, though: it is a request for a *new*
+    // conversation, and handing back the in-flight resume answers 200 having
+    // minted nothing — the same silent no-op the `fresh` test below exists to
+    // prevent, just reached down the concurrent path. It waits for the ladder
+    // in flight to settle instead (two of them on one task would have two
+    // agents in one directory) and then starts over, by which point the
+    // ordinary "already running" arm below discards whatever that resume left.
+    const alreadyResuming = this.resuming.get(taskId);
+    if (alreadyResuming) {
+      if (options.fresh !== true) return alreadyResuming;
+      await alreadyResuming.catch(() => undefined);
+      return this.resumeTask(taskId, options);
+    }
     // Already running. Resuming is what a client does on the way to opening a
     // task, so it has to be safe to ask for twice.
     //
@@ -505,15 +561,17 @@ export class TaskManager {
     // with the dead terminal's ptyId, having spawned nothing, and only a
     // daemon restart (where reconcileOnBoot suspends the row) ever cleared it.
     const existing = this.primaryPty(taskId);
-    if (existing && !existing.exited) return row;
+    // `fresh` is not a question about whether a conversation is already open —
+    // it is a request for a new one, and the ladder it builds is a single
+    // `--start` on a freshly minted id. Answering it with "already running"
+    // returns 200 having minted nothing and spawned nothing, and the body
+    // describes the old session, so the caller cannot tell. The live terminal
+    // goes the way a dead one does; leaving it would have two agents on one
+    // task.
+    if (existing && options.fresh !== true && !existing.exited) return row;
     // Nothing is going to attach to a dead terminal again, and leaving it
     // associated would have the new agent's task still pointing at it.
     if (existing) this.discardPty(existing, taskId);
-    // …including twice at once. The ladder is awaited end to end, so a second
-    // caller arriving mid-flight would otherwise pass the check above and
-    // start a second agent; it joins the first one's answer instead.
-    const inFlight = this.resuming.get(taskId);
-    if (inFlight) return inFlight;
 
     const attempt = this.runResumeLadder(taskId, row, options).finally(() => {
       this.resuming.delete(taskId);
@@ -537,11 +595,11 @@ export class TaskManager {
 
     for (const attempt of this.resumeLadder(row, options.fresh === true)) {
       // The task can be closed while the ladder is running: it awaits a spawn
-      // and up to `startTimeoutMs` per rung, and closeTask is one synchronous
+      // and up to `startTimeoutMs` per rung, and deleteTask is one synchronous
       // DELETE away. Everything below assumes the row is still there — the
       // mint rung dereferences it outright, and the success arm hands the PTY
       // to `adopt`, which would re-register a terminal under a task that no
-      // longer exists. Nothing kills that PTY afterwards (closeTask already
+      // longer exists. Nothing kills that PTY afterwards (deleteTask already
       // walked the list it is being added back to) and nothing ever shows it,
       // so the agent runs on invisibly for the life of the daemon.
       if (!this.store.get(taskId)) return undefined;
@@ -700,6 +758,27 @@ export class TaskManager {
     return undefined;
   }
 
+  /** Every terminal a task is holding: the agent's, and any shell tabs opened
+   * beside it (§3). What the harvester counts attached views over and asks
+   * what is running, and what `suspendTask` kills. */
+  taskPtyList(taskId: string): Pty[] {
+    const held: Pty[] = [];
+    for (const ptyId of this.taskPtys.get(taskId) ?? []) {
+      const pty = this.ptys.get(ptyId);
+      if (pty) held.push(pty);
+    }
+    return held;
+  }
+
+  /** The rows the idle harvester walks (§5.5). Rows rather than `TaskInfo`,
+   * because what the guards ask about — `idle_since`, `agent_state` — is column
+   * data that the rendered shape has no place for, and rows rather than
+   * `listTasks`, which only sees the in-memory project grouping and so cannot
+   * see a task the daemon adopted rather than created. */
+  liveTasks(): TaskRow[] {
+    return this.store.list({ lifecycle: "live" });
+  }
+
   /** A live PTY by id, for the routes that serialize or write to one. */
   getPty(ptyId: string): Pty | undefined {
     return this.ptys.get(ptyId);
@@ -721,7 +800,8 @@ export class TaskManager {
     // Nothing to throttle, and nothing to remember. The data routes call this
     // with whatever id is in the URL, so recording a timestamp before knowing
     // the task exists would grow this map by one entry per bad request and
-    // never free them — closeTask is the only thing that prunes it.
+    // never free them — suspending or deleting the task is the only thing that
+    // prunes it.
     if (!this.store.get(taskId)) return undefined;
     const last = this.cwdCheckedAt.get(taskId);
     if (last !== undefined && Date.now() - last < maxAgeMs) {
@@ -773,21 +853,144 @@ export class TaskManager {
     return true;
   }
 
-  /** v1's "close the session": the task and its terminals go away for good.
-   * §6 makes closing a suspend instead, with archive as the destructive one —
-   * that lands with TASK-16 and TASK-31.
+  /** Write the task's screen to disk and record the grid it was at (§5.1).
+   * False when there was nothing to write.
    *
-   * It deliberately leaves `~/.codetoaster/tasks/<id>/` behind, and that is a
-   * leak for as long as close means delete: the row is gone, so the id can
-   * never be reissued, so nothing will ever read that directory again — and
-   * TASK-14 will be putting scrollback snapshots in it beside the settings.
-   * Deleting it here would be the wrong fix, because TASK-16 turns close into
-   * a suspend, and a suspended task's directory is exactly what reopening it
-   * reads. The removal belongs to archive (TASK-31), which is the operation
-   * that actually ends a task. Until then a closed task costs a few KB of
-   * JSON. */
-  closeTask(taskId: string): boolean {
+   * What TASK-15's harvester calls before it kills an idle agent's terminal,
+   * and what TASK-17's restore reads back. The size goes on the row in the same
+   * breath because the two are one fact: a snapshot repainted into a grid it
+   * was not taken at reflows into nonsense, and `runResumeLadder` already reads
+   * `last_size_*` to size the terminal it spawns.
+   *
+   * A task with no live terminal keeps whatever snapshot it already has rather
+   * than having it cleared. The file is only stale in the sense that the
+   * process behind it is gone, which is precisely when a user wants to see it;
+   * reconciling rows whose PTYs died with the daemon is `reconcileOnBoot`'s
+   * job.
+   *
+   * It never throws. The harvester runs this across every live task on a timer,
+   * so one task whose directory has been deleted under it must not take the
+   * rest of the tick down with it. */
+  async snapshot(taskId: string): Promise<boolean> {
     if (!this.store.get(taskId)) return false;
+    const pty = this.primaryPty(taskId);
+    // A torn-down terminal is nothing to write, not an empty screen. `serialize`
+    // answers "" once disposed so a stray call cannot throw out of the
+    // harvester's tick — but persisting that "" would overwrite the last screen
+    // the task ever painted, which is the opposite of what the no-PTY branch
+    // above is careful to preserve.
+    if (!pty || pty.isDisposed) return false;
+    try {
+      await writeSnapshot(taskId, pty.serialize());
+    } catch (e) {
+      console.warn(`Could not write scrollback snapshot for task ${taskId}:`, e);
+      return false;
+    }
+    // The task can be deleted while the write is in flight, and `deleteTask`
+    // fires its own removal without awaiting it — so the removal can run first
+    // and this write lands after it, recreating the directory and leaving a
+    // multi-hundred-KB file for a row that no longer exists and an id that can
+    // never be reissued. Exactly the leak the removal exists to prevent.
+    if (!this.store.get(taskId)) {
+      void removeSnapshot(taskId).catch(() => {});
+      return false;
+    }
+    const size = pty.getSize();
+    this.store.update(taskId, { last_size_cols: size.cols, last_size_rows: size.rows });
+    return true;
+  }
+
+  /** Harvest a task: put the screen on disk, kill everything running behind
+   * it, and leave the row saying so (§5.5). False for a task that is not there
+   * or is not live — a suspended task has nothing left to take away, and
+   * asking twice is something both the harvester's tick and a user's click can
+   * do.
+   *
+   * This is the whole of what harvesting *does*; whether a given task should be
+   * harvested is the caller's question. The idle harvester answers it with §5.5's
+   * guards and `closeTask` answers it with a click, and neither one belongs in
+   * here.
+   *
+   * The snapshot comes first, and the order is load-bearing: `Pty.kill`
+   * disposes the headless terminal, `serialize` answers "" from then on, and
+   * `snapshot` refuses to persist that — so a snapshot taken after the kill
+   * would silently leave the task with whatever screen it had before this one,
+   * which is exactly the screen the user is about to be shown when they reopen
+   * it (§5.5, phase 1).
+   *
+   * The row and `~/.codetoaster/tasks/<id>/` both stay. Suspension is the
+   * reversible level of gone (§5.6): the settings file is what the resumed
+   * agent is started with, and the scrollback we just wrote is what the user
+   * sees while it comes back. */
+  async suspendTask(taskId: string): Promise<boolean> {
+    const row = this.store.get(taskId);
+    if (!row || row.lifecycle !== "live") return false;
+    await this.snapshot(taskId);
+    for (const ptyId of [...(this.taskPtys.get(taskId) ?? [])]) {
+      // Every terminal the task holds, not just the agent's: a shell tab
+      // (TASK-27) is a process in the task's directory like any other, and §5.5
+      // harvests the task, not one of its processes.
+      this.ptys.kill(ptyId);
+      this.ptyToTask.delete(ptyId);
+    }
+    this.taskPtys.delete(taskId);
+    // What a task without a process cannot have: a clock waiting for an agent's
+    // first hook, which would wake up and relabel a task that is deliberately
+    // quiet; a record that the agent now gone had reported, which is a claim
+    // about a process, not about a task (`spawnAgent` clears it for the same
+    // reason on the way back); and a throttle timestamp for a cwd check that
+    // was performed against a terminal that no longer exists, which would
+    // otherwise suppress the first check after the task is resumed.
+    this.disarmHookGrace(taskId);
+    this.hookSeen.delete(taskId);
+    this.cwdCheckedAt.delete(taskId);
+    // Only the lifecycle. `agent_state` stays `idle`: that is what was true of
+    // the agent when it was harvested and what the card should go on saying.
+    // `reconcileOnBoot`'s `unknown` is the other case — a daemon that never
+    // witnessed its agents die and cannot speak for what they were doing.
+    this.store.update(taskId, { lifecycle: "suspended" });
+    this.broadcastTask(taskId);
+    return true;
+  }
+
+  /** Closing a task. Chat products have no "close", and neither does this one:
+   * §6 makes the close button a suspend, and archive (TASK-31) the only way a
+   * task truly leaves.
+   *
+   * It is `suspendTask` and nothing else on purpose. Manual close is the
+   * harvest path minus the guards — §5.5's own wording — so the two must not be
+   * able to drift: whatever harvesting learns to preserve, a user's click
+   * preserves too. The guards are the entire difference, and they live with the
+   * caller that has a reason to ask: the harvester answers "should this be
+   * harvested?" with §5.5, and a click answers it by being a click. */
+  closeTask(taskId: string): Promise<boolean> {
+    return this.suspendTask(taskId);
+  }
+
+  /** The destructive door, and for now the only one: the row, the terminals and
+   * the snapshot go away for good, and the id can never be reissued.
+   *
+   * This is what archive becomes (TASK-31) once it also has a worktree to clean
+   * up and a decision to make about keeping the row. Until then it is reachable
+   * only over `DELETE /api/tasks/:id` — the CLI's `codetoaster kill` — because
+   * every path a browser can take now leads to `closeTask` instead.
+   *
+   * It deliberately leaves `~/.codetoaster/tasks/<id>/` behind, settings.json
+   * and all, which is a few KB of JSON for a row nothing will ever read again.
+   * Removing the directory is archive's job along with the worktree, and doing
+   * it here would put a recursive rm under the user's home on a path this task
+   * has no reason to touch yet.
+   *
+   * The scrollback snapshot is the exception, and only because of its size: a
+   * multi-hundred-KB screen per deleted task is a different order of leak, and
+   * unlike a suspended task's snapshot — which is exactly what reopening it
+   * reads back (§5.5, phase 1) — this one has no row left to be read for. */
+  deleteTask(taskId: string): boolean {
+    if (!this.store.get(taskId)) return false;
+    // Fired rather than awaited: delete is synchronous, and an unlink that fails
+    // — a directory already removed by hand, a read-only home — must not be
+    // allowed to fail the removal of a task that is otherwise gone.
+    void removeSnapshot(taskId).catch(() => {});
     // Before the row goes: a timer that outlived its task would wake up to
     // relabel something that is no longer there.
     this.disarmHookGrace(taskId);
@@ -911,20 +1114,29 @@ export class TaskManager {
     };
   }
 
-  /** In project order, live only. The v1 sidebar has no way to render a
-   * suspended task, and widening this is TASK-25's job along with the recency
-   * list that replaces the grouping. */
+  /** In project order, everything a user can still get back to: live and
+   * suspended. A suspended task is not gone (§6) — it is one click from being
+   * live again — so leaving it out of the list would be the sidebar telling the
+   * user their work had been deleted, which is the one thing suspension exists
+   * not to do. Archived tasks stay out: those really have left (TASK-31).
+   *
+   * Still the v1 project grouping; the recency list that replaces it is
+   * TASK-25's. */
   listTasks(): TaskInfo[] {
     const result: TaskInfo[] = [];
     for (const project of this.projects) {
       for (const taskId of project.taskIds) {
         const info = this.taskInfo(taskId);
-        if (info && info.lifecycle === "live") result.push(info);
+        if (info && info.lifecycle !== "archived") result.push(info);
       }
     }
     return result;
   }
 
+  /** The titles a new task's derived name has to be unique against. Suspended
+   * ones count: two tasks in the same directory derive the same "<dir> ·
+   * <branch>" label, and a user who cannot tell the new one from the one they
+   * suspended an hour ago is no better off than if both were live. */
   private taskTitles(): string[] {
     return this.listTasks().map((task) => task.title);
   }
@@ -964,8 +1176,15 @@ export class TaskManager {
     project?.taskIds.push(taskId);
   }
 
-  private placeInProject(taskId: string, options: CreateTaskOptions): void {
-    const project = this.projects.find((p) => p.id === this.resolveProjectId(options))!;
+  /** `projectId` is the one already written to the row, not a fresh
+   * resolution: the two must not be able to disagree. Falls back to General if
+   * the project was deleted while the create was awaiting, which is the same
+   * place `deleteProject` would have moved the task to anyway. */
+  private placeInProject(taskId: string, projectId: string, options: CreateTaskOptions): void {
+    const project =
+      this.projects.find((p) => p.id === projectId) ??
+      this.projects.find((p) => p.id === "general");
+    if (!project) return;
     const afterIndex = options.afterTaskId ? project.taskIds.indexOf(options.afterTaskId) : -1;
     if (afterIndex >= 0) {
       project.taskIds.splice(afterIndex + 1, 0, taskId);

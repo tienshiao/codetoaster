@@ -59,12 +59,16 @@ export function TabSwitcher() {
 
   const selectedSession = mruSessions[selectedIndex];
 
-  // Fetch preview when selection changes
+  // Fetch preview when selection changes. Not for a suspended task: it has no
+  // terminal, `/api/tasks/:id/preview` 404s for it, and the fetch swallows the
+  // failure — so the pane sat on "Loading…" for as long as the row stayed
+  // selected and re-fired the 404 every time the selection came back to it.
+  const selectedIsSuspended = selectedSession?.lifecycle === "suspended";
   useEffect(() => {
-    if (isOpen && selectedSession) {
+    if (isOpen && selectedSession && !selectedIsSuspended) {
       fetchPreview(selectedSession.id);
     }
-  }, [isOpen, selectedSession?.id, fetchPreview]);
+  }, [isOpen, selectedSession?.id, selectedIsSuspended, fetchPreview]);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -216,6 +220,10 @@ export function TabSwitcher() {
                   isConnected={isConnected}
                   isExited={!!session.exited}
                   isActive={!!sessionActivity[session.id]}
+                  // The switcher lists suspended tasks too, and a dormant task
+                  // showing the same green as a running one would be the one
+                  // place in the UI that lies about it.
+                  isSuspended={session.lifecycle === "suspended"}
                 />
                 <div className="flex flex-col min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -244,7 +252,14 @@ export function TabSwitcher() {
           className="rounded-lg overflow-hidden border border-border shrink-0"
           style={{ width: 480, height: 280, backgroundColor: bg }}
         >
-          {previewHtml ? (
+          {selectedIsSuspended ? (
+            <div
+              className="flex items-center justify-center w-full h-full text-xs"
+              style={{ color: fg }}
+            >
+              Suspended — no live terminal
+            </div>
+          ) : previewHtml ? (
             <div
               className={`${scopeClass} w-full h-full overflow-hidden pointer-events-none`}
             >

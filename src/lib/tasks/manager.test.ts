@@ -8,7 +8,9 @@ import { applyMigrations } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import type { ServerMessage, WebSocketData } from "../xtmux/types";
-import { taskDir, taskSettingsPath } from "../agent/spawn";
+import { taskDir, taskScrollbackPath, taskSettingsPath } from "../agent/spawn";
+import { writeTaskSettings } from "../agent/settings";
+import { readSnapshot, writeSnapshot } from "./snapshot";
 
 // A client socket that records what the server sent it.
 function fakeClient(id = "c1") {
@@ -45,9 +47,12 @@ function newManager(): { manager: TaskManager; store: TaskStore; db: Database } 
 }
 
 afterEach(() => {
-  // PTYs are real processes; a leaked one outlives the test run.
+  // PTYs are real processes; a leaked one outlives the test run. `deleteTask`
+  // rather than `closeTask`, which is a suspend now and would leave every row
+  // behind — and in a `:memory:` database that nobody else reads, a row with
+  // no process is nothing worth keeping.
   for (const m of managers) {
-    for (const task of m.listTasks()) m.closeTask(task.id);
+    for (const task of m.listTasks()) m.deleteTask(task.id);
   }
   managers.length = 0;
 });
@@ -84,6 +89,23 @@ describe("degraded mode, when no hook ever arrives", () => {
     expect(await waitFor(() => store.get("t1")!.agent_state === "idle")).toBe(true);
   });
 
+  // The heuristic has to write `idle_since` too, because in degraded mode
+  // nothing else ever does. A resumed task carries the column its previous
+  // life left — a `Stop` from hours ago — so inferring `idle` without
+  // restamping hands the idle harvester (TASK-15) a task that is already past
+  // `harvest_after` and suspends it seconds after the user reopened it.
+  test("an inferred idle starts the harvester's clock rather than inheriting an old one", async () => {
+    const { manager, store } = newManager();
+    manager.setHookGrace(60);
+    await manager.createTask({ id: "t1", command: ["sh", "-c", "printf hello; exec cat"] });
+    // What a previous life left behind.
+    const stale = Date.now() - 6 * 60 * 60_000;
+    store.update("t1", { idle_since: stale });
+
+    expect(await waitFor(() => store.get("t1")!.agent_state === "idle")).toBe(true);
+    expect(store.get("t1")!.idle_since).toBeGreaterThan(stale);
+  });
+
   test("a hook, once seen, outranks anything the terminal does", async () => {
     const { manager, store } = newManager();
     manager.setHookGrace(60);
@@ -110,13 +132,13 @@ describe("degraded mode, when no hook ever arrives", () => {
     expect(store.get("t1")!.agent_state).toBe("busy");
   });
 
-  test("closing a task takes its clock with it", async () => {
+  test("deleting a task takes its clock with it", async () => {
     const { manager } = newManager();
     manager.setHookGrace(60);
     const client = fakeClient();
     manager.registerClient(client.id, client.ws);
     await manager.createTask({ id: "t1", command: ["cat"] });
-    manager.closeTask("t1");
+    manager.deleteTask("t1");
 
     // Nothing to relabel, and nothing that throws trying.
     await Bun.sleep(150);
@@ -342,15 +364,15 @@ describe("the ptyId ↔ taskId association", () => {
     expect(client.of("activity")[0]).not.toHaveProperty("ptyId");
   });
 
-  test("closing the task takes its terminal with it, whatever the terminal is called", async () => {
+  test("deleting the task takes its terminal with it, whatever the terminal is called", async () => {
     const { manager, store } = newManager();
     await taskWithDistinctPty(manager);
 
-    expect(manager.closeTask("task-1")).toBe(true);
+    expect(manager.deleteTask("task-1")).toBe(true);
     expect(manager.getPty("pty-9")).toBeUndefined();
     expect(manager.taskIdForPty("pty-9")).toBeUndefined();
     expect(store.get("task-1")).toBeUndefined();
-    expect(manager.closeTask("task-1")).toBe(false);
+    expect(manager.deleteTask("task-1")).toBe(false);
   });
 });
 
@@ -404,7 +426,7 @@ describe("task info", () => {
   test("a suspended task reports no terminal and its remembered size", async () => {
     const { manager, store } = newManager();
     await manager.createTask({ id: "t1", command: shell() });
-    manager.closeTask("t1");
+    manager.deleteTask("t1");
 
     store.create({
       id: "gone", project_id: "general", title: "Suspended", initial_prompt: "",
@@ -419,13 +441,114 @@ describe("task info", () => {
     expect(info.lifecycle).toBe("suspended");
   });
 
-  test("the v1 list shows live tasks only", async () => {
+  // §6: closing a task suspends it, so a list that hid suspended rows would be
+  // the sidebar telling the user their work had been deleted.
+  test("the list carries suspended tasks and leaves archived ones out", async () => {
     const { manager, store } = newManager();
     await manager.createTask({ id: "t1", command: shell() });
     await manager.createTask({ id: "t2", command: shell() });
+    await manager.createTask({ id: "t3", command: shell() });
     store.update("t2", { lifecycle: "suspended" });
+    store.update("t3", { lifecycle: "archived" });
 
-    expect(manager.listTasks().map((t) => t.id)).toEqual(["t1"]);
+    expect(manager.listTasks().map((t) => t.id)).toEqual(["t1", "t2"]);
+  });
+
+});
+
+// TASK-16. Chat products have no "close", so closing a task suspends it (§6):
+// the process goes, everything that makes the task resumable stays.
+describe("closing a task", () => {
+  const closed: string[] = [];
+  function newTaskId(): string {
+    const id = `test-${crypto.randomUUID()}`;
+    closed.push(id);
+    return id;
+  }
+  afterEach(() => {
+    // Closing writes a real scrollback under the user's home, since that is
+    // what reopening the task reads back.
+    for (const id of closed.splice(0)) fs.rmSync(taskDir(id), { recursive: true, force: true });
+  });
+
+  // AC #5: the row and the directory are what a resume is built out of.
+  test("suspends the task instead of deleting it, and keeps what reopening it reads", async () => {
+    const { manager, store } = newManager();
+    const id = newTaskId();
+    await manager.createTask({ id, command: shell() });
+    // Written by hand because the stand-in command skips the agent path that
+    // normally writes it. It is what `claude --settings` is pointed at on the
+    // way back, so a close that took it would leave the task resumable only
+    // without its hooks.
+    await writeTaskSettings(id);
+
+    expect(await manager.closeTask(id)).toBe(true);
+
+    expect(store.get(id)!.lifecycle).toBe("suspended");
+    expect(manager.primaryPty(id)).toBeUndefined();
+    expect(fs.existsSync(taskSettingsPath(id))).toBe(true);
+    expect(fs.existsSync(taskScrollbackPath(id))).toBe(true);
+    // Still in front of the user, which is the whole point of suspending
+    // rather than deleting.
+    expect(manager.listTasks().map((t) => t.id)).toContain(id);
+  });
+
+  // AC #1. This is the one thing that distinguishes a click from the idle
+  // harvester: a user closing a task has already said what §5.5's guards exist
+  // to infer, so none of them applies.
+  test("closes a busy task immediately rather than waiting for it to go idle", async () => {
+    const { manager, store } = newManager();
+    const id = newTaskId();
+    await manager.createTask({ id, command: ["cat"] });
+    manager.applyHook(id, { hook_event_name: "UserPromptSubmit" });
+    expect(store.get(id)!.agent_state).toBe("busy");
+    expect(store.get(id)!.idle_since).toBeNull();
+
+    expect(await manager.closeTask(id)).toBe(true);
+
+    expect(store.get(id)!.lifecycle).toBe("suspended");
+  });
+
+  test("a task that is already closed is not closed twice", async () => {
+    const { manager } = newManager();
+    const id = newTaskId();
+    await manager.createTask({ id, command: shell() });
+
+    expect(await manager.closeTask(id)).toBe(true);
+    expect(await manager.closeTask(id)).toBe(false);
+    expect(await manager.closeTask("no-such-task")).toBe(false);
+  });
+
+  // A derived title is "<dir> · <branch>", so two tasks in one repository
+  // collide by default. A user who cannot tell a new task from the one they
+  // closed an hour ago is no better off than if both were still running.
+  test("a new task's title is unique against the closed ones too", async () => {
+    const { manager } = newManager();
+    const first = newTaskId();
+    const second = newTaskId();
+    await manager.createTask({ id: first, command: shell() });
+    expect(await manager.closeTask(first)).toBe(true);
+    await manager.createTask({ id: second, command: shell() });
+
+    const titles = manager.listTasks().map((t) => t.title);
+    expect(new Set(titles).size).toBe(titles.length);
+  });
+
+  // The destructive door is the other one, and only it is destructive.
+  // The mirror of "deleting a task takes its snapshot with it" below: the
+  // removal moved to `deleteTask`, and a close that still fired it would take
+  // the screen the user is shown while their agent comes back.
+  test("the snapshot survives a close, and goes on surviving it", async () => {
+    const { manager } = newManager();
+    const id = newTaskId();
+    await manager.createTask({ id, command: shell() });
+
+    expect(await manager.closeTask(id)).toBe(true);
+
+    // Given as long as a fire-and-forget removal would have needed, so this is
+    // not just outrunning it.
+    await Bun.sleep(100);
+    expect(fs.existsSync(taskScrollbackPath(id))).toBe(true);
   });
 });
 
@@ -456,6 +579,103 @@ describe("boot reconciliation", () => {
     });
     manager.reconcileOnBoot();
     expect(manager.reconcileOnBoot()).toBe(0);
+  });
+
+  // AC #2/#3. `loadProjects` starts every project's `taskIds` empty, and
+  // `listTasks` walks that grouping rather than the rows — so a restart that
+  // only rewrote the lifecycle column would leave every task of the previous
+  // run correct in the database and invisible in the sidebar, which from the
+  // user's side is the "restart nukes everything" this replaces.
+  test("the rows it suspends are in the list a connecting client is sent", () => {
+    const { manager, store } = newManager();
+    manager.loadProjects();
+    store.create({
+      id: "stale", project_id: "general", title: "Was running", initial_prompt: "",
+      repo_root: "/repo", cwd: "/repo",
+    });
+    store.create({
+      id: "already", project_id: "general", title: "Was suspended", initial_prompt: "",
+      repo_root: "/repo", cwd: "/repo", lifecycle: "suspended",
+    });
+    store.create({
+      id: "archived", project_id: "general", title: "Gone", initial_prompt: "",
+      repo_root: "/repo", cwd: "/repo", lifecycle: "archived",
+    });
+    expect(manager.listTasks()).toHaveLength(0);
+
+    manager.reconcileOnBoot();
+
+    expect(manager.listTasks().map((t) => t.id).sort()).toEqual(["already", "stale"]);
+  });
+});
+
+describe("snapshotting a task", () => {
+  const snapshotted: string[] = [];
+  function newTaskId(): string {
+    const id = `test-${crypto.randomUUID()}`;
+    snapshotted.push(id);
+    return id;
+  }
+  afterEach(() => {
+    for (const id of snapshotted.splice(0)) {
+      fs.rmSync(taskDir(id), { recursive: true, force: true });
+    }
+  });
+
+  test("writes the screen to disk and records the grid it was taken at", async () => {
+    const { manager, store } = newManager();
+    const id = newTaskId();
+    await manager.createTask({
+      id, cols: 133, rows: 41,
+      command: ["sh", "-c", "printf 'snapshot me'; exec cat"],
+    });
+    expect(await waitFor(() => manager.primaryPty(id)!.serialize().includes("snapshot me"))).toBe(true);
+
+    expect(await manager.snapshot(id)).toBe(true);
+
+    expect(await readSnapshot(id)).toContain("snapshot me");
+    // The two are one fact: a screen repainted into a grid it was not taken at
+    // reflows into nonsense, and `runResumeLadder` sizes the terminal it spawns
+    // off exactly these columns — as resume.test.ts asserts end to end.
+    expect(store.get(id)!.last_size_cols).toBe(133);
+    expect(store.get(id)!.last_size_rows).toBe(41);
+  });
+
+  test("a task that does not exist has nothing to snapshot", async () => {
+    const { manager } = newManager();
+    expect(await manager.snapshot("nope")).toBe(false);
+  });
+
+  // The file is only stale in the sense that the process behind it is gone,
+  // which is precisely when a user wants to see it. Clearing it here would lose
+  // the last screen of every task the daemon outlived.
+  test("a task with no terminal keeps the snapshot it already had", async () => {
+    const { manager, store } = newManager();
+    const id = newTaskId();
+    store.create({
+      id, project_id: "general", title: "Suspended", initial_prompt: "",
+      repo_root: "/repo", cwd: "/repo", lifecycle: "suspended",
+    });
+    await writeSnapshot(id, "the last thing it painted");
+
+    expect(await manager.snapshot(id)).toBe(false);
+    expect(await readSnapshot(id)).toBe("the last thing it painted");
+  });
+
+  // Deleting, not closing: a closed task's snapshot is exactly what reopening
+  // it reads back (§5.5, phase 1), and only a delete leaves no row to read it
+  // for.
+  test("deleting a task takes its snapshot with it", async () => {
+    const { manager } = newManager();
+    const id = newTaskId();
+    await manager.createTask({ id, command: shell() });
+    await manager.snapshot(id);
+    expect(fs.existsSync(taskScrollbackPath(id))).toBe(true);
+
+    manager.deleteTask(id);
+
+    // Fired rather than awaited, since delete is synchronous.
+    expect(await waitFor(() => !fs.existsSync(taskScrollbackPath(id)))).toBe(true);
   });
 });
 

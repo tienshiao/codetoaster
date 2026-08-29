@@ -1,5 +1,6 @@
 import { taskManager } from "../lib/tasks/manager";
 import type { CreateTaskOptions } from "../lib/tasks/manager";
+import { readSnapshot } from "../lib/tasks/snapshot";
 
 function badRequest(message: string): Response {
   return Response.json({ error: message }, { status: 400 });
@@ -152,10 +153,78 @@ export const taskRoutes = {
       }
 
       taskManager.broadcastTasks();
-      // 200 either way, including the could-not-resume landing: the task is
+      // The ladder awaits a spawn and up to `startTimeoutMs` per rung, and
+      // `closeTask` is one synchronous DELETE away — `runResumeLadder` checks
+      // for the row twice for exactly that reason. So the task can be gone by
+      // the time there is an answer to send, and `Response.json(undefined)`
+      // throws rather than serializing, turning a race into a 500 with an
+      // internal error in it.
+      const info = taskManager.taskInfo(req.params.id);
+      if (!info) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      // 200 otherwise, including the could-not-resume landing: the task is
       // there, and its agent_state says what happened. A failed resume is a
       // state the user can act on, not an HTTP error.
-      return Response.json(taskManager.taskInfo(req.params.id));
+      return Response.json(info);
+    },
+  },
+
+  "/api/tasks/:id/scrollback": {
+    // The first half of the two-phase reopen (§5.5): the screen the task was
+    // last showing, fetched so the user sees where they left off within one
+    // round-trip — before the resumed agent exists, let alone paints.
+    //
+    // HTTP rather than a `restore` frame, and not because of §5.4's rule alone:
+    // a `restore` is addressed by ptyId, and the whole point of this phase is
+    // that there is no PTY yet to name it with.
+    async GET(req: Request & { params: { id: string } }) {
+      const row = taskManager.getTask(req.params.id);
+      if (!row) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      // A task with no stored screen is a normal answer, not a failure: one
+      // suspended before snapshots existed, or an agent that died before a
+      // snapshot ever ran, has nothing to repaint and the client simply waits
+      // for the live PTY. Kept distinguishable from the 404 above, which means
+      // something else entirely — there is no such task to resume at all.
+      const data = await readSnapshot(req.params.id);
+      const { last_size_cols: cols, last_size_rows: rows } = row;
+      return Response.json({
+        data: data ?? null,
+        // Both or neither: a snapshot repainted into a grid it was not taken at
+        // reflows into nonsense, and half a size is no better than none — the
+        // client's own measured grid is a better guess than a fabricated
+        // dimension paired with a real one.
+        size: typeof cols === "number" && typeof rows === "number" ? { cols, rows } : null,
+      });
+    },
+  },
+
+  "/api/tasks/:id/close": {
+    // The close button, and a suspend rather than a delete (§6): chat products
+    // have no "close", so this is the escape hatch that puts a task down
+    // without ending it. None of §5.5's guards apply — a user closing a task
+    // has said what the guards exist to infer, so a busy agent mid-turn closes
+    // as readily as an idle one.
+    async POST(req: Request & { params: { id: string } }) {
+      if (!taskManager.getTask(req.params.id)) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      // The answer is not checked: `closeTask` reports false for a task that
+      // was already suspended, and closing something that is already closed is
+      // not a failure to tell the caller about. The row below says what is true
+      // either way.
+      await taskManager.closeTask(req.params.id);
+      // Same race as resume, and the same guard: closing snapshots the screen
+      // first, which is an await, and a DELETE landing in that window leaves
+      // nothing to describe — `Response.json(undefined)` throws rather than
+      // serializing, turning the race into a 500.
+      const info = taskManager.taskInfo(req.params.id);
+      if (!info) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      return Response.json(info);
     },
   },
 
@@ -172,11 +241,20 @@ export const taskRoutes = {
       if (!taskManager.renameTask(req.params.id, title.trim())) {
         return Response.json({ error: "Task not found" }, { status: 404 });
       }
-      return Response.json(taskManager.taskInfo(req.params.id));
+      const info = taskManager.taskInfo(req.params.id);
+      if (!info) {
+        return Response.json({ error: "Task not found" }, { status: 404 });
+      }
+      return Response.json(info);
     },
 
+    // The interim archive (§6): the row, the terminals and the scrollback go
+    // for good. It is the destructive door, kept off the browser's paths on
+    // purpose — the only caller is `codetoaster kill`, which meant "delete" in
+    // v1 and has no other route to mean it by. TASK-31 gives this worktree
+    // cleanup and the confirmation an archive deserves.
     DELETE(req: Request & { params: { id: string } }) {
-      if (taskManager.closeTask(req.params.id)) {
+      if (taskManager.deleteTask(req.params.id)) {
         taskManager.broadcastTasks();
         return Response.json({ success: true });
       }

@@ -15,9 +15,9 @@ import { generateUUID } from "./utils/uuid";
 import { sessionDisplayNames, type NameSource } from "../lib/xtmux/naming";
 import { useWebSocket } from "./hooks/use-websocket";
 import { playNotificationSound } from "./hooks/use-notification-sound";
-import { removeRecentFiles } from "./hooks/use-recent-files";
-import { clearViewState, retainViewStates } from "./view-state-store";
+import { retainViewStates } from "./view-state-store";
 import type { ClientMessage, ProjectInfo as WireProject, ServerMessage, TaskInfo } from "../lib/xtmux/types";
+import type { Lifecycle } from "../lib/db";
 
 // The v1 shape, kept so the sidebar, palette, tab switcher and routes need no
 // change while the server moves to tasks. This whole adapter — SessionInfo,
@@ -34,6 +34,11 @@ export interface SessionInfo {
   name: string;
   nameSource?: NameSource;
   title?: string;
+  /** Whether there is anything running behind the task (§6). A suspended one is
+   * not a task that went away — it is one click from being live again — so the
+   * sidebar renders it dormant rather than dropping it, and clicking it resumes
+   * rather than attaching. */
+  lifecycle: Lifecycle;
   createdAt: number;
   size: { cols: number; rows: number };
   clientCount: number;
@@ -52,6 +57,19 @@ function reportCreateFailure(reason: string): void {
   toast.error("Could not create the session", { description: reason });
 }
 
+// A resume that fails has to reach the user for the same reason: the row goes
+// on sitting there suspended, and without this the only sign that anything
+// happened is that clicking it did nothing.
+function reportResumeFailure(reason: string, retry: () => void): void {
+  console.error("Could not resume the task:", reason);
+  toast.error("Could not resume the session", {
+    description: reason,
+    // The only way back: a failed resume is not retried on its own, or the
+    // route's attach effect would spawn an agent on every list update.
+    action: { label: "Try again", onClick: retry },
+  });
+}
+
 function fromTask(task: TaskInfo): SessionInfo {
   return {
     id: task.id,
@@ -61,6 +79,7 @@ function fromTask(task: TaskInfo): SessionInfo {
     name: task.title,
     nameSource: task.titleSource,
     title: task.terminalTitle,
+    lifecycle: task.lifecycle,
     createdAt: task.createdAt,
     size: task.size,
     clientCount: task.clientCount,
@@ -92,6 +111,22 @@ interface SessionContextValue {
   isConnected: boolean;
   sessionsLoaded: boolean;
   sessionActivity: Record<string, boolean>;
+  /** The suspended tasks with a resume in flight, so the sidebar can say the
+   * click landed while the agent is coming back. */
+  resumingSessionIds: Set<string>;
+  /** The task whose stored screen is on the grid, read-only, waiting for the
+   * resumed agent's first paint (§5.5). Outlives `resumingSessionIds`: the
+   * resume request answers as soon as the ladder has a process, which is before
+   * that process has drawn anything. */
+  restoringSessionId: string | null;
+  /** Tasks whose resume failed and were not retried. The terminal is left
+   * showing the snapshot rather than a blank grid, so the overlay is the only
+   * thing that can say the agent is not coming. */
+  resumeFailedSessionIds: Set<string>;
+  /** Try a failed resume again. Failures are never retried on their own — the
+   * route's attach effect re-runs on every `sessions` delta — so this is the
+   * only way back. */
+  retryResume: (id: string) => void;
   lastActivityAt: React.RefObject<Record<string, number>>;
   terminalRef: React.RefObject<TerminalHandle | null>;
   // Labels for every session, keyed by id. Computed over the whole list so a
@@ -111,6 +146,9 @@ interface SessionContextValue {
   handleTerminalReady: () => void;
   handleSizeChange: (size: TerminalSize) => void;
   handleSendMessage: (msg: ClientMessage) => void;
+  /** The terminal saying the swap happened: the resumed agent painted, and the
+   * snapshot is gone. */
+  handleRestoreEnd: () => void;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -154,6 +192,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [mruSessionIds, setMruSessionIds] = useState<string[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessionActivity, setSessionActivity] = useState<Record<string, boolean>>({});
+  // Which suspended tasks have a resume in flight. A ref as well as state
+  // because it is read as a lock, not rendered: the route's attach effect runs
+  // again on every `sessions` delta, and those arrive constantly while a resume
+  // is spawning — a second request would put a second agent on the ladder for
+  // one click.
+  const resumingRef = useRef<Set<string>>(new Set());
+  const [resumingSessionIds, setResumingSessionIds] = useState<Set<string>>(new Set());
+  // Tasks whose resume failed, which must not be retried on their own. Opening
+  // a suspended task is driven by the route's attach effect, and that effect
+  // re-runs on every `sessions` delta — including the one the failure itself
+  // broadcasts. Without this the failing task would spawn an agent, fail,
+  // broadcast, and spawn another, for as long as the tab was open.
+  const resumeFailedRef = useRef<Set<string>>(new Set());
+  const [resumeFailedSessionIds, setResumeFailedSessionIds] = useState<Set<string>>(new Set());
+  // The task the terminal is holding a snapshot for. A ref as well as state for
+  // the same reason `resumingRef` is one: it is read as a guard by callbacks
+  // that run in the same commit that set it — the scrollback fetch resolving,
+  // and the attach effect deciding whether an attach belongs to the reopen in
+  // flight or is the user having moved on.
+  const restoringTaskIdRef = useRef<string | null>(null);
+  const [restoringSessionId, setRestoringSessionId] = useState<string | null>(null);
   const lastActivityAt = useRef<Record<string, number>>({});
   const terminalRef = useRef<TerminalHandle | null>(null);
   const terminalReadyRef = useRef(false);
@@ -402,14 +461,199 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setMruSessionIds((prev) => [id, ...prev.filter((x) => x !== id)]);
   }, []);
 
+  const markResuming = useCallback((id: string, resuming: boolean) => {
+    if (resuming) resumingRef.current.add(id);
+    else resumingRef.current.delete(id);
+    setResumingSessionIds(new Set(resumingRef.current));
+  }, []);
+
+  // Mirror the failure latch into state so the overlay can render it. The ref
+  // stays the authority — it is read as a lock, from callbacks, in the commit
+  // that writes it — and this only catches the render up. Unchanged sets are
+  // handed back untouched: `attachSession` prunes the latch on every call, and
+  // a fresh Set each time would re-render the whole tree off an effect that
+  // runs on every `sessions` delta.
+  const syncResumeFailed = useCallback(() => {
+    setResumeFailedSessionIds((prev) => {
+      const next = resumeFailedRef.current;
+      if (prev.size === next.size && [...next].every((id) => prev.has(id))) return prev;
+      return new Set(next);
+    });
+  }, []);
+
+  // Leave the read-only phase without a swap. The grid keeps whatever it is
+  // showing: after a failed resume that is the snapshot, which is the last true
+  // thing the user saw and still the most useful thing on screen.
+  const endRestorePhase = useCallback(() => {
+    if (restoringTaskIdRef.current === null) return;
+    restoringTaskIdRef.current = null;
+    setRestoringSessionId(null);
+    terminalRef.current?.endRestore();
+  }, []);
+
+  // The swap landed: the resumed agent painted and the terminal is live again.
+  const handleRestoreEnd = useCallback(() => {
+    restoringTaskIdRef.current = null;
+    setRestoringSessionId(null);
+  }, []);
+
+  // Bring a suspended task back (§6): the agent is respawned on the stored
+  // conversation and the task gets a fresh terminal, which the attach effect
+  // picks up when the server broadcasts the row. Nothing is attached from here
+  // — this only starts the process and reports it failing.
+  const resumeSession = useCallback(
+    (id: string, retry = false) => {
+      if (resumingRef.current.has(id)) return;
+      if (resumeFailedRef.current.has(id) && !retry) return;
+      resumeFailedRef.current.delete(id);
+      syncResumeFailed();
+      markResuming(id, true);
+
+      // Let go of the terminal we were showing before the request, not after.
+      // The user has already navigated to the task being resumed, so leaving
+      // the old PTY attached leaves them looking at another task's output for
+      // as long as the ladder takes — and typing into it, since input is
+      // addressed at whatever `currentPtyId` still names.
+      terminalRef.current?.resetAttached();
+      if (attachedPtyRef.current) {
+        sendRef.current({ type: "detach", ptyId: attachedPtyRef.current });
+        attachedPtyRef.current = null;
+        setCurrentPtyId(null);
+      }
+      setCurrentSession(id);
+      pushMru(id);
+
+      // The read-only phase opens here, before either request goes out (§5.5).
+      // The ordering is the whole trick: the two requests race, and a resume
+      // that comes back first must not have a snapshot painted over its live
+      // output afterwards — so painting is conditional on the phase still
+      // standing, and the phase can only still be standing if nothing has been
+      // painted live yet.
+      restoringTaskIdRef.current = id;
+      setRestoringSessionId(id);
+      terminalRef.current?.beginRestore();
+
+      // In parallel with the resume, not after it: showing the user where they
+      // left off must not wait on a process that takes seconds to come back,
+      // and the agent does not exist yet to serve it over the socket anyway.
+      fetch(`/api/tasks/${id}/scrollback`)
+        .then(async (response) => {
+          if (!response.ok) return;
+          const body = await response.json();
+          // A task with no stored screen is a normal answer (a task suspended
+          // before snapshots existed, or an agent that died before one ran):
+          // there is simply nothing to repaint, and the phase goes on waiting
+          // for the live PTY.
+          if (typeof body?.data !== "string") return;
+          // Guarded on the task as well as on the phase: the user can open a
+          // second suspended task while this is in flight, and that one's
+          // restore is standing by the time this answers.
+          if (restoringTaskIdRef.current !== id) return;
+          terminalRef.current?.paintSnapshot(body.data, body.size ?? null);
+        })
+        .catch(() => {
+          // Nothing to say. The snapshot is a courtesy — the resume is what the
+          // click was for, and it reports its own failures.
+        });
+
+      // Same distinction as create: the request needs a concrete grid, so it
+      // falls back, but a fabricated 80x24 must not reach the attach and enter
+      // smallest-wins negotiation as this client's real measurement.
+      const size = terminalRef.current?.getSize() ?? { cols: 80, rows: 24 };
+      fetch(`/api/tasks/${id}/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cols: size.cols, rows: size.rows }),
+      })
+        .then(async (response) => {
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error ?? response.statusText);
+          // A 200 is not by itself a success: the route answers with the row
+          // whatever the ladder managed, and a task that could not be resumed
+          // is a card with a button on it (§4.3), not an HTTP error.
+          if (body.agentState === "could_not_resume") {
+            throw new Error("The agent's conversation could not be reopened.");
+          }
+          // Upsert rather than wait for the broadcast that is already on its
+          // way: the attach effect fires off `sessions`, so the ptyId reaching
+          // the list is what actually reattaches the terminal, and racing the
+          // socket for it costs nothing.
+          const session = fromTask(body as TaskInfo);
+          setSessions((prev) => {
+            const i = prev.findIndex((s) => s.id === session.id);
+            if (i === -1) return [...prev, session];
+            const copy = [...prev];
+            copy[i] = session;
+            return copy;
+          });
+        })
+        .catch((e) => {
+          // Latched before the toast, so the button the toast offers is the
+          // only thing that tries again.
+          resumeFailedRef.current.add(id);
+          syncResumeFailed();
+          // No agent is coming, so nothing will ever swap the grid over: left
+          // standing, the phase would sit on "resuming…" and refuse input for
+          // as long as the tab was open. The snapshot stays painted underneath
+          // the failure — it is still the last true thing this task showed.
+          if (restoringTaskIdRef.current === id) endRestorePhase();
+          reportResumeFailure(e instanceof Error ? e.message : String(e), () =>
+            resumeSessionRef.current(id, true),
+          );
+        })
+        .finally(() => {
+          markResuming(id, false);
+        });
+    },
+    [markResuming, pushMru, setCurrentSession, syncResumeFailed, endRestorePhase],
+  );
+
+  // The retry the toast offers calls back into the callback that created it, so
+  // it is reached through a ref rather than by making `resumeSession` recursive
+  // on itself.
+  const resumeSessionRef = useRef(resumeSession);
+  resumeSessionRef.current = resumeSession;
+
+  // The same retry the toast offers, for the overlay to put on the failed
+  // task's own screen — where the user is actually looking when a reopen
+  // fails, and where a dismissed toast leaves nothing at all.
+  const retryResume = useCallback((id: string) => {
+    resumeSessionRef.current(id, true);
+  }, []);
+
   // Returns false when there is nothing to attach to yet — the task's terminal
-  // is minted by the server, so a row can exist a beat before its ptyId does.
-  // Callers that remember "this slug is handled" must not latch on a false, or
-  // the effect that would retry when the ptyId lands will short-circuit and the
-  // terminal stays dark.
+  // is minted by the server, so a row can exist a beat before its ptyId does,
+  // and a suspended one has none at all until it has been resumed. Callers that
+  // remember "this slug is handled" must not latch on a false, or the effect
+  // that would retry when the ptyId lands will short-circuit and the terminal
+  // stays dark.
   const attachSession = useCallback(
     (id: string): boolean => {
-      const ptyId = sessionsRef.current.find((s) => s.id === id)?.ptyId;
+      const session = sessionsRef.current.find((s) => s.id === id);
+      const ptyId = session?.ptyId;
+
+      // A resume latch only outlives the task the user is looking at. The
+      // latch exists so a failure is not retried on its own — the attach
+      // effect re-runs on every `sessions` delta, and those never stop — but
+      // it must not outlive the visit: without this, one failed resume made
+      // the task permanently un-openable, silently, since every later click
+      // came back through here, hit the latch and returned with no toast and
+      // nothing on screen. Leaving the task and coming back is the retry
+      // gesture, so leaving it is what clears the latch.
+      for (const failed of [...resumeFailedRef.current]) {
+        if (failed !== id) resumeFailedRef.current.delete(failed);
+      }
+      syncResumeFailed();
+
+      // A reopen belongs to the task that started it. Attaching that same task
+      // is the reopen proceeding — the resumed agent's fresh ptyId landing in
+      // the list is exactly what this effect is waiting for — so the phase has
+      // to survive it, or the snapshot would be wiped by the `restore` for a
+      // PTY that has not printed anything yet. Attaching anything else is the
+      // user having moved on, and the phase goes with them.
+      if (restoringTaskIdRef.current !== null && restoringTaskIdRef.current !== id) {
+        endRestorePhase();
+      }
 
       // Nothing to do only when this really is the terminal we are holding.
       // Being on the same task is not enough: after a reconnect the attachment
@@ -424,7 +668,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return true;
       }
 
-      if (!ptyId) return false;
+      if (!ptyId) {
+        // A suspended task is *precisely* a task with no PTY (§6), so this is
+        // where opening one has to start the process rather than give up. The
+        // false below is still right: there is nothing to attach to yet, and
+        // the caller's retry when the resumed ptyId lands is what attaches it.
+        if (session?.lifecycle === "suspended") resumeSession(id);
+        return false;
+      }
+
+      // Whatever went wrong last time did not stop the task coming back, so
+      // the next suspension gets a clean attempt rather than inheriting a
+      // latch from a resume that is now history.
+      resumeFailedRef.current.delete(id);
+      syncResumeFailed();
 
       terminalRef.current?.resetAttached();
 
@@ -451,7 +708,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       pushMru(id);
       return true;
     },
-    [send, pushMru, setCurrentSession],
+    [send, pushMru, setCurrentSession, resumeSession, syncResumeFailed, endRestorePhase],
   );
 
   // Creating a task is a request now, not a message: it resolves a directory,
@@ -508,6 +765,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return null;
       }
 
+      // A new task is the user having moved on from whatever reopen was in
+      // flight, and its terminal must not have the old task's snapshot held
+      // over it or its own first output swallowed as a swap.
+      endRestorePhase();
+
       // Only now let go of the terminal we were showing. Detaching up front
       // meant a refused create left the user staring at a dead grid: nothing
       // re-attaches it, since the route's slug latch has already fired and
@@ -529,10 +791,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       pushMru(task.id);
       if (task.ptyId) {
         send({ type: "attach", ptyId: task.ptyId, ...(measured ?? {}) });
+        // Recorded here rather than left to the `attached` frame that confirms
+        // it, because the caller navigates to the new task immediately and the
+        // route's attach effect runs in that same commit — long before the
+        // round trip. With this still null, `attachSession` cannot recognise
+        // the attachment just sent and sends a second one, and the server
+        // answers every attach with a fresh `restore`: the whole scrollback
+        // re-serialized and repainted (RIS and all) on every new task. Handing
+        // it back if the user switches away in the meantime still works — the
+        // `attached` handler detaches a task it is not showing, and
+        // `attachSession` now has the ptyId to detach from.
+        attachedPtyRef.current = task.ptyId;
+        setCurrentPtyId(task.ptyId);
       }
       return { id: task.id, name: session.name };
     },
-    [send, pushMru, setCurrentSession],
+    [send, pushMru, setCurrentSession, endRestorePhase],
   );
 
   const renameSession = useCallback(
@@ -656,25 +930,54 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
+  // Closing suspends (§6). The task keeps its row, its directory and its place
+  // in the sidebar; what goes away is the process behind it. So the row is not
+  // dropped from the list, and the recent files and view state this used to
+  // clear are kept: they describe the task, not its process, and a close the
+  // user undoes with a click should come back to the tab and file they left
+  // open. `retainViewStates` still collects them when the task really does go.
   const closeSession = useCallback(
     (id: string) => {
-      removeRecentFiles(id);
-      clearViewState(id);
-      send({ type: "kill", taskId: id });
+      resumeFailedRef.current.delete(id);
+      syncResumeFailed();
+      // Closing the task a reopen was for ends the reopen: there is nothing
+      // left to swap to, and the phase would otherwise go on refusing input to
+      // whatever the user opens next.
+      if (restoringTaskIdRef.current === id) endRestorePhase();
+      fetch(`/api/tasks/${id}/close`, { method: "POST" })
+        .then(async (res) => {
+          if (res.ok) return;
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error ?? res.statusText);
+        })
+        .catch((e) => {
+          console.error("Could not close the task:", e);
+          toast.error("Could not close the session", {
+            description: e instanceof Error ? e.message : String(e),
+          });
+        });
 
       if (id === currentSessionIdRef.current) {
         terminalRef.current?.resetAttached();
-        // The terminal went with the task: leaving these set would keep the
+        // Handed back rather than only forgotten. Closing is a request now, and
+        // a request can fail — a 404, a dropped connection — in which case the
+        // terminal is still alive and the server still counts this client as
+        // one of its viewers: it clamps smallest-wins size negotiation for
+        // everyone else, and `clientCount` never reaching zero means the idle
+        // harvester can never take that task (§5.5). On the success path the
+        // server has already killed the PTY and the detach is a no-op.
+        if (attachedPtyRef.current) {
+          sendRef.current({ type: "detach", ptyId: attachedPtyRef.current });
+        }
+        // The terminal went with the suspend: leaving these set would keep the
         // killed PTY's `exit` past the message filter and address the next
         // resize at a process that no longer exists.
         attachedPtyRef.current = null;
         setCurrentPtyId(null);
         setCurrentSession(null);
       }
-
-      setSessions((prev) => prev.filter((s) => s.id !== id));
     },
-    [send, setCurrentSession],
+    [setCurrentSession, syncResumeFailed, endRestorePhase],
   );
 
   const sessionLabels = useMemo(() => sessionDisplayNames(sessions), [sessions]);
@@ -690,6 +993,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         isConnected,
         sessionsLoaded,
         sessionActivity,
+        resumingSessionIds,
+        restoringSessionId,
+        resumeFailedSessionIds,
+        retryResume,
         lastActivityAt,
         sessionLabels,
         terminalRef,
@@ -704,6 +1011,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         handleTerminalReady,
         handleSizeChange,
         handleSendMessage,
+        handleRestoreEnd,
       }}
     >
       {children}

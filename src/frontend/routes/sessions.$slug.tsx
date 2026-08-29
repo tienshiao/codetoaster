@@ -39,6 +39,26 @@ function SessionComponent() {
     lastSlugRef.current = null;
   }, [slug]);
 
+  // And when this slug's task acquires a terminal it did not have. A resume
+  // mints a fresh PTY, and the attach effect below is latched on a slug that
+  // has not changed — so without this the reopened task comes back live,
+  // broadcasts its new ptyId, and nobody attaches to it: the server counts zero
+  // clients and the view sits on "resuming…" for good.
+  //
+  // Deliberately only in that direction. Clearing the latch when a task *loses*
+  // its PTY would re-run the attach below, which resumes a task with no
+  // terminal — reopening it the instant the user closed it. Losing the PTY is
+  // what the suspended overlay's Reopen is for; that is a click, and this is
+  // not.
+  const lastPtyIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const { id } = parseSessionSlug(slug);
+    const ptyId = sessions.find((s) => s.id === id)?.ptyId ?? null;
+    const previous = lastPtyIdRef.current;
+    lastPtyIdRef.current = ptyId;
+    if (!previous && ptyId) lastSlugRef.current = null;
+  }, [slug, sessions]);
+
   // Attach to session when slug changes (only if session exists)
   useEffect(() => {
     if (!isConnected || !sessionsLoaded) return;

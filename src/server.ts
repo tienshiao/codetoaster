@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, basename } from "node:path";
 import index from "./frontend/index.html";
 import { taskManager } from "./lib/tasks/manager";
+import { Harvester } from "./lib/tasks/harvester";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
 import { taskRoutes } from "./api/tasks";
@@ -81,6 +82,13 @@ export function startServer(options?: ServerOptions) {
   if (suspended > 0) {
     console.log(`Suspended ${suspended} task${suspended === 1 ? "" : "s"} left live by the previous run`);
   }
+  // After the reconciliation, so the first tick walks what is actually running
+  // rather than the rows the previous daemon left behind — every one of which
+  // is live, idle-looking and long past any timeout. On its own default of
+  // thirty minutes (§5.5), which it can be now that a suspended task shows in
+  // the sidebar and comes back on a click.
+  const harvester = new Harvester(taskManager);
+  harvester.start();
 
   // Read lazily, not computed here: `--port 0` means the real port does not
   // exist until `serve()` has returned.
@@ -112,6 +120,16 @@ export function startServer(options?: ServerOptions) {
           const response = await fetch(new URL(spaPath, selfOrigin()));
           const headers = new Headers(response.headers);
           headers.set("Cache-Control", "no-cache");
+          // This route is deliberately unguarded — a top-level navigation to
+          // the SPA carries no Origin, and serving HTML is not a mutation. But
+          // an unguarded page that can be framed hands an attacker the whole
+          // UI: every request the framed SPA makes is genuinely same-origin, so
+          // origin.ts waves it through, and a transparent overlay drives the
+          // routes that spawn agents in the user's repositories without ever
+          // making a cross-origin request. Both headers, since the CSP form is
+          // the current one and X-Frame-Options is what older browsers read.
+          headers.set("X-Frame-Options", "DENY");
+          headers.set("Content-Security-Policy", "frame-ancestors 'none'");
           return new Response(response.body, {
             status: response.status,
             headers,
@@ -248,8 +266,17 @@ export function startServer(options?: ServerOptions) {
 
       "/api/shutdown": guardRoute({
         POST() {
+          // Before the wait, not inside it: the exit is 100ms away so that this
+          // response can be written, and a tick that starts in that window
+          // would be halfway through snapshotting a task when the process goes.
+          harvester.stop();
           setTimeout(() => {
-            removePidFile(PORT);
+            // The bound port, not the requested one: `--port 0` resolves late,
+            // and `cmdForeground` writes the pid file under what the listener
+            // actually got. Removing `daemon-0.json` would leave the real one
+            // behind, so the next `codetoaster start` sees a pid file for a
+            // daemon that has just exited.
+            removePidFile(server.port ?? PORT);
             process.exit(0);
           }, 100);
           return Response.json({ status: "shutting down" });
@@ -313,11 +340,26 @@ export function startServer(options?: ServerOptions) {
           }
 
           case "kill": {
-            if (taskManager.closeTask(parsed.taskId)) {
-              taskManager.broadcastTasks();
-            } else {
-              sendError(ws, `Task "${parsed.taskId}" not found`);
+            // v1's name for a v2 suspend (§6). Renaming a wire message is a
+            // protocol change this is not, but what it does has moved: the
+            // destructive path is `DELETE /api/tasks/:id` and nothing a client
+            // sends can reach it, so a stale tab from before this change
+            // suspends a task rather than deleting one.
+            //
+            // Fired rather than awaited, because the message handler is
+            // synchronous and nothing later in it depends on the outcome.
+            // `suspendTask` broadcasts the row it changed, so the only thing
+            // left to say is that there was no such task — asked of the store
+            // rather than read off the answer, which is also false for a task
+            // that was already suspended and is therefore already closed.
+            const { taskId } = parsed;
+            if (!taskManager.getTask(taskId)) {
+              sendError(ws, `Task "${taskId}" not found`);
+              break;
             }
+            void taskManager.closeTask(taskId).catch((e) => {
+              console.warn(`Could not close task ${taskId}:`, e);
+            });
             break;
           }
 

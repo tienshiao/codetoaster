@@ -15,7 +15,7 @@ const taskIds: string[] = [];
 
 afterEach(() => {
   // PTYs are real processes; a leaked one outlives the test run.
-  for (const { manager, taskId } of opened.splice(0)) manager.closeTask(taskId);
+  for (const { manager, taskId } of opened.splice(0)) manager.deleteTask(taskId);
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
   for (const id of taskIds.splice(0)) fs.rmSync(taskDir(id), { recursive: true, force: true });
 });
@@ -110,6 +110,30 @@ function newManager(failWhen: string[] = []) {
 }
 
 describe("resuming a suspended task", () => {
+  // AC #2/#3. The daemon's PTYs died with it, so every `live` row at boot is a
+  // lie; what makes that a suspend rather than the v1 wipe is that the row it
+  // leaves behind is one `resumeTask` away from running again. `bun --hot`
+  // takes exactly this path on every reload.
+  test("a task the previous daemon left running comes back after a restart", async () => {
+    const { manager, store, agent } = newManager();
+    const row = suspendedTask(manager, store, {
+      lifecycle: "live",
+      agent_state: "busy",
+    });
+    manager.loadProjects();
+
+    expect(manager.reconcileOnBoot()).toBe(1);
+    expect(store.get(row.id)!.lifecycle).toBe("suspended");
+    // Not gone: a client connecting after the restart is sent it.
+    expect(manager.listTasks().map((t) => t.id)).toContain(row.id);
+
+    const resumed = await manager.resumeTask(row.id);
+
+    expect(resumed!.lifecycle).toBe("live");
+    expect(manager.primaryPty(row.id)).toBeDefined();
+    expect((await agent.settled(1))[0]).toContain("--resume");
+  });
+
   test("asks for the conversation the row remembers", async () => {
     const { manager, store, agent } = newManager();
     const row = suspendedTask(manager, store);
@@ -250,7 +274,7 @@ describe("resuming a suspended task", () => {
 
     // A first life, which reports in the way a working agent does.
     manager.applyHook(row.id, { hook_event_name: "SessionStart", session_id: "stored-session-id" });
-    manager.closeTask(row.id);
+    manager.deleteTask(row.id);
     store.create({ ...row, pinned: false, lifecycle: "suspended", agent_session_id: "stored-session-id" });
 
     await manager.resumeTask(row.id);
@@ -300,6 +324,45 @@ describe("resuming a suspended task", () => {
 
     expect(manager.primaryPty(row.id)!.id).toBe(ptyId);
     expect(await agent.settled(1)).toHaveLength(1);
+  });
+
+  // The ladder adopts each rung's terminal before it knows whether that rung
+  // worked, so for most of a resume there is a live PTY on the task belonging to
+  // an attempt still being judged. Reading that as "already running" answered a
+  // second caller with a suspended row and the ptyId of a terminal the first
+  // caller may be about to discard.
+  test("a second resume joins the first rather than answering out of its unfinished ladder", async () => {
+    const { manager, store } = newManager();
+    const row = suspendedTask(manager, store);
+
+    const first = manager.resumeTask(row.id);
+    // The window a second caller actually lands in: the rung's terminal is up,
+    // and the ladder has not yet decided anything about it.
+    while (!manager.primaryPty(row.id)) await Bun.sleep(5);
+
+    const second = await manager.resumeTask(row.id);
+
+    expect(second).toBe(await first);
+    expect(second!.lifecycle).toBe("live");
+  });
+
+  // "Safe to ask for twice" is about a plain resume. A fresh start is a request
+  // for a new conversation, and answering it with the running one returned 200
+  // having minted nothing — with a body describing the old session, so the
+  // caller could not tell.
+  test("a fresh start replaces a conversation that is already running", async () => {
+    const { manager, store, agent } = newManager();
+    const row = suspendedTask(manager, store);
+    await manager.resumeTask(row.id);
+    const ptyId = manager.primaryPty(row.id)!.id;
+
+    const fresh = await manager.resumeTask(row.id, { fresh: true });
+
+    expect(fresh!.agent_session_id).not.toBe("stored-session-id");
+    expect(manager.primaryPty(row.id)!.id).not.toBe(ptyId);
+    const [, second] = await agent.settled(2);
+    expect(second).toContain("--session-id");
+    expect(second).not.toContain("--resume");
   });
 
   test("restores the grid the task was suspended at", async () => {

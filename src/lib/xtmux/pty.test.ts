@@ -93,3 +93,27 @@ test("getCwd resolves to undefined for a PTY whose process is gone", async () =>
   expect(await pty.getCwd()).toBeUndefined();
   pty.kill();
 });
+
+test("serialize hands back what the terminal has painted", async () => {
+  const pty = new Pty("p5", ["sh", "-c", "printf 'snapshot me'; sleep 30"], 80, 24);
+  try {
+    await settle(200);
+    expect(pty.serialize()).toContain("snapshot me");
+  } finally {
+    pty.kill();
+  }
+});
+
+// Harvesting is snapshot-then-kill, so a serialize can land on the far side of
+// a dispose — out of a background interval, where a throw would take the rest
+// of the tick's tasks with it.
+test("serialize is empty once the terminal is gone, rather than throwing", async () => {
+  const pty = new Pty("p6", ["sh", "-c", "printf 'snapshot me'; sleep 30"], 80, 24);
+  await settle(200);
+  pty.kill();
+
+  expect(pty.serialize()).toBe("");
+  // And killing twice is not a second dispose.
+  pty.kill();
+  expect(pty.serialize()).toBe("");
+});

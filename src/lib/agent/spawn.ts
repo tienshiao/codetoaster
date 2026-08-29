@@ -3,14 +3,21 @@ import * as path from "path";
 import type { TaskRow } from "../db";
 
 /** Where a task keeps the files that belong to it rather than to its
- * checkout: the injected settings.json (TASK-9), and the scrollback snapshot
- * TASK-14 adds (docs/v2-architecture.md §4.2, §5.1). */
+ * checkout: the injected settings.json (TASK-9) and the scrollback snapshot
+ * (TASK-14) (docs/v2-architecture.md §4.2, §5.1). */
 export function taskDir(taskId: string): string {
   return path.join(os.homedir(), ".codetoaster", "tasks", taskId);
 }
 
 export function taskSettingsPath(taskId: string): string {
   return path.join(taskDir(taskId), "settings.json");
+}
+
+/** The task's last screen, as the ANSI needed to repaint it. On disk rather
+ * than on the row because it is a multi-hundred-KB blob per task, and SQLite
+ * is where the small durable facts live (§5.1). */
+export function taskScrollbackPath(taskId: string): string {
+  return path.join(taskDir(taskId), "scrollback.ans");
 }
 
 /** What building the argv actually needs off the row. Narrower than TaskRow

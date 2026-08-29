@@ -8,6 +8,11 @@ interface TerminalPreviewProps {
   children: ReactNode;
   fetchPreview: (sessionId: string) => void;
   getPreview: (sessionId: string) => string | null;
+  /** Whether there is a terminal to preview at all. A suspended task has none
+   * (§6), and `/api/tasks/:id/preview` 404s for it — a failure the fetch
+   * swallows on purpose, which left the tooltip saying "Loading…" for as long
+   * as the user hovered, on every dormant row in the sidebar. */
+  hasTerminal?: boolean;
 }
 
 export function TerminalPreview({
@@ -15,6 +20,7 @@ export function TerminalPreview({
   children,
   fetchPreview,
   getPreview,
+  hasTerminal = true,
 }: TerminalPreviewProps) {
   const { theme, cssFontFamily } = useTerminalTheme();
   const html = getPreview(sessionId);
@@ -26,7 +32,12 @@ export function TerminalPreview({
 
   return (
     <Tooltip delayDuration={400}>
-      <TooltipTrigger asChild onMouseEnter={() => fetchPreview(sessionId)}>
+      <TooltipTrigger
+        asChild
+        onMouseEnter={() => {
+          if (hasTerminal) fetchPreview(sessionId);
+        }}
+      >
         {children}
       </TooltipTrigger>
       <TooltipPrimitive.Portal>
@@ -36,7 +47,14 @@ export function TerminalPreview({
           className="animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=right]:slide-in-from-left-2 z-50 rounded-md shadow-xl"
           style={{ backgroundColor: bg }}
         >
-          {html ? (
+          {!hasTerminal ? (
+            <div
+              className="rounded-md px-3 py-2 text-xs"
+              style={{ background: bg, color: fg }}
+            >
+              Suspended — no live terminal
+            </div>
+          ) : html ? (
             <div
               className={`${scopeClass} rounded-md overflow-hidden pointer-events-none`}
               style={{ maxWidth: 360, maxHeight: 200 }}

@@ -75,11 +75,27 @@ describe("isSameOrigin", () => {
     expect(isSameOrigin("http://localhost:4000.evil.example", "localhost:4000")).toBe(false);
   });
 
-  // Browsers always attach an Origin cross-origin, so its absence means the
-  // caller is not a browser — the CLI, a curl, the server fetching its own SPA.
+  // No Origin and no Sec-Fetch-Site: the CLI, a curl, the hook reporter.
   test("allows a caller that is not a browser at all", () => {
     configureOriginGuard({ port: 4000, hostname: "127.0.0.1" });
     expect(isSameOrigin(null, "localhost:4000")).toBe(true);
+  });
+
+  // The gap an Origin check alone leaves: browsers omit Origin from every
+  // subresource load and from top-level navigation, so `new Image().src =
+  // "http://127.0.0.1:4000/api/tasks"` on any page reaches a guarded GET with
+  // nothing to refuse it. Sec-Fetch-Site is what those requests do carry.
+  test("refuses a browser request that carries no Origin", () => {
+    configureOriginGuard({ port: 4000, hostname: "127.0.0.1" });
+    expect(isSameOrigin(null, "localhost:4000", "cross-site")).toBe(false);
+    expect(isSameOrigin(null, "localhost:4000", "same-site")).toBe(false);
+  });
+
+  test("allows our own page, and the user typing the address", () => {
+    configureOriginGuard({ port: 4000, hostname: "127.0.0.1" });
+    expect(isSameOrigin("http://localhost:4000", "localhost:4000", "same-origin")).toBe(true);
+    // A bookmark, or a typed URL: a browser, but not another page.
+    expect(isSameOrigin(null, "localhost:4000", "none")).toBe(true);
   });
 
   test("refuses an opaque origin, which is a browser and is never us", () => {
@@ -170,6 +186,16 @@ describe("the guarded API", () => {
 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("written");
+  });
+
+  // The shape an `<img src>` on an attacker's page takes: a real browser
+  // request, and no Origin on it for the guard to compare.
+  test("refuses a subresource load from another page, which carries no Origin", async () => {
+    const base = serveGuarded();
+    const res = await fetch(`${base}/api/thing`, {
+      headers: { "sec-fetch-site": "cross-site" },
+    });
+    expect(res.status).toBe(403);
   });
 
   test("leaves the SPA alone", async () => {
