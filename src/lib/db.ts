@@ -73,8 +73,13 @@ const migrations: Migration[] = [
   {
     name: "001_initial_projects",
     up(db) {
+      // IF NOT EXISTS / OR IGNORE for the same reason 003 and 004 guard
+      // themselves: a database whose applied_migrations row went missing must
+      // not wedge the daemon on "table projects already exists" at every boot.
+      // The shape is unchanged, so this is a no-op for every database that
+      // already ran it.
       db.run(`
-        CREATE TABLE projects (
+        CREATE TABLE IF NOT EXISTS projects (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           initial_path TEXT NOT NULL DEFAULT '',
@@ -82,7 +87,7 @@ const migrations: Migration[] = [
           sort_order INTEGER NOT NULL DEFAULT 0
         )
       `);
-      db.run(`INSERT INTO projects (id, name, sort_order) VALUES ('general', 'General', 0)`);
+      db.run(`INSERT OR IGNORE INTO projects (id, name, sort_order) VALUES ('general', 'General', 0)`);
     },
   },
   {
@@ -243,14 +248,26 @@ export function createProject(project: NewProject): void {
   );
 }
 
+// Every column an update is allowed to name. The SET clause is built from
+// caller-supplied keys, and a key reaches SQL as an identifier, not a bound
+// parameter — so it is checked against this set rather than trusted. The type
+// says as much at compile time; this is what holds at runtime, where the
+// object may have come off the wire.
+const UPDATABLE_PROJECT_COLUMNS: ReadonlySet<string> = new Set([
+  "name", "initial_path", "sort_order", "default_base_ref", "default_model",
+  "default_permission_mode", "setup_command", "worktree_copy", "worktree_default",
+]);
+
 export function updateProject(id: string, fields: Partial<Omit<ProjectRow, "id">>): void {
   const sets: string[] = [];
   const values: any[] = [];
   for (const [key, value] of Object.entries(fields)) {
-    if (value !== undefined) {
-      sets.push(`${key} = ?`);
-      values.push(value);
+    if (value === undefined) continue;
+    if (!UPDATABLE_PROJECT_COLUMNS.has(key)) {
+      throw new Error(`Not an updatable project column: ${key}`);
     }
+    sets.push(`${key} = ?`);
+    values.push(value);
   }
   if (sets.length === 0) return;
   values.push(id);

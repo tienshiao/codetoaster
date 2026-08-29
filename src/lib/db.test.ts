@@ -174,6 +174,21 @@ describe("upgrade from v1", () => {
     expect(columnNames(db, "tasks").size).toBe(TASK_COLUMNS.length);
     expect(indexNames(db, "tasks").has("tasks_by_recency")).toBe(true);
   });
+
+  // The oldest migration is the one most likely to be missing from a
+  // hand-edited applied_migrations, and it is the only one that creates a
+  // table *and* seeds a row — so it has two ways to wedge the daemon, not one.
+  test("a lost migration record does not make the first migration throw", () => {
+    const db = new Database(":memory:");
+    applyMigrations(db);
+    db.run("INSERT INTO projects (id, name, sort_order) VALUES ('web', 'Web', 1)");
+    db.run("DELETE FROM applied_migrations WHERE name = '001_initial_projects'");
+
+    expect(() => applyMigrations(db)).not.toThrow();
+    // Re-running it must not duplicate or clobber what is already there.
+    expect(db.query("SELECT id FROM projects ORDER BY sort_order").all())
+      .toEqual([{ id: "general" }, { id: "web" }]);
+  });
 });
 
 describe("initDatabase", () => {
