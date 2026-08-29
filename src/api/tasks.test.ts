@@ -12,8 +12,21 @@ let server: ReturnType<typeof Bun.serve>;
 let base: string;
 let dbDir: string;
 
+// A task now starts its agent, and these tests create a lot of them. The
+// stand-in has to *ignore* the argv a real agent is given and then sit there:
+// `cat` alone exits at once on `cat: illegal option -- -`, which would leave
+// every route test asserting against a task whose terminal had already died
+// (`agentState` flips to "exited" from the exit callback). A one-line script
+// keeps the process alive until it is killed, and keeps the suite from
+// starting real Claude Code sessions, each with a transcript on disk.
+let previousAgentBin: string | undefined;
+
 beforeAll(() => {
+  previousAgentBin = process.env.CODETOASTER_AGENT_BIN;
   dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-taskroutes-"));
+  const agentBin = path.join(dbDir, "fake-agent");
+  fs.writeFileSync(agentBin, "#!/bin/sh\nexec cat\n", { mode: 0o755 });
+  process.env.CODETOASTER_AGENT_BIN = agentBin;
   initDatabase(path.join(dbDir, "codetoaster.db"));
   taskManager.loadProjects();
   server = Bun.serve({ port: 0, routes: taskRoutes as any, fetch: () => new Response("", { status: 404 }) });
@@ -28,6 +41,8 @@ afterEach(async () => {
 });
 
 afterAll(() => {
+  if (previousAgentBin === undefined) delete process.env.CODETOASTER_AGENT_BIN;
+  else process.env.CODETOASTER_AGENT_BIN = previousAgentBin;
   server.stop(true);
   fs.rmSync(dbDir, { recursive: true, force: true });
 });
@@ -118,8 +133,8 @@ describe("POST /api/tasks", () => {
   });
 
   test("a spawn failure is a 500 with a body, not a session that never appears", async () => {
-    const shell = process.env.SHELL;
-    process.env.SHELL = "/nonexistent/codetoaster-not-a-shell";
+    const bin = process.env.CODETOASTER_AGENT_BIN;
+    process.env.CODETOASTER_AGENT_BIN = "/nonexistent/codetoaster-not-an-agent";
     try {
       const res = await post({});
       expect(res.status).toBe(500);
@@ -127,8 +142,8 @@ describe("POST /api/tasks", () => {
       // And nothing is left behind holding the id.
       expect(taskManager.listTasks()).toHaveLength(0);
     } finally {
-      if (shell === undefined) delete process.env.SHELL;
-      else process.env.SHELL = shell;
+      if (bin === undefined) delete process.env.CODETOASTER_AGENT_BIN;
+      else process.env.CODETOASTER_AGENT_BIN = bin;
     }
   });
 });

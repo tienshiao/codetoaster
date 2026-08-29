@@ -334,5 +334,12 @@ export function startServer(options?: ServerOptions) {
     },
   });
 
+  // Taken from the listener rather than from the requested port, and set the
+  // moment it exists: `--port 0` asks the OS to pick one, and an agent told to
+  // report to port 0 has nowhere to send its hooks (§4.2). Still before any
+  // task can be created — nothing can reach the create route until serve()
+  // has returned.
+  taskManager.setPort(server.port ?? PORT);
+
   return server;
 }

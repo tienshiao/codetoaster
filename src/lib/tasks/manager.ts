@@ -8,6 +8,7 @@ import { uniqueName } from "../xtmux/naming";
 import * as db from "../db";
 import type { TaskRow } from "../db";
 import { TaskStore } from "./store";
+import { buildAgentCommand, taskEnv } from "../agent/spawn";
 import { deriveTitle, resolveRepoRoot } from "./derive";
 
 function expandTilde(filepath: string): string {
@@ -28,11 +29,13 @@ export interface CreateTaskOptions {
   afterTaskId?: string;
   cols?: number;
   rows?: number;
-  /** Recorded on the row and passed to the agent when TASK-8 builds its argv. */
+  /** Recorded on the row, and passed through to the agent's argv. */
   model?: string;
   permissionMode?: string;
-  /** What the task's first terminal runs. Defaults to the user's shell; the
-   * agent command arrives with TASK-8. */
+  /** Overrides what the task's first terminal runs. A task runs its agent by
+   * default — that is what a task *is* (§3) — so this is for the callers that
+   * want something else in front of a task: tests, and the extra shell tabs
+   * TASK-27 opens. */
   command?: string[];
   /** The id to give that terminal. Minted when omitted — a task and its
    * terminals are separate things with separate lifetimes, and a resumed task
@@ -56,6 +59,11 @@ export class TaskManager {
   private taskPtys: Map<string, Set<string>> = new Map();
   private projects: ProjectInfo[] = [{ id: "general", name: "General", initialPath: "", taskIds: [] }];
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
+  // What `codetoaster hook` has to POST back to (§4.2), handed over by
+  // startServer. Undefined until then: a manager with no server in front of it
+  // — a test — has no port to name, and an agent spawned from one simply
+  // reports nowhere.
+  private port?: number;
 
   /** Takes the database to work against; defaults to the process-wide one.
    * Tasks and projects both come from it, so a caller cannot end up reading
@@ -86,6 +94,12 @@ export class TaskManager {
   }
 
   // ---------------------------------------------------------------- startup
+
+  /** The port the daemon ended up on, which every task's environment carries
+   * so its hooks can reach us. Set once, at startup, before any task exists. */
+  setPort(port: number): void {
+    this.port = port;
+  }
 
   loadProjects(): void {
     const rows = db.getAllProjects(this.db);
@@ -185,6 +199,12 @@ export class TaskManager {
     const row = this.store.create({
       id,
       project_id: this.resolveProjectId(options),
+      // Allocated here, before anything starts: passing `--session-id` is how
+      // we know what to resume without asking the agent afterwards (§4.1).
+      // A used id cannot be reused, so this is minted per task and only ever
+      // replaced — by a `/clear` reported through SessionStart (TASK-11), or
+      // by a start-fresh fallback (TASK-13).
+      agent_session_id: crypto.randomUUID(),
       title,
       title_source: options.title ? "manual" : "derived",
       initial_prompt: options.prompt ?? "",
@@ -204,11 +224,16 @@ export class TaskManager {
     // own id from ever being used again.
     let pty: Pty;
     try {
-      pty = this.ptys.spawn(options.command ?? [process.env.SHELL || "bash"], {
+      pty = this.ptys.spawn(options.command ?? buildAgentCommand(row), {
         id: options.ptyId,
         cols: options.cols,
         rows: options.rows,
         cwd,
+        // Every PTY of a task, not just the agent's: an extra shell tab
+        // (TASK-27) wants the same task id to report under, and the same
+        // scrub — a shell that ran `claude` by hand would otherwise hit the
+        // inherited-marker problem the scrub exists for.
+        env: taskEnv(process.env, { taskId: id, port: this.port }),
       });
     } catch (e) {
       this.store.delete(id);

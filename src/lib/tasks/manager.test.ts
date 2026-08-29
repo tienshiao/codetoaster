@@ -67,6 +67,64 @@ describe("creating a task", () => {
     expect(manager.taskIdForPty(pty!.id)).toBe("t1");
   });
 
+  test("allocates the agent's session id before anything spawns", async () => {
+    const { manager, store } = newManager();
+    const row = await manager.createTask({ id: "t1", command: shell() });
+
+    // On the row the moment the task exists, not written back once the agent
+    // reports in: it is what `--session-id` was given, and what a resume has
+    // to ask for (§4.1).
+    expect(row.agent_session_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(store.get("t1")!.agent_session_id).toBe(row.agent_session_id);
+  });
+
+  test("gives each task its own session id", async () => {
+    const { manager } = newManager();
+    const a = await manager.createTask({ id: "t1", command: shell() });
+    const b = await manager.createTask({ id: "t2", command: shell() });
+    // A used id cannot be reused — sharing one would leave the second task
+    // unable to start at all (§4.3).
+    expect(a.agent_session_id).not.toBe(b.agent_session_id);
+  });
+
+  test("the terminal's environment names the task and drops inherited markers", async () => {
+    const { manager } = newManager();
+    const out = `${process.env.TMPDIR ?? "/tmp"}/codetoaster-env-${crypto.randomUUID()}`;
+    // Poison this process the way a daemon started from inside an agent
+    // session is poisoned, and check the child comes out clean. Restored
+    // rather than deleted afterwards: a suite run from inside an agent session
+    // already has these, and unsetting them would quietly change the
+    // environment every later test spawns under.
+    const poisoned = ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION"] as const;
+    const previous = poisoned.map((key) => [key, process.env[key]] as const);
+    for (const key of poisoned) process.env[key] = "1";
+    try {
+      await manager.createTask({
+        id: "t1",
+        command: ["bash", "-c", `env > ${out}`],
+      });
+      expect(await waitFor(() => Bun.file(out).size > 0)).toBe(true);
+      const keys = (await Bun.file(out).text())
+        .split("\n")
+        .map((line) => line.slice(0, line.indexOf("=")));
+
+      // The keys we poisoned, not "nothing starting with CLAUDE": the scrub is
+      // deliberately narrow, and a developer who exports CLAUDE_CONFIG_DIR is
+      // meant to have it inherited — a blanket assertion would fail on their
+      // machine over correct behaviour.
+      for (const key of poisoned) expect(keys).not.toContain(key);
+      expect(keys).toContain("CODETOASTER_TASK_ID");
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await Bun.file(out).delete().catch(() => {});
+    }
+  });
+
   test("derives a title from the cwd, and a caller's title outranks it", async () => {
     const { manager } = newManager();
     await manager.createTask({ id: "t1", command: shell() });
