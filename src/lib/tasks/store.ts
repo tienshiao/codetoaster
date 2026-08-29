@@ -136,6 +136,15 @@ export class TaskStore {
     return this.get(id);
   }
 
+  /** Move every task of one project to another, and answer how many moved.
+   * Rows outlive the manager's in-memory grouping — a task suspended by a
+   * previous run is in no project's `taskIds` but still carries its
+   * `project_id` — so deleting a project has to reassign by column, not by
+   * whatever the manager happens to be holding. */
+  reassignProject(from: string, to: string): number {
+    return this.db.run("UPDATE tasks SET project_id = ? WHERE project_id = ?", [to, from]).changes;
+  }
+
   /** True if a row was actually removed. Archiving is a lifecycle, not this —
    * a deleted task is one we are done remembering. */
   delete(id: string): boolean {

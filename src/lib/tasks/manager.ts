@@ -573,10 +573,11 @@ export class TaskManager {
     const project = this.projects[index]!;
     const general = this.projects.find((p) => p.id === "general")!;
     // The tasks outlive the grouping: they move to General rather than being
-    // destroyed with it.
-    for (const taskId of project.taskIds) {
-      this.store.update(taskId, { project_id: "general" });
-    }
+    // destroyed with it. By column, not by `project.taskIds` — that list only
+    // holds the tasks this run started, so a task suspended by a previous
+    // daemon would keep a project_id pointing at a project that no longer
+    // exists, and nothing else ever revisits the column.
+    this.store.reassignProject(id, "general");
     general.taskIds.push(...project.taskIds);
     this.projects.splice(index, 1);
     db.deleteProject(id, this.db);

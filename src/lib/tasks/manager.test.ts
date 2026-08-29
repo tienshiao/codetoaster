@@ -391,3 +391,21 @@ describe("boot reconciliation", () => {
     expect(manager.reconcileOnBoot()).toBe(0);
   });
 });
+
+describe("deleting a project", () => {
+  // The manager's `taskIds` only holds what this run started, so reassigning
+  // off that list leaves every task suspended by a previous daemon pointing at
+  // a project row that no longer exists — and nothing else revisits the column.
+  test("moves the rows it is not holding in memory, not just the live ones", () => {
+    const { manager, store } = newManager();
+    manager.createProject("proj", "Project", "");
+    store.create({
+      id: "suspended", project_id: "proj", title: "From a previous run",
+      initial_prompt: "", repo_root: "/repo", cwd: "/repo",
+      lifecycle: "suspended", agent_state: "unknown",
+    });
+
+    expect(manager.deleteProject("proj")).toBe(true);
+    expect(store.get("suspended")!.project_id).toBe("general");
+  });
+});
