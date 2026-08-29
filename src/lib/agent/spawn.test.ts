@@ -106,14 +106,21 @@ describe("buildAgentCommand", () => {
 });
 
 describe("taskEnv", () => {
+  // The full set observed in a real Claude Code subprocess environment, so the
+  // removal list is asserted against what it was drawn from rather than a
+  // sample of it.
   const poisoned = {
     PATH: "/usr/bin",
     CLAUDECODE: "1",
-    CLAUDE_CODE_CHILD_SESSION: "1",
-    CLAUDE_CODE_SESSION_ID: "abc",
-    CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/sock",
     CLAUDE_PID: "4242",
     CLAUDE_EFFORT: "high",
+    CLAUDE_CODE_ENTRYPOINT: "cli",
+    CLAUDE_CODE_SESSION_ID: "abc",
+    CLAUDE_CODE_CHILD_SESSION: "1",
+    CLAUDE_CODE_BRIDGE_SESSION_ID: "def",
+    CLAUDE_CODE_EXECPATH: "/usr/local/bin/claude",
+    CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/sock",
+    CLAUDE_CODE_MESSAGING_TOKEN: "tok",
   };
 
   test("names every inherited Claude Code key for removal", () => {
@@ -123,6 +130,38 @@ describe("taskEnv", () => {
       expect(env).toHaveProperty(key);
       expect(env[key]).toBeUndefined();
     }
+  });
+
+  // The blanket CLAUDE_CODE_ prefix scrub this replaced took these with it.
+  // A user who exports CLAUDE_CODE_USE_BEDROCK or a client certificate in their
+  // shell profile then got every task's agent started without it, failing to
+  // authenticate while the same `claude` run by hand worked.
+  test("keeps the user's own CLAUDE_CODE_ configuration, which the prefix scrub used to strip", () => {
+    const userConfig = {
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      CLAUDE_CODE_USE_MANTLE: "1",
+      CLAUDE_CODE_CLIENT_CERT: "/etc/ssl/corp.pem",
+      CLAUDE_CODE_CLIENT_KEY: "/etc/ssl/corp.key",
+      CLAUDE_CODE_CLIENT_KEY_PASSPHRASE: "hunter2",
+      CLAUDE_CODE_CERT_STORE: "/etc/ssl/store",
+      CLAUDE_CODE_EFFORT_LEVEL: "high",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      CLAUDE_CODE_PROCESS_WRAPPER: "/usr/bin/wrap",
+      CLAUDE_CODE_SKIP_AWS_CRED_CACHE: "1",
+    };
+    const env = taskEnv({ ...poisoned, ...userConfig }, { taskId: "t1" });
+    for (const key of Object.keys(userConfig)) {
+      expect(env).not.toHaveProperty(key);
+    }
+  });
+
+  // Whatever else the messaging family grows, it is per-session IPC pointing at
+  // the socket of the session that spawned the daemon — never user config — so
+  // that one prefix is still swept.
+  test("still sweeps the whole CLAUDE_CODE_MESSAGING_ family by prefix", () => {
+    const env = taskEnv({ CLAUDE_CODE_MESSAGING_SOMETHING_NEW: "x" }, { taskId: "t1" });
+    expect(env).toHaveProperty("CLAUDE_CODE_MESSAGING_SOMETHING_NEW");
+    expect(env.CLAUDE_CODE_MESSAGING_SOMETHING_NEW).toBeUndefined();
   });
 
   test("leaves the rest of the environment alone", () => {

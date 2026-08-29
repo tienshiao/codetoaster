@@ -94,17 +94,52 @@ export function buildAgentCommand(task: AgentTask, options: AgentCommandOptions 
   return command;
 }
 
-/** Env vars Claude Code sets for its own children, which a child of ours must
- * not inherit. `CLAUDE_CODE_` covers the family (`CLAUDE_CODE_CHILD_SESSION`,
- * `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_*`, …). */
-const SCRUBBED_KEYS = ["CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT"];
-const SCRUBBED_PREFIX = "CLAUDE_CODE_";
+/** Env vars Claude Code sets in the processes it spawns, which a child of ours
+ * must not inherit. Enumerated by name, from what a real Claude Code subprocess
+ * environment was observed to carry.
+ *
+ * This used to be a blanket `CLAUDE_CODE_` prefix scrub, which was wrong in the
+ * expensive direction: the same prefix carries documented *user* configuration
+ * — `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_CLIENT_CERT` and its key and
+ * passphrase, `CLAUDE_CODE_CERT_STORE`, `CLAUDE_CODE_EFFORT_LEVEL`, and the
+ * rest — which a user exports from their shell profile. Stripping those meant
+ * that a user who runs Bedrock, or a corporate mTLS setup, got every task's
+ * agent booted without the configuration it needs and failing to authenticate,
+ * while the identical `claude` run by hand from the same shell worked fine: a
+ * symptom pointing nowhere near its cause. Inheriting a marker some future
+ * version adds and we have not listed here degrades one task; stripping a
+ * user's provider or certificate configuration breaks all of them. So the
+ * default is now to inherit, and every removal is an exact name. */
+const SCRUBBED_KEYS = [
+  "CLAUDECODE",
+  "CLAUDE_PID",
+  "CLAUDE_EFFORT",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_BRIDGE_SESSION_ID",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+];
+/** The one family still scrubbed by prefix. Everything under it is per-session
+ * IPC plumbing pointing at the socket of the session that spawned us — never
+ * something a user would set — so a name we have not seen yet is safer removed
+ * than passed down to a child that would talk to the wrong session. */
+const SCRUBBED_PREFIX = "CLAUDE_CODE_MESSAGING_";
 
 export interface TaskEnvContext {
   taskId: string;
   /** The daemon's port, so `codetoaster hook` can reach us (TASK-10). Absent
    * outside a running server, where there is nothing to report to. */
   port?: number;
+  /** Where the daemon actually answers, when that is not loopback. `--host`
+   * binds one address exclusively, so a reporter that assembled
+   * `http://localhost:<port>` for itself would have every POST refused and
+   * every task would fall back to the output-activity guess the hooks exist to
+   * replace. Omitted for a loopback bind, where the reporter's own default is
+   * already right. */
+  origin?: string;
 }
 
 // The environment overrides every PTY of a task runs under — the agent's, and
@@ -135,5 +170,6 @@ export function taskEnv(
 
   env.CODETOASTER_TASK_ID = context.taskId;
   if (context.port !== undefined) env.CODETOASTER_PORT = String(context.port);
+  if (context.origin !== undefined) env.CODETOASTER_ORIGIN = context.origin;
   return env;
 }
