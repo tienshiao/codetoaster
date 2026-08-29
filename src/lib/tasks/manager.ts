@@ -91,6 +91,10 @@ export class TaskManager {
   // — a test — has no port to name, and an agent spawned from one simply
   // reports nowhere.
   private port?: number;
+  // And where it answers, when that is not loopback. A `--host` bind makes
+  // `http://localhost:<port>` refuse the connection, so the reporter cannot
+  // assemble its own URL from the port alone.
+  private origin?: string;
 
   /** Takes the database to work against; defaults to the process-wide one.
    * Tasks and projects both come from it, so a caller cannot end up reading
@@ -124,8 +128,9 @@ export class TaskManager {
 
   /** The port the daemon ended up on, which every task's environment carries
    * so its hooks can reach us. Set once, at startup, before any task exists. */
-  setPort(port: number): void {
+  setPort(port: number, origin?: string): void {
     this.port = port;
+    this.origin = origin;
   }
 
   /** How long a new task has to report its first hook before it is called
@@ -291,7 +296,7 @@ export class TaskManager {
         // (TASK-27) wants the same task id to report under, and the same
         // scrub — a shell that ran `claude` by hand would otherwise hit the
         // inherited-marker problem the scrub exists for.
-        env: taskEnv(process.env, { taskId: id, port: this.port }),
+        env: taskEnv(process.env, { taskId: id, port: this.port, origin: this.origin }),
       });
     } catch (e) {
       this.store.delete(id);
@@ -422,7 +427,7 @@ export class TaskManager {
         cols: options.cols,
         rows: options.rows,
         cwd: row.cwd,
-        env: taskEnv(process.env, { taskId: row.id, port: this.port }),
+        env: taskEnv(process.env, { taskId: row.id, port: this.port, origin: this.origin }),
       },
     );
     this.adopt(pty, row.id);
@@ -478,7 +483,20 @@ export class TaskManager {
     if (!row) return undefined;
     // Already running. Resuming is what a client does on the way to opening a
     // task, so it has to be safe to ask for twice.
-    if (this.primaryPty(taskId)) return row;
+    //
+    // "Running" has to mean the process is alive, not merely that we still
+    // hold a handle to it: PtyManager only forgets a PTY when something kills
+    // it, so one that exited on its own stays registered and `primaryPty` goes
+    // on answering with the corpse. Testing the handle alone made this a
+    // permanent no-op for the case resume most obviously exists to serve — an
+    // agent that exited while the daemon stayed up. The route returned 200
+    // with the dead terminal's ptyId, having spawned nothing, and only a
+    // daemon restart (where reconcileOnBoot suspends the row) ever cleared it.
+    const existing = this.primaryPty(taskId);
+    if (existing && !existing.exited) return row;
+    // Nothing is going to attach to a dead terminal again, and leaving it
+    // associated would have the new agent's task still pointing at it.
+    if (existing) this.discardPty(existing, taskId);
     // …including twice at once. The ladder is awaited end to end, so a second
     // caller arriving mid-flight would otherwise pass the check above and
     // start a second agent; it joins the first one's answer instead.
@@ -592,11 +610,35 @@ export class TaskManager {
     // hard way — a resume in this repo picked up the conversation of the
     // session doing the work. Opening someone else's conversation is worse
     // than not resuming at all.
-    if (continueIsSafe(row)) ladder.push({ mode: "continue" });
+    const continueSafe = continueIsSafe(row);
+    if (continueSafe) ladder.push({ mode: "continue" });
     // Last: a conversation we have never been told about, found by looking.
     // Whatever opens reports its own SessionStart, and the row picks the id up
     // from the hook — so a successful rung here heals what sent us down it.
-    const found = findResumableTranscript(row, { notThis: row.agent_session_id });
+    //
+    // NOTE (review): this rung and `continueIsSafe` above disagree. When the
+    // newest transcript in the directory is not the one this task reported,
+    // `--continue` is refused precisely because it would open a stranger's
+    // conversation — and then the scan below picks that same newest file and
+    // resumes it by id instead, which is the same mistake with more steps.
+    // Left as it is because closing it is a judgement call, not a typo: gating
+    // the scan on `continueIsSafe` would disable the rung in exactly the case
+    // it was added for (a stale `agent_session_id` healed from a newer
+    // transcript), and the ambiguity only really goes away with
+    // worktree-per-task (m-4), where a directory holds one conversation.
+    // Gated on the same judgement as `--continue`, and for the same reason:
+    // without it the guard above is theatre. Refusing `--continue` because the
+    // newest conversation in the directory is a stranger's, and then resuming
+    // that very file by id one rung later, is worse than not checking at all.
+    //
+    // What this costs is the rung §4.3 wanted for a pruned or skewed
+    // transcript — but only in a directory we can see is shared, which is
+    // exactly where guessing picks up somebody else's conversation. In a
+    // worktree (m-4) the directory holds one conversation, the guard passes,
+    // and the rung comes back.
+    const found = continueSafe
+      ? findResumableTranscript(row, { notThis: row.agent_session_id })
+      : undefined;
     if (found && !ladder.some((rung) => rung.sessionId === found.sessionId)) {
       ladder.push({ mode: "resume", sessionId: found.sessionId });
     }

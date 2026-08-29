@@ -7,6 +7,7 @@ import { applyMigrations } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import { taskDir } from "../agent/spawn";
+import { projectsDirFor } from "../agent/transcripts";
 
 const opened: Array<{ manager: TaskManager; taskId: string }> = [];
 const tempDirs: string[] = [];
@@ -119,28 +120,49 @@ describe("resuming a suspended task", () => {
     expect(modes).toEqual(["--resume", "--continue"]);
   });
 
-  test("scans for a conversation nobody told us about, and never re-tries the one that failed", async () => {
-    const { manager, store, agent } = newManager(["stored-session-id", "--continue"]);
-    // A transcript directory with two conversations: the one the row names,
-    // and a newer one it has never heard of.
+  // A directory holding somebody else's newer conversation: neither the guess
+  // that opens "the most recent one" nor the scan that looks for a candidate
+  // may run, because both would land on the stranger. Gating one and not the
+  // other would have made the guard theatre.
+  test("guesses nothing in a directory it can see is shared", async () => {
+    const { manager, store, agent } = newManager(["stored-session-id"]);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-transcripts-"));
     tempDirs.push(dir);
     fs.writeFileSync(path.join(dir, "stored-session-id.jsonl"), "{}");
-    fs.writeFileSync(path.join(dir, "found-by-scanning.jsonl"), "{}");
+    fs.writeFileSync(path.join(dir, "someone-elses.jsonl"), "{}");
 
     const row = suspendedTask(manager, store, { created_at: Date.now() - 60_000 });
     store.update(row.id, { transcript_path: path.join(dir, "stored-session-id.jsonl") });
 
-    await manager.resumeTask(row.id);
+    const resumed = await manager.resumeTask(row.id);
 
     const invocations = agent.invocations();
-    const ids = invocations.map((argv) => argv[argv.indexOf("--resume") + 1]);
-    expect(ids[0]).toBe("stored-session-id");
-    expect(ids.at(-1)).toBe("found-by-scanning");
-    // And `--continue` is never reached, because the newest conversation in
-    // that directory is not the one this task reported — it would have opened
-    // somebody else's.
+    // The task's own conversation is still tried — it is named, not guessed.
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]![invocations[0]!.indexOf("--resume") + 1]).toBe("stored-session-id");
     expect(invocations.flat()).not.toContain("--continue");
+    expect(resumed!.agent_state).toBe("could_not_resume");
+  });
+
+  // And where the directory is the task's own — which is what worktree-per-task
+  // makes true for every task (m-4) — the scan is exactly the rung §4.3 wants.
+  test("scans for a conversation nobody told us about when the directory is its own", async () => {
+    // `--continue` fails too, so the ladder gets as far as the scan.
+    const { manager, store, agent } = newManager(["stored-session-id", "--continue"]);
+    // A row that has never had a hook report a transcript path, so the
+    // directory is the derived one for its cwd.
+    const row = suspendedTask(manager, store, { created_at: Date.now() - 60_000 });
+    const derived = projectsDirFor(store.get(row.id)!.cwd);
+    fs.mkdirSync(derived, { recursive: true });
+    tempDirs.push(derived);
+    fs.writeFileSync(path.join(derived, "found-by-scanning.jsonl"), "{}");
+
+    await manager.resumeTask(row.id);
+
+    const ids = agent.invocations().map((argv) => argv[argv.indexOf("--resume") + 1]);
+    // The stored id has no transcript here, so it is never attempted; the
+    // conversation that is actually present is.
+    expect(ids).toContain("found-by-scanning");
   });
 
   // The rung that recovers a row whose id has gone stale: transcript_path came
@@ -291,5 +313,37 @@ describe("resuming a suspended task", () => {
     expect(resumed!.lifecycle).toBe("live");
     // And the row picks up whatever conversation actually opened.
     expect(resumed!.agent_session_id).toBe("reported");
+  });
+
+  // PtyManager only forgets a PTY when something kills it, so one that exited
+  // on its own stays registered and `primaryPty` goes on answering with the
+  // corpse. Testing that handle alone made resume a permanent no-op for the
+  // case it most obviously exists to serve: an agent that exited while the
+  // daemon stayed up.
+  test("resumes a task whose agent exited, rather than reporting the corpse", async () => {
+    const { manager, store, agent } = newManager();
+    const row = suspendedTask(manager, store);
+
+    // A first life that comes up and then dies, the way an agent does when the
+    // user exits it.
+    await manager.resumeTask(row.id);
+    const first = manager.primaryPty(row.id);
+    expect(first).toBeDefined();
+    // Killed through the Pty itself, not through PtyManager, so it stays
+    // registered exactly as a process that exited on its own would have. The
+    // wait is for the real exit to land: `exited` is set from the async
+    // callback, not by asking for the kill.
+    first!.kill();
+    for (let i = 0; i < 100 && !first!.exited; i++) await Bun.sleep(10);
+    expect(first!.exited).toBe(true);
+
+    const before = agent.invocations().length;
+    const resumed = await manager.resumeTask(row.id);
+
+    // A new process, and a new terminal to attach to.
+    expect(agent.invocations().length).toBeGreaterThan(before);
+    expect(resumed!.lifecycle).toBe("live");
+    expect(manager.primaryPty(row.id)?.id).not.toBe(first!.id);
+    expect(manager.primaryPty(row.id)?.exited).toBe(false);
   });
 });

@@ -107,6 +107,39 @@ describe("transitionFor", () => {
     expect(restarted.lifecycle).toBe("live");
   });
 
+  // Auto-compaction fires mid-turn, so the SessionStart that follows it is not
+  // a session coming up idle — the agent is still generating. Reporting `idle`
+  // here made the card read "done, waiting for you" until Stop landed, and
+  // stamped an idle_since the harvester would suspend the task from.
+  test("SessionStart from a compaction reports liveness without ending the turn", () => {
+    const update = transitionFor(
+      {
+        hook_event_name: "SessionStart",
+        source: "compact",
+        session_id: SESSION_START.session_id,
+        transcript_path: SESSION_START.transcript_path,
+      },
+      1000,
+    )!;
+    expect(update).toEqual({
+      agent_session_id: SESSION_START.session_id,
+      transcript_path: SESSION_START.transcript_path,
+      lifecycle: "live",
+      last_active_at: 1000,
+    });
+    expect(update).not.toHaveProperty("agent_state");
+    expect(update).not.toHaveProperty("idle_since");
+  });
+
+  // Every other source really is a session that has just come up.
+  test("SessionStart from any other source still comes up idle", () => {
+    for (const source of ["startup", "resume", "clear", "fork", undefined]) {
+      const update = transitionFor({ hook_event_name: "SessionStart", source }, 7)!;
+      expect(update.agent_state).toBe("idle");
+      expect(update.idle_since).toBe(7);
+    }
+  });
+
   test("a resume reports the id the task already had", () => {
     const update = transitionFor(
       { hook_event_name: "SessionStart", source: "resume", session_id: SESSION_START.session_id },

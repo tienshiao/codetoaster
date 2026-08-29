@@ -49,7 +49,18 @@ export function transitionFor(payload: HookPayload, now: number = Date.now()): T
   const transcriptPath = text(payload.transcript_path);
 
   switch (text(payload.hook_event_name)) {
-    case "SessionStart":
+    case "SessionStart": {
+      // Auto-compaction happens in the middle of a turn, not between them:
+      // PreCompact marks the task `compacting`, compaction runs, and the
+      // SessionStart that announces the rebuilt context arrives while the agent
+      // is still generating. Claiming `idle` there makes the card read "done,
+      // waiting for you" for the rest of the turn, until Stop finally lands —
+      // and worse, it stamps `idle_since` early, which is exactly the miscount
+      // the /clear restamp below exists to prevent, except here it is the
+      // harvester (TASK-15) suspending a task that never stopped working. So a
+      // compact SessionStart reports liveness and nothing else: whatever state
+      // the turn was in survives the compaction.
+      const resumesTurn = text(payload.source) === "compact";
       return {
         // Overwritten rather than merged: `/clear` starts a new conversation
         // inside the same process, and the task's identity is ours — the
@@ -59,18 +70,21 @@ export function transitionFor(payload: HookPayload, now: number = Date.now()): T
         ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
         // Two writes, not one. §4.2 says "state → live", but `live` is a
         // lifecycle: it is how a suspended task comes back when its agent
-        // reports in. `idle` is the agent_state that goes with it — up, and
-        // not working yet.
-        ...state("idle"),
+        // reports in. Both halves hold however the session started, and
+        // `last_active_at` holds too: something just reported in.
         lifecycle: "live",
-        // Restamped, not inherited. This is an `idle` the harvester (TASK-15)
-        // counts from, and the value sitting in the column belongs to the
-        // conversation that just ended: a task that stopped hours ago and is
-        // then `/clear`ed or resumed would come back live and idle already
-        // past `harvest_after`, and be suspended out from under the user the
-        // moment nobody is watching it. The session is idle as of now.
-        idle_since: now,
+        last_active_at: now,
+        // `idle` is the agent_state that goes with a session that has come up
+        // and is not working yet, and `idle_since` is restamped rather than
+        // inherited: the value sitting in the column belongs to the
+        // conversation that just ended, so a task that stopped hours ago and is
+        // then `/clear`ed or resumed would come back live and idle already past
+        // `harvest_after`, and be suspended out from under the user the moment
+        // nobody is watching it. Neither applies to a compaction, which is why
+        // both are conditional.
+        ...(resumesTurn ? {} : { agent_state: "idle" as AgentState, idle_since: now }),
       };
+    }
 
     case "UserPromptSubmit":
       return state("busy");
