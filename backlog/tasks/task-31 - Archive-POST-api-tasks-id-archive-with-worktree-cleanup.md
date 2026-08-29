@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-29 00:17'
+updated_date: '2026-08-29 05:04'
 labels:
   - server
   - api
@@ -35,4 +35,5 @@ The only way a task leaves (§5.6, §6), made recoverable. POST /api/tasks/:id/a
 - [ ] #5 The archive response/confirmation reports dirty files, unpushed commits, and merged status
 - [ ] #6 Hard delete drops the WIP ref and the row and requires its own confirmation; WIP refs older than the retention window are expired on boot
 - [ ] #7 Tests cover clean, dirty, unpushed, merged, no-worktree, and hard-delete cases
+- [ ] #8 Archive removes the whole of ~/.codetoaster/tasks/<id>/, not only the files it knows to name — closeTask deliberately leaves that directory behind (see its comment), so archive is where it finally goes
 <!-- AC:END -->

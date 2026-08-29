@@ -367,7 +367,17 @@ export class TaskManager {
 
   /** v1's "close the session": the task and its terminals go away for good.
    * §6 makes closing a suspend instead, with archive as the destructive one —
-   * that lands with TASK-16 and TASK-31. */
+   * that lands with TASK-16 and TASK-31.
+   *
+   * It deliberately leaves `~/.codetoaster/tasks/<id>/` behind, and that is a
+   * leak for as long as close means delete: the row is gone, so the id can
+   * never be reissued, so nothing will ever read that directory again — and
+   * TASK-14 will be putting scrollback snapshots in it beside the settings.
+   * Deleting it here would be the wrong fix, because TASK-16 turns close into
+   * a suspend, and a suspended task's directory is exactly what reopening it
+   * reads. The removal belongs to archive (TASK-31), which is the operation
+   * that actually ends a task. Until then a closed task costs a few KB of
+   * JSON. */
   closeTask(taskId: string): boolean {
     if (!this.store.get(taskId)) return false;
     for (const ptyId of [...(this.taskPtys.get(taskId) ?? [])]) {
