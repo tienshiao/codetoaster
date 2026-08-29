@@ -1,10 +1,10 @@
 ---
 id: TASK-40
 title: Make Pty.getCwd genuinely async so task listing stops blocking the event loop
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-29 04:34'
-updated_date: '2026-08-29 06:14'
+updated_date: '2026-08-29 07:52'
 labels:
   - server
   - performance
@@ -32,16 +32,30 @@ Found while reviewing TASK-8; flagged rather than fixed there because it is nowh
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Pty.getCwd performs no synchronous spawn: getForegroundPid and cwdForPid await Bun.spawn (or fs) rather than calling Bun.spawnSync
-- [ ] #2 On linux the cwd is read through fs.promises.readlink on /proc/<pid>/cwd, spawning no process at all
-- [ ] #3 GET /api/tasks with N live tasks resolves its cwd lookups concurrently — wall time stays close to one lookup rather than growing with N
-- [ ] #4 Behaviour is unchanged: the foreground process group's cwd still wins over the session shell's, and the shell's cwd is still the fallback when there is no distinct foreground process
-- [ ] #5 An exited PTY, a dead pid, and a lookup that fails still yield undefined rather than throwing or hanging a request
-- [ ] #6 Tests cover the foreground-pid preference, the shell fallback, and the undefined paths
+- [x] #1 Pty.getCwd performs no synchronous spawn: getForegroundPid and cwdForPid await Bun.spawn (or fs) rather than calling Bun.spawnSync
+- [x] #2 On linux the cwd is read through fs.promises.readlink on /proc/<pid>/cwd, spawning no process at all
+- [x] #3 GET /api/tasks with N live tasks resolves its cwd lookups concurrently — wall time stays close to one lookup rather than growing with N
+- [x] #4 Behaviour is unchanged: the foreground process group's cwd still wins over the session shell's, and the shell's cwd is still the fallback when there is no distinct foreground process
+- [x] #5 An exited PTY, a dead pid, and a lookup that fails still yield undefined rather than throwing or hanging a request
+- [x] #6 Tests cover the foreground-pid preference, the shell fallback, and the undefined paths
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Raised to high after the TASK-11 review: the cost is no longer confined to listing. TaskManager.attachClient calls refreshCwd on every terminal attach, so a tab switch runs ps + lsof synchronously on the daemon's event loop, and lsof routinely costs 100-500ms on macOS. It blocks everything, not just the caller: every other task's PTY output, every in-flight HTTP request and the WebSocket pump all stall on it. v1 never paid this on attach.
+
+getCwd is now genuinely async. A shared runCapture helper runs ps and lsof through Bun.spawn instead of Bun.spawnSync, and every failure — a non-zero exit, or a tool that is not installed, which makes Bun.spawn throw before there is a process — comes back as an empty string, so callers still read "could not tell" rather than getting a rejection they do not expect. Bun.$ would also work but is banned in this repo for deadlocking on large output.
+
+On linux the cwd is read with fs.promises.readlink on /proc/<pid>/cwd, spawning nothing at all: it is a symlink, and reading it is a syscall, so forking readlink to do it was a fork and an exec per lookup for an answer the kernel hands over directly.
+
+Measured on this machine: one lookup 82ms, eight concurrent 135ms, where serial would have been about 656ms. Promise.all in GET /api/tasks now buys the concurrency it was always written as if it had.
+
+Picked up in the same pass, since it is the same "a PTY that went away" story: kill() cleared the activity debounce without sending the falling edge. Activity is edge-triggered on the wire — a client turns its dot on at active:true and off only at a later active:false — so killing a PTY inside the 300ms window (a resume-ladder rung that prints its error and is torn down) left a live activity dot on a task with no process for the rest of the daemon's life. Both kill() and the self-exit path now announce the drop.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Pty.getCwd no longer blocks the daemon's event loop: ps and lsof run through Bun.spawn, and linux reads /proc/<pid>/cwd with fs.promises.readlink and spawns nothing. Eight concurrent lookups now cost 135ms against 82ms for one, where before they serialised — which matters because TaskManager refreshes the cwd on every client attach, so each terminal tab switch stalled every other task's output and every in-flight request.
+<!-- SECTION:FINAL_SUMMARY:END -->

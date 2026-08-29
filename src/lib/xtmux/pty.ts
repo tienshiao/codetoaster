@@ -1,4 +1,5 @@
 import type { Subprocess } from "bun";
+import { readlink } from "node:fs/promises";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import type { ClientInfo, ServerMessage } from "./types";
@@ -170,6 +171,16 @@ export class Pty {
       onExit: (_proc, exitCode) => {
         this.exited = true;
         this.exitCode = exitCode ?? 0;
+        // The same falling edge `kill` sends, for the same reason: a process
+        // that dies on its own inside the 300ms debounce window leaves a
+        // pending timeout that will fire against a dead PTY, and nothing after
+        // it can ever produce another activity message — so the sidebar keeps a
+        // live dot on a task whose agent has exited.
+        if (this.activityTimeout) clearTimeout(this.activityTimeout);
+        if (this.isActive) {
+          this.isActive = false;
+          this.onActivityChangeCallback?.(this.id, false);
+        }
         this.onExitCallback?.(this.exitCode);
         this.broadcast({ type: "exit", ptyId: this.id, code: this.exitCode });
       },
@@ -272,7 +283,17 @@ export class Pty {
 
   kill(): void {
     if (this.activityTimeout) clearTimeout(this.activityTimeout);
+    // Announce the activity drop instead of just clearing the flag. Activity is
+    // edge-triggered on the wire: a client turns its dot on when `active:true`
+    // arrives and off only when a later `active:false` does. Killing a PTY
+    // inside the 300ms debounce window — a resume-ladder rung that prints its
+    // error and is torn down immediately after — cancels the timeout that would
+    // have sent the falling edge, and no further output can ever produce one,
+    // so the sidebar keeps a live dot on a task with no process behind it for
+    // the rest of the daemon's life.
+    const wasActive = this.isActive;
     this.isActive = false;
+    if (wasActive) this.onActivityChangeCallback?.(this.id, false);
     if (!this.exited) {
       this.proc.terminal?.close();
       this.proc.kill();
@@ -287,43 +308,65 @@ export class Pty {
     // `claude --worktree` chdir's into a git worktree while the session shell
     // stays put, so the foreground process's cwd is what the user perceives as
     // "where they are". Fall back to the shell's own cwd.
-    const fgPid = this.getForegroundPid(shellPid);
+    const fgPid = await this.getForegroundPid(shellPid);
     if (fgPid && fgPid !== shellPid) {
-      const fgCwd = this.cwdForPid(fgPid);
+      const fgCwd = await this.cwdForPid(fgPid);
       if (fgCwd) return fgCwd;
     }
     return this.cwdForPid(shellPid);
   }
 
+  // Run a helper and hand back what it printed, or "" for anything that went
+  // wrong — a non-zero exit, or a tool that is not installed, which makes
+  // Bun.spawn throw before there is a process at all. Every caller below reads
+  // an absent answer out of an empty string, so failures stay indistinguishable
+  // from "could not tell", and getCwd() resolves to undefined rather than
+  // rejecting the way its callers assume it never does.
+  //
+  // Bun.spawn rather than Bun.spawnSync, and this is the whole point of the
+  // helper: `ps` and `lsof` are slow enough to notice, and spawnSync blocks the
+  // daemon's single event loop for their whole duration. Since TaskManager
+  // refreshes the cwd on every client attach, that turned each terminal tab
+  // switch into a stall in which no PTY output reached any client and every
+  // HTTP route sat waiting. Bun.$ would do this too, but it is banned here
+  // (CLAUDE.md) for deadlocking on large output.
+  private async runCapture(command: string[]): Promise<string> {
+    try {
+      const proc = Bun.spawn(command, { stdout: "pipe", stderr: "ignore" });
+      const output = await new Response(proc.stdout).text();
+      await proc.exited;
+      return output;
+    } catch {
+      return "";
+    }
+  }
+
   // The terminal's foreground process group id (== its leader's pid). When no
   // program is running this equals the shell's own group, so callers fall back
   // to the shell cwd.
-  private getForegroundPid(shellPid: number): number | undefined {
-    try {
-      const result = Bun.spawnSync(["ps", "-o", "tpgid=", "-p", String(shellPid)]);
-      const tpgid = parseInt(result.stdout.toString().trim(), 10);
-      if (Number.isFinite(tpgid) && tpgid > 0) return tpgid;
-    } catch {
-      // ignore
-    }
+  private async getForegroundPid(shellPid: number): Promise<number | undefined> {
+    const output = await this.runCapture(["ps", "-o", "tpgid=", "-p", String(shellPid)]);
+    const tpgid = parseInt(output.trim(), 10);
+    if (Number.isFinite(tpgid) && tpgid > 0) return tpgid;
     return undefined;
   }
 
-  private cwdForPid(pid: number): string | undefined {
-    try {
-      if (process.platform === "darwin") {
-        const result = Bun.spawnSync(["lsof", "-a", "-d", "cwd", "-Fn", "-p", String(pid)]);
-        const output = result.stdout.toString();
-        for (const line of output.split("\n")) {
-          if (line.startsWith("n")) return line.slice(1);
-        }
-      } else {
-        const result = Bun.spawnSync(["readlink", `/proc/${pid}/cwd`]);
-        const cwd = result.stdout.toString().trim();
-        if (cwd) return cwd;
+  private async cwdForPid(pid: number): Promise<string | undefined> {
+    if (process.platform === "darwin") {
+      const output = await this.runCapture(["lsof", "-a", "-d", "cwd", "-Fn", "-p", String(pid)]);
+      for (const line of output.split("\n")) {
+        if (line.startsWith("n")) return line.slice(1);
       }
-    } catch {
-      // ignore
+    } else {
+      // No process at all on linux: /proc/<pid>/cwd is a symlink, and reading
+      // it is a syscall. Spawning `readlink` to do it costs a fork and an exec
+      // per lookup for an answer the kernel will hand over directly.
+      try {
+        const cwd = await readlink(`/proc/${pid}/cwd`);
+        if (cwd) return cwd;
+      } catch {
+        // The process is gone, or /proc is not mounted. Either way: unknown.
+      }
     }
     return undefined;
   }
