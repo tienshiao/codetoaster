@@ -16,14 +16,38 @@
  * unconfigured guard checks no port and accepts only the host names below,
  * which is stricter than the daemon needs, never looser. */
 let bound: { port: number; hostname?: string } | undefined;
+/** Extra names the user has vouched for with --allowed-host. */
+let allowedHosts = new Set<string>();
+/** Hosts already complained about, so a misconfigured setup says so once
+ * rather than once per request. */
+const warnedHosts = new Set<string>();
 
-export function configureOriginGuard(config: { port: number; hostname?: string }): void {
-  bound = config;
+export function configureOriginGuard(config: {
+  port: number;
+  hostname?: string;
+  allowedHosts?: string[];
+}): void {
+  bound = { port: config.port, hostname: config.hostname };
+  allowedHosts = new Set((config.allowedHosts ?? []).map((name) => name.toLowerCase()));
 }
 
 /** Reset for tests, so one server's configuration cannot leak into the next. */
 export function resetOriginGuard(): void {
   bound = undefined;
+  allowedHosts = new Set();
+  warnedHosts.clear();
+}
+
+/** A refused Host is the one failure here a user cannot diagnose from the
+ * outside: the SPA still loads, and then every request under it fails. Say so,
+ * once per name, with the thing to do about it. */
+function warnAboutRefusedHost(host: string | null): void {
+  if (!host || warnedHosts.has(host)) return;
+  warnedHosts.add(host);
+  console.warn(
+    `Refused a request addressed to "${host}": not an address this daemon answers to. ` +
+      `If you reach the UI by that name, start it with --allowed-host ${host.split(":")[0]}`,
+  );
 }
 
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
@@ -64,15 +88,20 @@ export function isOurHost(host: string | null): boolean {
   }
   // Anything after the authority means this was not a bare Host header.
   if (url.pathname !== "/" || url.username || url.password) return false;
-  if (bound) {
-    const port = url.port === "" ? 80 : Number(url.port);
-    if (port !== bound.port) return false;
-  }
+  // Deliberately not checking the port. It buys nothing here — a name that
+  // cannot be repointed is what stops rebinding, and same-origin is enforced
+  // separately by comparing Origin to this same Host — while requiring it
+  // breaks the ordinary `ssh -L 8080:localhost:4000`, where the browser
+  // legitimately says `localhost:8080`.
   if (isUnspoofableName(url.hostname)) return true;
   // The name the user deliberately bound. `--host mymac.local` is a choice,
   // and refusing the only name that reaches the daemon would be the wrong
   // reading of it.
-  return !!bound?.hostname && url.hostname === bound.hostname.toLowerCase();
+  if (bound?.hostname && url.hostname === bound.hostname.toLowerCase()) return true;
+  // Names the user has vouched for. Binding a wildcard cannot tell us what to
+  // expect — `--host 0.0.0.0` says "be reachable", not "expect mymac.local" —
+  // so reaching the UI by a hostname over the network needs saying so.
+  return allowedHosts.has(url.hostname);
 }
 
 /** True when the request may proceed.
@@ -91,7 +120,10 @@ export function isOurHost(host: string | null): boolean {
  * A literal "null" origin is refused: that is a sandboxed iframe or a file://
  * page, which is a browser, and never us. */
 export function isSameOrigin(origin: string | null, host: string | null): boolean {
-  if (!isOurHost(host)) return false;
+  if (!isOurHost(host)) {
+    warnAboutRefusedHost(host);
+    return false;
+  }
   if (origin === null) return true;
   let originHost: string;
   try {

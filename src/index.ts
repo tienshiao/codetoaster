@@ -6,6 +6,7 @@ import { parseArgs } from "util";
     options: {
       port: { type: "string", short: "p" },
       host: { type: "string" },
+      "allowed-host": { type: "string", multiple: true },
       db: { type: "string" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
@@ -59,14 +60,18 @@ import { parseArgs } from "util";
   // Loopback unless asked otherwise: the daemon starts agents in the user's
   // repositories with nothing in front of it, so reachability is opt-in.
   const hostname = typeof values.host === "string" ? values.host : undefined;
+  // Repeatable: a daemon on a wildcard bind cannot know which name reaches it.
+  const allowedHosts = Array.isArray(values["allowed-host"])
+    ? (values["allowed-host"] as string[])
+    : undefined;
 
   switch (command) {
     case "":
-      await cmdStart(port, dbPath, hostname);
+      await cmdStart(port, dbPath, hostname, allowedHosts);
       break;
     case "foreground":
     case "fg":
-      await cmdForeground(port, dbPath, hostname);
+      await cmdForeground(port, dbPath, hostname, allowedHosts);
       break;
     case "list":
     case "ls":

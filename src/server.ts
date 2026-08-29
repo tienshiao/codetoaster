@@ -61,6 +61,10 @@ export interface ServerOptions {
    * repositories with no authentication in front of it, so being reachable
    * from the network is something to opt into, not out of. */
   hostname?: string;
+  /** Host names the UI may be reached by, beyond the ones that cannot be
+   * repointed. Needed when the bind is a wildcard and the user browses to a
+   * name: `--host 0.0.0.0` says "be reachable", not which name to expect. */
+  allowedHosts?: string[];
 }
 
 export function startServer(options?: ServerOptions) {
@@ -367,8 +371,8 @@ export function startServer(options?: ServerOptions) {
       const url = new URL(req.url);
       if (url.pathname === "/terminal") {
         // The same check the API gets. Without it the socket is a way round
-        // the guard rather than a thing behind it: it takes `create` and
-        // `input` for any terminal a client attaches to.
+        // the guard rather than a thing behind it: it takes `attach` and
+        // `input` for any terminal, and `kill` for any task.
         if (!isSameOriginRequest(req)) return crossOriginRefusal();
         const upgraded = server.upgrade(req, {
           data: { clientId: generateClientId() },
@@ -395,7 +399,11 @@ export function startServer(options?: ServerOptions) {
   // Host header naming this daemon from one naming somewhere an attacker
   // controls. Same reason as the line above for doing it here: `--port 0`
   // means the port is not knowable until now.
-  configureOriginGuard({ port: server.port ?? PORT, hostname: HOSTNAME });
+  configureOriginGuard({
+    port: server.port ?? PORT,
+    hostname: HOSTNAME,
+    allowedHosts: options?.allowedHosts,
+  });
 
   return server;
 }

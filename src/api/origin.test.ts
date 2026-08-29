@@ -28,9 +28,25 @@ describe("isOurHost", () => {
     expect(isOurHost("evil.test:4000")).toBe(false);
   });
 
-  test("refuses another server on another port of this machine", () => {
+  // The port is deliberately not part of this check. A page on another port of
+  // this machine is still refused — by the Origin comparison, which is where
+  // same-origin belongs — while `ssh -L 8080:localhost:4000`, where the
+  // browser legitimately says localhost:8080, keeps working.
+  test("says nothing about the port, and leaves same-origin to the Origin", () => {
     configureOriginGuard({ port: 4000, hostname: "127.0.0.1" });
-    expect(isOurHost("127.0.0.1:3000")).toBe(false);
+    expect(isOurHost("127.0.0.1:3000")).toBe(true);
+    // A page served from another local port is still turned away.
+    expect(isSameOrigin("http://127.0.0.1:3000", "127.0.0.1:4000")).toBe(false);
+    // And a tunnelled browser, which the port check used to break, is not.
+    expect(isSameOrigin("http://localhost:8080", "localhost:8080")).toBe(true);
+  });
+
+  test("accepts a name the user vouched for, which a wildcard bind cannot infer", () => {
+    configureOriginGuard({ port: 4000, hostname: "0.0.0.0", allowedHosts: ["mymac.local"] });
+    expect(isOurHost("mymac.local:4000")).toBe(true);
+    expect(isSameOrigin("http://mymac.local:4000", "mymac.local:4000")).toBe(true);
+    // Still only the names that were vouched for.
+    expect(isOurHost("evil.test:4000")).toBe(false);
   });
 
   test("refuses a missing or unparseable Host", () => {

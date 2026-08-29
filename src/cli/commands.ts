@@ -16,6 +16,20 @@ import { startServer, reachableOrigin } from "../server";
 // and every command here would report a perfectly healthy daemon as not
 // running — `start` loudest of all, which polls, gives up, and exits 1 on the
 // daemon it just launched.
+/** Reads a JSON body, or exits with what the daemon actually said.
+ *
+ * Without this a refusal reaches the caller as `x.map is not a function`,
+ * because the error body is an object and the caller expected an array — a
+ * TypeError where the daemon had sent a perfectly good explanation. */
+async function readJson<T>(res: Response, what: string): Promise<T> {
+  if (!res.ok) {
+    const detail = await res.json().then((body: any) => body?.error).catch(() => undefined);
+    console.error(`Could not ${what}: ${detail ?? `${res.status} ${res.statusText}`}`);
+    process.exit(1);
+  }
+  return (await res.json()) as T;
+}
+
 function getBaseUrl(port: number): string {
   return daemonBaseUrl(port);
 }
@@ -29,7 +43,7 @@ async function isDaemonReachable(port: number): Promise<boolean> {
   }
 }
 
-export async function cmdStart(port: number, dbPath?: string, hostname?: string): Promise<void> {
+export async function cmdStart(port: number, dbPath?: string, hostname?: string, allowedHosts?: string[]): Promise<void> {
   const pidInfo = readPidFile(port);
   if (pidInfo && isProcessRunning(pidInfo.pid)) {
     if (await isDaemonReachable(port)) {
@@ -43,7 +57,7 @@ export async function cmdStart(port: number, dbPath?: string, hostname?: string)
     removePidFile(port);
   }
 
-  spawnDaemon(port, dbPath, hostname);
+  spawnDaemon(port, dbPath, hostname, allowedHosts);
 
   // Wait for daemon to become reachable (first attempt after longer delay for HTML bundling)
   const maxAttempts = 15;
@@ -62,8 +76,8 @@ export async function cmdStart(port: number, dbPath?: string, hostname?: string)
   process.exit(1);
 }
 
-export async function cmdForeground(port: number, dbPath?: string, hostname?: string): Promise<void> {
-  const server = startServer({ port, dbPath, hostname });
+export async function cmdForeground(port: number, dbPath?: string, hostname?: string, allowedHosts?: string[]): Promise<void> {
+  const server = startServer({ port, dbPath, hostname, allowedHosts });
   // The origin goes in the pid file because the daemon is the only party that
   // knows it: `--port 0` resolves late, and `--host` decides whether loopback
   // is reachable at all. Everything else — the CLI on this machine, and the
@@ -90,7 +104,7 @@ export async function cmdList(port: number): Promise<void> {
   const res = await fetch(`${getBaseUrl(port)}/api/tasks`);
   // The v2 shape: `title` is the task's stored label (v1's `name`), and
   // `terminalTitle` is what the program inside is calling itself (v1's `title`).
-  const sessions = (await res.json()) as Array<{
+  const sessions = await readJson<Array<{
     id: string;
     title: string;
     terminalTitle: string;
@@ -99,7 +113,7 @@ export async function cmdList(port: number): Promise<void> {
     createdAt: number;
     exited: boolean;
     cwd: string | null;
-  }>;
+  }>>(res, "list sessions");
 
   if (sessions.length === 0) {
     console.log("No sessions.");
@@ -135,7 +149,7 @@ export async function cmdKill(target: string, port: number): Promise<void> {
   }
 
   const res = await fetch(`${getBaseUrl(port)}/api/tasks`);
-  const sessions = (await res.json()) as Array<{ id: string; title: string }>;
+  const sessions = await readJson<Array<{ id: string; title: string }>>(res, "list sessions");
 
   // Match by name (exact), id prefix, or full id
   const match = sessions.find(
@@ -170,10 +184,10 @@ export async function cmdConnections(port: number): Promise<void> {
   }
 
   const res = await fetch(`${getBaseUrl(port)}/api/connections`);
-  const connections = (await res.json()) as Array<{
+  const connections = await readJson<Array<{
     clientId: string;
     ptyIds: string[];
-  }>;
+  }>>(res, "list connections");
 
   if (connections.length === 0) {
     console.log("No connected clients.");
@@ -310,6 +324,7 @@ Options:
   --port <port>   Server port (default: 4000, or PORT env)
   --db <path>     Database path (default: ~/.codetoaster/data.db)
   --host <addr>   Address to bind (default: 127.0.0.1; widen at your own risk)
+  --allowed-host <name>  Extra host name the UI may be reached by (repeatable)
   --version       Show version
   --help          Show this help message`);
 }

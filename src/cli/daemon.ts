@@ -65,7 +65,7 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
-export function spawnDaemon(port: number, dbPath?: string, hostname?: string): void {
+export function spawnDaemon(port: number, dbPath?: string, hostname?: string, allowedHosts?: string[]): void {
   ensureConfigDir();
 
   // Build the command to run the server in foreground mode.
@@ -87,6 +87,10 @@ export function spawnDaemon(port: number, dbPath?: string, hostname?: string): v
   // asked for rather than quietly falling back to loopback.
   if (hostname) {
     cmd.push("--host", hostname);
+  }
+
+  for (const name of allowedHosts ?? []) {
+    cmd.push("--allowed-host", name);
   }
 
   const logFd = fs.openSync(LOG_FILE, "a");
