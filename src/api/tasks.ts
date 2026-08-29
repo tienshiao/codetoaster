@@ -69,8 +69,12 @@ export const taskRoutes = {
       // Same bar as PATCH: a title is either a deliberate choice or absent, and
       // a blank one is neither — it would be stored verbatim, leaving a row
       // with nothing to show and a slug with nothing in front of its uuid.
-      if (typeof fields.title === "string" && !fields.title.trim()) {
-        return badRequest(`"title" cannot be blank`);
+      // Trimmed for the same reason the blank check exists: the surrounding
+      // space is not part of anyone's choice, and it reaches the row, the
+      // uniqueness check and the URL slug.
+      if (typeof fields.title === "string") {
+        if (!fields.title.trim()) return badRequest(`"title" cannot be blank`);
+        fields.title = fields.title.trim();
       }
       const cols = optionalSize(body.cols);
       const rows = optionalSize(body.rows);
@@ -119,7 +123,7 @@ export const taskRoutes = {
       if (title === undefined) return badRequest(`"title" is required`);
       if (!title.trim()) return badRequest(`"title" cannot be blank`);
 
-      if (!taskManager.renameTask(req.params.id, title)) {
+      if (!taskManager.renameTask(req.params.id, title.trim())) {
         return Response.json({ error: "Task not found" }, { status: 404 });
       }
       return Response.json(taskManager.taskInfo(req.params.id));
