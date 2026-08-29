@@ -129,6 +129,37 @@ describe("transitionFor", () => {
     expect(update).not.toHaveProperty("agent_session_id");
     expect(update.lifecycle).toBe("live");
   });
+
+  // The payload is unvalidated JSON off a process we do not control, so a
+  // field that is the wrong *type* has to degrade the same way a missing one
+  // does. Letting one through reaches TaskStore.update as a bind value,
+  // bun:sqlite refuses anything that is not a primitive, and the throw turns
+  // the hook route's documented 2xx into a 500.
+  test("a field of the wrong type is dropped, not carried into a bind", () => {
+    const start = transitionFor(
+      {
+        hook_event_name: "SessionStart",
+        session_id: { nested: true },
+        transcript_path: 7,
+      } as never,
+      1,
+    )!;
+    expect(start).not.toHaveProperty("agent_session_id");
+    expect(start).not.toHaveProperty("transcript_path");
+    expect(start.lifecycle).toBe("live");
+
+    const stop = transitionFor(
+      { hook_event_name: "Stop", last_assistant_message: ["hi"] } as never,
+      1,
+    )!;
+    expect(stop).not.toHaveProperty("last_message");
+    expect(stop.agent_state).toBe("idle");
+
+    expect(transitionFor({ hook_event_name: 99 } as never, 1)).toBeUndefined();
+    expect(
+      transitionFor({ hook_event_name: "SessionEnd", reason: ["other"] } as never, 1),
+    ).toBeUndefined();
+  });
 });
 
 describe("isHookPayload", () => {

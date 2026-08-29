@@ -21,7 +21,17 @@ export const hookRoutes = {
       }
       if (!isHookPayload(payload)) return new Response(null, { status: 204 });
 
-      const applied = taskManager.applyHook(req.params.id, payload);
+      // "Everything answers 2xx" has to hold for a payload that surprises us
+      // too, not just for the shapes we anticipated: the body is unvalidated
+      // JSON off a process we do not control, and a 500 here is a stack trace
+      // in the agent's transcript over something the agent cannot act on.
+      let applied = false;
+      try {
+        applied = taskManager.applyHook(req.params.id, payload);
+      } catch (e) {
+        console.error("Could not apply a hook payload:", e);
+        return new Response(null, { status: 204 });
+      }
       // 200 when the row moved, 204 when it did not. The reporter ignores
       // both; the difference is for anyone reading a log or a test.
       return new Response(null, { status: applied ? 200 : 204 });

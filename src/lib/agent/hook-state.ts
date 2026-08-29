@@ -26,6 +26,16 @@ export interface HookPayload {
 // carries for a real exit.
 const ENDING_REASONS = new Set(["logout", "prompt_input_exit", "other"]);
 
+/** A field only if it really is a non-empty string. The interface above says
+ * what we hope for; this is what holds at runtime, where the payload is an
+ * unvalidated JSON object off a process we do not control. Without it a
+ * `session_id` that arrives as a number or an object reaches TaskStore.update
+ * as a bind value, bun:sqlite refuses it, and the throw turns "accepted,
+ * changed nothing" into a 500 out of the hook route. */
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
 /** The row change one payload implies, or undefined for anything that does not
  * move the task: an event we do not map, a SessionEnd that is not an ending,
  * a payload we cannot make sense of.
@@ -35,15 +45,18 @@ const ENDING_REASONS = new Set(["logout", "prompt_input_exit", "other"]);
 export function transitionFor(payload: HookPayload, now: number = Date.now()): TaskUpdate | undefined {
   const state = (agentState: AgentState): TaskUpdate => ({ agent_state: agentState, last_active_at: now });
 
-  switch (payload.hook_event_name) {
+  const sessionId = text(payload.session_id);
+  const transcriptPath = text(payload.transcript_path);
+
+  switch (text(payload.hook_event_name)) {
     case "SessionStart":
       return {
         // Overwritten rather than merged: `/clear` starts a new conversation
         // inside the same process, and the task's identity is ours — the
         // conversation id underneath it is free to change. A resume reports
         // the id it already had, so this is a no-op there.
-        ...(payload.session_id ? { agent_session_id: payload.session_id } : {}),
-        ...(payload.transcript_path ? { transcript_path: payload.transcript_path } : {}),
+        ...(sessionId ? { agent_session_id: sessionId } : {}),
+        ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
         // Two writes, not one. §4.2 says "state → live", but `live` is a
         // lifecycle: it is how a suspended task comes back when its agent
         // reports in. `idle` is the agent_state that goes with it — up, and
@@ -67,7 +80,9 @@ export function transitionFor(payload: HookPayload, now: number = Date.now()): T
         ...state("idle"),
         // The card preview. Absent on a payload that carries no message,
         // rather than blanking what the task last said.
-        ...(payload.last_assistant_message ? { last_message: payload.last_assistant_message } : {}),
+        ...(text(payload.last_assistant_message)
+          ? { last_message: text(payload.last_assistant_message) }
+          : {}),
         // What the idle harvester counts from (TASK-15).
         idle_since: now,
       };
@@ -79,7 +94,7 @@ export function transitionFor(payload: HookPayload, now: number = Date.now()): T
       return state("compacting");
 
     case "SessionEnd":
-      return ENDING_REASONS.has(payload.reason ?? "") ? state("exited") : undefined;
+      return ENDING_REASONS.has(text(payload.reason) ?? "") ? state("exited") : undefined;
 
     default:
       // An event we never registered, or one a future version added. Silence
