@@ -11,6 +11,7 @@ import type { TaskRow } from "../db";
 import { TaskStore } from "./store";
 import { buildAgentCommand, taskDir, taskEnv } from "../agent/spawn";
 import { writeTaskSettings } from "../agent/settings";
+import { transitionFor, type HookPayload } from "../agent/hook-state";
 import { deriveTitle, resolveRepoRoot } from "./derive";
 
 function expandTilde(filepath: string): string {
@@ -299,6 +300,19 @@ export class TaskManager {
       this.broadcastToAll({ type: "notification", taskId, title, body });
       this.broadcastTask(taskId);
     });
+  }
+
+  /** Apply one hook payload to a task (§4.2). False when there is no such
+   * task or the payload moves nothing — both of which the caller answers 2xx,
+   * since a hook that reports a problem reports it into the agent's own
+   * transcript. */
+  applyHook(taskId: string, payload: HookPayload): boolean {
+    if (!this.store.get(taskId)) return false;
+    const update = transitionFor(payload);
+    if (!update) return false;
+    if (!this.store.update(taskId, update)) return false;
+    this.broadcastTask(taskId);
+    return true;
   }
 
   getTask(taskId: string): TaskRow | undefined {

@@ -7,6 +7,7 @@ import { taskManager } from "./lib/tasks/manager";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
 import { taskRoutes } from "./api/tasks";
+import { hookRoutes } from "./api/hooks";
 import { diffRoutes } from "./api/diff";
 import { fileRoutes } from "./api/files";
 import { gitRoutes } from "./api/git";
@@ -172,6 +173,7 @@ export function startServer(options?: ServerOptions) {
       },
 
       ...taskRoutes,
+      ...hookRoutes,
       ...diffRoutes,
       ...fileRoutes,
       ...gitRoutes,

@@ -64,7 +64,7 @@ export type TitleSource = "derived" | "manual";
 // disk (restorable), `missing` for one removed behind our back.
 export type WorktreeState = "none" | "present" | "evicted" | "missing";
 export type AgentState =
-  | "starting" | "busy" | "idle" | "needs_attention" | "exited" | "unknown";
+  | "starting" | "busy" | "idle" | "needs_attention" | "compacting" | "exited" | "unknown";
 export type Lifecycle = "live" | "suspended" | "archived";
 
 interface Migration {
