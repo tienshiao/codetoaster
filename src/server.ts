@@ -105,7 +105,10 @@ export function startServer(options?: ServerOptions) {
           }
           const paths: string[] = [];
           for (const file of files) {
-            const tmpPath = `/tmp/${crypto.randomUUID()}-${file.name}`;
+            // basename, because the name comes off a multipart body: a client
+            // is free to send "../../.zshrc", and Bun.write would resolve it
+            // out of /tmp and overwrite the file it names.
+            const tmpPath = `/tmp/${crypto.randomUUID()}-${basename(file.name)}`;
             await Bun.write(tmpPath, file);
             paths.push(tmpPath);
           }
