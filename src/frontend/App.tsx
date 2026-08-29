@@ -132,11 +132,14 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     ? sessions.find((s) => s.id === closeConfirmSessionId)
     : null;
 
-  const handleNewTab = useCallback((projectId?: string) => {
-    const { id, name } = createSession(projectId);
+  const handleNewTab = useCallback(async (projectId?: string) => {
+    // Nothing to navigate to if the server refused — createSession has already
+    // said why.
+    const created = await createSession(projectId);
+    if (!created) return;
     navigate({
       to: "/sessions/$slug",
-      params: { slug: buildSessionSlug({ id, name }) },
+      params: { slug: buildSessionSlug(created) },
     });
     setTimeout(() => terminalRef.current?.focus(), 100);
   }, [createSession, navigate, terminalRef]);

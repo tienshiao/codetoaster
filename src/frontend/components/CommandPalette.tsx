@@ -213,12 +213,14 @@ export function CommandPalette() {
             value="new session"
             onSelect={() => {
               armFocusTerminal();
-              const { id, name } = createSession();
-              navigate({
-                to: "/sessions/$slug",
-                params: { slug: buildSessionSlug({ id, name }) },
-              });
               setOpen(false);
+              void createSession().then((created) => {
+                if (!created) return;
+                navigate({
+                  to: "/sessions/$slug",
+                  params: { slug: buildSessionSlug(created) },
+                });
+              });
             }}
           >
             <Plus className="size-4" />

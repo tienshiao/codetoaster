@@ -21,8 +21,11 @@ export interface ProjectInfo {
 //
 // A task is addressed by taskId and its terminals by ptyId: the task is the
 // durable thing, and it survives the process that runs it.
+// Creating and renaming a task are not here: they run git, spawn processes and
+// fail in ways that want a status code and a body, so they are HTTP
+// (POST /api/tasks, PATCH /api/tasks/:id — §5.3). The socket carries terminal
+// traffic and the push channel.
 export type ClientMessage =
-  | { type: "create"; taskId: string; title?: string; cols: number; rows: number; projectId?: string; afterTaskId?: string }
   | { type: "attach"; ptyId: string; cols?: number; rows?: number }
   // Without a ptyId, detaches the client from every PTY it holds.
   | { type: "detach"; ptyId?: string }
@@ -35,7 +38,6 @@ export type ClientMessage =
   // Addressed by task, not by PTY: these are things done to the work, and a
   // task owns however many terminals it has open.
   | { type: "kill"; taskId: string }
-  | { type: "rename"; taskId: string; title: string }
   | { type: "acknowledge"; taskId: string }
   | { type: "reorder"; projects: Array<{ id: string; taskIds: string[] }> }
   | { type: "createProject"; id: string; name: string; initialPath: string }

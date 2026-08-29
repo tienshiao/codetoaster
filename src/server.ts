@@ -6,6 +6,7 @@ import index from "./frontend/index.html";
 import { taskManager } from "./lib/tasks/manager";
 import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
 import { removePidFile } from "./cli/daemon";
+import { taskRoutes } from "./api/tasks";
 import { diffRoutes } from "./api/diff";
 import { fileRoutes } from "./api/files";
 import { gitRoutes } from "./api/git";
@@ -72,32 +73,6 @@ export function startServer(options?: ServerOptions) {
             status: response.status,
             headers,
           });
-        },
-      },
-
-      "/api/tasks": {
-        async GET() {
-          const tasks = taskManager.listTasks();
-          // The one place a live PTY is still asked anything: listing is when
-          // we happen to have the processes to hand, so it is where an agent
-          // that has cd'd elsewhere gets noticed and written back (§5.4).
-          const withCwd = await Promise.all(
-            tasks.map(async (task) => ({
-              ...task,
-              cwd: (await taskManager.refreshCwd(task.id)) ?? null,
-            }))
-          );
-          return Response.json(withCwd);
-        },
-      },
-
-      "/api/tasks/:id": {
-        DELETE(req: Request & { params: { id: string } }) {
-          if (taskManager.closeTask(req.params.id)) {
-            taskManager.broadcastTasks();
-            return Response.json({ success: true });
-          }
-          return Response.json({ error: "Task not found" }, { status: 404 });
         },
       },
 
@@ -193,6 +168,7 @@ export function startServer(options?: ServerOptions) {
         },
       },
 
+      ...taskRoutes,
       ...diffRoutes,
       ...fileRoutes,
       ...gitRoutes,
@@ -252,30 +228,6 @@ export function startServer(options?: ServerOptions) {
         const { clientId } = ws.data;
 
         switch (parsed.type) {
-          case "create": {
-            const { taskId, title, cols, rows, projectId, afterTaskId } = parsed;
-            taskManager.createTask({
-              id: taskId, title: title || undefined, cols, rows, projectId, afterTaskId,
-            }).then(
-              (task) => {
-                // The socket can close while the task is being created — its
-                // `close` already ran detachClient, so attaching now would
-                // leave a dead client in the PTY's broadcast list for good,
-                // pinning smallest-wins negotiation to a size nobody is
-                // showing and reporting a viewer that isn't there.
-                const ptyId = taskManager.primaryPty(task.id)?.id;
-                if (ptyId && taskManager.isClientConnected(clientId)) {
-                  taskManager.attachClient(ptyId, clientId, ws, cols, rows);
-                }
-                taskManager.broadcastTasks();
-              },
-              (e: any) => {
-                sendError(ws, e.message);
-              }
-            );
-            break;
-          }
-
           case "attach": {
             const { ptyId, cols, rows } = parsed;
             const pty = taskManager.attachClient(ptyId, clientId, ws, cols, rows);
@@ -313,13 +265,6 @@ export function startServer(options?: ServerOptions) {
             if (taskManager.closeTask(parsed.taskId)) {
               taskManager.broadcastTasks();
             } else {
-              sendError(ws, `Task "${parsed.taskId}" not found`);
-            }
-            break;
-          }
-
-          case "rename": {
-            if (!taskManager.renameTask(parsed.taskId, parsed.title)) {
               sendError(ws, `Task "${parsed.taskId}" not found`);
             }
             break;

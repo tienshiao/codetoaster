@@ -87,7 +87,9 @@ interface SessionContextValue {
   sessionLabels: Map<string, string>;
   /** False when the task has no terminal to attach to yet. */
   attachSession: (id: string) => boolean;
-  createSession: (projectId?: string) => { id: string; name: string };
+  /** Null when the server refused: creating a task can fail on git or on the
+   * spawn, and the caller should not navigate to something that isn't there. */
+  createSession: (projectId?: string) => Promise<{ id: string; name: string } | null>;
   closeSession: (id: string) => void;
   renameSession: (id: string, name: string) => void;
   reorderSessions: (projects: Array<{ id: string; sessionIds: string[] }>) => void;
@@ -107,9 +109,6 @@ export function useSession(): SessionContextValue {
   return ctx;
 }
 
-function generateSessionId(): string {
-  return generateUUID();
-}
 
 function fireWebNotification(
   title: string,
@@ -415,81 +414,111 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send, pushMru],
   );
 
-  const createSession = useCallback((projectId?: string): { id: string; name: string } => {
-    terminalRef.current?.resetAttached();
+  // Creating a task is a request now, not a message: it resolves a directory,
+  // runs git and spawns a process, and the caller needs to hear about any of
+  // those failing. The server broadcasts the new list before it answers, so
+  // there is nothing to add optimistically — only a terminal to attach to.
+  const createSession = useCallback(
+    async (projectId?: string): Promise<{ id: string; name: string } | null> => {
+      // Only inherit position/cwd when no explicit project is targeted (e.g. Cmd+T)
+      const afterTaskId = projectId ? undefined : (currentSessionIdRef.current || undefined);
 
-    // Only inherit position/cwd when no explicit project is targeted (e.g. Cmd+T)
-    const afterSessionId = projectId ? undefined : (currentSessionIdRef.current || undefined);
+      // Derive project from current session if not explicitly provided
+      let resolvedProjectId = projectId;
+      if (!resolvedProjectId && afterTaskId) {
+        const currentProject = projectsRef.current.find((p) => p.sessionIds.includes(afterTaskId));
+        if (currentProject) resolvedProjectId = currentProject.id;
+      }
 
-    if (attachedPtyRef.current) {
-      send({ type: "detach", ptyId: attachedPtyRef.current });
-      attachedPtyRef.current = null;
-      setCurrentPtyId(null);
-    }
-
-    const sessionId = generateSessionId();
-    currentSessionIdRef.current = sessionId;
-    // The server names the session: it is the side that knows the resolved cwd
-    // and branch, and it owns the terminal title the name later latches onto.
-    // This placeholder only labels the optimistic row until that list arrives.
-    const name = "New Session";
-    const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
-
-    // Derive project from current session if not explicitly provided
-    let resolvedProjectId = projectId;
-    if (!resolvedProjectId && afterSessionId) {
-      const currentProject = projectsRef.current.find((p) => p.sessionIds.includes(afterSessionId));
-      if (currentProject) resolvedProjectId = currentProject.id;
-    }
-
-    send({ type: "create", taskId: sessionId, cols: size.cols, rows: size.rows, projectId: resolvedProjectId, afterTaskId: afterSessionId });
-    setCurrentSessionId(sessionId);
-    pushMru(sessionId);
-    setSessions((prev) => [
-      ...prev,
-      {
-        id: sessionId,
-        // Unknown until the server answers: it is the side that spawns the
-        // terminal. The `task` delta fills it in.
-        ptyId: null,
-        name,
-        createdAt: Date.now(),
-        size: { cols: size.cols, rows: size.rows },
-        clientCount: 1,
-      },
-    ]);
-    // Optimistically add to project at correct position
-    const targetProjectId = resolvedProjectId || "general";
-    setProjects((prev) =>
-      prev.map((p) => {
-        if (p.id !== targetProjectId) return p;
-        const newSessionIds = [...p.sessionIds];
-        if (afterSessionId && (!projectId || projectId === p.id)) {
-          const afterIndex = newSessionIds.indexOf(afterSessionId);
-          if (afterIndex >= 0) {
-            newSessionIds.splice(afterIndex + 1, 0, sessionId);
-            return { ...p, sessionIds: newSessionIds };
-          }
+      const size = terminalRef.current?.getSize() || { cols: 80, rows: 24 };
+      let task: TaskInfo;
+      try {
+        const response = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: resolvedProjectId,
+            afterTaskId,
+            cols: size.cols,
+            rows: size.rows,
+          }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          console.error("Could not create the task:", body.error ?? response.statusText);
+          return null;
         }
-        newSessionIds.push(sessionId);
-        return { ...p, sessionIds: newSessionIds };
-      })
-    );
-    return { id: sessionId, name };
-  }, [send]);
+        task = await response.json();
+      } catch (e) {
+        console.error("Could not create the task:", e);
+        return null;
+      }
+
+      // Only now let go of the terminal we were showing. Detaching up front
+      // meant a refused create left the user staring at a dead grid: nothing
+      // re-attaches it, since the route's slug latch has already fired and
+      // attachSession short-circuits on the task it thinks is current.
+      terminalRef.current?.resetAttached();
+      if (attachedPtyRef.current) {
+        send({ type: "detach", ptyId: attachedPtyRef.current });
+        attachedPtyRef.current = null;
+        setCurrentPtyId(null);
+      }
+
+      const session = fromTask(task);
+      setSessions((prev) =>
+        prev.some((s) => s.id === session.id) ? prev : [...prev, session],
+      );
+      // Written before the attach: `attached` comes back naming this task, and
+      // the handler hands back any attachment for a task it is not showing.
+      currentSessionIdRef.current = task.id;
+      setCurrentSessionId(task.id);
+      pushMru(task.id);
+      if (task.ptyId) {
+        send({ type: "attach", ptyId: task.ptyId, cols: size.cols, rows: size.rows });
+      }
+      return { id: task.id, name: session.name };
+    },
+    [send, pushMru],
+  );
 
   const renameSession = useCallback(
     (id: string, name: string) => {
-      send({ type: "rename", taskId: id, title: name });
+      const previous = sessionsRef.current.find((s) => s.id === id);
       // nameSource moves with the name: without it the optimistic row still
       // reads as "derived", so the label keeps projecting the terminal title
-      // over the name just chosen until the server echoes the list back — and
-      // for as long as the socket is down, since the send is only queued.
+      // over the name just chosen until the server echoes the row back.
       setSessions((prev) =>
         prev.map((s) => (s.id === id ? { ...s, name, nameSource: "manual" } : s))
       );
+      fetch(`/api/tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: name }),
+      })
+        .then(async (res) => {
+          if (res.ok) return;
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error ?? res.statusText);
+        })
+        .catch((e) => {
+          console.error("Could not rename the task:", e);
+          // A refusal is not just a network failure: the full `tasks` snapshot
+          // only comes back on reconnect or when the set of tasks changes, so
+          // without this the row would read as renamed — and drive the URL
+          // slug — for as long as the session lasts. Guarded on the name still
+          // being the one we wrote, so a rename that landed since is kept.
+          if (!previous) return;
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === id && s.name === name
+                ? { ...s, name: previous.name, nameSource: previous.nameSource }
+                : s
+            )
+          );
+        });
     },
-    [send],
+    [],
   );
 
   const reorderSessions = useCallback(

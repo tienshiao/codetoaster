@@ -28,6 +28,9 @@ export interface CreateTaskOptions {
   afterTaskId?: string;
   cols?: number;
   rows?: number;
+  /** Recorded on the row and passed to the agent when TASK-8 builds its argv. */
+  model?: string;
+  permissionMode?: string;
   /** What the task's first terminal runs. Defaults to the user's shell; the
    * agent command arrives with TASK-8. */
   command?: string[];
@@ -120,13 +123,6 @@ export class TaskManager {
     this.connectedClients.delete(clientId);
   }
 
-  /** Whether the client's socket is still open. Worth asking before acting on
-   * anything that resolved asynchronously: attaching a closed socket puts a
-   * ClientInfo nothing will ever remove into the PTY's broadcast list. */
-  isClientConnected(clientId: string): boolean {
-    return this.connectedClients.has(clientId);
-  }
-
   broadcastToAll(message: object): void {
     const data = JSON.stringify(message);
     for (const ws of this.connectedClients.values()) {
@@ -180,8 +176,11 @@ export class TaskManager {
     // A caller-supplied title is a deliberate choice and outranks the terminal
     // title; otherwise the task gets the derived "<dir> · <branch>" label,
     // which any terminal title with real content will display over.
+    // `||`, not `??`: an empty title is no title at all, and `title_source`
+    // below judges it on truthiness — the two must not disagree, or a task
+    // ends up labelled "" and recorded as having derived that.
     const title = options.title
-      ?? uniqueName(await deriveTitle(cwd), this.taskTitles());
+      || uniqueName(await deriveTitle(cwd), this.taskTitles());
 
     const row = this.store.create({
       id,
@@ -195,6 +194,8 @@ export class TaskManager {
       // keep — refreshCwd is where the distinction matters.
       repo_root: (await resolveRepoRoot(cwd)) ?? null,
       cwd,
+      model: options.model ?? null,
+      permission_mode: options.permissionMode ?? null,
     });
 
     // The row is only worth keeping if something is running behind it: Bun.spawn
@@ -444,6 +445,10 @@ export class TaskManager {
   }
 
   // --------------------------------------------------------------- projects
+
+  hasProject(projectId: string): boolean {
+    return this.projects.some((p) => p.id === projectId);
+  }
 
   getProjects(): ProjectInfo[] {
     return this.projects.map((p) => ({ ...p, taskIds: [...p.taskIds] }));

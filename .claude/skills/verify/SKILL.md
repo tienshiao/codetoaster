@@ -18,26 +18,38 @@ when `curl -s -o /dev/null -w "%{http_code}" http://localhost:4599/` → 200.
 
 ## Create a task (required before any /api/tasks/:id/* call)
 
-Tasks are created over the WebSocket protocol, not HTTP. Endpoint is
-`ws://localhost:4599/terminal`.
+Task CRUD is HTTP, not the socket (§5.3): creating one resolves a directory,
+runs git and spawns a process, and every one of those wants a status code.
+
+```sh
+# 201 with the task's info; the id it answers with is the one every route takes.
+curl -s -X POST http://localhost:4599/api/tasks \
+  -H 'Content-Type: application/json' -d '{"cols":120,"rows":30}'
+# PATCH renames it, DELETE closes it, GET /api/tasks lists the live ones.
+curl -s -X PATCH http://localhost:4599/api/tasks/<task-id> \
+  -H 'Content-Type: application/json' -d '{"title":"verify"}'
+```
 
 **The two ids are different things.** A task is the durable work and owns the
 row, the URL and every HTTP route; a PTY is a terminal it happens to be running
-right now, and gets a server-minted id. `create`, `kill`, `rename` and
-`acknowledge` name the task; `attach`, `detach`, `input` and `resize` name the
-terminal. `attached` is the message that pairs them, and it arrives *before*
-the PTY's `restore`. Naming a PTY you never attached to is rejected; omitting
-`ptyId` from `detach` drops every terminal the socket holds.
+right now, and gets a server-minted id — read it off `ptyId` in the create
+response rather than assuming it matches. `kill` and `acknowledge` name the
+task; `attach`, `detach`, `input` and `resize` name the terminal. `attached` is
+the message that pairs them, and it arrives *before* the PTY's `restore`.
+Naming a PTY you never attached to is rejected; omitting `ptyId` from `detach`
+drops every terminal the socket holds.
+
+Nothing on the socket is needed to exercise the HTTP routes, but to watch a
+terminal (run with `bun`):
 
 ```ts
 const ws = new WebSocket("ws://localhost:4599/terminal");
-const taskId = crypto.randomUUID();
-ws.onopen = () =>
-  ws.send(JSON.stringify({ type: "create", taskId, cols: 120, rows: 30 }));
+const ptyId = process.argv[2]!; // from the POST response above
+ws.onopen = () => ws.send(JSON.stringify({ type: "attach", ptyId, cols: 120, rows: 30 }));
 ws.onmessage = (ev) => {
   const msg = JSON.parse(String(ev.data));
-  if (msg.type === "attached" && msg.taskId === taskId) {
-    console.log(`task ${taskId} is running on pty ${msg.ptyId}`);
+  if (msg.type === "attached") {
+    console.log(`pty ${msg.ptyId} belongs to task ${msg.taskId}`);
     ws.send(JSON.stringify({ type: "detach" }));
     process.exit(0);
   }
