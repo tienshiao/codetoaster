@@ -23,7 +23,11 @@ afterEach(() => {
 /** A stand-in agent that records how it was invoked and fails on demand. It
  * fails the way the real binary does on an unusable conversation: one line and
  * exit 1 (verified against claude 2.1.251). */
-function standInAgent(failWhen: string[]): { bin: string; invocations: () => string[][] } {
+function standInAgent(failWhen: string[]): {
+  bin: string;
+  settled: (n: number) => Promise<string[][]>;
+  invocations: () => string[][];
+} {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-resume-"));
   tempDirs.push(dir);
   const log = path.join(dir, "invocations");
@@ -44,8 +48,20 @@ exec cat
 `,
   );
   fs.chmodSync(bin, 0o755);
+  const read = () =>
+    fs.existsSync(log)
+      ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => line.split("\t").filter(Boolean))
+      : [];
   return {
     bin,
+    /** Waits for at least `n` invocations to have been recorded. The stand-in
+     * writes its line from a child process, so reading the log the instant
+     * resumeTask resolves races it — the ladder can be finished while the last
+     * rung's shell has not flushed yet. */
+    settled: async (n: number) => {
+      for (let i = 0; i < 60 && read().length < n; i++) await Bun.sleep(25);
+      return read();
+    },
     invocations: () =>
       fs.existsSync(log)
         ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => line.split("\t").filter(Boolean))
@@ -102,7 +118,7 @@ describe("resuming a suspended task", () => {
 
     expect(resumed!.lifecycle).toBe("live");
     expect(manager.primaryPty(row.id)).toBeDefined();
-    const [first] = agent.invocations();
+    const [first] = await agent.settled(1);
     expect(first).toContain("--resume");
     expect(first![first!.indexOf("--resume") + 1]).toBe("stored-session-id");
     // A resumed conversation already holds the prompt that opened it.
@@ -116,7 +132,7 @@ describe("resuming a suspended task", () => {
     const resumed = await manager.resumeTask(row.id);
 
     expect(resumed!.lifecycle).toBe("live");
-    const modes = agent.invocations().map((argv) => argv.find((a) => a.startsWith("--resume") || a === "--continue"));
+    const modes = (await agent.settled(2)).map((argv) => argv.find((a) => a.startsWith("--resume") || a === "--continue"));
     expect(modes).toEqual(["--resume", "--continue"]);
   });
 
@@ -136,7 +152,7 @@ describe("resuming a suspended task", () => {
 
     const resumed = await manager.resumeTask(row.id);
 
-    const invocations = agent.invocations();
+    const invocations = await agent.settled(1);
     // The task's own conversation is still tried — it is named, not guessed.
     expect(invocations).toHaveLength(1);
     expect(invocations[0]![invocations[0]!.indexOf("--resume") + 1]).toBe("stored-session-id");
@@ -159,7 +175,7 @@ describe("resuming a suspended task", () => {
 
     await manager.resumeTask(row.id);
 
-    const ids = agent.invocations().map((argv) => argv[argv.indexOf("--resume") + 1]);
+    const ids = (await agent.settled(1)).map((argv) => argv[argv.indexOf("--resume") + 1]);
     // The stored id has no transcript here, so it is never attempted; the
     // conversation that is actually present is.
     expect(ids).toContain("found-by-scanning");
@@ -183,7 +199,7 @@ describe("resuming a suspended task", () => {
     // The stored id is not merely tried-and-failed, it is never tried: there
     // is no transcript for it in the task's directory, and a doomed --resume
     // in a PTY does not announce itself by exiting.
-    const ids = agent.invocations().map((argv) => argv[argv.indexOf("--resume") + 1]);
+    const ids = (await agent.settled(1)).map((argv) => argv[argv.indexOf("--resume") + 1]);
     expect(ids).toEqual(["what-really-happened"]);
   });
 
@@ -222,7 +238,7 @@ describe("resuming a suspended task", () => {
     expect(resumed!.agent_state).toBe("could_not_resume");
     expect(resumed!.lifecycle).toBe("suspended");
     expect(manager.primaryPty(row.id)).toBeUndefined();
-    expect(agent.invocations()).toHaveLength(2);
+    expect(await agent.settled(2)).toHaveLength(2);
   });
 
   // Found in live verification: hooks from a task's *previous* agent made the
@@ -240,7 +256,7 @@ describe("resuming a suspended task", () => {
     await manager.resumeTask(row.id);
 
     // The failing first rung must not be mistaken for a success.
-    expect(agent.invocations().length).toBeGreaterThan(1);
+    expect((await agent.settled(2)).length).toBeGreaterThan(1);
   });
 
   // A rung that failed is killed on the way to the next one, and its exit
@@ -268,7 +284,7 @@ describe("resuming a suspended task", () => {
     // one would fail a second time and strand the task in a retry loop.
     expect(resumed!.agent_session_id).not.toBe("stored-session-id");
     expect(resumed!.agent_session_id).toMatch(/^[0-9a-f-]{36}$/);
-    const [argv] = agent.invocations();
+    const [argv] = await agent.settled(1);
     expect(argv).toContain("--session-id");
     expect(argv![argv!.indexOf("--session-id") + 1]).toBe(resumed!.agent_session_id!);
     expect(argv).not.toContain("--resume");
@@ -283,7 +299,7 @@ describe("resuming a suspended task", () => {
     await manager.resumeTask(row.id);
 
     expect(manager.primaryPty(row.id)!.id).toBe(ptyId);
-    expect(agent.invocations()).toHaveLength(1);
+    expect(await agent.settled(1)).toHaveLength(1);
   });
 
   test("restores the grid the task was suspended at", async () => {
@@ -341,7 +357,7 @@ describe("resuming a suspended task", () => {
     const resumed = await manager.resumeTask(row.id);
 
     // A new process, and a new terminal to attach to.
-    expect(agent.invocations().length).toBeGreaterThan(before);
+    expect((await agent.settled(before + 1)).length).toBeGreaterThan(before);
     expect(resumed!.lifecycle).toBe("live");
     expect(manager.primaryPty(row.id)?.id).not.toBe(first!.id);
     expect(manager.primaryPty(row.id)?.exited).toBe(false);

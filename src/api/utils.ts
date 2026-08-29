@@ -13,7 +13,13 @@ export interface TaskRoot {
 // PTY to interrogate, and browsing a task you are not currently running is the
 // whole point — so this asks the row, which also means the data routes stop
 // shelling out to `rev-parse --show-toplevel` on every single request.
-export function resolveTaskRoot(taskId: string): TaskRoot | { error: Response } {
+export async function resolveTaskRoot(taskId: string): Promise<TaskRoot | { error: Response }> {
+  // Ask the terminal where it actually is, at most once every few seconds per
+  // task (TASK-41). The row is the source of truth for these routes (§5.4),
+  // and this is the only thing that keeps it true when the agent cd's — a
+  // client re-attaches when it switches task, so a user working inside one
+  // task's tabs would otherwise browse the repository it started in forever.
+  await taskManager.refreshCwdIfStale(taskId).catch(() => {});
   const task = taskManager.getTask(taskId);
   if (!task) {
     return { error: Response.json({ error: "Task not found" }, { status: 404 }) };

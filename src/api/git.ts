@@ -140,7 +140,7 @@ export const gitRoutes = {
   "/api/tasks/:id/git/log": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
@@ -226,7 +226,7 @@ export const gitRoutes = {
   "/api/tasks/:id/git/refs": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
@@ -283,7 +283,7 @@ export const gitRoutes = {
   "/api/tasks/:id/git/commit": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
@@ -350,7 +350,7 @@ export const gitRoutes = {
   "/api/tasks/:id/git/tree": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
@@ -380,7 +380,7 @@ export const gitRoutes = {
   "/api/tasks/:id/git/file": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 

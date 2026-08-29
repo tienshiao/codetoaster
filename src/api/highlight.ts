@@ -66,7 +66,7 @@ export const highlightRoutes = {
   "/api/tasks/:id/diff-tokens": {
     async POST(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 

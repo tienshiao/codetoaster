@@ -69,7 +69,7 @@ export const fileRoutes = {
   "/api/tasks/:id/files": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
@@ -103,7 +103,7 @@ export const fileRoutes = {
         const q = url.searchParams.get("q") || "";
         if (!q) return Response.json({ results: [] });
 
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
@@ -133,7 +133,7 @@ export const fileRoutes = {
   "/api/tasks/:id/file": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
@@ -178,7 +178,7 @@ export const fileRoutes = {
   "/api/tasks/:id/image": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
@@ -214,7 +214,7 @@ export const fileRoutes = {
   "/api/tasks/:id/image/git": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = resolveTaskRoot(req.params.id);
+        const result = await resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 

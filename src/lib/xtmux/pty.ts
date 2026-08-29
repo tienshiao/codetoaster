@@ -19,6 +19,12 @@ export function sanitizeSize(cols: unknown, rows: unknown): { cols: number; rows
   return { cols, rows };
 }
 
+// How long `ps` / `lsof` get to answer where a process is before the answer is
+// written off as unknowable. Generous for a healthy machine, and the only
+// thing standing between a stalled network mount and a request that never
+// returns.
+const LOOKUP_TIMEOUT_MS = 2000;
+
 export interface PtyOptions {
   cwd?: string;
   // Merged over the PTY's own defaults ({ ...process.env, TERM }), so a caller
@@ -330,14 +336,27 @@ export class Pty {
   // switch into a stall in which no PTY output reached any client and every
   // HTTP route sat waiting. Bun.$ would do this too, but it is banned here
   // (CLAUDE.md) for deadlocking on large output.
+  //
+  // Bounded, for the same reason gitSpawn is: `lsof` on a wedged mount does not
+  // return, and getCwd() now sits in front of every diff, file and git request
+  // (TASK-41), not just an attach. Without the kill a single stalled helper is
+  // a request that never answers — and the throttle only stops the *next* one
+  // starting for a few seconds, so the stalled processes pile up rather than
+  // being replaced. Giving up reads as "could not tell", which every caller
+  // already handles.
   private async runCapture(command: string[]): Promise<string> {
+    let timer: Timer | null = null;
     try {
       const proc = Bun.spawn(command, { stdout: "pipe", stderr: "ignore" });
-      const output = await new Response(proc.stdout).text();
-      await proc.exited;
+      timer = setTimeout(() => proc.kill(), LOOKUP_TIMEOUT_MS);
+      // The kill ends both awaits: stdout hits EOF and exited resolves, so this
+      // never outlives the child.
+      const [output] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
       return output;
     } catch {
       return "";
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

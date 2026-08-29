@@ -46,23 +46,23 @@ function row(id: string, overrides: Partial<Parameters<TaskStore["create"]>[0]> 
 }
 
 describe("resolveTaskRoot", () => {
-  test("reads the row, with no process anywhere near it", () => {
+  test("reads the row, with no process anywhere near it", async () => {
     row("suspended", { repo_root: "/repo", cwd: "/repo/worktree", lifecycle: "suspended" });
-    const result = resolveTaskRoot("suspended");
+    const result = await resolveTaskRoot("suspended");
     expect(result).toEqual({ repoRoot: "/repo", cwd: "/repo/worktree" });
     // The whole point: browsing a task that has no terminal to interrogate.
     expect(taskManager.primaryPty("suspended")).toBeUndefined();
   });
 
   test("an unknown task is a 404", async () => {
-    const result = resolveTaskRoot("nope") as { error: Response };
+    const result = await resolveTaskRoot("nope") as { error: Response };
     expect(result.error.status).toBe(404);
     expect(await result.error.json()).toEqual({ error: "Task not found" });
   });
 
   test("a task outside a repository is a 400, not a directory that fails later", async () => {
     row("bare", { repo_root: null, cwd: "/tmp" });
-    const result = resolveTaskRoot("bare") as { error: Response };
+    const result = await resolveTaskRoot("bare") as { error: Response };
     expect(result.error.status).toBe(400);
     expect(await result.error.json()).toEqual({ error: "Not a git repository" });
   });
@@ -71,7 +71,7 @@ describe("resolveTaskRoot", () => {
     await taskManager.createTask({ id: "live", command: ["sleep", "30"] });
     spawned.push("live");
 
-    const result = resolveTaskRoot("live") as { repoRoot: string; cwd: string };
+    const result = await resolveTaskRoot("live") as { repoRoot: string; cwd: string };
     expect(result.repoRoot).toBe(store.get("live")!.repo_root!);
     expect(result.cwd).toBe(process.cwd());
     // Created inside this repository, so the root is a real one.
@@ -109,7 +109,7 @@ describe("refreshCwd", () => {
     expect(store.get("still")).toEqual(before);
   });
 
-  test("a task with no terminal reports the row's directory", () => {
+  test("a task with no terminal reports the row's directory", async () => {
     row("parked", { cwd: "/repo/elsewhere" });
     expect(taskManager.refreshCwd("parked")).resolves.toBe("/repo/elsewhere");
   });
@@ -137,7 +137,70 @@ describe("refreshCwd", () => {
     expect(store.get("outside")).toEqual(before);
   });
 
-  test("an unknown task reports nothing", () => {
+  test("an unknown task reports nothing", async () => {
     expect(taskManager.refreshCwd("nope")).resolves.toBeUndefined();
+  });
+});
+
+// The gap TASK-41 closes. Attach was the only thing refreshing a task's
+// directory, and a client only re-attaches when it changes task — so a user
+// moving between one task's own Changes, Files and History tabs never
+// triggered it, and a single-task user never did at all.
+describe("noticing that the agent has moved", () => {
+  afterEach(() => taskManager.setCwdRefreshWindow(3_000));
+
+  async function taskInThisRepo(id: string) {
+    spawned.push(id);
+    await taskManager.createTask({ id, command: [process.env.SHELL || "bash"] });
+    return id;
+  }
+
+  test("a data route follows the agent without any re-attach", async () => {
+    taskManager.setCwdRefreshWindow(0);
+    const id = await taskInThisRepo("moves");
+    const before = (await resolveTaskRoot(id)) as { cwd: string };
+    expect(before.cwd).toBe(process.cwd());
+
+    // The agent cd's somewhere else inside the same repository. Nobody
+    // re-attaches, nobody switches task — the user just clicks Changes.
+    taskManager.primaryPty(id)!.write(`cd ${process.cwd()}/src\n`);
+
+    let followed = false;
+    for (let i = 0; i < 40 && !followed; i++) {
+      await Bun.sleep(50);
+      followed = ((await resolveTaskRoot(id)) as { cwd: string }).cwd.endsWith("/src");
+    }
+    expect(followed).toBe(true);
+  });
+
+  test("and does not ask the terminal again on every request", async () => {
+    taskManager.setCwdRefreshWindow(0);
+    const id = await taskInThisRepo("throttled");
+    await resolveTaskRoot(id);
+
+    // From here the answer is trusted for the window's duration, however many
+    // requests the diff view makes.
+    taskManager.setCwdRefreshWindow(60_000);
+    await resolveTaskRoot(id);
+    taskManager.primaryPty(id)!.write(`cd ${process.cwd()}/src\n`);
+    await Bun.sleep(400);
+
+    const stale = (await resolveTaskRoot(id)) as { cwd: string };
+    expect(stale.cwd).toBe(process.cwd());
+
+    // And is asked again once the window is over.
+    taskManager.setCwdRefreshWindow(0);
+    for (let i = 0; i < 40; i++) {
+      if (((await resolveTaskRoot(id)) as { cwd: string }).cwd.endsWith("/src")) return;
+      await Bun.sleep(50);
+    }
+    throw new Error("the directory was never picked up again");
+  });
+
+  test("a task with no terminal costs nothing and still answers", async () => {
+    taskManager.setCwdRefreshWindow(0);
+    row("parked-here", { repo_root: "/repo", cwd: "/repo/sub", lifecycle: "suspended" });
+
+    expect(await resolveTaskRoot("parked-here")).toEqual({ repoRoot: "/repo", cwd: "/repo/sub" });
   });
 });

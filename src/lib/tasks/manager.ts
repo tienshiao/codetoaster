@@ -77,6 +77,11 @@ export class TaskManager {
   // unknown again until its agent reports in.
   private hookSeen: Set<string> = new Set();
   private hookGraceTimers: Map<string, Timer> = new Map();
+  // When each task's directory was last checked against its live terminal.
+  // The data routes ask on every request; this is what keeps that from being a
+  // process spawn every time (TASK-41).
+  private cwdCheckedAt: Map<string, number> = new Map();
+  private cwdRefreshWindowMs = 3_000;
   private hookGraceMs = 10_000;
   private startTimeoutMs = 4_000;
   // The resume in flight for a task, if any. Resuming is what a client does on
@@ -144,6 +149,13 @@ export class TaskManager {
    * it did (§4.3). Only the cap — a hook or an exit settles it sooner. */
   setStartTimeout(ms: number): void {
     this.startTimeoutMs = ms;
+  }
+
+  /** How long a task's directory is trusted before the terminal is asked
+   * again. Zero asks every time, which is what a test wants and what nothing
+   * else does. */
+  setCwdRefreshWindow(ms: number): void {
+    this.cwdRefreshWindowMs = ms;
   }
 
   loadProjects(): void {
@@ -524,6 +536,15 @@ export class TaskManager {
     };
 
     for (const attempt of this.resumeLadder(row, options.fresh === true)) {
+      // The task can be closed while the ladder is running: it awaits a spawn
+      // and up to `startTimeoutMs` per rung, and closeTask is one synchronous
+      // DELETE away. Everything below assumes the row is still there — the
+      // mint rung dereferences it outright, and the success arm hands the PTY
+      // to `adopt`, which would re-register a terminal under a task that no
+      // longer exists. Nothing kills that PTY afterwards (closeTask already
+      // walked the list it is being added back to) and nothing ever shows it,
+      // so the agent runs on invisibly for the life of the daemon.
+      if (!this.store.get(taskId)) return undefined;
       if (attempt.mint) {
         // A used id cannot be reused — `--session-id` on one that already has
         // a transcript fails with "already in use", so starting fresh on the
@@ -553,7 +574,16 @@ export class TaskManager {
         break;
       }
 
-      if (await this.awaitAgentStart(taskId, pty)) {
+      const started = await this.awaitAgentStart(taskId, pty);
+      // Checked again on the far side of the wait, which is where the window
+      // actually is: a rung takes up to `startTimeoutMs` to settle, and a task
+      // closed in the meantime must not end up owning the terminal we just
+      // started for it.
+      if (!this.store.get(taskId)) {
+        this.discardPty(pty, taskId);
+        return undefined;
+      }
+      if (started) {
         this.store.update(taskId, { lifecycle: "live", last_active_at: Date.now() });
         // The in-memory grouping only ever held the tasks *this* run created,
         // and a task worth resuming is by definition one it did not. Without
@@ -616,16 +646,6 @@ export class TaskManager {
     // Whatever opens reports its own SessionStart, and the row picks the id up
     // from the hook — so a successful rung here heals what sent us down it.
     //
-    // NOTE (review): this rung and `continueIsSafe` above disagree. When the
-    // newest transcript in the directory is not the one this task reported,
-    // `--continue` is refused precisely because it would open a stranger's
-    // conversation — and then the scan below picks that same newest file and
-    // resumes it by id instead, which is the same mistake with more steps.
-    // Left as it is because closing it is a judgement call, not a typo: gating
-    // the scan on `continueIsSafe` would disable the rung in exactly the case
-    // it was added for (a stale `agent_session_id` healed from a newer
-    // transcript), and the ambiguity only really goes away with
-    // worktree-per-task (m-4), where a directory holds one conversation.
     // Gated on the same judgement as `--continue`, and for the same reason:
     // without it the guard above is theatre. Refusing `--continue` because the
     // newest conversation in the directory is a stranger's, and then resuming
@@ -683,6 +703,32 @@ export class TaskManager {
   /** A live PTY by id, for the routes that serialize or write to one. */
   getPty(ptyId: string): Pty | undefined {
     return this.ptys.get(ptyId);
+  }
+
+  /** refreshCwd, but at most once every `maxAgeMs` for a given task.
+   *
+   * This is what lets the data routes ask on every request. They have to ask
+   * somewhere: §5.4 moved them off "run git per request" and onto the stored
+   * row, and the row then needs something to notice when the agent has moved.
+   * Attach was doing that job, but a client only re-attaches when it changes
+   * task — so a user moving between one task's own Changes, Files and History
+   * tabs never triggered it, and a single-task user never triggered it at all.
+   *
+   * Affordable only because getCwd stopped blocking the event loop (TASK-40);
+   * before that this would have put a synchronous ps and lsof in front of
+   * every diff request. */
+  async refreshCwdIfStale(taskId: string, maxAgeMs = this.cwdRefreshWindowMs): Promise<string | undefined> {
+    // Nothing to throttle, and nothing to remember. The data routes call this
+    // with whatever id is in the URL, so recording a timestamp before knowing
+    // the task exists would grow this map by one entry per bad request and
+    // never free them — closeTask is the only thing that prunes it.
+    if (!this.store.get(taskId)) return undefined;
+    const last = this.cwdCheckedAt.get(taskId);
+    if (last !== undefined && Date.now() - last < maxAgeMs) {
+      return this.store.get(taskId)?.cwd;
+    }
+    this.cwdCheckedAt.set(taskId, Date.now());
+    return this.refreshCwd(taskId);
   }
 
   /** The one thing a live PTY is still better at than the row: noticing the
@@ -746,6 +792,7 @@ export class TaskManager {
     // relabel something that is no longer there.
     this.disarmHookGrace(taskId);
     this.hookSeen.delete(taskId);
+    this.cwdCheckedAt.delete(taskId);
     for (const ptyId of [...(this.taskPtys.get(taskId) ?? [])]) {
       this.ptys.kill(ptyId);
       this.ptyToTask.delete(ptyId);
@@ -799,7 +846,7 @@ export class TaskManager {
     // from the root it had at creation, or 400 them forever if it had none.
     // Fire-and-forget: it broadcasts a delta if anything moved, and a failure
     // to notice is not a reason to refuse the attach.
-    if (taskId) void this.refreshCwd(taskId).catch(() => {});
+    if (taskId) void this.refreshCwdIfStale(taskId).catch(() => {});
 
     return this.ptys.attach(ptyId, clientId, ws, cols, rows);
   }
