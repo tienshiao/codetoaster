@@ -191,6 +191,87 @@ describe("upgrade from v1", () => {
   });
 });
 
+describe("005_tasks_repo_root_nullable", () => {
+  function columnIsNullable(db: Database, table: string, column: string): boolean {
+    const rows = db.query(`PRAGMA table_info(${table})`).all() as
+      { name: string; notnull: number }[];
+    return rows.find((r) => r.name === column)!.notnull === 0;
+  }
+
+  test("repo_root ends up nullable, and every other column survives the rebuild", () => {
+    const db = new Database(":memory:");
+    applyMigrations(db);
+    expect(columnIsNullable(db, "tasks", "repo_root")).toBe(true);
+    expect([...columnNames(db, "tasks")].sort()).toEqual([...TASK_COLUMNS].sort());
+    expect(indexNames(db, "tasks").has("tasks_by_recency")).toBe(true);
+  });
+
+  test("a task with no repository can say so", () => {
+    const db = new Database(":memory:");
+    applyMigrations(db);
+    db.run(`
+      INSERT INTO tasks (id, project_id, title, title_source, initial_prompt, cwd,
+                         worktree_state, agent_state, lifecycle, created_at, last_active_at)
+      VALUES ('t1', 'general', 'Loose', 'derived', '', '/tmp', 'none', 'starting', 'live', 1, 1)
+    `);
+    expect((db.query("SELECT repo_root FROM tasks WHERE id = 't1'").get() as any).repo_root)
+      .toBeNull();
+  });
+
+  // The rebuild has to carry rows across, including the empty string the
+  // NOT NULL column forced on tasks that were not in a repository.
+  test("rows written before the rebuild come across, with '' folded to NULL", () => {
+    const db = new Database(":memory:");
+    applyMigrations(db);
+    db.run("DELETE FROM applied_migrations WHERE name = '005_tasks_repo_root_nullable'");
+    // Put the old shape back, so this is a genuine upgrade rather than a re-run.
+    db.run("DROP TABLE tasks");
+    db.run(`
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+        title_source TEXT NOT NULL, initial_prompt TEXT NOT NULL,
+        repo_root TEXT NOT NULL, cwd TEXT NOT NULL, worktree_path TEXT, branch TEXT,
+        base_ref TEXT, worktree_state TEXT NOT NULL, wip_ref TEXT, wip_at INTEGER,
+        setup_duration_ms INTEGER, pinned INTEGER NOT NULL DEFAULT 0,
+        agent_session_id TEXT, transcript_path TEXT, agent_state TEXT NOT NULL,
+        lifecycle TEXT NOT NULL, last_message TEXT, last_size_cols INTEGER,
+        last_size_rows INTEGER, model TEXT, permission_mode TEXT,
+        created_at INTEGER NOT NULL, last_active_at INTEGER NOT NULL,
+        idle_since INTEGER, exit_code INTEGER
+      )
+    `);
+    const insert = `INSERT INTO tasks (id, project_id, title, title_source, initial_prompt,
+      repo_root, cwd, worktree_state, agent_state, lifecycle, created_at, last_active_at)
+      VALUES (?, 'general', ?, 'derived', '', ?, '/dir', 'none', 'idle', 'suspended', 1, ?)`;
+    db.run(insert, ["in-repo", "Has a repo", "/repo", 200]);
+    db.run(insert, ["loose", "Has none", "", 100]);
+
+    applyMigrations(db);
+
+    expect(columnIsNullable(db, "tasks", "repo_root")).toBe(true);
+    expect(db.query("SELECT id, repo_root FROM tasks ORDER BY last_active_at DESC").all())
+      .toEqual([
+        { id: "in-repo", repo_root: "/repo" },
+        { id: "loose", repo_root: null },
+      ]);
+    expect(indexNames(db, "tasks").has("tasks_by_recency")).toBe(true);
+  });
+
+  test("re-running it over an already-nullable column does nothing", () => {
+    const db = new Database(":memory:");
+    applyMigrations(db);
+    db.run(`
+      INSERT INTO tasks (id, project_id, title, title_source, initial_prompt, repo_root, cwd,
+                         worktree_state, agent_state, lifecycle, created_at, last_active_at)
+      VALUES ('t1', 'general', 'Kept', 'derived', '', '/repo', '/repo', 'none', 'idle', 'live', 1, 1)
+    `);
+    db.run("DELETE FROM applied_migrations WHERE name = '005_tasks_repo_root_nullable'");
+
+    expect(() => applyMigrations(db)).not.toThrow();
+    expect(db.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 });
+  });
+});
+
 describe("initDatabase", () => {
   test("creates the directory, migrates, and is idempotent across opens", () => {
     const dbPath = tempDbPath();
@@ -209,6 +290,7 @@ describe("initDatabase", () => {
       "002_drop_project_color",
       "003_v2_tasks",
       "004_project_task_defaults",
+      "005_tasks_repo_root_nullable",
     ]);
     db.close();
   });

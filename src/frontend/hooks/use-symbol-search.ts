@@ -3,7 +3,7 @@ import type { SymbolSearchResult } from "../../lib/symbols/types";
 
 async function fetchSymbolSearch(sessionId: string, query: string): Promise<SymbolSearchResult> {
   const res = await fetch(
-    `/api/sessions/${sessionId}/symbols/search?q=${encodeURIComponent(query)}`,
+    `/api/tasks/${sessionId}/symbols/search?q=${encodeURIComponent(query)}`,
   );
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));

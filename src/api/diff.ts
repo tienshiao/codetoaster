@@ -1,14 +1,14 @@
-import { resolveSessionGitRoot, listGitFiles, safePath, diffUntrackedFile } from "./utils";
+import { resolveTaskRoot, listGitFiles, safePath, diffUntrackedFile } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
 import type { LineTokens } from "../types/highlight";
 
 export const diffRoutes = {
-  "/api/sessions/:id/diff": {
+  "/api/tasks/:id/diff": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const [unstagedDiff, stagedDiff, untrackedDiffs] = await Promise.all([
           Bun.$`git -C ${dir} diff`.quiet().text(),
@@ -30,12 +30,12 @@ export const diffRoutes = {
     },
   },
 
-  "/api/sessions/:id/context": {
+  "/api/tasks/:id/context": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const url = new URL(req.url);
         const filePath = url.searchParams.get("file");

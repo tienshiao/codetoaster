@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { GitRefsResponse } from "../types/git";
 
 async function fetchGitRefs(sessionId: string): Promise<GitRefsResponse> {
-  const res = await fetch(`/api/sessions/${sessionId}/git/refs`);
+  const res = await fetch(`/api/tasks/${sessionId}/git/refs`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to fetch git refs");

@@ -11,7 +11,7 @@ interface FileSearchResponse {
 }
 
 async function fetchFileSearch(sessionId: string, query: string): Promise<FileSearchResponse> {
-  const res = await fetch(`/api/sessions/${sessionId}/files/search?q=${encodeURIComponent(query)}`);
+  const res = await fetch(`/api/tasks/${sessionId}/files/search?q=${encodeURIComponent(query)}`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to search files");

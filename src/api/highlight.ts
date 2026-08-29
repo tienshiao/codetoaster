@@ -1,4 +1,4 @@
-import { resolveSessionGitRoot, safePath, SHA_RE } from "./utils";
+import { resolveTaskRoot, safePath, SHA_RE } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
 import { readOldSide, gitShow } from "../lib/highlight/gitContent";
 import type { FileTokens } from "../types/highlight";
@@ -63,12 +63,12 @@ async function tokensForFile(
 }
 
 export const highlightRoutes = {
-  "/api/sessions/:id/diff-tokens": {
+  "/api/tasks/:id/diff-tokens": {
     async POST(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const body = (await req.json()) as { files?: DiffTokenRequestFile[]; sha?: string };
         // `sha` is optional; validate only when present. Absent => working-tree

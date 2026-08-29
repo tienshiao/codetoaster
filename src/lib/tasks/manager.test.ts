@@ -90,7 +90,8 @@ describe("creating a task", () => {
     const { manager, store } = newManager();
     await manager.createTask({ id: "t1", command: shell() });
     const row = store.get("t1")!;
-    expect(row.repo_root.length).toBeGreaterThan(0);
+    // Created inside this repository, so it has a real root rather than null.
+    expect(row.repo_root).toBe(process.cwd());
     expect(row.cwd).toBe(process.cwd());
   });
 

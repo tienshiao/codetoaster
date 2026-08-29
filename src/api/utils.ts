@@ -1,25 +1,29 @@
 import path from "node:path";
 import { taskManager } from "../lib/tasks/manager";
 
-// Still resolved through the live terminal. TASK-6 moves this onto the task
-// row as resolveTaskRoot, which is what lets a suspended task's diff, file and
-// git views keep working with no process to ask.
-export async function resolveSessionGitRoot(
-  sessionId: string
-): Promise<{ dir: string } | { error: Response }> {
-  const task = taskManager.getTask(sessionId);
+export interface TaskRoot {
+  /** The repository the task's work lives in — where every git route runs. */
+  repoRoot: string;
+  /** The directory the task was started in. Equal to repoRoot for a task
+   * opened at the top of its repo, and to the worktree path once §5.6 lands. */
+  cwd: string;
+}
+
+// Read from the task row, never from a process (§5.4). A suspended task has no
+// PTY to interrogate, and browsing a task you are not currently running is the
+// whole point — so this asks the row, which also means the data routes stop
+// shelling out to `rev-parse --show-toplevel` on every single request.
+export function resolveTaskRoot(taskId: string): TaskRoot | { error: Response } {
+  const task = taskManager.getTask(taskId);
   if (!task) {
-    return { error: Response.json({ error: "Session not found" }, { status: 404 }) };
+    return { error: Response.json({ error: "Task not found" }, { status: 404 }) };
   }
-  const cwd = (await taskManager.primaryPty(sessionId)?.getCwd()) ?? task.cwd;
-  if (!cwd) {
-    return { error: Response.json({ error: "Cannot determine session CWD" }, { status: 400 }) };
-  }
-  const gitRootResult = await Bun.$`git -C ${cwd} rev-parse --show-toplevel`.quiet().nothrow();
-  if (gitRootResult.exitCode !== 0) {
+  // Null when the task's directory is not inside a repository, and every route
+  // that reaches this helper needs one.
+  if (task.repo_root === null) {
     return { error: Response.json({ error: "Not a git repository" }, { status: 400 }) };
   }
-  return { dir: gitRootResult.text().trim() };
+  return { repoRoot: task.repo_root, cwd: task.cwd };
 }
 
 export const IMAGE_MIME_TYPES: Record<string, string> = {
@@ -123,7 +127,7 @@ export interface FileInfo {
 }
 
 /**
- * Derive a flat file listing (same shape as GET /api/sessions/:id/files) from a
+ * Derive a flat file listing (same shape as GET /api/tasks/:id/files) from a
  * set of blob paths. Each parent directory is synthesized once, before the first
  * file living under it; depth is the path's segment count minus one. `size` is
  * omitted — git blobs aren't stat'd.

@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import * as os from "os";
 import type { Pty } from "../xtmux/pty";
 import { PtyManager } from "../xtmux/pty-manager";
-import type { ProjectInfo, TaskInfo, WebSocketData } from "../xtmux/types";
+import type { ProjectInfo, ServerMessage, TaskInfo, WebSocketData } from "../xtmux/types";
 import { uniqueName } from "../xtmux/naming";
 import * as db from "../db";
 import type { TaskRow } from "../db";
@@ -31,10 +31,10 @@ export interface CreateTaskOptions {
   /** What the task's first terminal runs. Defaults to the user's shell; the
    * agent command arrives with TASK-8. */
   command?: string[];
-  /** The id to give that terminal. Defaults to the task's own id, which is
-   * what keeps /api/sessions/:id resolving through a live PTY until TASK-6
-   * moves route resolution onto the row; a resumed task (TASK-13) spawns with
-   * a fresh one. Clients read TaskInfo.ptyId rather than assuming either. */
+  /** The id to give that terminal. Minted when omitted — a task and its
+   * terminals are separate things with separate lifetimes, and a resumed task
+   * (TASK-13) keeps its id while getting a new PTY. Clients read
+   * TaskInfo.ptyId rather than assuming any relationship. */
   ptyId?: string;
 }
 
@@ -134,9 +134,15 @@ export class TaskManager {
     }
   }
 
+  /** The whole list, as one message. Shared with the `list` request so a
+   * client that asks for the snapshot and one that is pushed it cannot drift. */
+  tasksSnapshot(): ServerMessage {
+    return { type: "tasks", list: this.listTasks(), projects: this.getProjects() };
+  }
+
   /** The whole list — for a connect, or any change to which tasks exist. */
   broadcastTasks(): void {
-    this.broadcastToAll({ type: "tasks", list: this.listTasks(), projects: this.getProjects() });
+    this.broadcastToAll(this.tasksSnapshot());
   }
 
   /** One row changed. Cheaper than a snapshot, and the reason the protocol has
@@ -157,7 +163,11 @@ export class TaskManager {
     // Inherit cwd from afterTaskId's terminal, or from the project's initialPath
     let cwd: string | undefined;
     if (options.afterTaskId) {
-      cwd = await this.primaryPty(options.afterTaskId)?.getCwd();
+      // The live terminal first — it knows where the agent actually is — but a
+      // task with no process still has a directory on its row, and inheriting
+      // that beats silently falling back to the daemon's own cwd.
+      cwd = (await this.primaryPty(options.afterTaskId)?.getCwd())
+        ?? this.store.get(options.afterTaskId)?.cwd;
     }
     if (!cwd && options.projectId) {
       const project = this.projects.find((p) => p.id === options.projectId);
@@ -180,8 +190,10 @@ export class TaskManager {
       title_source: options.title ? "manual" : "derived",
       initial_prompt: options.prompt ?? "",
       // Resolved once and stored, so the data routes never have to ask a
-      // process where they are (§5.4).
-      repo_root: await resolveRepoRoot(cwd),
+      // process where they are (§5.4). `undefined` (the lookup never ran) is
+      // recorded as "no repository" here, since there is no earlier value to
+      // keep — refreshCwd is where the distinction matters.
+      repo_root: (await resolveRepoRoot(cwd)) ?? null,
       cwd,
     });
 
@@ -192,7 +204,7 @@ export class TaskManager {
     let pty: Pty;
     try {
       pty = this.ptys.spawn(options.command ?? [process.env.SHELL || "bash"], {
-        id: options.ptyId ?? id,
+        id: options.ptyId,
         cols: options.cols,
         rows: options.rows,
         cwd,
@@ -260,6 +272,29 @@ export class TaskManager {
     return this.ptys.get(ptyId);
   }
 
+  /** The one thing a live PTY is still better at than the row: noticing the
+   * agent has cd'd somewhere unexpected (§5.4). Opportunistic — callers ask
+   * when they happen to be listing tasks anyway, and a suspended task simply
+   * has nothing to report. Re-resolves repo_root only when the directory
+   * actually moved, since that is a git call. */
+  async refreshCwd(taskId: string): Promise<string | undefined> {
+    const task = this.store.get(taskId);
+    if (!task) return undefined;
+    const live = await this.primaryPty(taskId)?.getCwd();
+    if (!live || live === task.cwd) return task.cwd;
+    // undefined means the lookup could not be performed (git unavailable, or
+    // slow enough to hit the timeout). Keeping the root we already had is the
+    // only safe answer: nothing re-resolves it once cwd stops moving, so
+    // writing null here would 400 the task's data routes for good.
+    const repoRoot = await resolveRepoRoot(live);
+    this.store.update(taskId, {
+      cwd: live,
+      ...(repoRoot === undefined ? {} : { repo_root: repoRoot }),
+    });
+    this.broadcastTask(taskId);
+    return live;
+  }
+
   renameTask(taskId: string, title: string): boolean {
     // An explicit rename opts the task out of derivation for good.
     if (!this.store.update(taskId, { title, title_source: "manual" })) return false;
@@ -315,9 +350,18 @@ export class TaskManager {
     // to. A client filters terminal messages against the PTY it is showing, so
     // learning the pairing afterwards would mean dropping its own restore. The
     // task id has to come from here — a Pty has no notion of one.
-    ws.send(JSON.stringify({
-      type: "attached", ptyId, taskId: this.ptyToTask.get(ptyId) ?? ptyId,
-    }));
+    const taskId = this.ptyToTask.get(ptyId);
+    ws.send(JSON.stringify({ type: "attached", ptyId, taskId: taskId ?? ptyId }));
+
+    // Opening a task's terminal is the moment before its Changes, Files and
+    // History tabs get used, and it is the only such moment the browser
+    // reaches — GET /api/tasks is CLI-only. Without this, a task created in a
+    // directory the agent then cd'd out of would keep answering those tabs
+    // from the root it had at creation, or 400 them forever if it had none.
+    // Fire-and-forget: it broadcasts a delta if anything moved, and a failure
+    // to notice is not a reason to refuse the attach.
+    if (taskId) void this.refreshCwd(taskId).catch(() => {});
+
     return this.ptys.attach(ptyId, clientId, ws, cols, rows);
   }
 

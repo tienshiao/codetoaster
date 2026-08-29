@@ -16,42 +16,54 @@ this git repo — needed for the diff/file/git endpoints). `foreground` skips th
 daemon/PID-file machinery; `--db` isolates state from `~/.codetoaster/`. Ready
 when `curl -s -o /dev/null -w "%{http_code}" http://localhost:4599/` → 200.
 
-## Create a session (required before any /api/sessions/:id/* call)
+## Create a task (required before any /api/tasks/:id/* call)
 
-Sessions are created over the WebSocket protocol, not HTTP. Endpoint is
-`ws://localhost:4599/terminal`. Minimal client (run with `bun`):
+Tasks are created over the WebSocket protocol, not HTTP. Endpoint is
+`ws://localhost:4599/terminal`.
 
-Terminal messages are addressed by `ptyId` (protocol v2, §5.3 — a v1 session
-*is* a PTY, so this is the same id the HTTP routes take). One socket can hold
-several PTYs at once, so `input` and `resize` must name the one they mean, and
-naming a PTY you never attached to is rejected. `detach` names one too, except
-that omitting `ptyId` drops every PTY the socket holds — what the sample below
-does on its way out.
+**The two ids are different things.** A task is the durable work and owns the
+row, the URL and every HTTP route; a PTY is a terminal it happens to be running
+right now, and gets a server-minted id. `create`, `kill`, `rename` and
+`acknowledge` name the task; `attach`, `detach`, `input` and `resize` name the
+terminal. `attached` is the message that pairs them, and it arrives *before*
+the PTY's `restore`. Naming a PTY you never attached to is rejected; omitting
+`ptyId` from `detach` drops every terminal the socket holds.
 
 ```ts
 const ws = new WebSocket("ws://localhost:4599/terminal");
-const ptyId = crypto.randomUUID();
+const taskId = crypto.randomUUID();
 ws.onopen = () =>
-  ws.send(JSON.stringify({ type: "create", ptyId, name: "verify", cols: 120, rows: 30 }));
+  ws.send(JSON.stringify({ type: "create", taskId, cols: 120, rows: 30 }));
 ws.onmessage = (ev) => {
   const msg = JSON.parse(String(ev.data));
-  if (msg.type === "attached" && msg.ptyId === ptyId) {
-    console.log(ptyId);
+  if (msg.type === "attached" && msg.taskId === taskId) {
+    console.log(`task ${taskId} is running on pty ${msg.ptyId}`);
     ws.send(JSON.stringify({ type: "detach" }));
     process.exit(0);
   }
 };
 ```
 
-The session (and its PTY) survives detach — the id stays valid for HTTP calls.
+The task and its PTY survive detach — the task id stays valid for HTTP calls,
+and stays valid after the PTY is gone.
 
 ## Drive the API surface
 
-All session-scoped endpoints live under `/api/sessions/<id>/…`: `diff`, `files`,
-`file?file=`, `git/log`, `git/refs`, `git/commit?sha=`, `git/tree?sha=`,
-`git/file?sha=&file=`, `image/git?ref=&file=`, POST `diff-tokens`
-(`{ files, sha? }`). SHAs must be full/abbrev hex (`SHA_RE`); symbolic refs like
-`HEAD` are rejected 400 by design.
+All task-scoped endpoints live under `/api/tasks/<task-id>/…`: `diff`,
+`context?file=&line=`, `files`, `files/search?q=`, `file?file=`, `git/log`,
+`git/refs`, `git/commit?sha=`, `git/tree?sha=`, `git/file?sha=&file=`,
+`image/git?ref=&file=`, `symbols?name=`, `symbols/search?q=`, POST
+`diff-tokens` (`{ files, sha? }`). SHAs must be full/abbrev hex (`SHA_RE`);
+symbolic refs like `HEAD` are rejected 400 by design.
+
+These read the task row, not a process, so they answer for a task whose PTY is
+gone — restart the daemon and hit them again to check that. Two that do need a
+live terminal, and 404 without one: `preview` and POST `upload`. A task created
+outside any repository has a null `repo_root` and answers 400 "Not a git
+repository"; it recovers if its shell cd's into one and a client re-attaches.
+
+An unmatched `/api/…` path is served the SPA's HTML with a 200, not a 404 — so
+check the content type before concluding a route still exists.
 
 ## Drive the frontend
 
@@ -64,6 +76,9 @@ import bundling error surfaces as a failed/erroring chunk request.
 ## Gotchas
 
 - `bun run dev` spawns tsr + tsc watchers — use `foreground` directly for verification.
+- Restarting the daemon suspends every live task (its PTYs died with the parent),
+  so the sidebar comes back empty while the rows stay. That is the cheapest way
+  to get a task with no process for the route checks above.
 - `--db` picks up the migration harness, so a fresh file is a free check that
   migrations apply cleanly: open it with `bun:sqlite` and read `applied_migrations`.
 - Write the driver to a file and run `bun <file>`; `bun -e` with top-level

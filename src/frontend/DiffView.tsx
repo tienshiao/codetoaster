@@ -160,7 +160,7 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
 
       try {
         const res = await fetch(
-          `/api/sessions/${sessionId}/context?file=${encodeURIComponent(filePath)}&start=${startLine}&end=${endLine}`
+          `/api/tasks/${sessionId}/context?file=${encodeURIComponent(filePath)}&start=${startLine}&end=${endLine}`
         );
         if (!res.ok) return;
         const data = await res.json();

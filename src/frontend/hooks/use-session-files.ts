@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { FileContentResponse, FilesResponse } from "../types/file";
 
 async function fetchFiles(sessionId: string): Promise<FilesResponse> {
-  const res = await fetch(`/api/sessions/${sessionId}/files`);
+  const res = await fetch(`/api/tasks/${sessionId}/files`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to fetch files");
@@ -12,7 +12,7 @@ async function fetchFiles(sessionId: string): Promise<FilesResponse> {
 
 async function fetchFileContent(sessionId: string, filePath: string): Promise<FileContentResponse> {
   const res = await fetch(
-    `/api/sessions/${sessionId}/file?file=${encodeURIComponent(filePath)}`
+    `/api/tasks/${sessionId}/file?file=${encodeURIComponent(filePath)}`
   );
   if (!res.ok) {
     const data = await res.json();

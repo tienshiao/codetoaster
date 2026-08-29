@@ -75,37 +75,37 @@ export function startServer(options?: ServerOptions) {
         },
       },
 
-      "/api/sessions": {
+      "/api/tasks": {
         async GET() {
           const tasks = taskManager.listTasks();
+          // The one place a live PTY is still asked anything: listing is when
+          // we happen to have the processes to hand, so it is where an agent
+          // that has cd'd elsewhere gets noticed and written back (§5.4).
           const withCwd = await Promise.all(
-            tasks.map(async (task) => {
-              const pty = task.ptyId ? taskManager.getPty(task.ptyId) : undefined;
-              // The row's cwd is authoritative; the live one only tells us the
-              // agent has wandered somewhere else since (§5.4).
-              const cwd = (await pty?.getCwd()) ?? taskManager.getTask(task.id)?.cwd;
-              return { ...task, cwd: cwd ?? null };
-            })
+            tasks.map(async (task) => ({
+              ...task,
+              cwd: (await taskManager.refreshCwd(task.id)) ?? null,
+            }))
           );
           return Response.json(withCwd);
         },
       },
 
-      "/api/sessions/:id": {
+      "/api/tasks/:id": {
         DELETE(req: Request & { params: { id: string } }) {
           if (taskManager.closeTask(req.params.id)) {
             taskManager.broadcastTasks();
             return Response.json({ success: true });
           }
-          return Response.json({ error: "Session not found" }, { status: 404 });
+          return Response.json({ error: "Task not found" }, { status: 404 });
         },
       },
 
-      "/api/sessions/:id/preview": {
+      "/api/tasks/:id/preview": {
         GET(req: Request & { params: { id: string } }) {
           const session = taskManager.primaryPty(req.params.id);
           if (!session) {
-            return new Response("Session not found", { status: 404 });
+            return new Response("Task has no live terminal", { status: 404 });
           }
           const url = new URL(req.url);
           const themeParam = url.searchParams.get("theme");
@@ -117,11 +117,11 @@ export function startServer(options?: ServerOptions) {
         },
       },
 
-      "/api/sessions/:id/upload": {
+      "/api/tasks/:id/upload": {
         async POST(req: Request & { params: { id: string } }) {
           const session = taskManager.primaryPty(req.params.id);
           if (!session) {
-            return Response.json({ error: "Session not found" }, { status: 404 });
+            return Response.json({ error: "Task has no live terminal" }, { status: 404 });
           }
           const formData = await req.formData();
           const files = formData.getAll("files") as File[];
@@ -305,13 +305,7 @@ export function startServer(options?: ServerOptions) {
           }
 
           case "list": {
-            ws.send(
-              JSON.stringify({
-                type: "tasks",
-                list: taskManager.listTasks(),
-                projects: taskManager.getProjects(),
-              })
-            );
+            ws.send(JSON.stringify(taskManager.tasksSnapshot()));
             break;
           }
 

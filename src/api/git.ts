@@ -1,4 +1,4 @@
-import { resolveSessionGitRoot, gitSpawn, gitSpawnRaw, parseNonNegInt, safePath, buildFileListing, IMAGE_MIME_TYPES, SHA_RE } from "./utils";
+import { resolveTaskRoot, gitSpawn, gitSpawnRaw, parseNonNegInt, safePath, buildFileListing, IMAGE_MIME_TYPES, SHA_RE } from "./utils";
 import { serializeFileContent } from "./files";
 
 // ---------------------------------------------------------------------------
@@ -137,12 +137,12 @@ function stripToFirstDiff(text: string): string {
 }
 
 export const gitRoutes = {
-  "/api/sessions/:id/git/log": {
+  "/api/tasks/:id/git/log": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const url = new URL(req.url);
         const skip = parseNonNegInt(url.searchParams.get("skip"), 0);
@@ -223,12 +223,12 @@ export const gitRoutes = {
     },
   },
 
-  "/api/sessions/:id/git/refs": {
+  "/api/tasks/:id/git/refs": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const [forEach, symbolic, revParse] = await Promise.all([
           gitSpawn(dir, [
@@ -280,12 +280,12 @@ export const gitRoutes = {
     },
   },
 
-  "/api/sessions/:id/git/commit": {
+  "/api/tasks/:id/git/commit": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const url = new URL(req.url);
         const sha = url.searchParams.get("sha") ?? "";
@@ -347,12 +347,12 @@ export const gitRoutes = {
     },
   },
 
-  "/api/sessions/:id/git/tree": {
+  "/api/tasks/:id/git/tree": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const url = new URL(req.url);
         const sha = url.searchParams.get("sha") ?? "";
@@ -377,12 +377,12 @@ export const gitRoutes = {
     },
   },
 
-  "/api/sessions/:id/git/file": {
+  "/api/tasks/:id/git/file": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const url = new URL(req.url);
         const sha = url.searchParams.get("sha") ?? "";

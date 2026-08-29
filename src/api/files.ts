@@ -1,4 +1,4 @@
-import { resolveSessionGitRoot, getImageMimeType, IMAGE_MIME_TYPES, listGitFiles, safePath, buildFileListing } from "./utils";
+import { resolveTaskRoot, getImageMimeType, IMAGE_MIME_TYPES, listGitFiles, safePath, buildFileListing } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
 import type { FileTokens } from "../types/highlight";
 
@@ -66,12 +66,12 @@ export async function serializeFileContent(buffer: ArrayBuffer, filePath: string
 }
 
 export const fileRoutes = {
-  "/api/sessions/:id/files": {
+  "/api/tasks/:id/files": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const filePaths = await listGitFiles(dir);
 
@@ -96,16 +96,16 @@ export const fileRoutes = {
     },
   },
 
-  "/api/sessions/:id/files/search": {
+  "/api/tasks/:id/files/search": {
     async GET(req: Request & { params: { id: string } }) {
       try {
         const url = new URL(req.url);
         const q = url.searchParams.get("q") || "";
         if (!q) return Response.json({ results: [] });
 
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const filePaths = await listGitFiles(dir);
         const scored: { path: string; name: string; score: number; indices: number[] }[] = [];
@@ -130,12 +130,12 @@ export const fileRoutes = {
     },
   },
 
-  "/api/sessions/:id/file": {
+  "/api/tasks/:id/file": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const url = new URL(req.url);
         const filePath = url.searchParams.get("file");
@@ -175,12 +175,12 @@ export const fileRoutes = {
     },
   },
 
-  "/api/sessions/:id/image": {
+  "/api/tasks/:id/image": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const url = new URL(req.url);
         const filePath = url.searchParams.get("file");
@@ -211,12 +211,12 @@ export const fileRoutes = {
     },
   },
 
-  "/api/sessions/:id/image/git": {
+  "/api/tasks/:id/image/git": {
     async GET(req: Request & { params: { id: string } }) {
       try {
-        const result = await resolveSessionGitRoot(req.params.id);
+        const result = resolveTaskRoot(req.params.id);
         if ("error" in result) return result.error;
-        const { dir } = result;
+        const { repoRoot: dir } = result;
 
         const url = new URL(req.url);
         const filePath = url.searchParams.get("file");

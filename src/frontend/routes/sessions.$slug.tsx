@@ -32,8 +32,11 @@ function SessionComponent() {
     const sessionExists = sessions.some((s) => s.id === id);
     if (!sessionExists) return;
 
-    lastSlugRef.current = slug;
-    attachSession(id);
+    // Latch only on success: a task's terminal is minted server-side, so a row
+    // can be in the list a beat before its ptyId is. Marking the slug handled
+    // on a failed attach would leave the effect short-circuiting when the
+    // ptyId does land, and the terminal would never attach.
+    if (attachSession(id)) lastSlugRef.current = slug;
   }, [slug, isConnected, sessionsLoaded, sessions, attachSession]);
 
   // Reset lastSlugRef when slug changes so re-attach works after navigating away and back

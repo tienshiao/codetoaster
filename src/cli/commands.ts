@@ -76,7 +76,7 @@ export async function cmdList(port: number): Promise<void> {
     process.exit(1);
   }
 
-  const res = await fetch(`${getBaseUrl(port)}/api/sessions`);
+  const res = await fetch(`${getBaseUrl(port)}/api/tasks`);
   // The v2 shape: `title` is the task's stored label (v1's `name`), and
   // `terminalTitle` is what the program inside is calling itself (v1's `title`).
   const sessions = (await res.json()) as Array<{
@@ -123,7 +123,7 @@ export async function cmdKill(target: string, port: number): Promise<void> {
     process.exit(1);
   }
 
-  const res = await fetch(`${getBaseUrl(port)}/api/sessions`);
+  const res = await fetch(`${getBaseUrl(port)}/api/tasks`);
   const sessions = (await res.json()) as Array<{ id: string; title: string }>;
 
   // Match by name (exact), id prefix, or full id
@@ -140,7 +140,7 @@ export async function cmdKill(target: string, port: number): Promise<void> {
     process.exit(1);
   }
 
-  const killRes = await fetch(`${getBaseUrl(port)}/api/sessions/${match.id}`, {
+  const killRes = await fetch(`${getBaseUrl(port)}/api/tasks/${match.id}`, {
     method: "DELETE",
   });
 

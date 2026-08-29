@@ -105,6 +105,13 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
 
         switch (message.type) {
           case "attached":
+            // Taken from the message, not left to the `ptyId` prop: the prop
+            // only catches up on the next render, and input is unblocked here
+            // and now. A keystroke in between would be addressed to the
+            // terminal we just switched away from, which the server drops as
+            // unattached — the character is lost and an error paints into the
+            // grid. The next render assigns the same value.
+            ptyIdRef.current = message.ptyId;
             attachedRef.current = true;
             term.focus();
             break;

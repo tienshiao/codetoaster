@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { FileContentResponse, FilesResponse } from "../types/file";
 
 async function fetchGitTree(sessionId: string, sha: string): Promise<FilesResponse> {
-  const res = await fetch(`/api/sessions/${sessionId}/git/tree?sha=${encodeURIComponent(sha)}`);
+  const res = await fetch(`/api/tasks/${sessionId}/git/tree?sha=${encodeURIComponent(sha)}`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to fetch tree");
@@ -16,7 +16,7 @@ async function fetchGitFile(
   path: string,
 ): Promise<FileContentResponse> {
   const res = await fetch(
-    `/api/sessions/${sessionId}/git/file?sha=${encodeURIComponent(sha)}&file=${encodeURIComponent(path)}`,
+    `/api/tasks/${sessionId}/git/file?sha=${encodeURIComponent(sha)}&file=${encodeURIComponent(path)}`,
   );
   if (!res.ok) {
     const data = await res.json();

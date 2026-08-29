@@ -50,7 +50,7 @@ export function useTerminalPreview(
     const themeParam = themeRef.current
       ? `?theme=${encodeURIComponent(JSON.stringify(themeRef.current))}`
       : "";
-    fetch(`/api/sessions/${sessionId}/preview${themeParam}`)
+    fetch(`/api/tasks/${sessionId}/preview${themeParam}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch preview");
         return res.text();

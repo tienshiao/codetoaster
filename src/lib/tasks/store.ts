@@ -9,7 +9,7 @@ export interface NewTask {
   project_id: string;
   title: string;
   initial_prompt: string;
-  repo_root: string;
+  repo_root: string | null;
   cwd: string;
   title_source?: TitleSource;
   worktree_path?: string | null;

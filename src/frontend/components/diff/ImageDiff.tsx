@@ -13,12 +13,12 @@ export function ImageDiff({ file, sessionId, imageRefs }: ImageDiffProps) {
   const { status, oldPath, newPath } = file;
 
   const gitUrl = (path: string, ref: string) =>
-    `/api/sessions/${sessionId}/image/git?file=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
+    `/api/tasks/${sessionId}/image/git?file=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
 
   // "after"/new side.
   const currentImageUrl = imageRefs
     ? gitUrl(newPath, imageRefs.new)
-    : `/api/sessions/${sessionId}/image?file=${encodeURIComponent(newPath)}`;
+    : `/api/tasks/${sessionId}/image?file=${encodeURIComponent(newPath)}`;
   // "before"/old side.
   const beforeImageUrl = imageRefs
     ? gitUrl(oldPath, imageRefs.old)

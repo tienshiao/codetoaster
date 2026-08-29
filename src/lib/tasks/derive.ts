@@ -55,19 +55,29 @@ export async function deriveTitle(cwd: string): Promise<string> {
 // Resolved once, at creation, and stored on the row (§5.4). A harvested task
 // has no process to ask, and re-deriving this from a live PTY is exactly what
 // made every data route depend on one.
-export async function resolveRepoRoot(cwd: string): Promise<string> {
+//
+// Null when the directory is not in a repository. Falling back to the cwd
+// would be worse than saying nothing: it reads as a repository right up until
+// every git command inside it fails, and the data routes owe the client a 400
+// rather than a directory that looks fine.
+//
+// `undefined` is the third answer, and a different thing entirely: the lookup
+// could not be performed — git missing from PATH (Bun.spawn throws), a stalled
+// network mount, a contended index.lock that outran the timeout. That must not
+// be written to the row as "no repository", because the row is what every data
+// route reads and nothing re-resolves it while the directory stays put; one
+// slow git call would otherwise 400 the task's diff, file and git views for
+// good. Callers keep whatever root they already had.
+export async function resolveRepoRoot(cwd: string): Promise<string | null | undefined> {
   try {
     const result = await gitSpawn(cwd, ["rev-parse", "--show-toplevel"], {
       timeoutMs: GIT_LOOKUP_TIMEOUT_MS,
     });
-    if (result.exitCode === 0) {
-      const root = result.stdout.trim();
-      if (root) return root;
-    }
+    if (result.exitCode === 0) return result.stdout.trim() || null;
+    // 128 is git's "not a git repository", which is an answer. Anything else —
+    // 143 from the timeout kill above included — means we never got one.
+    return result.exitCode === 128 ? null : undefined;
   } catch {
-    // ignore
+    return undefined;
   }
-  // Not a repository, or git is unavailable. The task still has a directory,
-  // and the routes that need a repo will say so themselves.
-  return cwd;
 }

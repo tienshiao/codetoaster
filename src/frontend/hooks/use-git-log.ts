@@ -49,7 +49,7 @@ async function fetchGitLog(sessionId: string, param: LogPageParam): Promise<GitL
   const params = new URLSearchParams({ skip: String(param.skip), limit: String(PAGE_LIMIT) });
   if (param.skip > 0 && param.after) params.set("after", param.after);
 
-  const res = await fetch(`/api/sessions/${sessionId}/git/log?${params}`);
+  const res = await fetch(`/api/tasks/${sessionId}/git/log?${params}`);
   // Throw a typed error WITHOUT resetting here — the reset is performed once,
   // outside the fetch/retry cycle, by an effect watching query.error.
   if (res.status === 409) {
@@ -128,7 +128,7 @@ export function useGitLog(sessionId: string) {
         // won't catch it).
         let page: GitLogPage;
         try {
-          const res = await fetch(`/api/sessions/${sessionId}/git/log?${params}`);
+          const res = await fetch(`/api/tasks/${sessionId}/git/log?${params}`);
           if (res.status === 409) {
             // Direct 409 handling (not inside a queryFn): reset now and report.
             handleStale(sessionId);

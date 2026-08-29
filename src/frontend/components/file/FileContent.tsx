@@ -129,7 +129,7 @@ export function FileContent({
 
   if (content.isBinary) {
     if (content.isImage) {
-      const imageUrl = imageUrlProp ?? `/api/sessions/${sessionId}/image?file=${encodeURIComponent(filePath)}`;
+      const imageUrl = imageUrlProp ?? `/api/tasks/${sessionId}/image?file=${encodeURIComponent(filePath)}`;
       return (
         <div className="flex flex-col items-center justify-center p-8 h-full">
           <img

@@ -85,7 +85,8 @@ interface SessionContextValue {
   // Labels for every session, keyed by id. Computed over the whole list so a
   // title shared by several sessions falls back to their stable names.
   sessionLabels: Map<string, string>;
-  attachSession: (id: string) => void;
+  /** False when the task has no terminal to attach to yet. */
+  attachSession: (id: string) => boolean;
   createSession: (projectId?: string) => { id: string; name: string };
   closeSession: (id: string) => void;
   renameSession: (id: string, name: string) => void;
@@ -375,19 +376,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setMruSessionIds((prev) => [id, ...prev.filter((x) => x !== id)]);
   }, []);
 
+  // Returns false when there is nothing to attach to yet — the task's terminal
+  // is minted by the server, so a row can exist a beat before its ptyId does.
+  // Callers that remember "this slug is handled" must not latch on a false, or
+  // the effect that would retry when the ptyId lands will short-circuit and the
+  // terminal stays dark.
   const attachSession = useCallback(
-    (id: string) => {
+    (id: string): boolean => {
       if (id === currentSessionIdRef.current) {
         if (isViewingTerminalRef.current) {
           send({ type: "acknowledge", taskId: id });
         }
-        return;
+        return true;
       }
 
-      // The route only attaches once the list has loaded, so the task's
-      // terminal is known by the time we get here.
       const ptyId = sessionsRef.current.find((s) => s.id === id)?.ptyId;
-      if (!ptyId) return;
+      if (!ptyId) return false;
 
       terminalRef.current?.resetAttached();
 
@@ -406,6 +410,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
       setCurrentSessionId(id);
       pushMru(id);
+      return true;
     },
     [send, pushMru],
   );

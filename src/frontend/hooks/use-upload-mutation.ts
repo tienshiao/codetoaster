@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 async function uploadFiles(sessionId: string, files: File[]): Promise<void> {
   const formData = new FormData();
   for (const file of files) formData.append("files", file);
-  await fetch(`/api/sessions/${sessionId}/upload`, {
+  await fetch(`/api/tasks/${sessionId}/upload`, {
     method: "POST",
     body: formData,
   });

@@ -30,7 +30,10 @@ export interface TaskRow {
   title: string;
   title_source: TitleSource;
   initial_prompt: string;
-  repo_root: string;
+  /** NULL when the task's directory is not inside a repository. Every git
+   * route needs one, so this is the difference between "browse it" and a 400 —
+   * which a directory standing in for a repo root could not express. */
+  repo_root: string | null;
   cwd: string;
   worktree_path: string | null;
   branch: string | null;
@@ -168,6 +171,68 @@ const migrations: Migration[] = [
       addColumn(db, "projects", "worktree_default", "INTEGER NOT NULL DEFAULT 0");
       addColumn(db, "projects", "setup_command", "TEXT");
       addColumn(db, "projects", "worktree_copy", "TEXT");
+    },
+  },
+  {
+    // repo_root started NOT NULL, which left a task outside any repository
+    // nothing honest to store: the cwd stood in for a root and read as one
+    // right up until every git command inside it failed. SQLite cannot drop a
+    // NOT NULL in place, so the table is rebuilt — cheap, since the only rows
+    // that can exist are a developer's.
+    name: "005_tasks_repo_root_nullable",
+    up(db) {
+      const columns = db.query(`PRAGMA table_info(tasks)`).all() as
+        { name: string; notnull: number }[];
+      const repoRoot = columns.find((c) => c.name === "repo_root");
+      if (!repoRoot || repoRoot.notnull === 0) return;
+
+      db.run(`
+        CREATE TABLE tasks_new (
+          id                    TEXT PRIMARY KEY,
+          project_id            TEXT NOT NULL REFERENCES projects(id),
+          title                 TEXT NOT NULL,
+          title_source          TEXT NOT NULL,
+          initial_prompt        TEXT NOT NULL,
+          repo_root             TEXT,
+          cwd                   TEXT NOT NULL,
+          worktree_path         TEXT,
+          branch                TEXT,
+          base_ref              TEXT,
+          worktree_state        TEXT NOT NULL,
+          wip_ref               TEXT,
+          wip_at                INTEGER,
+          setup_duration_ms     INTEGER,
+          pinned                INTEGER NOT NULL DEFAULT 0,
+          agent_session_id      TEXT,
+          transcript_path       TEXT,
+          agent_state           TEXT NOT NULL,
+          lifecycle             TEXT NOT NULL,
+          last_message          TEXT,
+          last_size_cols        INTEGER,
+          last_size_rows        INTEGER,
+          model                 TEXT, permission_mode TEXT,
+          created_at            INTEGER NOT NULL,
+          last_active_at        INTEGER NOT NULL,
+          idle_since            INTEGER,
+          exit_code             INTEGER
+        )
+      `);
+      // NULLIF because the pre-migration code recorded "no repository" as an
+      // empty string for exactly as long as this column was NOT NULL.
+      db.run(`
+        INSERT INTO tasks_new
+        SELECT id, project_id, title, title_source, initial_prompt,
+               NULLIF(repo_root, ''), cwd, worktree_path, branch, base_ref,
+               worktree_state, wip_ref, wip_at, setup_duration_ms, pinned,
+               agent_session_id, transcript_path, agent_state, lifecycle,
+               last_message, last_size_cols, last_size_rows, model,
+               permission_mode, created_at, last_active_at, idle_since, exit_code
+        FROM tasks
+      `);
+      db.run(`DROP TABLE tasks`);
+      db.run(`ALTER TABLE tasks_new RENAME TO tasks`);
+      // The index went with the old table.
+      db.run(`CREATE INDEX IF NOT EXISTS tasks_by_recency ON tasks(last_active_at DESC)`);
     },
   },
 ];

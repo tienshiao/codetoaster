@@ -323,7 +323,7 @@ function TreeMode({
   }
 
   const imageUrl = selectedFile
-    ? `/api/sessions/${sessionId}/image/git?ref=${sha}&file=${encodeURIComponent(selectedFile)}`
+    ? `/api/tasks/${sessionId}/image/git?ref=${sha}&file=${encodeURIComponent(selectedFile)}`
     : undefined;
 
   return (

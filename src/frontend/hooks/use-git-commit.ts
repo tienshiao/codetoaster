@@ -10,7 +10,7 @@ async function fetchGitCommit(
   sessionId: string,
   sha: string,
 ): Promise<GitCommitResponse> {
-  const res = await fetch(`/api/sessions/${sessionId}/git/commit?sha=${encodeURIComponent(sha)}`);
+  const res = await fetch(`/api/tasks/${sessionId}/git/commit?sha=${encodeURIComponent(sha)}`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to fetch commit");

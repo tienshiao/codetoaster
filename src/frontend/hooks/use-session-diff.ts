@@ -27,7 +27,7 @@ export async function fetchDiffTokens(
   if (requestFiles.length === 0) return null;
 
   try {
-    const res = await fetch(`/api/sessions/${sessionId}/diff-tokens`, {
+    const res = await fetch(`/api/tasks/${sessionId}/diff-tokens`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(sha ? { sha, files: requestFiles } : { files: requestFiles }),
@@ -42,7 +42,7 @@ export async function fetchDiffTokens(
 }
 
 async function fetchDiff(sessionId: string): Promise<{ diff: string; hash: string }> {
-  const res = await fetch(`/api/sessions/${sessionId}/diff`);
+  const res = await fetch(`/api/tasks/${sessionId}/diff`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to fetch diff");
