@@ -1,10 +1,11 @@
 ---
 id: TASK-25
 title: 'Task list sidebar: recency, filter, state dots, suspended rows'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-30 00:34'
+updated_date: '2026-08-30 06:10'
 labels:
   - frontend
 milestone: m-3

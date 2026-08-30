@@ -3,8 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { usePty } from "@/frontend/PtyContext";
 import { sessionDisplayNames } from "@/lib/xtmux/naming";
-import type { TaskInfo } from "@/lib/xtmux/types";
-import { AppShell, type ShellTaskGroup } from "@/frontend/components/v2/AppShell";
+import { AppShell } from "@/frontend/components/v2/AppShell";
+import { useTaskSidebar } from "@/frontend/components/TaskSidebar";
 import { Badge } from "@/frontend/components/v2/Badge";
 import { Button } from "@/frontend/components/v2/Button";
 import { TaskHeader } from "@/frontend/components/v2/TaskHeader";
@@ -17,18 +17,6 @@ export const Route = createFileRoute("/shell")({
   component: ShellPreview,
 });
 
-/** Coarse and mono, the way the design wants a timestamp: the list is scanned,
- * not read. */
-function ago(timestamp: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - timestamp) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.round(hours / 24)}d`;
-}
-
 /**
  * The v2 app shell, at `/shell` until TASK-28 puts it at `/`.
  *
@@ -40,29 +28,21 @@ function ago(timestamp: number, now: number): string {
  * left is the agent terminal, which arrives with the tab host that knows which
  * PTY it is showing.
  *
- * Ordering, the filter and the archived toggle are deliberately not built here:
- * this is TaskContext's data in the shell, not TASK-25's sidebar.
+ * The sidebar's own behaviour — recency, grouping, the filter, the archived
+ * toggle and the per-row actions — is `useTaskSidebar`'s; this route only says
+ * which task is selected.
  */
 function ShellPreview() {
-  const { tasks, projects, loaded, createTask } = useTasks();
+  const { tasks, loaded } = useTasks();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
   const explorerPanel = useExplorerPanel();
   const explorerSections = useExplorerRail(selectedTaskId);
-  // Only the groups the user has closed; everything else defaults open.
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   // A real layout for the selected task, persisted per task id.
   const { layout, setLayout } = useTaskLayout(selectedTaskId);
+  const sidebar = useTaskSidebar({ selectedTaskId, onSelectTask: setSelectedTaskId });
 
-  const toggleGroup = (id: string) =>
-    setOpenGroups((open) => ({ ...open, [id]: !open[id] }));
-
-  // Live, from TaskContext. Grouped by project because that is what the socket
-  // hands over today; recency ordering, the filter and the archived toggle are
-  // TASK-25's, so this is the store's data in the design's rows and nothing
-  // more.
-  const needle = filter.trim().toLowerCase();
-  // The label is projected, not stored: an explicit rename, else the live
+  // Only for the task header below — the sidebar projects its own labels. The
+  // label is projected, not stored: an explicit rename, else the live
   // terminal title when it carries real content *and is unique*, else the
   // stable name. Claude Code sits on a bare "Claude Code" until it has a task,
   // so without this every agent task in the list reads identically — which is
@@ -79,46 +59,6 @@ function ShellPreview() {
       ),
     [tasks],
   );
-  const groups: ShellTaskGroup[] = useMemo(() => {
-    // Read inside the memo, not in the render body: as a dependency it changes
-    // on every render, which would rebuild the whole list on every keystroke
-    // and every activity delta — the memo would never hit. Ages are coarse
-    // enough that recomputing them whenever the list actually changes is the
-    // resolution this display has anyway.
-    const now = Date.now();
-    const byId = new Map(tasks.map((t) => [t.id, t]));
-    // Matched against the label on screen, not the stored title. They differ
-    // whenever the projection wins — a task named by its terminal title reads
-    // "Fix the parser" while its row still says "<dir> · <branch>" — so
-    // filtering on the row would hide the task the user just typed the name of.
-    const matches = (task: TaskInfo) =>
-      !needle || (displayNames.get(task.id) ?? task.title).toLowerCase().includes(needle);
-    return projects.map((project) => {
-      const rows = project.taskIds
-        .map((id) => byId.get(id))
-        .filter((t): t is NonNullable<typeof t> => t != null)
-        .filter(matches);
-      return {
-        id: project.id,
-        name: project.name,
-        open: openGroups[project.id] ?? true,
-        count: rows.length,
-        attention: rows.some((t) => taskStateOf(t) === "attention"),
-        onToggle: () => toggleGroup(project.id),
-        tasks: rows.map((task) => ({
-          id: task.id,
-          title: displayNames.get(task.id) ?? task.title,
-          state: taskStateOf(task),
-          preview: task.lastMessage ?? undefined,
-          meta: ago(task.lastActiveAt, now),
-          worktree: false,
-          selected: task.id === selectedTaskId,
-          onClick: () => setSelectedTaskId(task.id),
-        })),
-      };
-    });
-  }, [tasks, projects, openGroups, needle, selectedTaskId, displayNames]);
-
   const selected = tasks.find((t) => t.id === selectedTaskId);
   const { sendInput } = usePty();
 
@@ -156,10 +96,7 @@ function ShellPreview() {
 
   return (
     <AppShell
-      groups={groups}
-      taskFilter={filter}
-      onTaskFilterChange={(e) => setFilter(e.target.value)}
-      onNewTask={() => void createTask({ cols: 120, rows: 30 })}
+      {...sidebar}
       endpoint={loaded ? `:${location.port || "80"}` : "connecting…"}
       tabArea={
         layout

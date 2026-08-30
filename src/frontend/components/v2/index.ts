@@ -21,6 +21,12 @@ export type { StatusDotProps, TaskState } from "./StatusDot";
 export { FilterInput } from "./FilterInput";
 export type { FilterInputProps } from "./FilterInput";
 
+export { TextInput } from "./TextInput";
+export type { TextInputProps } from "./TextInput";
+
+export { Dialog } from "./Dialog";
+export type { DialogProps } from "./Dialog";
+
 export { TaskRow } from "./TaskRow";
 export type { TaskRowProps } from "./TaskRow";
 
@@ -52,4 +58,10 @@ export { FileRow } from "./FileRow";
 export type { FileRowProps, FileStatus } from "./FileRow";
 
 export { AppShell, SectionLabel } from "./AppShell";
-export type { AppShellProps, ShellBreadcrumb, ShellTab, ShellTaskGroup } from "./AppShell";
+export type {
+  AppShellProps,
+  ShellBreadcrumb,
+  ShellTab,
+  ShellTask,
+  ShellTaskGroup,
+} from "./AppShell";

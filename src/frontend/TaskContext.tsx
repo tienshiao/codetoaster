@@ -10,6 +10,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { usePty } from "./PtyContext";
+import { generateUUID } from "./utils/uuid";
 import type { TaskState } from "./components/v2/StatusDot";
 import type { ProjectInfo, TaskInfo } from "../lib/xtmux/types";
 
@@ -73,6 +74,15 @@ export interface TaskContextValue {
   renameTask: (id: string, title: string) => Promise<TaskResult<TaskInfo>>;
   closeTask: (id: string) => Promise<TaskResult<TaskInfo>>;
   resumeTask: (id: string, options?: ResumeTaskOptions) => Promise<TaskResult<TaskInfo>>;
+  /**
+   * Projects are the exception to the HTTP rule above: they touch a table and
+   * nothing else — no git, no processes — so they stay on the socket, where
+   * they already are (`ClientMessage`). Neither answers, because the server
+   * re-broadcasts the whole list when either lands; `createProject` returns the
+   * id it minted so the caller can select what it just made.
+   */
+  createProject: (name: string, initialPath: string) => string;
+  deleteProject: (id: string) => void;
 }
 
 const TaskContext = createContext<TaskContextValue | null>(null);
@@ -281,6 +291,23 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // The id is the client's to mint: the socket has no reply channel, so a
+  // server-assigned one would only come back with the next broadcast and the
+  // caller could not tell which project in it was the one it just asked for.
+  const createProject = useCallback(
+    (name: string, initialPath: string) => {
+      const id = generateUUID();
+      send({ type: "createProject", id, name, initialPath });
+      return id;
+    },
+    [send],
+  );
+
+  const deleteProject = useCallback(
+    (id: string) => send({ type: "deleteProject", id }),
+    [send],
+  );
+
   const taskById = useCallback((id: string) => tasksRef.current.find((t) => t.id === id), []);
 
   const value = useMemo<TaskContextValue>(
@@ -295,6 +322,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       renameTask,
       closeTask,
       resumeTask,
+      createProject,
+      deleteProject,
     }),
     [
       tasks,
@@ -307,6 +336,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       renameTask,
       closeTask,
       resumeTask,
+      createProject,
+      deleteProject,
     ],
   );
 

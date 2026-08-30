@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent, type ReactNode } from "react";
-import { ListFilter, PanelLeft, Plus, Settings } from "lucide-react";
+import { Archive, ListFilter, PanelLeft, Plus, Settings } from "lucide-react";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { Badge } from "./Badge";
 import { ExplorerRail, type ExplorerRailItem } from "./ExplorerRail";
@@ -12,6 +12,18 @@ import { TaskHeader, type TaskHeaderProps } from "./TaskHeader";
 import { TaskRow, type TaskRowProps } from "./TaskRow";
 import { cn } from "@/frontend/lib/utils";
 
+/**
+ * One row in the task list.
+ *
+ * `actions` is a sibling of the row, not a child of it: `TaskRow` renders a
+ * `<button role="option">`, and a close or rename control nested inside it
+ * would be a button in a button — invalid, and the inner click would never
+ * survive the outer one. The shell positions whatever it is given over the
+ * row's trailing edge and reveals it on hover *and* on keyboard focus, so the
+ * actions are never hover-only.
+ */
+export type ShellTask = TaskRowProps & { id: string; actions?: ReactNode };
+
 /** A project header plus the task rows under it. `open` and `onToggle` are the
  * caller's: the shell draws the list, it does not own which groups are open. */
 export interface ShellTaskGroup {
@@ -22,7 +34,9 @@ export interface ShellTaskGroup {
   count?: number;
   attention?: boolean;
   onToggle?: () => void;
-  tasks?: (TaskRowProps & { id: string })[];
+  tasks?: ShellTask[];
+  /** Header-level controls, placed the same way a row's are. */
+  actions?: ReactNode;
 }
 
 export type ShellTab = TabProps & { id: string };
@@ -32,11 +46,27 @@ export type ShellBreadcrumb = TaskHeaderProps;
 
 export interface AppShellProps {
   // ── left rail ──
+  /** The flat, recency-ordered list (§7.5) — the default view. Rows are drawn
+   * unindented, since with no group headers there is no chevron to line up
+   * under. */
+  tasks?: ShellTask[];
+  /** The same rows under project headers, drawn instead of `tasks` when
+   * `grouped` is on. */
   groups?: ShellTaskGroup[];
+  /** Which of the two the sidebar shows. Defaults to grouped only for a caller
+   * that passes no flat list at all, so the grouped-only call site keeps
+   * working. */
+  grouped?: boolean;
   taskFilter?: string;
   onTaskFilterChange?: (e: ChangeEvent<HTMLInputElement>) => void;
   onToggleGrouping?: () => void;
+  showArchived?: boolean;
+  onToggleArchived?: () => void;
   onNewTask?: () => void;
+  /** Extra controls at the leading edge of the header's button cluster, for
+   * affordances the shell has no opinion about — creating a project, say,
+   * which brings its own dialog with it. */
+  headerActions?: ReactNode;
   onOpenSettings?: () => void;
   /** The daemon's address, trailing the sidebar footer. */
   endpoint?: string;
@@ -84,6 +114,44 @@ export interface AppShellProps {
   className?: string;
 }
 
+/**
+ * A row's hover/focus actions, floated over its trailing edge.
+ *
+ * `opacity`, not `hidden`: a `display: none` control is not focusable, so
+ * nothing could ever tab into it and `focus-within` would never fire — the
+ * actions would be hover-only, which is exactly what they must not be.
+ *
+ * The background is the sidebar's own and not the row's, so the cluster reads
+ * as a chip floating over the trailing `meta` column in every row state —
+ * hovered, focused or selected — instead of having to guess which wash is
+ * currently painted underneath it.
+ */
+function RowActions({ children }: { children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-sidebar",
+        "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function TaskRows({ tasks }: { tasks: ShellTask[] }) {
+  return tasks.map(({ id, actions, ...task }) =>
+    actions ? (
+      <div key={id} className="group/row relative">
+        <TaskRow {...task} />
+        <RowActions>{actions}</RowActions>
+      </div>
+    ) : (
+      <TaskRow key={id} {...task} />
+    ),
+  );
+}
+
 /** The 11px uppercase section label — the one piece of tracked-out type in the
  * system. Used for path headers inside the Explorer body. */
 export function SectionLabel({ children, className }: { children: ReactNode; className?: string }) {
@@ -110,11 +178,16 @@ export function SectionLabel({ children, className }: { children: ReactNode; cla
  * the wiring tasks that follow supply data instead of restructuring markup.
  */
 export function AppShell({
+  tasks,
   groups = [],
+  grouped = tasks === undefined,
   taskFilter,
   onTaskFilterChange,
   onToggleGrouping,
+  showArchived = false,
+  onToggleArchived,
   onNewTask,
+  headerActions,
   onOpenSettings,
   endpoint,
   tabArea,
@@ -195,28 +268,72 @@ export function AppShell({
             <span className="font-semibold">CodeToaster</span>
             <Badge>v2</Badge>
             <span className="ml-auto flex gap-0.5">
-              <IconButton icon={ListFilter} label="Group by project" size="sm" onClick={onToggleGrouping} />
+              {headerActions}
+              <IconButton
+                icon={ListFilter}
+                label="Group by project"
+                size="sm"
+                active={grouped}
+                onClick={onToggleGrouping}
+              />
               <IconButton icon={Plus} label="New task" size="sm" onClick={onNewTask} />
             </span>
           </div>
 
-          <div className="flex-none px-2 pt-2 pb-1.5">
-            <FilterInput placeholder="Filter tasks" value={taskFilter} onChange={onTaskFilterChange} />
+          {/* The archived toggle sits with the filter and not in the header
+              because it is the same kind of control: both change which rows
+              the list is showing, and neither creates anything. */}
+          <div className="flex flex-none items-center gap-1 px-2 pt-2 pb-1.5">
+            <FilterInput
+              placeholder="Filter tasks"
+              value={taskFilter}
+              onChange={onTaskFilterChange}
+              className="min-w-0 flex-1"
+            />
+            {onToggleArchived && (
+              <IconButton
+                icon={Archive}
+                label={showArchived ? "Hide archived" : "Show archived"}
+                size="sm"
+                active={showArchived}
+                onClick={onToggleArchived}
+              />
+            )}
           </div>
 
           <div className="flex flex-1 flex-col gap-px overflow-y-auto px-1 pb-1">
-            {groups.map((group) => (
-              <ProjectGroup
-                key={group.id}
-                name={group.name}
-                open={group.open}
-                count={group.count}
-                attention={group.attention}
-                onToggle={group.onToggle}
-              >
-                {group.tasks?.map(({ id, ...task }) => <TaskRow key={id} {...task} />)}
-              </ProjectGroup>
-            ))}
+            {grouped ? (
+              groups.map((group) => (
+                // Its own group name, not `row`: the task rows inside declare
+                // `group/row` too, and sharing the name would surface the
+                // project's controls every time a row under it was hovered.
+                <div key={group.id} className="group/project relative flex flex-col gap-px">
+                  <ProjectGroup
+                    name={group.name}
+                    open={group.open}
+                    count={group.count}
+                    attention={group.attention}
+                    onToggle={group.onToggle}
+                  >
+                    <TaskRows tasks={group.tasks ?? []} />
+                  </ProjectGroup>
+                  {group.actions && (
+                    // Pinned to the header row rather than centred on the
+                    // group, whose height is however many tasks are in it.
+                    <span
+                      className={cn(
+                        "absolute top-0 right-1 flex h-group items-center gap-0.5 rounded-md bg-sidebar",
+                        "opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100",
+                      )}
+                    >
+                      {group.actions}
+                    </span>
+                  )}
+                </div>
+              ))
+            ) : (
+              <TaskRows tasks={tasks ?? []} />
+            )}
           </div>
 
           <div className="flex h-titlebar flex-none items-center gap-2 border-t border-sidebar-border pr-2 pl-2.5 text-xs text-muted-foreground">
