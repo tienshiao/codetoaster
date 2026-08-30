@@ -33,6 +33,11 @@ const TOTAL_LINES_THRESHOLD = 1500;
 // file in *both*, each writing a new selection and a reset scroll offset into
 // its own slot. The panes take turns instead: the last one pointed at owns the
 // keys, and a lone pane owns them without being asked.
+//
+// Only a pane in single-file mode ever enters the set, because only that pane
+// installs a listener. An "all"-mode pane holding the claim would be ownership
+// no key press could ever reach — and the check below would turn the arrows off
+// in the pane that *was* listening.
 const mountedDiffLayouts = new Set<symbol>();
 let diffKeyboardOwner: symbol | null = null;
 
@@ -217,18 +222,29 @@ export function DiffLayout({
   layoutIdRef.current ??= Symbol("diff-layout");
   const layoutId = layoutIdRef.current;
 
+  // Registration is gated on `single` for the same reason the listener below is:
+  // a pane in "all" mode has no use for the arrow keys, and a claim it never
+  // acts on is worse than no claim — the ownership check in the listener makes
+  // the *other* pane's arrows a silent no-op, with nothing on screen to say why.
+  // A claim only exists while a listener does.
+  //
+  // Kept apart from the listener rather than folded into it because the
+  // listener's dependencies change on every navigation: re-running this with
+  // them would release the keys to whatever else is mounted and then fail to
+  // reclaim them, so a split would steal the arrows from itself on first use.
   useEffect(() => {
+    if (viewMode !== "single") return;
     mountedDiffLayouts.add(layoutId);
     diffKeyboardOwner ??= layoutId;
     return () => {
       mountedDiffLayouts.delete(layoutId);
-      // Hand the keys to whatever is still on screen, so closing the owning tab
+      // Hand the keys to whatever is still listening, so closing the owning tab
       // does not leave the remaining pane unable to arrow anywhere.
       if (diffKeyboardOwner === layoutId) {
         diffKeyboardOwner = mountedDiffLayouts.values().next().value ?? null;
       }
     };
-  }, [layoutId]);
+  }, [viewMode, layoutId]);
 
   // Keyboard navigation in single-file mode
   useEffect(() => {
@@ -345,8 +361,15 @@ export function DiffLayout({
 
   return (
     // Capture, so a click anywhere in the pane claims the arrow keys before any
-    // handler inside it can stop the event.
-    <div className="flex h-full" onPointerDownCapture={() => { diffKeyboardOwner = layoutId; }}>
+    // handler inside it can stop the event — but only from a pane that is
+    // listening: pointing at an "all"-mode pane, where the arrows do nothing,
+    // must not take them away from the single-file pane beside it.
+    <div
+      className="flex h-full"
+      onPointerDownCapture={() => {
+        if (viewMode === "single") diffKeyboardOwner = layoutId;
+      }}
+    >
       {/* File tree sidebar */}
       {showFileTree && (
         <div className="w-[280px] shrink-0">

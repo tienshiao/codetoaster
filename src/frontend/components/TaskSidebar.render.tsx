@@ -115,6 +115,44 @@ test("a row's actions are focusable, so they are not hover-only", () => {
   expect(document.activeElement).toBe(action);
 });
 
+/** Whether `el` sits under anything the shell fades out with the row. Walked
+ * rather than asserted on one known parent, because the trap is any ancestor at
+ * all: opacity applies to a whole subtree, `position: fixed` included. */
+function fadesWithTheRow(el: HTMLElement): boolean {
+  for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+    if (node.classList.contains("opacity-0")) return true;
+  }
+  return false;
+}
+
+test("a row's dialog is not inside the cluster that fades with the hover", () => {
+  render(
+    <AppShell
+      tasks={[
+        {
+          id: "t1",
+          title: "Fix the parser",
+          actions: (
+            <TaskRowActions
+              taskId="t1"
+              label="Fix the parser"
+              busy
+              onRename={vi.fn()}
+              onClose={vi.fn()}
+            />
+          ),
+        },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Close Fix the parser" }));
+
+  // Left in the cluster, the dialog and its scrim drop to `opacity: 0` the
+  // moment focus leaves the row — clicking the dialog's own title is enough —
+  // and the invisible scrim then eats every click in the app.
+  expect(fadesWithTheRow(screen.getByRole("dialog", { name: "Close this task?" }))).toBe(false);
+});
+
 test("a row's actions sit outside its button, not inside it", () => {
   render(
     <AppShell

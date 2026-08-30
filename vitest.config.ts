@@ -12,8 +12,12 @@ import { fileURLToPath } from "node:url";
  * hand its `fetch`/`Response` back. Scoping by runner is the honest version of
  * that: the server tests never see a DOM at all.
  *
- * The boundary is `*.test.tsx` — "does it render", not "is it frontend". The
- * thirteen pure frontend suites (parseDiff, commitGraph, layout-store, drag,
+ * The boundary is `*.render.tsx` — "does it render", not "is it frontend". The
+ * suffix deliberately omits `.test`, because Bun requires `.test`/`.spec` in a
+ * filename to discover a file: that is what keeps these invisible to `bun test`
+ * with no ignore flag to maintain. Do not rename them to `*.test.tsx`.
+ *
+ * The pure frontend suites (parseDiff, commitGraph, layout-store, drag,
  * view-state-store, …) stay on `bun test`, where they need no DOM and no second
  * module resolver.
  */

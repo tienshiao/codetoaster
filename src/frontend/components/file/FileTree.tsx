@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
+import { useState, useEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { FileIcon } from "../diff/FileIcon";
 import { FilterInput } from "../FilterInput";
@@ -91,8 +91,21 @@ export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onE
     setExpandedPaths((prev) => pruneSet(prev, validDirs));
   }, [files, setExpandedPaths]);
 
+  // Reveal the selection's ancestor directories when the selection *changes*,
+  // not on every mount. The Explorer unmounts this tree on every rail switch
+  // while the selection persists with the view, so a mount-time reveal would
+  // reopen directories the user had deliberately collapsed — every switch,
+  // forever, with no way to make a collapse stick. (RefSidebar's HEAD reveal is
+  // the same story and had to persist its marker; here the marker *is* the
+  // persisted selection, so remembering it for the life of the mount is enough.)
+  //
+  // The selection already on screen at mount was revealed when it was made, or
+  // has been collapsed over since; either way it is recorded as seen rather than
+  // acted on.
+  const revealedFor = useRef(selectedFile);
   useEffect(() => {
-    if (!selectedFile) return;
+    if (!selectedFile || revealedFor.current === selectedFile) return;
+    revealedFor.current = selectedFile;
     setExpandedPaths((prev) => withAll(prev, collectPathPrefixes([selectedFile])));
   }, [selectedFile, setExpandedPaths]);
 

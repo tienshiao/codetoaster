@@ -125,6 +125,12 @@ export interface AppShellProps {
  * as a chip floating over the trailing `meta` column in every row state —
  * hovered, focused or selected — instead of having to guess which wash is
  * currently painted underneath it.
+ *
+ * Anything mounted in here that must outlive the hover — a dialog, a menu —
+ * has to render through a portal, and `v2/Dialog` does. Opacity paints the whole
+ * subtree whatever a descendant's `position` says, so a modal left in place
+ * fades out the instant the pointer leaves the row while its full-screen scrim
+ * goes on swallowing clicks.
  */
 function RowActions({ children }: { children: ReactNode }) {
   return (

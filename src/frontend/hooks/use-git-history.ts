@@ -52,7 +52,31 @@ export function useGitHistory(
   const { fetchUntil } = logQuery;
   const { activity } = useTasks();
 
-  const [pendingRefSha, setPendingRefSha] = useState<string | null>(null);
+  // Held with the task it belongs to. A spinner is on a row of *one* task's ref
+  // sidebar, and this hook is not remounted per task (the Explorer's Refs
+  // section is drawn at a fixed position with no `key`), so carrying a bare sha
+  // across a switch left the new task's sidebar spinning on a ref it had never
+  // been asked to seek. React's "adjust state when a prop changes", as in
+  // `use-task-layout`.
+  const [pending, setPending] = useState<{ taskId: string; sha: string | null }>({
+    taskId,
+    sha: null,
+  });
+  if (pending.taskId !== taskId) setPending({ taskId, sha: null });
+  const pendingRefSha = pending.taskId === taskId ? pending.sha : null;
+  const setPendingRefSha = useCallback<Dispatch<SetStateAction<string | null>>>(
+    (next) =>
+      setPending((prev) => ({
+        taskId: prev.taskId,
+        sha: typeof next === "function" ? next(prev.sha) : next,
+      })),
+    [],
+  );
+
+  // What the selection is *now*, for the async seek below to compare against;
+  // its own `taskId` is the one it closed over when the click happened.
+  const taskIdRef = useRef(taskId);
+  taskIdRef.current = taskId;
 
   const commits = useMemo(
     () => logQuery.data?.pages.flatMap((p) => p.commits) ?? [],
@@ -84,19 +108,29 @@ export function useGitHistory(
         onSelect(sha);
         return;
       }
-      setPendingRefSha(sha);
+      // `fetchUntil` alone polls for up to five seconds waiting out an
+      // in-flight page fetch, which is ample time to click another task — and
+      // this hook stays mounted through that. Everything below is addressed to
+      // the task the click was for and simply does not land once it is no
+      // longer the selection: `onSelect` would otherwise open a `commit:<sha>`
+      // tab in a layout whose repository has no such commit, leaving the pane
+      // fetching a sha that cannot resolve, and the clear would take down a
+      // spinner the new task had started for itself.
+      const startedFor = taskId;
+      setPending({ taskId: startedFor, sha });
       try {
         const status = await fetchUntil(sha);
+        if (taskIdRef.current !== startedFor) return;
         if (status === "found") {
           onSelect(sha);
         } else {
           reportSeekFailure(status);
         }
       } finally {
-        setPendingRefSha(null);
+        if (taskIdRef.current === startedFor) setPending({ taskId: startedFor, sha: null });
       }
     },
-    [commits, fetchUntil, onSelect, reportSeekFailure],
+    [taskId, commits, fetchUntil, onSelect, reportSeekFailure],
   );
 
   // Refetch refs when the task's PTY activity settles (true→false). The 300ms

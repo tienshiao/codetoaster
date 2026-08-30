@@ -1,4 +1,5 @@
 import { useEffect, useRef, type FormEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "./Button";
 import { cn } from "@/frontend/lib/utils";
 
@@ -27,9 +28,14 @@ export interface DialogProps {
  * (CLAUDE.md). What is lost is a focus trap; what is kept is the part these
  * dialogs actually use, which is "a name and two buttons".
  *
- * `fixed`, so it renders correctly from wherever it is mounted — including
- * inside the sidebar's own scroller, which is where the per-row actions that
- * own these dialogs live.
+ * `fixed`, and mounted onto `document.body` through a portal. The portal is not
+ * tidiness: the per-row actions that own these dialogs live inside the cluster
+ * `AppShell` fades in on hover with `opacity-0`, and opacity paints an entire
+ * subtree no matter what any descendant's `position` says. Rendered in place, an
+ * open dialog and its full-screen scrim would vanish the moment the pointer left
+ * the row — click the dialog's own title, which takes no focus, and it does —
+ * while still swallowing every click, which looks precisely like an app that has
+ * stopped responding.
  */
 export function Dialog({
   open,
@@ -75,7 +81,7 @@ export function Dialog({
     onClose();
   };
 
-  return (
+  return createPortal(
     // The scrim matches AppShell's mobile overlay rather than introducing a
     // second black — it is a shadow over the app, not a palette colour.
     <div
@@ -116,6 +122,7 @@ export function Dialog({
           </Button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body,
   );
 }

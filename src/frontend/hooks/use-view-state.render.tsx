@@ -1,7 +1,15 @@
 import { test, expect } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, render, renderHook } from "@testing-library/react";
+import { useCallback, useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
 import { useViewState } from "./use-view-state";
-import { getViewState, resetViewStates, setViewField, viewRef } from "../view-state-store";
+import {
+  collectPathPrefixes,
+  getViewState,
+  resetViewStates,
+  setViewField,
+  viewRef,
+  withAll,
+} from "../view-state-store";
 import type { LineComment } from "../types/diff";
 
 function comment(filePath: string): LineComment {
@@ -145,4 +153,83 @@ test("a write lands on the slot named by the ref, not the one held at mount", ()
   expect(getViewState("commit", ref).mode).toBe("tree");
   expect(getViewState("commit", viewRef(task, "commit:def456")).mode).toBe("commit");
   resetViewStates(task);
+});
+
+// ── the ref moving under a mounted instance ─────────────────────────────────
+//
+// Not every consumer is a tab. The Explorer renders `<FilesSection taskId={…}/>`
+// at a fixed position with no `key` — deliberately, so a task switch does not
+// throw away the query cache — so `taskId` changes on a live instance and the
+// value and setter have to move to the new slot together.
+
+test("the ref changing under a mounted hook rebinds the value with the setter", () => {
+  const a = viewRef("ref-moved-a", "files");
+  const b = viewRef("ref-moved-b", "files");
+  setViewField("files", a, "selectedFile", "src/a.ts");
+  setViewField("files", b, "selectedFile", "src/b.ts");
+
+  const frames: Array<[string | null, Dispatch<SetStateAction<string | null>>]> = [];
+  const { rerender } = renderHook(
+    ({ taskId }: { taskId: string }) => {
+      const pair = useViewState("files", viewRef(taskId, "files"), "selectedFile");
+      frames.push(pair);
+      return pair;
+    },
+    { initialProps: { taskId: "ref-moved-a" } },
+  );
+  const switchedAt = frames.length;
+  rerender({ taskId: "ref-moved-b" });
+
+  // The render the switch happens on, not whatever the subscription settles to
+  // afterwards: child effects fire in between, and that is where the bug lived.
+  const [value, set] = frames[switchedAt]!;
+  expect(value).toBe("src/b.ts");
+  act(() => set("src/c.ts"));
+  expect(getViewState("files", b).selectedFile).toBe("src/c.ts");
+  expect(getViewState("files", a).selectedFile).toBe("src/a.ts");
+
+  resetViewStates("ref-moved-a");
+  resetViewStates("ref-moved-b");
+});
+
+test("a child effect firing on the switch cannot write the old task's paths into the new one", () => {
+  // FileTree's reveal effect, in miniature: whenever the selected file changes,
+  // expand its ancestor directories so the selection is visible. On a task
+  // switch the value used to stay put while `reveal` rebound to the new task —
+  // so the effect re-fired with the previous task's path and a setter aimed at
+  // the next task's tree, and the write was persisted there.
+  function Tree({ selected, reveal }: { selected: string | null; reveal: (p: string) => void }) {
+    useEffect(() => {
+      if (selected) reveal(selected);
+    }, [selected, reveal]);
+    return null;
+  }
+
+  function Files({ taskId }: { taskId: string }) {
+    const ref = useMemo(() => viewRef(taskId, "files"), [taskId]);
+    const [selected] = useViewState("files", ref, "selectedFile");
+    const [, setExpanded] = useViewState("files", ref, "expandedPaths");
+    const reveal = useCallback(
+      (path: string) => setExpanded((prev) => withAll(prev, collectPathPrefixes([path]))),
+      [setExpanded],
+    );
+    return <Tree selected={selected} reveal={reveal} />;
+  }
+
+  const a = viewRef("reveal-a", "files");
+  const b = viewRef("reveal-b", "files");
+  setViewField("files", a, "selectedFile", "src/deep/nested/x.ts");
+
+  const { rerender } = render(<Files taskId="reveal-a" />);
+  rerender(<Files taskId="reveal-b" />);
+
+  expect([...getViewState("files", b).expandedPaths]).toEqual([]);
+  expect([...getViewState("files", a).expandedPaths].sort()).toEqual([
+    "src",
+    "src/deep",
+    "src/deep/nested",
+  ]);
+
+  resetViewStates("reveal-a");
+  resetViewStates("reveal-b");
 });
