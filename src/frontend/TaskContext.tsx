@@ -141,6 +141,10 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   const [activity, setActivity] = useState<Record<string, boolean>>({});
   const tasksRef = useRef<TaskInfo[]>([]);
   tasksRef.current = tasks;
+  // Whether the snapshot has already been asked for on the connection that is
+  // open now. Two things ask — the socket's own `onConnect` and the mount
+  // effect below — and exactly one of them should get to.
+  const askedRef = useRef(false);
 
   useEffect(
     () =>
@@ -178,12 +182,14 @@ export function TaskProvider({ children }: { children: ReactNode }) {
           // one. Asking here is the store's own business, and it is also what
           // makes a reconnect recover: the ptyIds we are holding stopped being
           // true the moment the socket dropped.
+          askedRef.current = true;
           send({ type: "list" });
         },
         onDisconnect: () => {
           // The list we hold is from before the drop, and a reconnect is
           // exactly when its ptyIds stop being true. Saying "not loaded" is
           // what stops the UI acting on it until the fresh snapshot lands.
+          askedRef.current = false;
           setLoaded(false);
         },
       }),
@@ -194,8 +200,15 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   // page, or React running effects in an order that puts the connection first.
   // `onConnect` only ever fires on a transition, so without this the store
   // would sit empty until the next reconnect.
+  //
+  // Latched against `onConnect`, which runs in the socket's open handler and so
+  // has already fired by the time this effect sees `isConnected` go true.
+  // Without the latch every connect asks twice, and each ask costs a full task
+  // snapshot serialized and sent to this client.
   useEffect(() => {
-    if (isConnected) send({ type: "list" });
+    if (!isConnected || askedRef.current) return;
+    askedRef.current = true;
+    send({ type: "list" });
   }, [isConnected, send]);
 
   const createTask = useCallback(

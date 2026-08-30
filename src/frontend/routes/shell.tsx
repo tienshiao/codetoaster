@@ -4,6 +4,7 @@ import { FileDiff, Files, GitBranch, GitCommitHorizontal } from "lucide-react";
 import type { ExplorerRailItem } from "@/frontend/components/v2/ExplorerRail";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { sessionDisplayNames } from "@/lib/xtmux/naming";
+import type { TaskInfo } from "@/lib/xtmux/types";
 import {
   AppShell,
   SectionLabel,
@@ -67,7 +68,6 @@ function ShellPreview() {
   // hands over today; recency ordering, the filter and the archived toggle are
   // TASK-25's, so this is the store's data in the design's rows and nothing
   // more.
-  const now = Date.now();
   const needle = filter.trim().toLowerCase();
   // The label is projected, not stored: an explicit rename, else the live
   // terminal title when it carries real content *and is unique*, else the
@@ -87,12 +87,24 @@ function ShellPreview() {
     [tasks],
   );
   const groups: ShellTaskGroup[] = useMemo(() => {
+    // Read inside the memo, not in the render body: as a dependency it changes
+    // on every render, which would rebuild the whole list on every keystroke
+    // and every activity delta — the memo would never hit. Ages are coarse
+    // enough that recomputing them whenever the list actually changes is the
+    // resolution this display has anyway.
+    const now = Date.now();
     const byId = new Map(tasks.map((t) => [t.id, t]));
+    // Matched against the label on screen, not the stored title. They differ
+    // whenever the projection wins — a task named by its terminal title reads
+    // "Fix the parser" while its row still says "<dir> · <branch>" — so
+    // filtering on the row would hide the task the user just typed the name of.
+    const matches = (task: TaskInfo) =>
+      !needle || (displayNames.get(task.id) ?? task.title).toLowerCase().includes(needle);
     return projects.map((project) => {
       const rows = project.taskIds
         .map((id) => byId.get(id))
         .filter((t): t is NonNullable<typeof t> => t != null)
-        .filter((t) => !needle || t.title.toLowerCase().includes(needle));
+        .filter(matches);
       return {
         id: project.id,
         name: project.name,
@@ -112,7 +124,7 @@ function ShellPreview() {
         })),
       };
     });
-  }, [tasks, projects, openGroups, needle, selectedTaskId, now, displayNames]);
+  }, [tasks, projects, openGroups, needle, selectedTaskId, displayNames]);
 
   const selected = tasks.find((t) => t.id === selectedTaskId);
 

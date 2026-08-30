@@ -4,6 +4,7 @@ title: 'An error frame names no PTY, so a multi-terminal client cannot place it'
 status: To Do
 assignee: []
 created_date: '2026-08-30 01:27'
+updated_date: '2026-08-30 02:05'
 labels:
   - frontend
   - xtmux
@@ -30,3 +31,13 @@ The likely fix is on the server: address an error to the PTY that provoked it wh
 - [ ] #2 pty-router routes an addressed error to the one terminal and fans out an unaddressed one
 - [ ] #3 A stale attach still paints its explanation into the grid that provoked it
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Second symptom of the same root cause, found reviewing TASK-20 — worth fixing together.
+
+`restore-phase.ts` treats an `error` frame as 'the agent is not coming': the phase goes IDLE, the stashed empty `restore` is dropped and input is ungated. Since an error names no PTY, SessionContext fans every one of them into the terminal — so an error provoked by some *other* action arriving mid-reopen ends that reopen. The user is then typing into a screen still showing the old snapshot, and when the resumed agent finally paints, its output is appended to the snapshot instead of replacing it.
+
+Not fixable on the client: suppressing errors during the phase would break the case the arm exists for (the agent really did die, and this is the only explanation the user gets). Addressing the frame to the PTY that provoked it fixes both symptoms at once.
+<!-- SECTION:NOTES:END -->
