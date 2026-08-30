@@ -373,7 +373,7 @@ it preserves the shape of the workspace while losing everything that made it
 one.
 
 The rule the client applies is *drop on positive knowledge, never on absence*
-(`reconcileShellTabs`), and there are exactly two things that count:
+(`reconcileShellTabs`), and there are exactly three things that count:
 
 - the task is not `live` — suspension is precisely "this task holds no
   processes", so every shell tab in a restored layout is stale. This is what
@@ -385,6 +385,14 @@ The rule the client applies is *drop on positive knowledge, never on absence*
   the way an agent whose process died does; `PtyManager` only forgets a PTY
   when something kills it, so the task goes on reporting that one and closing
   the tab is what reaps it.
+- the tab was *restored from disk* and the live task does not report its PTY.
+  Nothing is in flight for a tab this client did not spawn, so absence is
+  evidence rather than silence — which is the only thing that catches a shell
+  killed while nobody was watching and the task then brought back to `live`
+  (a daemon restart, or a harvest the user resumed from the sidebar). Without
+  it that tab meets neither rule above and stays forever, attached to nothing.
+  `TaskShell` seeds the ids of a freshly loaded layout's shell tabs into `seen`
+  for exactly this.
 
 The distinction matters because a shell tab is opened from the response to
 `POST /api/tasks/:id/shell`, which races the task deltas on the socket: one

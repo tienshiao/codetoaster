@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-30 22:33'
+updated_date: '2026-08-30 22:53'
 labels:
   - frontend
   - server
@@ -73,6 +73,18 @@ Landed as planned, with two findings the plan did not anticipate.
 **A shell that exits on its own keeps its tab**, showing its exit code the way an agent whose process died does; `PtyManager` only forgets a PTY when something kills it, so the task goes on reporting it and closing the tab is what reaps it. Dropping the tab on the exit frame would take the exit code down with it, which is the one place the reason a shell died is written.
 
 Validation: `bun run test` (706 unit + 62 render, 0 fail), `tsc --noEmit` clean. Driven end to end against an isolated daemon on port 4601 with a stand-in agent binary — a real `claude` in the working tree is not an acceptable side effect of a UI check. Confirmed in the browser: the strip's `+` opens a live shell at the task cwd carrying `CODETOASTER_TASK_ID` with the inherited Claude marker scrubbed; the agent's ptyId is unmoved; closing the tab reaps the PTY; suspending drops the shell tab with the toast, both while watching and across a reload with the layout restored from localStorage. Over HTTP: 409 on a suspended task, 404 for an unknown task, an unknown PTY, another task's PTY, and — deliberately — the task's own agent. No console errors.
+
+Post-review (`/code-review --fix`). Three real defects, all in the client, all fixed and now pinned by a new `TaskShell.render.tsx` — each test confirmed to fail against the pre-fix code and pass after:
+
+1. **`handleNewShell` wrote a layout it captured before an await.** Two presses on `+` inside one round trip started from the same snapshot, so the second write landed a layout that never held the first shell's tab — a PTY running with nothing on screen to close it and nothing to reap it short of the task being suspended. Every layout write now goes through an `applyLayout` that updates a ref synchronously, and the post-await write reads the ref and bails if the user has changed task under the round trip.
+2. **A restored shell tab whose PTY died unobserved was never pruned.** The lifecycle rule needs the client to *see* the suspension; a daemon restart or a harvest while the browser was closed, followed by a resume from the CLI or another client, presents a `live` task whose dead ptyId is in neither `seen` nor `shellPtyIds`, so neither rule fired and the tab sat there forever attached to nothing. A tab restored from disk now seeds `seen` — nothing is in flight for a tab this client did not spawn, so its absence is evidence rather than silence. Third bullet added to §5.5. Deliberately once per task: seeding unconditionally would prune the tab a `+` press had just opened, which two of the new tests catch.
+3. **The composer raced its own navigation.** `createTask` answered over HTTP and the composer navigated immediately, but the task only enters the list over the socket — so `t.$slug`'s `missing = loaded && !taskById(id)` could bounce the user straight back to `/` into a fresh composer, losing the prompt they had typed. `createTask` now upserts the returned row, the same upsert the socket delta already does.
+
+Also: the composer was sending no `cols`/`rows`, so a task started there spawned at the 80×24 fallback and reflowed on first attach, while the sidebar's New task sent 120×30. Two doors, two different tasks; now one.
+
+The review's fourth finding — `taskInfo` possibly undefined in the shell routes' responses — is not reachable: both handlers are synchronous, so nothing can interleave between `openShell`/`closeShell` and the `taskInfo` read. Left alone.
+
+Re-verified in the browser after the fixes: the composer lands on its new task, a double press on `+` yields two shells server-side and two tabs in the strip, no console errors.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -20,6 +20,7 @@ import {
   type OpenOptions,
   type TabDescriptor,
   type TabState,
+  type TaskLayout,
 } from "@/frontend/layout-store";
 
 export interface TaskShellProps {
@@ -53,6 +54,30 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   // A real layout for the selected task, persisted per task id.
   const { layout, setLayout } = useTaskLayout(taskId);
   const sidebar = useTaskSidebar({ selectedTaskId: taskId, onSelectTask: openTask });
+
+  /**
+   * The layout as of the last commit *and* of any write already issued, plus
+   * the task it belongs to.
+   *
+   * `handleNewShell` is the one layout write that spans an await, and the
+   * `layout` a closure captured before it is stale by the time the spawn
+   * answers. Two presses on `+` inside one round trip capture the same
+   * snapshot, so the second write lands a layout that never held the first
+   * shell's tab — leaving a shell running with nothing on screen to close it
+   * and nothing to reap it short of the task being suspended. Every write goes
+   * through `applyLayout` so the ref is never behind one.
+   */
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const taskIdRef = useRef(taskId);
+  taskIdRef.current = taskId;
+  const applyLayout = useCallback(
+    (next: TaskLayout) => {
+      layoutRef.current = next;
+      setLayout(next);
+    },
+    [setLayout],
+  );
 
   // Only for the task header below — the sidebar projects its own labels. The
   // label is projected, not stored: an explicit rename, else the live
@@ -96,9 +121,9 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   const handleOpenTab = useCallback(
     (descriptor: TabDescriptor, options?: OpenOptions) => {
       if (!layout) return;
-      setLayout(openTab(layout, descriptor, options));
+      applyLayout(openTab(layout, descriptor, options));
     },
-    [layout, setLayout],
+    [layout, applyLayout],
   );
 
   // ── ?tab= ─────────────────────────────────────────────────────────────────
@@ -126,9 +151,9 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     // Deliberately permanent, not preview: following a link is the user asking
     // for that tab by name, and a preview tab would be replaced by their next
     // click in the Explorer.
-    if (descriptor) setLayout(openTab(layout, descriptor));
+    if (descriptor) applyLayout(openTab(layout, descriptor));
     onTabEnsured?.();
-  }, [pendingTab, taskId, layout, setLayout, onTabEnsured]);
+  }, [pendingTab, taskId, layout, applyLayout, onTabEnsured]);
 
   // Having a ptyId is not the same as having somewhere to write. A PTY whose
   // process exited on its own is never removed from PtyManager — only `kill`
@@ -140,15 +165,25 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
 
   // ── shell tabs ────────────────────────────────────────────────────────────
 
+  // Through `layoutRef`, not the captured `layout`: this is the one layout
+  // write that spans an await, and the snapshot it started from is stale by the
+  // time the spawn answers (see `applyLayout` above).
   const handleNewShell = useCallback(async () => {
-    if (!taskId || !layout) return;
+    if (!taskId || !layoutRef.current) return;
     const result = await openShell(taskId);
     // The failure already reached the user as a toast; there is simply no tab
     // to open. The commonest one by far is a 409 — the task was harvested while
     // the strip sat on screen saying otherwise.
     if (!result.ok) return;
-    setLayout(openTab(layout, { kind: "shell", ptyId: result.value.ptyId }));
-  }, [taskId, layout, openShell, setLayout]);
+    // The user can have moved to another task under the round trip, and the
+    // ref now holds *that* task's layout. The shell belongs to the task that
+    // was asked, so the tab is dropped rather than opened somewhere it would
+    // name a PTY the layout's task does not hold; §5.5's reconciliation drops
+    // it from the other side when the user comes back.
+    const current = layoutRef.current;
+    if (!current || taskIdRef.current !== taskId) return;
+    applyLayout(openTab(current, { kind: "shell", ptyId: result.value.ptyId }));
+  }, [taskId, openShell, applyLayout]);
 
   // Closing a shell tab is what kills its shell. Only from the close gesture:
   // a shell tab dropped by the reconciliation below names a PTY that is already
@@ -173,8 +208,27 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
    * broadcast has had to mention it, so pruning on absence would race a task
    * delta computed a moment before the spawn against the response that opened
    * the tab — and lose, by deleting the tab the user just asked for.
+   *
+   * A tab *restored from disk* is the other half of that, and it counts as
+   * knowledge the moment the layout loads. Nothing is in flight for it — this
+   * client did not spawn it — so its absence from `shellPtyIds` is evidence
+   * rather than silence. Without seeding it here, a shell tab whose PTY died
+   * while nothing was watching (a daemon restart, or a harvest the user then
+   * resumed from the sidebar) would meet a task that is `live` again with the
+   * ptyId in neither `seen` nor `shellPtyIds`, and neither rule would fire: the
+   * tab would sit there for good, attached to nothing, and closing it would
+   * DELETE a PTY the server has never heard of and raise an error toast.
    */
   const seenShellsRef = useRef<Set<string>>(new Set());
+  const restoredForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!taskId || !layout || restoredForRef.current === taskId) return;
+    restoredForRef.current = taskId;
+    for (const tab of allTabs(layout)) {
+      if (tab.descriptor.kind === "shell") seenShellsRef.current.add(tab.descriptor.ptyId);
+    }
+  }, [taskId, layout]);
+
   const lifecycle = selected?.lifecycle;
   const shellPtyIds = selected?.shellPtyIds;
   useEffect(() => {
@@ -184,7 +238,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     const pruned = reconcileShellTabs(layout, { lifecycle, shellPtyIds }, seenShellsRef.current);
     if (pruned === layout) return;
     const dropped = allTabs(layout).length - allTabs(pruned).length;
-    setLayout(pruned);
+    applyLayout(pruned);
     // Said out loud rather than done quietly: the user left a shell tab open
     // and it is not there any more, and a workspace that rearranges itself
     // without explanation reads as a bug.
@@ -198,7 +252,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
             "That shell is no longer running."
           : "Shells are not resumable, so they do not survive a task being suspended.",
     });
-  }, [taskId, layout, lifecycle, shellPtyIds, setLayout]);
+  }, [taskId, layout, lifecycle, shellPtyIds, applyLayout]);
 
   const handleSubmitReview = useCallback(
     (promptText: string): boolean => {
@@ -210,10 +264,10 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
       sendInput(ptyId, promptText);
       // The review has gone to the agent, so the agent is what the user wants
       // to be looking at.
-      setLayout(openTab(layout, { kind: "agent" }));
+      applyLayout(openTab(layout, { kind: "agent" }));
       return true;
     },
-    [canDeliver, ptyId, sendInput, layout, setLayout],
+    [canDeliver, ptyId, sendInput, layout, applyLayout],
   );
 
   return (
@@ -225,7 +279,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
           ? ({ leading }) => (
               <TabArea
                 layout={layout}
-                onLayoutChange={setLayout}
+                onLayoutChange={applyLayout}
                 onNewShell={taskId ? handleNewShell : undefined}
                 onCloseTab={handleCloseTab}
                 leading={leading}

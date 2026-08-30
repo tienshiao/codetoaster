@@ -277,19 +277,29 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     retainLayouts(ids);
   }, [tasks, loaded]);
 
-  const createTask = useCallback(
-    (options: CreateTaskOptions = {}) =>
-      request<TaskInfo>(
-        "/api/tasks",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(options),
-        },
-        "Could not start the task",
-      ),
-    [],
-  );
+  const createTask = useCallback(async (options: CreateTaskOptions = {}) => {
+    const result = await request<TaskInfo>(
+      "/api/tasks",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(options),
+      },
+      "Could not start the task",
+    );
+    // Seeded from the answer, the same upsert the socket's `task` delta does.
+    // The two are separate transports racing each other, and a caller that
+    // navigates to what it just created — the composer does — would otherwise
+    // land on `/t/$slug` in the frame before the broadcast, where the route's
+    // missing-task guard reads "loaded, and no such task" and bounces it
+    // straight back to `/`, taking the typed prompt with it. The next
+    // broadcast overwrites this row either way.
+    if (result.ok) {
+      const created = result.value;
+      setTasks((prev) => (prev.some((t) => t.id === created.id) ? prev : [...prev, created]));
+    }
+    return result;
+  }, []);
 
   const renameTask = useCallback(
     (id: string, title: string) =>

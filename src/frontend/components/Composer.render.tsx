@@ -82,6 +82,10 @@ test("⌘⏎ starts the task and opens its agent tab", async () => {
     // resolves both from the project.
     model: undefined,
     permissionMode: undefined,
+    // The grid the agent is spawned at, so its first paint is not laid out for
+    // the 80×24 fallback and reflowed on the first attach.
+    cols: 120,
+    rows: 30,
   });
   await waitFor(() => expect(stubs.openTask).toHaveBeenCalledWith("task-1", { tab: "agent" }));
 });

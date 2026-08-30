@@ -94,6 +94,13 @@ export function Composer() {
       projectId: project?.id,
       model: model || undefined,
       permissionMode: mode || undefined,
+      // The grid the agent is spawned at, before any client has attached and
+      // so the only size the server has to go on. Left off, the agent paints
+      // its opening banner at the 80×24 fallback and reflows the moment the
+      // tab attaches at the real width. Same pair the sidebar's "new task"
+      // sends, so the two doors produce the same task.
+      cols: 120,
+      rows: 30,
     });
 
     if (!result.ok) {
