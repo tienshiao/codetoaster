@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { TaskShell } from "../components/TaskShell";
+import { Composer } from "../components/Composer";
 
 export const Route = createFileRoute("/")({
   component: HomeRoute,
@@ -16,20 +17,14 @@ export const Route = createFileRoute("/")({
  * load and every hot reload — and would take back the process the idle
  * harvester had just reclaimed. The sidebar has every task one click away,
  * which is where resuming one belongs.
+ *
+ * What the main area holds instead is the composer: with no task selected, the
+ * thing to do here is start one.
  */
 function HomeRoute() {
   return (
     <TaskShell taskId={null}>
-      <NoTaskPlaceholder />
+      <Composer />
     </TaskShell>
-  );
-}
-
-/** The main area before a task is picked. TASK-24 puts the composer here. */
-function NoTaskPlaceholder() {
-  return (
-    <div className="grid h-full place-items-center text-sm text-subtle-foreground">
-      Pick a task on the left.
-    </div>
   );
 }

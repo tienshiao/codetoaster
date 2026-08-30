@@ -31,6 +31,19 @@ function expandTilde(filepath: string): string {
 
 const DEFAULT_SIZE = { cols: 80, rows: 24 };
 
+/** The project every task without one falls into. Minted per call rather than
+ * shared: the caller pushes it into a list whose `taskIds` it then mutates. */
+function generalProject(): ProjectInfo {
+  return {
+    id: "general",
+    name: "General",
+    initialPath: "",
+    taskIds: [],
+    defaultModel: null,
+    defaultPermissionMode: null,
+  };
+}
+
 export interface CreateTaskOptions {
   id: string;
   title?: string;
@@ -68,7 +81,7 @@ export class TaskManager {
   // notification — has to be readdressed to the task before it goes out.
   private ptyToTask: Map<string, string> = new Map();
   private taskPtys: Map<string, Set<string>> = new Map();
-  private projects: ProjectInfo[] = [{ id: "general", name: "General", initialPath: "", taskIds: [] }];
+  private projects: ProjectInfo[] = [generalProject()];
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
   // Which tasks have ever reported a hook, and the timers waiting to find out
   // (§9, risk 4). Both in memory on purpose: what they guard is a running
@@ -180,10 +193,12 @@ export class TaskManager {
       name: row.name,
       initialPath: row.initial_path,
       taskIds: [],
+      defaultModel: row.default_model,
+      defaultPermissionMode: row.default_permission_mode,
     }));
     // Ensure General always exists
     if (!this.projects.some((p) => p.id === "general")) {
-      this.projects.unshift({ id: "general", name: "General", initialPath: "", taskIds: [] });
+      this.projects.unshift(generalProject());
     }
   }
 
@@ -266,8 +281,8 @@ export class TaskManager {
         ?? this.store.get(options.afterTaskId)?.cwd;
     }
     if (!cwd && options.projectId) {
-      const project = this.projects.find((p) => p.id === options.projectId);
-      if (project?.initialPath) cwd = expandTilde(project.initialPath);
+      const named = this.projects.find((p) => p.id === options.projectId);
+      if (named?.initialPath) cwd = expandTilde(named.initialPath);
     }
     // Spelled out rather than left undefined: the PTY inherits this directory
     // either way, but a derived title can only describe a cwd it knows.
@@ -288,6 +303,7 @@ export class TaskManager {
     // of that list — so a task deleted while this create is awaiting would have
     // the row say one project and the sidebar say General.
     const projectId = this.resolveProjectId(options);
+    const project = this.projects.find((p) => p.id === projectId);
 
     const row = this.store.create({
       id,
@@ -307,8 +323,19 @@ export class TaskManager {
       // keep — refreshCwd is where the distinction matters.
       repo_root: (await resolveRepoRoot(cwd)) ?? null,
       cwd,
-      model: options.model ?? null,
-      permission_mode: options.permissionMode ?? null,
+      // The project's column is what an absent option means. The composer
+      // sends only what the user actually overrode — "Project default" is no
+      // field at all — so resolving here rather than in the client is what
+      // gives the API and the CLI the same answer for free.
+      //
+      // Read off `projectId`, the project the task actually joins, and not off
+      // `options.projectId`, the one the caller happened to name. A create that
+      // names no project still lands in "general", so keying this off the
+      // option meant `POST /api/tasks {prompt}` — the API and CLI shape, the
+      // very callers this is resolved server-side for — inherited nothing at
+      // all while the row sat in a project with defaults set.
+      model: options.model ?? project?.defaultModel ?? null,
+      permission_mode: options.permissionMode ?? project?.defaultPermissionMode ?? null,
     });
 
     // The row is only worth keeping if something is running behind it: Bun.spawn
@@ -1319,7 +1346,17 @@ export class TaskManager {
       throw new Error(`Project "${id}" already exists`);
     }
     db.createProject({ id, name, initial_path: initialPath, sort_order: this.projects.length }, this.db);
-    this.projects.push({ id, name, initialPath, taskIds: [] });
+    // No defaults yet: `createProject` writes the identity columns only, so a
+    // fresh project resolves to whatever the caller asks for until something
+    // sets them.
+    this.projects.push({
+      id,
+      name,
+      initialPath,
+      taskIds: [],
+      defaultModel: null,
+      defaultPermissionMode: null,
+    });
     this.broadcastTasks();
   }
 

@@ -24,6 +24,12 @@ export type { FilterInputProps } from "./FilterInput";
 export { TextInput } from "./TextInput";
 export type { TextInputProps } from "./TextInput";
 
+export { Textarea } from "./Textarea";
+export type { TextareaProps } from "./Textarea";
+
+export { Select } from "./Select";
+export type { SelectOption, SelectProps, SelectSize } from "./Select";
+
 export { Dialog } from "./Dialog";
 export type { DialogProps } from "./Dialog";
 

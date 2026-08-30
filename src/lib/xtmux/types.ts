@@ -8,6 +8,13 @@ export interface ProjectInfo {
   /** Ordered by hand, not by recency: this is the v1 sidebar's grouping, which
    * TASK-25 replaces with the recency list §7.5 describes. */
   taskIds: string[];
+  /** What a task started in this project runs as when the caller names neither
+   * (§3.2). On the wire so the composer can *show* what "Project default" will
+   * resolve to; the resolution itself is the server's, in `createTask`, so the
+   * API and the CLI get it without asking. Null until something sets it —
+   * nothing writes these columns yet. */
+  defaultModel: string | null;
+  defaultPermissionMode: string | null;
 }
 
 // Client -> Server messages

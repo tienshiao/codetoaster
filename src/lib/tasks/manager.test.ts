@@ -4,7 +4,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { ServerWebSocket } from "bun";
-import { applyMigrations } from "../db";
+import { applyMigrations, updateProject } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import type { ServerMessage, WebSocketData } from "../xtmux/types";
@@ -322,6 +322,45 @@ describe("creating a task", () => {
     // Created inside this repository, so it has a real root rather than null.
     expect(row.repo_root).toBe(process.cwd());
     expect(row.cwd).toBe(process.cwd());
+  });
+
+  // The composer sends only what the user overrode, so an absent model or mode
+  // means "whatever the project says" — resolved here rather than in the
+  // client, which is what gives the API and the CLI the same answer.
+  test("falls back to the project's defaults, and a caller's choice outranks them", async () => {
+    const { manager, store, db: database } = newManager();
+    manager.createProject("proj", "Project", "");
+    // Straight onto the row: nothing writes these columns yet.
+    updateProject("proj", { default_model: "opus", default_permission_mode: "plan" }, database);
+    manager.loadProjects();
+
+    await manager.createTask({ id: "t1", projectId: "proj", command: shell() });
+    expect(store.get("t1")!.model).toBe("opus");
+    expect(store.get("t1")!.permission_mode).toBe("plan");
+
+    await manager.createTask({
+      id: "t2", projectId: "proj", model: "haiku", permissionMode: "acceptEdits", command: shell(),
+    });
+    expect(store.get("t2")!.model).toBe("haiku");
+    expect(store.get("t2")!.permission_mode).toBe("acceptEdits");
+  });
+
+  // The shape the API and the CLI actually send. A create that names no project
+  // still lands in "general" — `resolveProjectId` says so — and a task sitting
+  // in a project has to inherit that project's defaults however it got there.
+  // Resolving against the *named* project rather than the joined one made this
+  // the one caller that silently got nothing, which is the opposite of the
+  // reason the resolution lives on the server at all.
+  test("a task that names no project inherits the defaults of the one it lands in", async () => {
+    const { manager, store, db: database } = newManager();
+    updateProject("general", { default_model: "sonnet", default_permission_mode: "plan" }, database);
+    manager.loadProjects();
+
+    await manager.createTask({ id: "t1", command: shell() });
+
+    expect(store.get("t1")!.project_id).toBe("general");
+    expect(store.get("t1")!.model).toBe("sonnet");
+    expect(store.get("t1")!.permission_mode).toBe("plan");
   });
 
   test("refuses a duplicate id rather than orphaning the first task's terminal", async () => {
