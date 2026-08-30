@@ -50,10 +50,14 @@ async function fetchDiff(sessionId: string): Promise<{ diff: string; hash: strin
   return res.json();
 }
 
-export function useSessionDiff(sessionId: string) {
+// `enabled` exists for the Explorer rail, which wants the changed-file count
+// before a task is selected: with no task there is no id, and a query keyed on
+// an empty one would fetch `/api/tasks//diff`.
+export function useSessionDiff(sessionId: string, enabled = true) {
   const diffQuery = useQuery({
     queryKey: ["sessions", sessionId, "diff"],
     queryFn: () => fetchDiff(sessionId),
+    enabled,
   });
 
   // The app has no error boundary, so a throw from parseDiff must degrade like a
@@ -75,7 +79,7 @@ export function useSessionDiff(sessionId: string) {
       if (!Array.isArray(parsed)) throw new Error("no parsed diff");
       return fetchDiffTokens(sessionId, parsed);
     },
-    enabled: Array.isArray(parsed) && parsed.length > 0,
+    enabled: enabled && Array.isArray(parsed) && parsed.length > 0,
     staleTime: Infinity,
   });
 

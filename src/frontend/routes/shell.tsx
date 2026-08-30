@@ -1,35 +1,21 @@
 import { useCallback, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { FileDiff, Files, GitBranch, GitCommitHorizontal } from "lucide-react";
-import type { ExplorerRailItem } from "@/frontend/components/v2/ExplorerRail";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { usePty } from "@/frontend/PtyContext";
 import { sessionDisplayNames } from "@/lib/xtmux/naming";
 import type { TaskInfo } from "@/lib/xtmux/types";
-import {
-  AppShell,
-  SectionLabel,
-  type ShellTaskGroup,
-} from "@/frontend/components/v2/AppShell";
+import { AppShell, type ShellTaskGroup } from "@/frontend/components/v2/AppShell";
 import { Badge } from "@/frontend/components/v2/Badge";
 import { Button } from "@/frontend/components/v2/Button";
-import { FileRow } from "@/frontend/components/v2/FileRow";
 import { TaskHeader } from "@/frontend/components/v2/TaskHeader";
+import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
+import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { TabArea, TabPane, useTaskLayout } from "@/frontend/components/tabs";
 import { openTab, type OpenOptions, type TabDescriptor } from "@/frontend/layout-store";
 
 export const Route = createFileRoute("/shell")({
   component: ShellPreview,
 });
-
-// The Explorer's four sections (§7.1). Glyphs match the tab kinds each section
-// opens, so a rail icon and the tab it produces read as the same thing.
-const EXPLORER_SECTIONS: ExplorerRailItem[] = [
-  { label: "Changes", icon: FileDiff, count: 5 },
-  { label: "Files", icon: Files },
-  { label: "Commits", icon: GitCommitHorizontal },
-  { label: "Refs", icon: GitBranch },
-];
 
 /** Coarse and mono, the way the design wants a timestamp: the list is scanned,
  * not read. */
@@ -49,9 +35,10 @@ function ago(timestamp: number, now: number): string {
  * The left column is live: real tasks from `TaskContext`, in the design's rows.
  * The tab area is live too — a real `TaskLayout` per task, persisted, with
  * drag, split, close and preview tabs (TASK-22) — and so is what a pane holds:
- * the diff, file, commit and history tabs render the real thing. What is left
- * is the Explorer (TASK-26) and the agent terminal, which arrives with the tab
- * host that knows which PTY it is showing.
+ * the diff, file, commit and history tabs render the real thing. So is the
+ * Explorer: its four sections host the real trees and open real tabs. What is
+ * left is the agent terminal, which arrives with the tab host that knows which
+ * PTY it is showing.
  *
  * Ordering, the filter and the archived toggle are deliberately not built here:
  * this is TaskContext's data in the shell, not TASK-25's sidebar.
@@ -60,7 +47,8 @@ function ShellPreview() {
   const { tasks, projects, loaded, createTask } = useTasks();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
-  const [explorerTab, setExplorerTab] = useState("Changes");
+  const explorerPanel = useExplorerPanel();
+  const explorerSections = useExplorerRail(selectedTaskId);
   // Only the groups the user has closed; everything else defaults open.
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   // A real layout for the selected task, persisted per task id.
@@ -133,14 +121,6 @@ function ShellPreview() {
 
   const selected = tasks.find((t) => t.id === selectedTaskId);
   const { sendInput } = usePty();
-
-  // Single-click opens a preview tab, which the next single click replaces;
-  // double-clicking the tab pins it (§7.2). The Explorer's file rows are the
-  // one place in this preview that opens tabs, so they are where that shows.
-  const openPreview = (path: string) => {
-    if (!layout) return;
-    setLayout(openTab(layout, { kind: "diff", path }, { preview: true }));
-  };
 
   const handleOpenTab = useCallback(
     (descriptor: TabDescriptor, options?: OpenOptions) => {
@@ -228,22 +208,29 @@ function ShellPreview() {
           : ["no task"],
         right: "+142 −38 · 4 files",
       }}
-      explorerSections={EXPLORER_SECTIONS}
-      explorerTab={explorerTab}
-      onExplorerTabChange={setExplorerTab}
+      explorerSections={explorerSections}
+      explorerTab={explorerPanel.section}
+      onExplorerTabChange={explorerPanel.setSection}
+      explorerOpen={explorerPanel.open}
+      onExplorerOpenChange={explorerPanel.setOpen}
       explorer={
-        explorerTab === "Changes" ? (
-          <ChangesFixture onOpen={openPreview} />
-        ) : (
-          <UnbuiltSection name={explorerTab} />
-        )
+        <Explorer
+          taskId={selectedTaskId}
+          section={explorerPanel.section}
+          onOpenTab={handleOpenTab}
+        />
       }
+      // No "Commit" button beside it: every route under `src/api/git.ts` is a
+      // read-only GET, so there is nothing behind one.
       explorerFooter={
-        explorerTab === "Changes" ? (
-          <>
-            <Button variant="outline" className="flex-1">Review all</Button>
-            <Button variant="primary" className="flex-1">Commit</Button>
-          </>
+        explorerPanel.section === "Changes" && layout ? (
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={() => handleOpenTab({ kind: "diffAll" })}
+          >
+            Review all
+          </Button>
         ) : undefined
       }
     >
@@ -258,56 +245,5 @@ function NoTaskFixture() {
     <div className="grid h-full place-items-center text-sm text-subtle-foreground">
       Pick a task on the left.
     </div>
-  );
-}
-
-/** Only Changes has fixture content. Saying so beats showing the diff tree
- * under all four labels and calling the rail verified. */
-function UnbuiltSection({ name }: { name: string }) {
-  return (
-    <div className="px-2 py-3 text-xs text-subtle-foreground">
-      {name} is not built yet — see TASK-26.
-    </div>
-  );
-}
-
-function ChangesFixture({ onOpen }: { onOpen: (path: string) => void }) {
-  return (
-    <>
-      <SectionLabel>src/lib/xtmux</SectionLabel>
-      <FileRow
-        name="pty.ts"
-        status="modified"
-        additions={142}
-        deletions={38}
-        onClick={() => onOpen("src/lib/xtmux/pty.ts")}
-      />
-      <FileRow
-        name="manager.ts"
-        status="modified"
-        additions={9}
-        deletions={7}
-        onClick={() => onOpen("src/lib/xtmux/manager.ts")}
-      />
-      <FileRow
-        name="multiplex.test.ts"
-        status="added"
-        additions={61}
-        onClick={() => onOpen("src/lib/xtmux/multiplex.test.ts")}
-      />
-      <SectionLabel className="mt-1.5">src/frontend</SectionLabel>
-      <FileRow
-        name="SessionContext.tsx"
-        status="deleted"
-        deletions={214}
-        onClick={() => onOpen("src/frontend/SessionContext.tsx")}
-      />
-      <FileRow
-        name="TopBar.tsx"
-        status="renamed"
-        note="renamed"
-        onClick={() => onOpen("src/frontend/TopBar.tsx")}
-      />
-    </>
   );
 }

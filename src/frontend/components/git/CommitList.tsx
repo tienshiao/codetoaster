@@ -24,6 +24,16 @@ interface CommitListProps {
   // identity). Restored once, on the first render with commits present.
   initialScrollTop?: number;
   onScrollTopChange?: (top: number) => void;
+  /**
+   * Drawn in the Explorer's 272px panel rather than a full-width tab.
+   *
+   * The author and abbreviated sha are fixed columns — 120px and 64px — and
+   * together with the date and the graph they leave the subject, the only
+   * flexible child, nothing at all to occupy at this width. So they go: both
+   * are one click away in the commit tab the row opens, and a commit list
+   * whose commit messages are invisible is not a commit list.
+   */
+  compact?: boolean;
 }
 
 // A commit row matches the selected SHA when either equals the other's prefix
@@ -44,6 +54,7 @@ const CommitRow = memo(function CommitRow({
   row,
   globalLanes,
   refSets,
+  compact,
 }: {
   commit: GitLogCommit;
   isSelected: boolean;
@@ -51,9 +62,10 @@ const CommitRow = memo(function CommitRow({
   row: GraphRow;
   globalLanes: number;
   refSets: RefSets;
+  compact?: boolean;
 }) {
   const refs = displayRefs(commit.refs, refSets);
-  const shown = refs.slice(0, 3);
+  const shown = refs.slice(0, compact ? 1 : 3);
   const overflow = refs.length - shown.length;
 
   return (
@@ -65,25 +77,41 @@ const CommitRow = memo(function CommitRow({
       }`}
     >
       <CommitGraph row={row} height={ROW_HEIGHT} globalLanes={globalLanes} />
-      <span className="flex-1 min-w-0 flex items-center gap-2">
+      {/* overflow-hidden, not just min-w-0: the chips are laid out inside this
+          span, so once it is squeezed to nothing they keep their own width and
+          paint over the column to the right rather than clipping. */}
+      <span className="flex-1 min-w-0 overflow-hidden flex items-center gap-2">
         {shown.map((ref) => (
-          <RefChip key={ref} name={ref} refSets={refSets} className="shrink-0 max-w-[140px] truncate" />
+          <RefChip
+            key={ref}
+            name={ref}
+            refSets={refSets}
+            // Narrow enough to leave a subject beside it, and allowed to shrink
+            // rather than hold its width against one.
+            className={
+              compact ? "min-w-0 shrink max-w-[88px] truncate" : "shrink-0 max-w-[140px] truncate"
+            }
+          />
         ))}
         {overflow > 0 && (
           <span className="shrink-0 text-[10px] text-muted-foreground">+{overflow}</span>
         )}
         <span className="truncate">{commit.subject}</span>
       </span>
-      <span className="shrink-0 text-muted-foreground truncate max-w-[120px]">{commit.author}</span>
+      {!compact && (
+        <span className="shrink-0 text-muted-foreground truncate max-w-[120px]">{commit.author}</span>
+      )}
       <span
-        className="shrink-0 text-muted-foreground/70 w-16 text-right"
+        className={`shrink-0 truncate text-muted-foreground/70 text-right ${compact ? "w-14" : "w-16"}`}
         title={absoluteDate(commit.date)}
       >
         {relativeDate(commit.date)}
       </span>
-      <span className="shrink-0 font-mono text-muted-foreground/60 w-16">
-        {commit.hash.slice(0, 8)}
-      </span>
+      {!compact && (
+        <span className="shrink-0 font-mono text-muted-foreground/60 w-16">
+          {commit.hash.slice(0, 8)}
+        </span>
+      )}
     </button>
   );
 });
@@ -99,6 +127,7 @@ export function CommitList({
   onLocalChanges,
   initialScrollTop,
   onScrollTopChange,
+  compact,
 }: CommitListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   // Scroll-into-view guard (also primed by the mount-time scroll restore below).
@@ -276,6 +305,7 @@ export function CommitList({
                   row={rows[vi.index]!}
                   globalLanes={globalLanes}
                   refSets={refSets}
+                  compact={compact}
                 />
               )}
             </div>

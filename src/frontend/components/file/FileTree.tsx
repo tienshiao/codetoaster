@@ -5,6 +5,7 @@ import { FilterInput } from "../FilterInput";
 import { formatSize } from "../../utils/formatSize";
 import { collectDirectoryPaths, collectPathPrefixes, pruneSet, toggleInSet, withAll } from "../../view-state-store";
 import { compareTreeSiblings } from "../../utils/sortFiles";
+import { cn } from "@/frontend/lib/utils";
 import type { FileInfo } from "../../types/file";
 
 interface FileTreeProps {
@@ -16,6 +17,9 @@ interface FileTreeProps {
   // lacks directories that exist today.
   expandedPaths: Set<string>;
   onExpandedPathsChange: Dispatch<SetStateAction<Set<string>>>;
+  /** Merged onto the outer container, so the Explorer can host the tree
+   * without v1's route chrome. */
+  className?: string;
 }
 
 interface TreeNode {
@@ -69,7 +73,7 @@ function sortTree(nodes: TreeNode[]): TreeNode[] {
     .sort((a, b) => compareTreeSiblings(a.isDirectory, b.isDirectory, a.name, b.name));
 }
 
-export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onExpandedPathsChange: setExpandedPaths }: FileTreeProps) {
+export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onExpandedPathsChange: setExpandedPaths, className }: FileTreeProps) {
   const [filter, setFilter] = useState("");
 
   const filteredFiles = useMemo(() => {
@@ -136,7 +140,7 @@ export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onE
   const dirCount = filteredFiles.filter((f) => f.isDirectory).length;
 
   return (
-    <div className="flex flex-col h-full border-r border-border">
+    <div className={cn("flex h-full flex-col border-r border-border", className)}>
       <div className="p-3 border-b border-border space-y-2">
         <div className="flex items-center justify-between text-xs">
           <span className="text-muted-foreground">

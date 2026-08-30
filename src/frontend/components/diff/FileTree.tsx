@@ -5,6 +5,7 @@ import { DiffStat } from "./DiffStat";
 import { FilterInput } from "../FilterInput";
 import { buildTree, FILE_KEY, compareTreeSiblings } from "../../utils/sortFiles";
 import { collectPathPrefixes, pruneSet, toggleInSet } from "../../view-state-store";
+import { cn } from "@/frontend/lib/utils";
 import type { FileTreeNode } from "../../utils/sortFiles";
 import type { FileDiff } from "../../types/diff";
 
@@ -21,9 +22,12 @@ interface FileTreeProps {
   // other's persisted set.
   collapsedPaths: Set<string>;
   onCollapsedPathsChange: Dispatch<SetStateAction<Set<string>>>;
+  /** Merged onto the outer container, so the Explorer can host the tree
+   * without v1's route chrome. */
+  className?: string;
 }
 
-export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts, collapsedPaths, onCollapsedPathsChange: setCollapsedPaths }: FileTreeProps) {
+export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts, collapsedPaths, onCollapsedPathsChange: setCollapsedPaths, className }: FileTreeProps) {
   const [filter, setFilter] = useState("");
 
   const filteredFiles = filter
@@ -122,7 +126,7 @@ export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, to
   };
 
   return (
-    <div className="flex flex-col h-full border-r border-border">
+    <div className={cn("flex h-full flex-col border-r border-border", className)}>
       <div className="p-3 border-b border-border space-y-2">
         <div className="flex items-center justify-between text-xs">
           <span className="text-muted-foreground">

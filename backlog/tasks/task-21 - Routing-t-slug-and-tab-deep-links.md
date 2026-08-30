@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-29 00:02'
-updated_date: '2026-08-30 05:17'
+updated_date: '2026-08-30 05:43'
 labels:
   - frontend
 milestone: m-3
@@ -48,3 +48,19 @@ S4. TASK-21 proper: extract shell.tsx's host into a component shared by both rou
 
 S5/S6. TASK-24 composer at /, then TASK-28's deletions.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+S1 (agent terminal host) landed and verified in a browser.
+
+Verification found two runtime bugs that no test could have caught — both need a real socket, a real PTY and a real xterm:
+
+1. SessionContext was giving the v2 pane's attachment away. `attached` is fanned out to every socket subscriber, and the v1 adapter hands back any attachment for a task it is not showing. That was right while it was the only attacher; with AgentPane as a second one, and the adapter showing no task at /shell, it detached every PTY the agent tab attached to. Fixed by having it give back only what it took.
+
+2. `Terminal.tsx`'s init effect — which constructs and disposes the xterm instance — had `onReady` in its dependency list, and AgentPane passed an inline arrow, so the grid was rebuilt on every render and the painted `restore` went to a disposed instance (three xterm instances on one page load). `onReady` now goes through a ref like every other callback in that file.
+
+Also filed TASK-53: clientCount never provokes a broadcast, so the status bar's 'N viewing' is stale.
+
+Note for whoever verifies next: `bun src/index.ts foreground` still runs with `hmr: true`, so a subagent editing frontend files while you drive the browser will remount the shell, reset the selection and unmount panes before their effects flush. Verify from a detached git worktree on its own port, or the observations are worthless.
+<!-- SECTION:NOTES:END -->

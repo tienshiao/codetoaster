@@ -5,8 +5,8 @@
 // `commit:<sha>`, `history` — so "the state of this tab" and "the identity of
 // this tab" are the same string, and closing a tab is the only thing that has
 // to happen for its state to be droppable. A handful of keys are not tabs at
-// all (`review`, `files`, `prefs`): state that belongs to the task rather than
-// to any one pane.
+// all (`review`, `files`, `explorer`, `prefs`): state that belongs to the task
+// rather than to any one pane.
 //
 // That keying is what lets one component serve two tabs. The old store handed
 // out a single blob per session, so the all-files diff and a per-file diff
@@ -109,10 +109,23 @@ export interface ReviewViewState {
 }
 
 /** `files`: the Explorer's file tree. Not a tab; the tree is chrome that
- * outlives whichever file tab it opened. TASK-26 grows this. */
+ * outlives whichever file tab it opened. */
 export interface FilesViewState {
   selectedFile: string | null;
   expandedPaths: Set<string>;
+}
+
+/** `explorer`: the right panel's trees (§7.1). Not a tab — the Explorer's
+ * trees outlive every tab they open, so a collapsed directory must not be
+ * pruned because the last diff tab was closed. The Files section is the one
+ * exception: it shares the `files` slot with the tree v1 still draws. */
+export interface ExplorerViewState {
+  changesSelectedFile: string | null;
+  changesCollapsedPaths: Set<string>;
+  refsClosedSections: Set<string>;
+  refsHeadExpandedFor: string | null;
+  refsExpanded: Map<string, Set<string>>;
+  commitsScrollTop: number;
 }
 
 /** `prefs`: task-wide toggles that are a preference rather than a view's own
@@ -140,6 +153,7 @@ export interface ViewStateShapes {
   history: HistoryViewState;
   review: ReviewViewState;
   files: FilesViewState;
+  explorer: ExplorerViewState;
   prefs: PrefsViewState;
   nav: NavViewState;
 }
@@ -177,6 +191,14 @@ const DEFAULTS: { [K in ViewSlotKind]: () => ViewStateShapes[K] } = {
   }),
   review: () => ({ comments: new Map() }),
   files: () => ({ selectedFile: null, expandedPaths: new Set() }),
+  explorer: () => ({
+    changesSelectedFile: null,
+    changesCollapsedPaths: new Set(),
+    refsClosedSections: new Set(),
+    refsHeadExpandedFor: null,
+    refsExpanded: new Map(),
+    commitsScrollTop: 0,
+  }),
   prefs: () => ({ treeLineWrap: false }),
   nav: () => ({ lastTab: "terminal", gitCommit: undefined, gitMode: undefined, gitFile: undefined }),
 };
@@ -215,6 +237,14 @@ const PERSISTED: { [K in ViewSlotKind]: ReadonlyArray<keyof ViewStateShapes[K] &
   ],
   review: ["comments"],
   files: ["selectedFile", "expandedPaths"],
+  explorer: [
+    "changesSelectedFile",
+    "changesCollapsedPaths",
+    "refsClosedSections",
+    "refsHeadExpandedFor",
+    "refsExpanded",
+    "commitsScrollTop",
+  ],
   prefs: ["treeLineWrap"],
   // v1's nav shim reconstructs a route for a session that is already gone by
   // the time the page comes back. Nothing worth keeping.
@@ -367,9 +397,9 @@ export function clearViewState(ref: ViewRef): void {
 
 /**
  * Drop every slot of `taskId` whose key is not in `validKeys` — the tabs the
- * task's layout still holds. Non-tab slots (`review`, `files`, `prefs`, `nav`)
- * belong to the task rather than to any pane and are never pruned by a tab
- * closing.
+ * task's layout still holds. Non-tab slots (`review`, `files`, `explorer`,
+ * `prefs`, `nav`) belong to the task rather than to any pane and are never
+ * pruned by a tab closing.
  */
 export function retainViewStates(taskId: string, validKeys: ReadonlySet<string>): void {
   // The caller that matters most — the layout, on load — runs before anything

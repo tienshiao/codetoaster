@@ -5,6 +5,7 @@ import { FilterInput } from "../FilterInput";
 import { buildRefTree, countRefs, isRefFolder, type RefTreeNode } from "../../utils/refTree";
 import { collectPathPrefixes, toggleInSet, withAll } from "../../view-state-store";
 import type { GitRef, GitRefsResponse } from "../../types/git";
+import { cn } from "@/frontend/lib/utils";
 
 // Shared empty-set default for sections with no persisted expansion state.
 const EMPTY_SET: Set<string> = new Set();
@@ -32,6 +33,9 @@ interface RefSidebarProps {
   refsExpanded: Map<string, Set<string>>;
   onRefsExpandedChange: Dispatch<SetStateAction<Map<string, Set<string>>>>;
   headExpanded: RefSidebarHeadExpanded;
+  /** Merged onto the outer container, so the Explorer can host the tree
+   * without v1's route chrome. */
+  className?: string;
 }
 
 interface SectionProps {
@@ -170,6 +174,7 @@ export function RefSidebar({
   refsExpanded,
   onRefsExpandedChange: setRefsExpanded,
   headExpanded,
+  className,
 }: RefSidebarProps) {
   const [filter, setFilter] = useState("");
 
@@ -216,7 +221,12 @@ export function RefSidebar({
   }, [refs, filter]);
 
   return (
-    <div className="w-56 shrink-0 border-r border-border flex flex-col overflow-hidden">
+    <div
+      className={cn(
+        "flex w-56 shrink-0 flex-col overflow-hidden border-r border-border",
+        className,
+      )}
+    >
       <div className="shrink-0 p-2 border-b border-border">
         <FilterInput value={filter} onChange={setFilter} placeholder="Filter refs..." />
       </div>

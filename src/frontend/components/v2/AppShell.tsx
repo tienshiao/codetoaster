@@ -72,6 +72,12 @@ export interface AppShellProps {
   onExplorerTabChange?: (label: string) => void;
   explorer?: ReactNode;
   explorerFooter?: ReactNode;
+  /** Controlled open state, for a caller that persists it. Falls back to
+   * internal state (`defaultExplorerOpen`) when omitted — the panel's
+   * collapsed state is a per-device concern, and where it is stored is not
+   * the shell's business. */
+  explorerOpen?: boolean;
+  onExplorerOpenChange?: (open: boolean) => void;
 
   defaultSidebarOpen?: boolean;
   defaultExplorerOpen?: boolean;
@@ -123,12 +129,19 @@ export function AppShell({
   onExplorerTabChange,
   explorer,
   explorerFooter,
+  explorerOpen: explorerOpenProp,
+  onExplorerOpenChange,
   defaultSidebarOpen = true,
   defaultExplorerOpen = true,
   className,
 }: AppShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen);
-  const [explorerOpen, setExplorerOpen] = useState(defaultExplorerOpen);
+  const [uncontrolledExplorerOpen, setUncontrolledExplorerOpen] = useState(defaultExplorerOpen);
+  const explorerOpen = explorerOpenProp ?? uncontrolledExplorerOpen;
+  const setExplorerOpen = (next: boolean) => {
+    if (explorerOpenProp === undefined) setUncontrolledExplorerOpen(next);
+    onExplorerOpenChange?.(next);
+  };
   const isMobile = useIsMobile();
 
   // A rail click on the section already showing closes the panel; any other
@@ -257,7 +270,11 @@ export function AppShell({
               </span>
             )}
           </div>
-          <div className="flex flex-1 flex-col gap-px overflow-y-auto px-1 py-1.5">{explorer}</div>
+          {/* Bounded, not scrolling. The sections bring their own filter
+              headers and scrollers, and the commit list virtualizes against
+              its own scroll element — an outer `overflow-y-auto` would hand it
+              an unbounded viewport and it would render every row. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{explorer}</div>
           {explorerFooter && (
             <div className="flex flex-none gap-1.5 border-t border-sidebar-border p-2">{explorerFooter}</div>
           )}
