@@ -149,6 +149,13 @@ export function TabArea({
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("[data-tab-close]")) return;
 
+    // Retire any gesture still installed *before* writing this one down.
+    // `listen` releases too, but that release runs the previous gesture's
+    // finish handler, which nulls the very ref set just below — so a second
+    // pointer landing before the first lifts would otherwise kill the drag it
+    // was starting.
+    releaseRef.current?.();
+
     dragRef.current = {
       tabId: tab.id,
       fromGroupId: group.id,
@@ -229,6 +236,8 @@ export function TabArea({
     if (e.button !== 0) return;
     // Or the drag selects the text of every pane it crosses.
     e.preventDefault();
+    // As in `startDrag`: release before the ref is written, not after.
+    releaseRef.current?.();
     resizeRef.current = {
       index,
       startX: e.clientX,
