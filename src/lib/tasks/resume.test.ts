@@ -346,6 +346,25 @@ describe("resuming a suspended task", () => {
     expect(second!.lifecycle).toBe("live");
   });
 
+  // The row stays `suspended` for the whole of the ladder and only turns
+  // `live` on the rung that works, so a close arriving mid-resume read "not
+  // live", did nothing, and reported success — and seconds later the ladder
+  // handed the user back the agent they had just closed.
+  test("a close that lands mid-resume closes the task the resume produced", async () => {
+    const { manager, store } = newManager();
+    const row = suspendedTask(manager, store);
+
+    const resume = manager.resumeTask(row.id);
+    while (!manager.primaryPty(row.id)) await Bun.sleep(5);
+
+    const closed = await manager.closeTask(row.id);
+    await resume;
+
+    expect(closed).toBe(true);
+    expect(store.get(row.id)!.lifecycle).toBe("suspended");
+    expect(manager.primaryPty(row.id)).toBeUndefined();
+  });
+
   // "Safe to ask for twice" is about a plain resume. A fresh start is a request
   // for a new conversation, and answering it with the running one returned 200
   // having minted nothing — with a body describing the old session, so the

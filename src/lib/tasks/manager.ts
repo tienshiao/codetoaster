@@ -923,6 +923,16 @@ export class TaskManager {
    * agent is started with, and the scrollback we just wrote is what the user
    * sees while it comes back. */
   async suspendTask(taskId: string): Promise<boolean> {
+    // A resume in flight has to settle first. The ladder leaves the row
+    // `suspended` for its whole run and only writes `live` on the rung that
+    // works, so a close arriving mid-resume read "not live", answered false and
+    // did nothing at all — and seconds later the ladder finished, wrote `live`
+    // and handed the user back the agent they had just closed. The route
+    // reported success either way, so there was nothing to say it had happened.
+    // Waiting means the click lands on the task the resume produced, which is
+    // the task the user was looking at when they clicked.
+    const inFlight = this.resuming.get(taskId);
+    if (inFlight) await inFlight.catch(() => undefined);
     const row = this.store.get(taskId);
     if (!row || row.lifecycle !== "live") return false;
     await this.snapshot(taskId);
