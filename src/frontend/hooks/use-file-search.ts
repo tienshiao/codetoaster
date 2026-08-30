@@ -10,8 +10,8 @@ interface FileSearchResponse {
   results: FileSearchResult[];
 }
 
-async function fetchFileSearch(sessionId: string, query: string): Promise<FileSearchResponse> {
-  const res = await fetch(`/api/tasks/${sessionId}/files/search?q=${encodeURIComponent(query)}`);
+async function fetchFileSearch(taskId: string, query: string): Promise<FileSearchResponse> {
+  const res = await fetch(`/api/tasks/${taskId}/files/search?q=${encodeURIComponent(query)}`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to search files");
@@ -19,11 +19,11 @@ async function fetchFileSearch(sessionId: string, query: string): Promise<FileSe
   return res.json();
 }
 
-export function useFileSearch(sessionId: string | null, query: string) {
+export function useFileSearch(taskId: string | null, query: string) {
   return useQuery({
-    queryKey: ["sessions", sessionId, "files-search", query],
-    queryFn: () => fetchFileSearch(sessionId!, query),
-    enabled: sessionId !== null && query.length > 0,
+    queryKey: ["tasks", taskId, "files-search", query],
+    queryFn: () => fetchFileSearch(taskId!, query),
+    enabled: taskId !== null && query.length > 0,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   });

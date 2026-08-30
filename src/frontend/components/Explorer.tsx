@@ -15,8 +15,8 @@ import { FileTree as WorkspaceFileTree } from "@/frontend/components/file/FileTr
 import { CommitList } from "@/frontend/components/git/CommitList";
 import { RefSidebar, type RefSidebarHeadExpanded } from "@/frontend/components/git/RefSidebar";
 import { useGitHistory } from "@/frontend/hooks/use-git-history";
-import { useSessionDiff } from "@/frontend/hooks/use-session-diff";
-import { useSessionFiles } from "@/frontend/hooks/use-session-files";
+import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
+import { useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { EXPLORER_SECTIONS, type ExplorerSection } from "@/frontend/explorer-store";
 import type { OpenOptions, TabDescriptor } from "@/frontend/layout-store";
@@ -51,7 +51,7 @@ const SECTION_ICONS: Record<ExplorerSection, LucideIcon> = {
  * panel header precisely so it still reads with the panel shut.
  */
 export function useExplorerRail(taskId: string | null): ExplorerRailItem[] {
-  const { data } = useSessionDiff(taskId ?? "", taskId != null);
+  const { data } = useTaskDiff(taskId ?? "", taskId != null);
   const count = data?.length;
   return useMemo(
     () =>
@@ -153,7 +153,7 @@ type SectionProps = PreviewOpen & { taskId: string };
 // tab with a matching `tabKey` rather than opening a second one.
 
 function ChangesSection({ taskId, open, handlers }: SectionProps) {
-  const { data, isLoading, error, refetch } = useSessionDiff(taskId);
+  const { data, isLoading, error, refetch } = useTaskDiff(taskId);
   const view = useMemo(() => viewRef(taskId, "explorer"), [taskId]);
   const [selectedFile, setSelectedFile] = useViewState("explorer", view, "changesSelectedFile");
   const [collapsedPaths, setCollapsedPaths] = useViewState(
@@ -202,7 +202,7 @@ function ChangesSection({ taskId, open, handlers }: SectionProps) {
 }
 
 function FilesSection({ taskId, open, handlers }: SectionProps) {
-  const { data, isLoading, error, refetch } = useSessionFiles(taskId);
+  const { data, isLoading, error, refetch } = useTaskFiles(taskId);
   // The `files` slot, shared with the tree v1's file route still draws: it is
   // the same tree over the same working copy, so a directory collapsed in one
   // has no business springing open in the other.

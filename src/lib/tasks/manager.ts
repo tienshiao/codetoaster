@@ -791,8 +791,8 @@ export class TaskManager {
     // exited on its own, with the user then pressing the retry overlay's
     // button — would keep saying `live` with `ptyId: null`, which is the lie.
     // Nothing recovers it either, because everything that would reopen the task
-    // asks for one of the two states this is between: `AgentPane` and
-    // `SessionContext` only reopen a `suspended` task, and the harvester only
+    // asks for one of the two states this is between: `AgentPane` only reopens
+    // a `suspended` task, and the harvester only
     // takes an `idle` one. Left `live` the card sits in the sidebar dead for the
     // life of the daemon; left `suspended` it is what it looks like, and the
     // next click walks the ladder again.

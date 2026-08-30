@@ -29,7 +29,7 @@ export function CommitPane({ taskId, view, sha, onOpenCommit }: CommitPaneProps)
 
   return (
     <CommitDetail
-      sessionId={taskId}
+      taskId={taskId}
       view={view}
       sha={sha}
       mode={mode}

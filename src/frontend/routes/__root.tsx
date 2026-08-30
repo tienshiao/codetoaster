@@ -3,11 +3,9 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "../query-client";
 import { PtyProvider } from "../PtyContext";
 import { TaskProvider } from "../TaskContext";
-import { SessionProvider } from "../SessionContext";
 import { TerminalThemeProvider } from "../hooks/use-terminal-theme";
 import { useTheme } from "../hooks/use-theme";
 import { Toaster } from "../components/ui/sonner";
-import { SidebarProvider } from "../components/ui/sidebar";
 import { useVisualViewportHeight } from "../hooks/use-visual-viewport";
 
 export const Route = createRootRoute({
@@ -25,18 +23,20 @@ function RootComponent() {
             list and the terminals share one connection, and the router is what
             keeps a PTY's frames going to the one terminal showing it. */}
         <PtyProvider>
-          {/* Both stores subscribe to the one socket. TaskProvider is the v2
-              one; SessionProvider is the v1 adapter it replaces at TASK-28. */}
+          {/* One subscriber to the one socket, which is what lets the store
+              own the notification sound and the `acknowledge` that answers one:
+              with the v1 adapter also subscribed, each fired twice. */}
           <TaskProvider>
-            <SessionProvider>
-              <SidebarProvider className="h-[var(--app-height,100svh)] min-h-0">
-                <Outlet />
-                {/* No command palette and no tab switcher: both were typed off
-                    the v1 session routes and went with them. TASK-35 builds the
-                    palette back over tasks and tabs. */}
-                <Toaster />
-              </SidebarProvider>
-            </SessionProvider>
+            {/* Was v1's `SidebarProvider`, which by the end was a div with a
+                height: `AppShell` owns both its sidebars and nothing consumed
+                the context. These are the classes it resolved to. */}
+            <div className="flex min-h-0 w-full h-[var(--app-height,100svh)]">
+              <Outlet />
+              {/* No command palette and no tab switcher: both were typed off
+                  the v1 session routes and went with them. TASK-35 builds the
+                  palette back over tasks and tabs. */}
+              <Toaster />
+            </div>
           </TaskProvider>
         </PtyProvider>
       </TerminalThemeProvider>

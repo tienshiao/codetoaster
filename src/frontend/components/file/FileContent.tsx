@@ -13,7 +13,7 @@ import { maybeShowSymbolTip } from "../../utils/tips";
 
 interface FileContentProps {
   filePath: string;
-  sessionId: string;
+  taskId: string;
   content: FileContentResponse | null;
   loading: boolean;
   lineWrap: boolean;
@@ -29,7 +29,7 @@ interface FileContentProps {
 
 export function FileContent({
   filePath,
-  sessionId,
+  taskId,
   content,
   loading,
   lineWrap,
@@ -129,7 +129,7 @@ export function FileContent({
 
   if (content.isBinary) {
     if (content.isImage) {
-      const imageUrl = imageUrlProp ?? `/api/tasks/${sessionId}/image?file=${encodeURIComponent(filePath)}`;
+      const imageUrl = imageUrlProp ?? `/api/tasks/${taskId}/image?file=${encodeURIComponent(filePath)}`;
       return (
         <div className="flex flex-col items-center justify-center p-8 h-full">
           <img

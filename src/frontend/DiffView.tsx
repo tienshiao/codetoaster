@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { generatePrompt } from "./utils/generatePrompt";
 import { useComments } from "./hooks/use-comments";
-import { useSessionDiff } from "./hooks/use-session-diff";
+import { useTaskDiff } from "./hooks/use-task-diff";
 import { useViewState } from "./hooks/use-view-state";
 import { useHunkExpansions } from "./hooks/use-hunk-expansions";
 import { getViewState, setViewField, viewRef } from "./view-state-store";
@@ -25,7 +25,7 @@ import { SymbolPopover, type SymbolTarget } from "./components/SymbolPopover";
 import { Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
 
 interface DiffViewProps {
-  sessionId: string;
+  taskId: string;
   /** False when the prompt could not be delivered — a task whose agent has
    * exited has no terminal to send it to. The review is kept in that case
    * rather than cleared, since the user's comments are the only copy. */
@@ -36,15 +36,15 @@ interface DiffViewProps {
   onOpenFile: (path: string, line: number) => void;
 }
 
-export function DiffView({ sessionId, onSubmit, onOpenFile }: DiffViewProps) {
-  const { data, isLoading: loading, error: queryError, refetch } = useSessionDiff(sessionId);
+export function DiffView({ taskId, onSubmit, onOpenFile }: DiffViewProps) {
+  const { data, isLoading: loading, error: queryError, refetch } = useTaskDiff(taskId);
   const files = useMemo(() => data ?? [], [data]);
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
 
   // The whole-working-tree diff's slot. The review it feeds is a separate,
   // task-wide slot: comments left here and on a per-file diff are one review.
-  const view = useMemo(() => viewRef(sessionId, "diffAll"), [sessionId]);
-  const review = useMemo(() => viewRef(sessionId, "review"), [sessionId]);
+  const view = useMemo(() => viewRef(taskId, "diffAll"), [taskId]);
+  const review = useMemo(() => viewRef(taskId, "review"), [taskId]);
 
   // Persistence-backed state supplied to the shared diff layout.
   const [selectedFile, setSelectedFile] = useViewState("diffAll", view, "selectedFile");
@@ -53,7 +53,7 @@ export function DiffView({ sessionId, onSubmit, onOpenFile }: DiffViewProps) {
   // default stays live across refetches; the toggle buttons set it explicitly.
   const [viewModeOverride, setViewModeOverride] = useViewState("diffAll", view, "viewModeOverride");
   const [treeCollapsedPaths, setTreeCollapsedPaths] = useViewState("diffAll", view, "treeCollapsedPaths");
-  const { hunkExpansions, expandContext } = useHunkExpansions(sessionId, "diffAll", view, data);
+  const { hunkExpansions, expandContext } = useHunkExpansions(taskId, "diffAll", view, data);
 
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [promptText, setPromptText] = useState("");
@@ -164,7 +164,7 @@ export function DiffView({ sessionId, onSubmit, onOpenFile }: DiffViewProps) {
     <>
       <DiffLayout
         files={files}
-        sessionId={sessionId}
+        taskId={taskId}
         viewModeOverride={viewModeOverride}
         onViewModeOverride={setViewModeOverride}
         selectedFile={selectedFile}
@@ -227,7 +227,7 @@ export function DiffView({ sessionId, onSubmit, onOpenFile }: DiffViewProps) {
       </AlertDialog>
 
       <SymbolPopover
-        sessionId={sessionId}
+        taskId={taskId}
         target={symbolTarget}
         onClose={() => setSymbolTarget(null)}
         onGo={(entry) => onOpenFile(entry.path, entry.line)}

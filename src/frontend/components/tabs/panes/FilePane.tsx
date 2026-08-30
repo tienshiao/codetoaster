@@ -3,7 +3,7 @@ import { Eye, WrapText } from "lucide-react";
 import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
-import { useFileContent } from "@/frontend/hooks/use-session-files";
+import { useFileContent } from "@/frontend/hooks/use-task-files";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
@@ -70,7 +70,7 @@ export function FilePane({ taskId, view, path, line, onOpenFile }: FilePaneProps
       <FileContent
         key={scrollKey}
         filePath={path}
-        sessionId={taskId}
+        taskId={taskId}
         content={content}
         loading={isLoading}
         lineWrap={lineWrap}
@@ -84,7 +84,7 @@ export function FilePane({ taskId, view, path, line, onOpenFile }: FilePaneProps
         onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}
       />
       <SymbolPopover
-        sessionId={taskId}
+        taskId={taskId}
         target={symbolTarget}
         onClose={() => setSymbolTarget(null)}
         onGo={(entry) => onOpenFile(entry.path, entry.line)}

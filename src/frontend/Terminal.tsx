@@ -56,9 +56,9 @@ export interface TerminalHandle {
 }
 
 interface XTerminalProps {
-  // The session this terminal is showing. Input and resize are addressed by
-  // it: the socket now carries several sessions at once, so "the client's
-  // session" is no longer a thing the server can infer.
+  // The PTY this terminal is showing. Input and resize are addressed by it: the
+  // socket carries several terminals at once, so "the client's terminal" is not
+  // a thing the server can infer.
   ptyId: string | null;
   onSizeChange: (size: TerminalSize) => void;
   /** The grid exists. Held in a ref like every other callback here, so a host

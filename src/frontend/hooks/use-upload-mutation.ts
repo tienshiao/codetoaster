@@ -1,19 +1,19 @@
 import { useMutation } from "@tanstack/react-query";
 
-async function uploadFiles(sessionId: string, files: File[]): Promise<void> {
+async function uploadFiles(taskId: string, files: File[]): Promise<void> {
   const formData = new FormData();
   for (const file of files) formData.append("files", file);
-  await fetch(`/api/tasks/${sessionId}/upload`, {
+  await fetch(`/api/tasks/${taskId}/upload`, {
     method: "POST",
     body: formData,
   });
 }
 
-export function useUploadFiles(sessionId: string | undefined) {
+export function useUploadFiles(taskId: string | undefined) {
   return useMutation({
     mutationFn: (files: File[]) => {
-      if (!sessionId) return Promise.resolve();
-      return uploadFiles(sessionId, files);
+      if (!taskId) return Promise.resolve();
+      return uploadFiles(taskId, files);
     },
   });
 }

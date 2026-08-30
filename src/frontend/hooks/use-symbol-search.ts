@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SymbolSearchResult } from "../../lib/symbols/types";
 
-async function fetchSymbolSearch(sessionId: string, query: string): Promise<SymbolSearchResult> {
+async function fetchSymbolSearch(taskId: string, query: string): Promise<SymbolSearchResult> {
   const res = await fetch(
-    `/api/tasks/${sessionId}/symbols/search?q=${encodeURIComponent(query)}`,
+    `/api/tasks/${taskId}/symbols/search?q=${encodeURIComponent(query)}`,
   );
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -13,10 +13,10 @@ async function fetchSymbolSearch(sessionId: string, query: string): Promise<Symb
 }
 
 /** Fuzzy/prefix symbol-name search. Pass `null` to disable (e.g. no query). */
-export function useSymbolSearch(sessionId: string, query: string | null) {
+export function useSymbolSearch(taskId: string, query: string | null) {
   return useQuery({
-    queryKey: ["sessions", sessionId, "symbol-search", query],
-    queryFn: () => fetchSymbolSearch(sessionId, query!),
+    queryKey: ["tasks", taskId, "symbol-search", query],
+    queryFn: () => fetchSymbolSearch(taskId, query!),
     enabled: !!query,
     staleTime: 5000,
   });

@@ -68,7 +68,7 @@ export function TabPane({ taskId, tab, onOpenTab, onSubmitReview, visible }: Tab
       // already takes a task and a submit, and already addresses the `diffAll`
       // and `review` slots itself, so a wrapper would be a layer that forwards
       // two props.
-      return <DiffView sessionId={taskId} onSubmit={onSubmitReview} onOpenFile={openFile} />;
+      return <DiffView taskId={taskId} onSubmit={onSubmitReview} onOpenFile={openFile} />;
 
     case "diff":
       return (

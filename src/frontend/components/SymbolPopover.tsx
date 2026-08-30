@@ -10,7 +10,7 @@ export interface SymbolTarget {
 }
 
 interface SymbolPopoverProps {
-  sessionId: string;
+  taskId: string;
   target: SymbolTarget | null;
   onClose: () => void;
   /** Where a chosen definition or reference goes. A callback rather than a
@@ -20,8 +20,8 @@ interface SymbolPopoverProps {
   onGo: (entry: SymbolEntry) => void;
 }
 
-export function SymbolPopover({ sessionId, target, onClose, onGo }: SymbolPopoverProps) {
-  const { data, isLoading } = useSymbolLookup(sessionId, target?.name ?? null);
+export function SymbolPopover({ taskId, target, onClose, onGo }: SymbolPopoverProps) {
+  const { data, isLoading } = useSymbolLookup(taskId, target?.name ?? null);
 
   // Choosing an entry always dismisses: the popover is anchored to the click
   // that opened it, so leaving it up over a pane that has moved on is never

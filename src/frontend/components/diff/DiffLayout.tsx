@@ -58,7 +58,7 @@ export interface DiffLayoutScroll {
 
 interface DiffLayoutProps {
   files: FileDiff[];
-  sessionId?: string;
+  taskId?: string;
 
   // View-mode override (controlled); the large-diff → single default derives
   // from diff size inside the core so it stays live across refetches.
@@ -112,7 +112,7 @@ interface DiffLayoutProps {
 // All persistence-backed state is injected so each consumer owns its own store.
 export function DiffLayout({
   files,
-  sessionId,
+  taskId,
   viewModeOverride,
   onViewModeOverride,
   selectedFile,
@@ -328,7 +328,7 @@ export function DiffLayout({
             hunkExpansions={hunkExpansions}
             onExpandContext={onExpandContext}
             commentState={commentState}
-            sessionId={sessionId}
+            taskId={taskId}
             imageRefs={imageRefs}
           />
         </div>
@@ -350,7 +350,7 @@ export function DiffLayout({
           hunkExpansions={hunkExpansions}
           onExpandContext={onExpandContext}
           commentState={commentState}
-          sessionId={sessionId}
+          taskId={taskId}
           imageRefs={imageRefs}
         />
       </div>

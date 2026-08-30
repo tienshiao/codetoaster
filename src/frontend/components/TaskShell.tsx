@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { taskStateOf, useTasks } from "@/frontend/TaskContext";
+import { taskDisplayNames, taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { usePty } from "@/frontend/PtyContext";
-import { useSession } from "@/frontend/SessionContext";
-import { sessionDisplayNames } from "@/lib/xtmux/naming";
 import { AppShell } from "@/frontend/components/v2/AppShell";
 import { useTaskSidebar } from "@/frontend/components/TaskSidebar";
 import { Button } from "@/frontend/components/v2/Button";
 import { TaskHeader } from "@/frontend/components/v2/TaskHeader";
 import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
+import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { TabArea, TabPane, useTaskLayout } from "@/frontend/components/tabs";
@@ -47,13 +46,16 @@ export interface TaskShellProps {
  * hooks, so the routes stay about addresses.
  */
 export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }: TaskShellProps) {
-  const { tasks, loaded, openShell, closeShell } = useTasks();
+  const { tasks, loaded, openShell, closeShell, setViewedTask } = useTasks();
   const openTask = useOpenTask();
   const explorerPanel = useExplorerPanel();
   const explorerSections = useExplorerRail(taskId);
   // A real layout for the selected task, persisted per task id.
   const { layout, setLayout } = useTaskLayout(taskId);
   const sidebar = useTaskSidebar({ selectedTaskId: taskId, onSelectTask: openTask });
+  // The shell's footer draws the Settings button; the dialog it opens is held
+  // here, since it is the shell's chrome and belongs to no task.
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   /**
    * The layout as of the last commit *and* of any write already issued, plus
@@ -85,18 +87,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   // stable name. Claude Code sits on a bare "Claude Code" until it has a task,
   // so without this every agent task in the list reads identically — which is
   // the failure the projection exists to prevent (naming.ts).
-  const displayNames = useMemo(
-    () =>
-      sessionDisplayNames(
-        tasks.map((t) => ({
-          id: t.id,
-          name: t.title,
-          nameSource: t.titleSource,
-          title: t.terminalTitle,
-        })),
-      ),
-    [tasks],
-  );
+  const displayNames = useMemo(() => taskDisplayNames(tasks), [tasks]);
   const selected = tasks.find((t) => t.id === taskId);
   const { sendInput } = usePty();
 
@@ -109,10 +100,9 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     document.title = label ? `${label} — CodeToaster` : "CodeToaster";
   }, [label]);
 
-  // Which task is on screen, for the notification adapter. It decides whether a
-  // notification is for the terminal the user is already watching — and with
-  // nothing telling it, every one of them rings.
-  const { setViewedTask } = useSession();
+  // Which task is on screen. It decides whether a notification is for the
+  // terminal the user is already watching — and with nothing telling it, every
+  // one of them rings.
   useEffect(() => {
     setViewedTask(taskId);
     return () => setViewedTask(null);
@@ -274,6 +264,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     <AppShell
       {...sidebar}
       endpoint={loaded ? `:${location.port || "80"}` : "connecting…"}
+      onOpenSettings={() => setSettingsOpen(true)}
       tabArea={
         layout
           ? ({ leading }) => (
@@ -346,6 +337,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
       }
     >
       {children}
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </AppShell>
   );
 }

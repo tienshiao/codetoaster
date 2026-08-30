@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { Monitor, Moon, Settings, Sun } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "../hooks/use-theme";
 import { useTerminalTheme, terminalThemeNames, terminalFontOptions } from "../hooks/use-terminal-theme";
 import { useNotificationSound, useBellSound, SOUND_OPTIONS } from "../hooks/use-notification-sound";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "./ui/dialog";
@@ -24,28 +24,37 @@ const themeOptions = [
   { value: "dark" as const, label: "Dark", icon: Moon },
 ];
 
-export function SettingsButton() {
-  const [open, setOpen] = useState(false);
+export interface SettingsDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+/**
+ * Theme, terminal appearance, and the two sounds.
+ *
+ * Controlled, and without a trigger of its own: it used to carry a v1 button,
+ * but the v2 shell draws that itself in the sidebar footer, and two buttons for
+ * one dialog is one too many. Nothing here is about a task — it is all
+ * per-device preference in `localStorage` — which is why it survived the v1
+ * routes going and only needed reconnecting (TASK-28).
+ */
+export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { theme, setTheme } = useTheme();
   const { themeName, setThemeName, theme: terminalTheme, fontFamily, setFontFamily, fontSize, setFontSize } = useTerminalTheme();
   const { soundOption, setSoundOption, previewSound } = useNotificationSound();
   const { soundOption: bellOption, setSoundOption: setBellOption, previewSound: previewBell } = useBellSound();
 
   return (
-    <>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="flex-1 justify-start gap-2 text-zinc-500"
-        onClick={() => setOpen(true)}
-      >
-        <Settings className="size-4" />
-        Settings
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="grid-rows-[auto_minmax(0,1fr)] sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
+            {/* Radix wants every dialog described, and warns in the console
+                when one is not. It also earns its place: everything here is
+                per-device, which is not obvious from a list of dropdowns. */}
+            <DialogDescription>
+              Appearance and sounds, remembered on this device.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 overflow-y-auto min-h-0">
             <div className="grid sm:grid-cols-[1fr_1.5fr] gap-x-6 gap-y-2 items-start">
@@ -210,16 +219,8 @@ export function SettingsButton() {
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-xs text-muted-foreground text-center pt-2 border-t">
-              Press{" "}
-              <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded border">
-                {typeof navigator !== "undefined" && navigator.platform.includes("Mac") ? "⌘⇧P" : "Ctrl+Shift+P"}
-              </kbd>{" "}
-              to open the command palette
-            </p>
           </div>
-        </DialogContent>
-      </Dialog>
-    </>
+      </DialogContent>
+    </Dialog>
   );
 }

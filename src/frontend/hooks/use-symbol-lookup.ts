@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SymbolLookupResult } from "../../lib/symbols/types";
 
-async function fetchSymbol(sessionId: string, name: string): Promise<SymbolLookupResult> {
+async function fetchSymbol(taskId: string, name: string): Promise<SymbolLookupResult> {
   const res = await fetch(
-    `/api/tasks/${sessionId}/symbols?name=${encodeURIComponent(name)}`,
+    `/api/tasks/${taskId}/symbols?name=${encodeURIComponent(name)}`,
   );
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -12,10 +12,10 @@ async function fetchSymbol(sessionId: string, name: string): Promise<SymbolLooku
   return res.json();
 }
 
-export function useSymbolLookup(sessionId: string, name: string | null) {
+export function useSymbolLookup(taskId: string, name: string | null) {
   return useQuery({
-    queryKey: ["sessions", sessionId, "symbols", name],
-    queryFn: () => fetchSymbol(sessionId, name!),
+    queryKey: ["tasks", taskId, "symbols", name],
+    queryFn: () => fetchSymbol(taskId, name!),
     enabled: !!name,
     staleTime: 5000,
   });

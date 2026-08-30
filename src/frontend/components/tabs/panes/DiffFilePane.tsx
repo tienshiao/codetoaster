@@ -6,7 +6,7 @@ import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPo
 import { useComments } from "@/frontend/hooks/use-comments";
 import { useHunkExpansions } from "@/frontend/hooks/use-hunk-expansions";
 import { useModifierHeld } from "@/frontend/hooks/use-modifier-held";
-import { useSessionDiff } from "@/frontend/hooks/use-session-diff";
+import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
 import { useSymbolHighlight } from "@/frontend/hooks/use-symbol-highlight";
 import { getViewState, setViewField, viewRef, type ViewRef } from "@/frontend/view-state-store";
 
@@ -36,7 +36,7 @@ interface DiffFilePaneProps {
  * slot rather than one per tab.
  */
 export function DiffFilePane({ taskId, view, path, onOpenFile }: DiffFilePaneProps) {
-  const { data, isLoading, error: queryError, refetch } = useSessionDiff(taskId);
+  const { data, isLoading, error: queryError, refetch } = useTaskDiff(taskId);
   const error = queryError
     ? queryError instanceof Error
       ? queryError.message
@@ -107,7 +107,7 @@ export function DiffFilePane({ taskId, view, path, onOpenFile }: DiffFilePanePro
     <>
       <DiffLayout
         files={files}
-        sessionId={taskId}
+        taskId={taskId}
         showFileTree={false}
         showViewModeToggle={false}
         // Not a mode the user can leave: there is one file, and "all" of it is
@@ -132,7 +132,7 @@ export function DiffFilePane({ taskId, view, path, onOpenFile }: DiffFilePanePro
         }}
       />
       <SymbolPopover
-        sessionId={taskId}
+        taskId={taskId}
         target={symbolTarget}
         onClose={() => setSymbolTarget(null)}
         onGo={(entry) => onOpenFile(entry.path, entry.line)}

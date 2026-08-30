@@ -23,7 +23,7 @@ interface DiffFileProps {
     nextHunk: DiffHunk | null
   ) => void;
   commentState?: UseCommentsReturn;
-  sessionId?: string;
+  taskId?: string;
   // When present (git commit view) both image sides are resolved from git refs;
   // absent means the working-tree diff, where the "after" side is the file on disk.
   imageRefs?: { old: string; new: string };
@@ -157,7 +157,7 @@ export function DiffFile({
   hunkExpansions: hunkExpansionsProp,
   onExpandContext,
   commentState,
-  sessionId,
+  taskId,
   imageRefs,
 }: DiffFileProps) {
   const hunkExpansions = hunkExpansionsProp ?? EMPTY_EXPANSIONS;
@@ -309,8 +309,8 @@ export function DiffFile({
       })()}
 
       {/* Image diff */}
-      {isExpanded && file.isImage && sessionId && (
-        <ImageDiff file={file} sessionId={sessionId} imageRefs={imageRefs} />
+      {isExpanded && file.isImage && taskId && (
+        <ImageDiff file={file} taskId={taskId} imageRefs={imageRefs} />
       )}
 
       {/* Diff content */}

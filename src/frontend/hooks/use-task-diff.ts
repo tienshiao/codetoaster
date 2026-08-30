@@ -12,7 +12,7 @@ import type { FileDiff } from "../types/diff";
 // With `sha` (git commit view), the server reads new = `git show sha:path`,
 // old = `git show sha^1:path`; without it, the working tree / index.
 export async function fetchDiffTokens(
-  sessionId: string,
+  taskId: string,
   files: FileDiff[],
   sha?: string,
 ): Promise<Map<string, DiffFileTokens> | null> {
@@ -27,7 +27,7 @@ export async function fetchDiffTokens(
   if (requestFiles.length === 0) return null;
 
   try {
-    const res = await fetch(`/api/tasks/${sessionId}/diff-tokens`, {
+    const res = await fetch(`/api/tasks/${taskId}/diff-tokens`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(sha ? { sha, files: requestFiles } : { files: requestFiles }),
@@ -41,8 +41,8 @@ export async function fetchDiffTokens(
   }
 }
 
-async function fetchDiff(sessionId: string): Promise<{ diff: string; hash: string }> {
-  const res = await fetch(`/api/tasks/${sessionId}/diff`);
+async function fetchDiff(taskId: string): Promise<{ diff: string; hash: string }> {
+  const res = await fetch(`/api/tasks/${taskId}/diff`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to fetch diff");
@@ -53,10 +53,10 @@ async function fetchDiff(sessionId: string): Promise<{ diff: string; hash: strin
 // `enabled` exists for the Explorer rail, which wants the changed-file count
 // before a task is selected: with no task there is no id, and a query keyed on
 // an empty one would fetch `/api/tasks//diff`.
-export function useSessionDiff(sessionId: string, enabled = true) {
+export function useTaskDiff(taskId: string, enabled = true) {
   const diffQuery = useQuery({
-    queryKey: ["sessions", sessionId, "diff"],
-    queryFn: () => fetchDiff(sessionId),
+    queryKey: ["tasks", taskId, "diff"],
+    queryFn: () => fetchDiff(taskId),
     enabled,
   });
 
@@ -74,10 +74,10 @@ export function useSessionDiff(sessionId: string, enabled = true) {
   // Tokens are content-addressed on the server and keyed here by the diff hash,
   // so the result is stable for a given diff; never blocks the diff paint below.
   const tokensQuery = useQuery({
-    queryKey: ["sessions", sessionId, "diff-tokens", diffQuery.data?.hash],
+    queryKey: ["tasks", taskId, "diff-tokens", diffQuery.data?.hash],
     queryFn: () => {
       if (!Array.isArray(parsed)) throw new Error("no parsed diff");
-      return fetchDiffTokens(sessionId, parsed);
+      return fetchDiffTokens(taskId, parsed);
     },
     enabled: enabled && Array.isArray(parsed) && parsed.length > 0,
     staleTime: Infinity,

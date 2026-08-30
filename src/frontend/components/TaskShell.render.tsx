@@ -26,6 +26,7 @@ const stubs = vi.hoisted(() => ({
   openShell: vi.fn<(id: string) => Promise<unknown>>(),
   closeShell: vi.fn<(id: string, ptyId: string) => Promise<unknown>>(),
   toast: vi.fn(),
+  setViewedTask: vi.fn(),
 }));
 
 vi.mock("@/frontend/TaskContext", () => ({
@@ -34,12 +35,16 @@ vi.mock("@/frontend/TaskContext", () => ({
     loaded: true,
     openShell: stubs.openShell,
     closeShell: stubs.closeShell,
+    setViewedTask: stubs.setViewedTask,
   }),
   taskStateOf: () => "idle",
+  // The real projection over the real shape; it is pure, and stubbing it would
+  // only mean these tests could not see a label change break the shell.
+  taskDisplayNames: (tasks: TaskInfo[]) =>
+    new Map(tasks.map((t) => [t.id, t.terminalTitle || t.title])),
 }));
 vi.mock("sonner", () => ({ toast: Object.assign(stubs.toast, { error: vi.fn() }) }));
 vi.mock("@/frontend/PtyContext", () => ({ usePty: () => ({ sendInput: vi.fn() }) }));
-vi.mock("@/frontend/SessionContext", () => ({ useSession: () => ({ setViewedTask: vi.fn() }) }));
 vi.mock("@/frontend/hooks/use-task-nav", () => ({ useOpenTask: () => vi.fn() }));
 vi.mock("@/frontend/hooks/use-explorer-panel", () => ({
   useExplorerPanel: () => ({ section: "Changes", setSection: vi.fn(), open: false, setOpen: vi.fn() }),
@@ -49,6 +54,7 @@ vi.mock("@/frontend/components/Explorer", () => ({
   useExplorerRail: () => [],
 }));
 vi.mock("@/frontend/components/TaskSidebar", () => ({ useTaskSidebar: () => ({}) }));
+vi.mock("@/frontend/components/SettingsDialog", () => ({ SettingsDialog: () => null }));
 // Only the slot. Everything else `AppShell` draws is chrome this file has no
 // question about, and all of it wants data from the contexts stubbed above.
 vi.mock("@/frontend/components/v2/AppShell", () => ({

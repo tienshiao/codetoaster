@@ -3,14 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { parseDiff } from "../utils/parseDiff";
 import { enhanceWithWordDiff } from "../utils/wordDiff";
 import { sortFiles } from "../utils/sortFiles";
-import { fetchDiffTokens } from "./use-session-diff";
+import { fetchDiffTokens } from "./use-task-diff";
 import type { GitCommitData, GitCommitResponse } from "../types/git";
 
 async function fetchGitCommit(
-  sessionId: string,
+  taskId: string,
   sha: string,
 ): Promise<GitCommitResponse> {
-  const res = await fetch(`/api/tasks/${sessionId}/git/commit?sha=${encodeURIComponent(sha)}`);
+  const res = await fetch(`/api/tasks/${taskId}/git/commit?sha=${encodeURIComponent(sha)}`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to fetch commit");
@@ -21,10 +21,10 @@ async function fetchGitCommit(
 // `wantTokens` gates the tree-sitter token fetch: tree mode renders no diff, so
 // token work is skipped until a diff-rendering mode needs it (the per-sha cache
 // key makes the later fetch a one-time cost).
-export function useGitCommit(sessionId: string, sha: string | undefined, wantTokens = true) {
+export function useGitCommit(taskId: string, sha: string | undefined, wantTokens = true) {
   const commitQuery = useQuery({
-    queryKey: ["git-commit", sessionId, sha],
-    queryFn: () => fetchGitCommit(sessionId, sha!),
+    queryKey: ["git-commit", taskId, sha],
+    queryFn: () => fetchGitCommit(taskId, sha!),
     enabled: !!sha,
     // Commit content is immutable per SHA. Do NOT set gcTime — inactive commit
     // queries are GC'd on the default schedule so memory stays bounded.
@@ -48,10 +48,10 @@ export function useGitCommit(sessionId: string, sha: string | undefined, wantTok
   // meta.hash (not the possibly-abbreviated URL sha) drives the server's
   // `git show sha:path` reads.
   const tokensQuery = useQuery({
-    queryKey: ["git-commit-tokens", sessionId, meta?.hash, commitQuery.data?.hash],
+    queryKey: ["git-commit-tokens", taskId, meta?.hash, commitQuery.data?.hash],
     queryFn: () => {
       if (!Array.isArray(parsed)) throw new Error("no parsed diff");
-      return fetchDiffTokens(sessionId, parsed, meta!.hash);
+      return fetchDiffTokens(taskId, parsed, meta!.hash);
     },
     enabled: wantTokens && Array.isArray(parsed) && parsed.length > 0 && !!meta,
     staleTime: Infinity,

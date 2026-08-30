@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import { toast } from "sonner";
+import { sessionDisplayNames } from "../lib/xtmux/naming";
+import { playNotificationSound } from "./hooks/use-notification-sound";
 import { usePty } from "./PtyContext";
 import { retainLayouts } from "./layout-store";
 import { retainTaskViewStates } from "./view-state-store";
@@ -25,10 +27,12 @@ import type { ProjectInfo, TaskInfo } from "../lib/xtmux/types";
  * the socket carries the push channel that says what changed. This context is
  * the client half of both.
  *
- * It deliberately holds no side effects. While `SessionContext` is still live
- * (until TASK-28) two subscribers see every frame, so a notification sound or
- * an `acknowledge` here would fire twice — once each. Sound, web notifications
- * and acknowledgement stay in `SessionContext` and move across when it goes.
+ * It is also where the socket's side effects live — the notification sound, the
+ * desktop notification, the `acknowledge` that answers one. They were held out
+ * of here while v1's `SessionContext` adapter subscribed to the same socket, as
+ * each would have fired twice, once per subscriber. With the adapter gone there
+ * is one subscriber again, and this is the only thing that sees every frame — which is what a notification needs, since the tasks worth ringing
+ * about are precisely the ones with no pane mounted.
  */
 
 export interface TaskMutationError {
@@ -84,6 +88,9 @@ export interface TaskContextValue {
   /** Kill one of a task's shells — what closing a shell tab means. Never the
    * agent's terminal, which the server refuses. */
   closeShell: (id: string, ptyId: string) => Promise<TaskResult<{ task: TaskInfo }>>;
+  /** Tell the store which task is on screen, so a notification for it is
+   * acknowledged rather than rung. Null when no task is selected. */
+  setViewedTask: (id: string | null) => void;
   /**
    * Projects are the exception to the HTTP rule above: they touch a table and
    * nothing else — no git, no processes — so they stay on the socket, where
@@ -127,6 +134,58 @@ export function taskStateOf(task: Pick<TaskInfo, "agentState" | "lifecycle">): T
     case "idle":
     case "unknown":
       return "idle";
+  }
+}
+
+/**
+ * The label every task shows, keyed by id — an explicit rename, else the live
+ * terminal title when it carries real content *and is unique*, else the stable
+ * `<dir> · <branch>` name (naming.ts).
+ *
+ * The adapter of the two shapes, and the reason it is one function rather than
+ * a `.map` at each call site: the projection is over the *whole list*, because
+ * a title several tasks share is no help to any of them. Getting the mapping
+ * subtly different in two places would mean two different answers to "what is
+ * this task called" on one screen.
+ */
+export function taskDisplayNames(tasks: readonly TaskInfo[]): Map<string, string> {
+  return sessionDisplayNames(
+    tasks.map((task) => ({
+      id: task.id,
+      name: task.title,
+      nameSource: task.titleSource,
+      title: task.terminalTitle,
+    })),
+  );
+}
+
+/**
+ * The desktop notification, for the case the sound cannot cover: the window is
+ * in the background, so there is nothing on screen to look at.
+ *
+ * Silent about a browser that has no `Notification` at all, and about a user
+ * who has said no — asking again on every notification is how a permission
+ * prompt becomes a nuisance. Anything else, and the first one asks.
+ */
+function fireWebNotification(
+  title: string,
+  body: string,
+  tag: string,
+  taskLabel?: string,
+  taskName?: string,
+) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "granted") {
+    // "Implementing the latch — codetoaster · main": the projected label and
+    // the stable name, deduplicated, since they are often the same string.
+    const metaParts = [...new Set([taskLabel, taskName].filter(Boolean))];
+    const metaLine = metaParts.length > 0 ? metaParts.join(" — ") : undefined;
+    const fullBody = [metaLine, body].filter(Boolean).join("\n") || undefined;
+
+    const n = new Notification(title || "Terminal notification", { body: fullBody, tag });
+    setTimeout(() => n.close(), 5000);
+  } else if (Notification.permission !== "denied") {
+    Notification.requestPermission();
   }
 }
 
@@ -176,6 +235,19 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   // open now. Two things ask — the socket's own `onConnect` and the mount
   // effect below — and exactly one of them should get to.
   const askedRef = useRef(false);
+  /**
+   * Which task the shell is showing (§7.3), written by `TaskShell`.
+   *
+   * A ref rather than state, because nothing renders it: it is read once, from
+   * inside the socket handler, to decide whether a notification is about
+   * something the user is already looking at. Held here rather than in a pane
+   * because the tasks that need to ring are precisely the ones with no pane
+   * mounted — the whole point of a notification is that you are elsewhere.
+   */
+  const viewedTaskIdRef = useRef<string | null>(null);
+  const setViewedTask = useCallback((id: string | null) => {
+    viewedTaskIdRef.current = id;
+  }, []);
 
   useEffect(
     () =>
@@ -204,6 +276,37 @@ export function TaskProvider({ children }: { children: ReactNode }) {
 
           if (message.type === "activity") {
             setActivity((prev) => ({ ...prev, [message.taskId]: message.active }));
+            return;
+          }
+
+          if (message.type === "notification") {
+            const { taskId } = message;
+            // Already being looked at, and the user is here: `AgentPane` is
+            // showing whatever provoked this, so ringing would be telling them
+            // about something on their screen.
+            if (taskId === viewedTaskIdRef.current && document.hasFocus()) {
+              send({ type: "acknowledge", taskId });
+            } else {
+              playNotificationSound();
+            }
+            // Separate test, not an `else`: a notification for the viewed task
+            // raised while the window is in the background is still one the
+            // user cannot see, and the desktop is the only place left to put
+            // it. The sound above stays suppressed for it either way.
+            if (!document.hasFocus()) {
+              const task = tasksRef.current.find((t) => t.id === taskId);
+              fireWebNotification(
+                message.title,
+                message.body,
+                `codetoaster-${taskId}`,
+                // The projected label and the stable name, which read as
+                // "Implementing the latch — codetoaster · main". Projected over
+                // the whole list, because a title several tasks share is no
+                // help in a notification either (naming.ts).
+                taskDisplayNames(tasksRef.current).get(taskId),
+                task?.title,
+              );
+            }
             return;
           }
 
@@ -258,13 +361,6 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   // Both stores are keyed by task id and neither is swept by anything else, so
   // a task removed here — archived, deleted, or closed from another client —
   // otherwise leaves its layout and its view state in `localStorage` for good.
-  //
-  // The one exception to this context holding no side effects, and it earns it:
-  // the rule exists because `SessionContext` is still subscribed to the same
-  // socket, so a notification or an `acknowledge` here would fire twice. A
-  // retain sweep is idempotent — running it twice removes nothing the first run
-  // did not — and it lives here rather than in the adapter precisely so it
-  // survives TASK-28.
   //
   // Guarded on `loaded` for the reason the store keeps that flag at all: before
   // the first snapshot, and after a drop, "no tasks" and "not told yet" look
@@ -388,6 +484,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       resumeTask,
       openShell,
       closeShell,
+      setViewedTask,
       createProject,
       deleteProject,
     }),
@@ -404,6 +501,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       resumeTask,
       openShell,
       closeShell,
+      setViewedTask,
       createProject,
       deleteProject,
     ],
