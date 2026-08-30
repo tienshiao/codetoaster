@@ -45,10 +45,18 @@ export function Dialog({
 }: DialogProps) {
   const panel = useRef<HTMLFormElement>(null);
 
+  // Read through a ref rather than depending on it. Callers pass a closure
+  // literal, so `onClose` has a new identity on every render — as a dependency
+  // it re-ran this effect on every keystroke, and the focus call below then
+  // dragged the caret back to the *first* field. A dialog with two fields was
+  // unusable in its second one.
+  const close = useRef(onClose);
+  close.current = onClose;
+
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") close.current();
     };
     document.addEventListener("keydown", onKeyDown);
     // Focus the first field, or the confirm button when there are none, so the
@@ -56,7 +64,7 @@ export function Dialog({
     // somewhere to return from.
     panel.current?.querySelector<HTMLElement>("input, textarea, button[data-confirm]")?.focus();
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

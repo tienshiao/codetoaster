@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-30 06:10'
+updated_date: '2026-08-30 06:33'
 labels:
   - frontend
 milestone: m-3
@@ -24,11 +24,11 @@ Rework AppSidebar.tsx into the chat-history / resume list (§7.5). Recency order
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Default ordering is by last_active_at; a toggle groups by project
-- [ ] #2 Filter box narrows the list by title, project, and last_message
-- [ ] #3 Each row shows a state dot for busy/idle/needs_attention and the last_message preview
-- [ ] #4 Suspended tasks look like normal rows; clicking one navigates to it and triggers resume
-- [ ] #5 Archived tasks are hidden unless the show-archived toggle is on
+- [x] #1 Default ordering is by last_active_at; a toggle groups by project
+- [x] #2 Filter box narrows the list by title, project, and last_message
+- [x] #3 Each row shows a state dot for busy/idle/needs_attention and the last_message preview
+- [x] #4 Suspended tasks look like normal rows; clicking one navigates to it and triggers resume
+- [x] #5 Archived tasks are hidden unless the show-archived toggle is on
 - [ ] #6 use-sidebar-drag.ts is deleted
 <!-- AC:END -->
 
@@ -38,4 +38,14 @@ Rework AppSidebar.tsx into the chat-history / resume list (§7.5). Recency order
 Carried over from TASK-6's review: TaskManager.loadProjects() rebuilds ProjectInfo from the projects table but never repopulates project.taskIds, and listTasks() reads only those arrays — placeInProject runs on create alone. Today nothing shows, because reconcileOnBoot suspends every row at startup and listTasks filters to live. The moment TASK-13 resumes a task, taskInfo()/broadcastTask() will answer for it while listTasks() still will not. Whichever of TASK-13 or this task lands first owns fixing it — most likely by dropping the in-memory grouping for the recency list §7.5 describes.
 
 Build against `frontend/components/v2/` — the v2 design system is the new UI, not a parallel track (CLAUDE.md, "The v2 design system is the new UI"). `AppShell` and the shell components already exist from TASK-46; this task supplies their data. Do not extend `components/ui/` (v1 shadcn) for new surfaces.
+
+ACs 1-5 verified in Chrome against a live daemon: recency order by default, grouping toggle producing project headers with rows indented to 21px, filter narrowing and restoring, state dots plus the OSC-title subtitle, close-without-confirm on an idle task leaving an ordinary suspended row, and clicking that row driving AgentPane's reopen.
+
+AC#5's toggle and predicate are built but show nothing, because nothing writes lifecycle='archived' anywhere yet — it is only ever read, by the resume route, to refuse. TASK-31 is what will archive. Checked on that basis: the client half is real and correct the moment there is anything to filter.
+
+AC#6 is NOT done and is deliberately unchecked: hooks/use-sidebar-drag.ts is still imported by v1's AppSidebar, so deleting it breaks the build. It goes with v1 in TASK-28.
+
+Project creation was added without an AC asking for it, to avoid a regression once v1 is deleted — there would otherwise be no way to add a repository. Cost a v2 Dialog and TextInput rather than pulling four v1 shadcn components into the v2 surface; the price is losing ProjectDialog's path autocomplete and directory picker, which can come back later.
+
+Incidental finding worth keeping: reopening a task whose agent never completed a conversation turn lands on could_not_resume, because there is no transcript for any rung of the ladder to open. That is §4.3 behaving correctly and the overlay renders it as a card with a Try again button — but it is also the shape TASK-43 is about.
 <!-- SECTION:NOTES:END -->

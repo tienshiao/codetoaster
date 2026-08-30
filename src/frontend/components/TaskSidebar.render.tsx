@@ -1,7 +1,20 @@
 import { test, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppShell } from "./v2/AppShell";
 import { NewProjectButton, TaskRowActions } from "./TaskSidebar";
+
+/** The project dialog's path field asks the server for directories, so it needs
+ * a client even here, where nothing types enough to make it fetch. What the
+ * field then *does* is tested in `PathField.render.tsx`. */
+function renderNewProject(onCreate: (name: string, path: string) => void) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <NewProjectButton onCreate={onCreate} />
+    </QueryClientProvider>,
+  );
+}
 
 /**
  * The sidebar's behaviours that only exist once something is mounted: whether
@@ -127,7 +140,7 @@ test("the shell draws the flat list by default and the groups when told to", () 
 
 test("creating a project reports name and path, and only once submitted", () => {
   const onCreate = vi.fn();
-  render(<NewProjectButton onCreate={onCreate} />);
+  renderNewProject(onCreate);
 
   fireEvent.click(screen.getByRole("button", { name: "New project" }));
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Website" } });
@@ -143,7 +156,7 @@ test("creating a project reports name and path, and only once submitted", () => 
 
 test("a project with no name cannot be created", () => {
   const onCreate = vi.fn();
-  render(<NewProjectButton onCreate={onCreate} />);
+  renderNewProject(onCreate);
 
   fireEvent.click(screen.getByRole("button", { name: "New project" }));
   fireEvent.click(screen.getByRole("button", { name: "Create" }));

@@ -8,6 +8,7 @@ import type { AppShellProps, ShellTask } from "@/frontend/components/v2/AppShell
 import { Dialog } from "@/frontend/components/v2/Dialog";
 import { IconButton } from "@/frontend/components/v2/IconButton";
 import { TextInput } from "@/frontend/components/v2/TextInput";
+import { DirectoryBrowser, PathField } from "@/frontend/components/PathField";
 
 /**
  * The chat-history / resume list (§7.5): the shell's left column, fed by
@@ -150,6 +151,11 @@ function ProjectActions({ projectId, name, onDelete }: ProjectActionsProps) {
  * The one affordance for adding a repo, which v1 had and nothing else in v2
  * does. Self-contained — button plus dialog — so it can be handed to the shell
  * as a header slot without the shell learning what a project is.
+ *
+ * Two views, one dialog. Browsing for a directory swaps the body and re-labels
+ * the footer rather than opening a second `Dialog`: `Dialog` binds Escape to
+ * `document` and renders `fixed z-50`, so stacking two of them would dismiss
+ * both at once and leave their z-order to declaration order.
  */
 export function NewProjectButton({
   onCreate,
@@ -159,6 +165,18 @@ export function NewProjectButton({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
+  const [browsing, setBrowsing] = useState(false);
+  /** Whether the browser has been open once — only then should returning to the
+   * form pull focus, since the first open belongs to the Name field. */
+  const [browsed, setBrowsed] = useState(false);
+  /** The row highlighted in the browser, already spelled the way the field wants. */
+  const [picked, setPicked] = useState<string | null>(null);
+
+  const usePicked = useCallback((chosen: string) => {
+    setPath(chosen);
+    setPicked(null);
+    setBrowsing(false);
+  }, []);
 
   return (
     <>
@@ -169,33 +187,57 @@ export function NewProjectButton({
         onClick={() => {
           setName("");
           setPath("");
+          setPicked(null);
+          setBrowsing(false);
+          setBrowsed(false);
           setOpen(true);
         }}
       />
       <Dialog
         open={open}
-        title="New project"
-        confirmLabel="Create"
-        confirmDisabled={!name.trim()}
-        onConfirm={() => onCreate(name.trim(), path.trim())}
-        onClose={() => setOpen(false)}
+        title={browsing ? "Choose a folder" : "New project"}
+        confirmLabel={browsing ? "Use this folder" : "Create"}
+        confirmDisabled={browsing ? !picked : !name.trim()}
+        onConfirm={() => (browsing ? usePicked(picked!) : onCreate(name.trim(), path.trim()))}
+        // While browsing, Cancel and Escape mean "back to the form", not
+        // "abandon the project". That also makes confirming work without
+        // `Dialog` growing a stay-open option: it calls `onConfirm` then
+        // `onClose`, and here the second is the same leave-browse-mode the
+        // first already did.
+        onClose={() => (browsing ? setBrowsing(false) : setOpen(false))}
+        className={browsing ? "max-w-md" : undefined}
       >
-        <TextInput
-          id="new-project-name"
-          label="Name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Website"
-          data-1p-ignore
-        />
-        <TextInput
-          id="new-project-path"
-          label="Repository path"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          placeholder="~/projects/website"
-          data-1p-ignore
-        />
+        {browsing ? (
+          <DirectoryBrowser
+            initialPath={path}
+            onSelectionChange={setPicked}
+            onCommit={usePicked}
+          />
+        ) : (
+          <>
+            <TextInput
+              id="new-project-name"
+              label="Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Website"
+              data-1p-ignore
+            />
+            <PathField
+              id="new-project-path"
+              label="Repository path"
+              value={path}
+              onChange={setPath}
+              placeholder="~/projects/website"
+              autoFocus={browsed}
+              onBrowse={() => {
+                setPicked(null);
+                setBrowsed(true);
+                setBrowsing(true);
+              }}
+            />
+          </>
+        )}
       </Dialog>
     </>
   );

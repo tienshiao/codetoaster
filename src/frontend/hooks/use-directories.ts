@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 interface DirResult {
   parent: string;
   directories: string[];
+  /** The server's homedir, so a caller can translate between `~` and absolute. */
+  home: string;
 }
 
 async function fetchDirectories(path: string): Promise<DirResult> {
