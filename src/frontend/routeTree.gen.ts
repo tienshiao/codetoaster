@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ShellRouteImport } from './routes/shell'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SessionsSlugRouteImport } from './routes/sessions.$slug'
 import { Route as SessionsSlugIndexRouteImport } from './routes/sessions.$slug.index'
@@ -16,6 +17,11 @@ import { Route as SessionsSlugGitRouteImport } from './routes/sessions.$slug.git
 import { Route as SessionsSlugFileRouteImport } from './routes/sessions.$slug.file'
 import { Route as SessionsSlugDiffRouteImport } from './routes/sessions.$slug.diff'
 
+const ShellRoute = ShellRouteImport.update({
+  id: '/shell',
+  path: '/shell',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -49,6 +55,7 @@ const SessionsSlugDiffRoute = SessionsSlugDiffRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/shell': typeof ShellRoute
   '/sessions/$slug': typeof SessionsSlugRouteWithChildren
   '/sessions/$slug/diff': typeof SessionsSlugDiffRoute
   '/sessions/$slug/file': typeof SessionsSlugFileRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/shell': typeof ShellRoute
   '/sessions/$slug/diff': typeof SessionsSlugDiffRoute
   '/sessions/$slug/file': typeof SessionsSlugFileRoute
   '/sessions/$slug/git': typeof SessionsSlugGitRoute
@@ -65,6 +73,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/shell': typeof ShellRoute
   '/sessions/$slug': typeof SessionsSlugRouteWithChildren
   '/sessions/$slug/diff': typeof SessionsSlugDiffRoute
   '/sessions/$slug/file': typeof SessionsSlugFileRoute
@@ -75,6 +84,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/shell'
     | '/sessions/$slug'
     | '/sessions/$slug/diff'
     | '/sessions/$slug/file'
@@ -83,6 +93,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/shell'
     | '/sessions/$slug/diff'
     | '/sessions/$slug/file'
     | '/sessions/$slug/git'
@@ -90,6 +101,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/shell'
     | '/sessions/$slug'
     | '/sessions/$slug/diff'
     | '/sessions/$slug/file'
@@ -99,11 +111,19 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ShellRoute: typeof ShellRoute
   SessionsSlugRoute: typeof SessionsSlugRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/shell': {
+      id: '/shell'
+      path: '/shell'
+      fullPath: '/shell'
+      preLoaderRoute: typeof ShellRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -169,6 +189,7 @@ const SessionsSlugRouteWithChildren = SessionsSlugRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ShellRoute: ShellRoute,
   SessionsSlugRoute: SessionsSlugRouteWithChildren,
 }
 export const routeTree = rootRouteImport

@@ -99,6 +99,54 @@
   font-display: swap;
 }
 
+/* Public Sans — the v2 chrome face, self-hosted. v1 declared `Inter, system-ui`
+   and shipped no sans binary, so it really rendered in system-ui; v2 picks a
+   face deliberately. Self-hosted rather than pulled from Google Fonts because
+   the daemon is a local tool at localhost:4000 and must not need the network
+   to render its own chrome. One variable file per subset covers 400–700. */
+@font-face {
+  font-family: "Public Sans";
+  src: url("./fonts/PublicSans-Variable-latin.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Public Sans";
+  src: url("./fonts/PublicSans-Variable-latin-ext.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ─── CodeToaster v2 design system ───────────────────────────────────────────
+   Imported from the Claude Design project "CodeToaster v2 Design System"
+   (06f63995-570a-486c-af82-d70b8fa5976b): tokens/palette.css, space.css,
+   typography.css, motion.css, semantic.css, base.css, and the Tailwind 4
+   bridge from integration/tailwind-theme.css.
+
+   The direction is cold precision — one blue-grey neutral family at oklch hue
+   258, one electric blue accent, and colour otherwise reserved for state, so
+   that code stays the brightest thing on screen. It replaces the shadcn zinc
+   defaults wholesale; light and dark are peers and `.dark` on <html> is the
+   whole switch.
+
+   Layering, and it matters: the raw palette is never referenced by a
+   component — semantic.css is the only vocabulary the UI may use. Keep it
+   that way, or a re-sync from the design project has nothing to re-sync.
+
+   Note `--shadow-*`, `--radius-*`, `--text-*` and `--font-*` are declared in
+   :root here *and* mapped through `@theme inline` under the same names. That
+   is deliberate: `inline` makes a utility carry the value rather than a
+   reference to a theme variable, so the mapping does not re-emit the name and
+   there is no cycle. See docs/v2-architecture.md §7.1 for the shell these
+   chrome heights measure. */
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -108,121 +156,460 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-pane: var(--pane);
+  --color-chrome: var(--chrome);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-selected-border: var(--selected-border);
+  --color-selected-foreground: var(--selected-foreground);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-state-busy: var(--state-busy);
+  --color-state-attention: var(--state-attention);
+  --color-state-idle: var(--state-idle);
+  --color-state-suspended: var(--state-suspended);
+  --color-state-exited: var(--state-exited);
+  --color-state-error: var(--state-error);
+  --color-diff-add: var(--diff-add);
+  --color-diff-add-emphasis: var(--diff-add-emphasis);
+  --color-diff-add-marker: var(--diff-add-marker);
+  --color-diff-del: var(--diff-del);
+  --color-diff-del-emphasis: var(--diff-del-emphasis);
+  --color-diff-del-marker: var(--diff-del-marker);
+  --color-diff-hunk: var(--diff-hunk);
+  --color-diff-hunk-foreground: var(--diff-hunk-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  /* Not in the design project's bridge, but the shadcn sidebar/command
+     primitives still in the v1 tree compile against them. */
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --text-micro: var(--text-micro);
+  --text-xs: var(--text-xs);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-base);
+  /* Tailwind pairs a default line-height with every --text-* step, computed
+     for its own 14px scale. Left alone, `text-sm` would set 1.43 on 13px and
+     quietly break the fixed chrome heights the shell lines up on. */
+  --text-micro--line-height: var(--leading-row);
+  --text-xs--line-height: var(--leading-ui);
+  --text-sm--line-height: var(--leading-ui);
+  --text-base--line-height: var(--leading-code);
+  --text-lg: var(--text-lg);
+  --text-xl: var(--text-xl);
+  --text-2xl: var(--text-2xl);
+
+  --tracking-ui: var(--tracking-ui);
+  --tracking-label: var(--tracking-label);
+  --tracking-mono: var(--tracking-mono);
+
+  --leading-row: var(--leading-row);
+  --leading-ui: var(--leading-ui);
+  --leading-code: var(--leading-code);
+
+  /* Chrome heights as spacing, so `h-row`, `h-tabstrip`, `w-sidebar` are the
+     same numbers three independently built columns line up on. */
+  --spacing-row: var(--h-row);
+  --spacing-group: var(--h-group);
+  --spacing-tab: var(--h-tab);
+  --spacing-tabstrip: var(--h-tabstrip);
+  --spacing-titlebar: var(--h-titlebar);
+  --spacing-statusbar: var(--h-statusbar);
+  --spacing-control: var(--h-control);
+  --spacing-control-sm: var(--h-control-sm);
+  --spacing-control-lg: var(--h-control-lg);
+  --spacing-sidebar: var(--w-sidebar);
+  --spacing-sidebar-right: var(--w-sidebar-right);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-overlay: var(--shadow-overlay);
+
+  --animate-busy-pulse: ct-busy-pulse var(--duration-pulse) var(--ease-in-out) infinite;
 }
 
+/* ── tokens/palette.css ─────────────────────────────────────────────────────
+   Raw palette. Never referenced from components — use the semantic names
+   below. Neutrals are blue-grey at hue 258 with chroma rising as they darken,
+   so shadow reads cool rather than muddy. */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
+  /* Five steps are declared as bare `L C H` channels as well as colours,
+     because every transparent wash in this system is built from one of them.
+     A wash MUST be written `oklch(var(--ct-x-ch) / <alpha>)` and never
+     `color-mix(in oklab, var(--ct-x) N%, transparent)`: Tailwind emits a
+     color-mix over a var() as an opaque fallback plus an `@supports` override
+     nested inside the rule, and Bun's CSS bundler drops that nested block —
+     leaving the fallback, so every wash renders fully opaque. A selected row
+     comes out solid blue and a diff comes out solid green. Adding a wash over
+     a sixth palette step means giving that step a `-ch` triplet first. */
+  --ct-slate-1000-ch: 0.155 0.014 258;
+  --ct-blue-400-ch:   0.720 0.150 259;
+  --ct-blue-500-ch:   0.623 0.188 260;
+  --ct-green-500-ch:  0.660 0.150 150;
+  --ct-red-500-ch:    0.620 0.190 22;
+
+  --ct-slate-25:   oklch(0.990 0.002 258);
+  --ct-slate-50:   oklch(0.976 0.003 258);
+  --ct-slate-100:  oklch(0.958 0.005 258);
+  --ct-slate-200:  oklch(0.918 0.008 258);
+  --ct-slate-300:  oklch(0.862 0.011 258);
+  --ct-slate-400:  oklch(0.700 0.016 258);
+  --ct-slate-500:  oklch(0.588 0.019 258);
+  --ct-slate-600:  oklch(0.492 0.021 258);
+  --ct-slate-700:  oklch(0.372 0.021 258);
+  --ct-slate-800:  oklch(0.278 0.019 258);
+  --ct-slate-850:  oklch(0.232 0.017 258);
+  --ct-slate-900:  oklch(0.192 0.015 258);
+  --ct-slate-950:  oklch(0.170 0.014 258);
+  --ct-slate-1000: oklch(var(--ct-slate-1000-ch));
+
+  /* Accent: one hue, five steps. 500 is the classic #3B82F6 blue. */
+  --ct-blue-300:   oklch(0.800 0.100 258);
+  --ct-blue-400:   oklch(var(--ct-blue-400-ch));
+  --ct-blue-500:   oklch(var(--ct-blue-500-ch));
+  --ct-blue-600:   oklch(0.548 0.196 261);
+  --ct-blue-700:   oklch(0.470 0.180 262);
+
+  /* Signal hues, matched in lightness and chroma so none shouts louder than
+     another. Each has exactly one job — see the semantic block. */
+  --ct-green-400:  oklch(0.780 0.130 150);
+  --ct-green-500:  oklch(var(--ct-green-500-ch));
+  --ct-green-600:  oklch(0.560 0.140 150);
+  --ct-amber-400:  oklch(0.840 0.140 78);
+  --ct-amber-500:  oklch(0.760 0.150 75);
+  --ct-amber-600:  oklch(0.660 0.145 68);
+  --ct-red-400:    oklch(0.740 0.150 22);
+  --ct-red-500:    oklch(var(--ct-red-500-ch));
+  --ct-red-600:    oklch(0.540 0.200 24);
+  --ct-violet-500: oklch(0.640 0.170 295);
+  --ct-cyan-500:   oklch(0.700 0.110 210);
+}
+
+/* ── tokens/space.css ───────────────────────────────────────────────────────
+   Small radii and fixed chrome heights, so every toolbar, tab strip and list
+   row lines up across screens without per-screen guesswork. */
+:root {
+  --radius: 0.375rem;              /* 6 — cards, dialogs, popovers          */
+  --radius-sm: 0.125rem;           /* 2 — chips, dots-as-squares            */
+  --radius-md: 0.25rem;            /* 4 — rows, controls, tabs              */
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.625rem;
+  --radius-full: 9999px;
+
+  --space-unit: 0.25rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --gutter-chrome: 0.5rem;         /* inside toolbars and tab strips        */
+  --gutter-pane: 0.75rem;          /* inside content panes                  */
+  --gutter-dialog: 1.25rem;
+
+  --h-titlebar: 2.25rem;           /* 36 — top bar                          */
+  --h-tabstrip: 2.25rem;           /* 36 — main-area tab strip              */
+  --h-tab: 1.875rem;               /* 30 — a tab inside the strip           */
+  --h-row: 1.75rem;                /* 28 — task / tree / list / commit row  */
+  --h-group: 1.625rem;             /* 26 — project group header in sidebar  */
+  --h-control-sm: 1.5rem;
+  --h-control: 1.75rem;
+  --h-control-lg: 2rem;
+  --h-statusbar: 1.5rem;
+
+  --w-sidebar: 15rem;              /* 240 — left, tasks                     */
+  --w-sidebar-right: 17rem;        /* 272 — right, trees and lists          */
+  --w-sidebar-icon: 3rem;
+  --w-gutter-line: 3.5rem;         /* diff line-number gutter               */
+
+  --border-width: 1px;
+  --ring-width: 2px;
+  --ring-offset: 1px;
+}
+
+/* ── tokens/typography.css ──────────────────────────────────────────────────
+   Two families, and the split is the identity: Public Sans for chrome,
+   JetBrains Mono for anything that came out of a machine — paths, refs, shas,
+   diffs, terminal, timestamps, counts. If a value could be pasted into a
+   shell, it is mono. */
+:root {
+  --font-sans: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrainsMono Nerd Font Mono", ui-monospace, SFMono-Regular,
+               Menlo, monospace;
+
+  --text-micro: 0.6875rem;         /* 11 — uppercase section labels only    */
+  --text-xs:    0.75rem;           /* 12 — dense metadata, gutters          */
+  --text-sm:    0.8125rem;         /* 13 — UI default                       */
+  --text-base:  0.875rem;          /* 14 — body, code                       */
+  --text-lg:    1rem;
+  --text-xl:    1.25rem;
+  --text-2xl:   1.5rem;
+  --text-3xl:   2.25rem;
+
+  --tracking-ui: -0.006em;         /* sans at small sizes                   */
+  --tracking-tight: -0.02em;       /* display sizes                         */
+  --tracking-label: 0.08em;        /* uppercase micro labels                */
+  --tracking-mono: 0em;            /* never track mono                      */
+
+  --leading-row: 1.2;
+  --leading-ui: 1.35;
+  --leading-code: 1.5;
+  --leading-prose: 1.6;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;          /* the heaviest weight in the product    */
+}
+
+/* ── tokens/motion.css ──────────────────────────────────────────────────────
+   Fast and short. The only long animations mean "working". */
+:root {
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-instant: 90ms;
+  --duration-fast: 140ms;
+  --duration-slow: 220ms;
+  --duration-pulse: 1600ms;
+}
+
+@keyframes ct-busy-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes ct-caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes ct-attention-ring {
+  0%   { box-shadow: 0 0 0 0 var(--state-attention); opacity: 0.6; }
+  100% { box-shadow: 0 0 0 5px var(--state-attention); opacity: 0; }
+}
+
+/* Both long animations mean "working", and neither carries information the
+   colour does not — so a reduced-motion reader loses nothing by stopping
+   them. */
+@media (prefers-reduced-motion: reduce) {
+  .ct-busy-pulse, [data-ct-pulse] { animation: none !important; }
+}
+
+/* ── tokens/semantic.css ────────────────────────────────────────────────────
+   The only vocabulary components may use. Light is the default scope; dark is
+   a `.dark` class on <html>, and a peer of light rather than a tint of it. */
+:root {
+  /* Surfaces. Three planes: chrome (sidebars, strips) sits back, content
+     comes forward, overlays float. */
+  --background: var(--ct-slate-25);
+  --foreground: var(--ct-slate-850);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
+  --card-foreground: var(--ct-slate-850);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0.002 247.839);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.714);
-  --chart-3: oklch(0.398 0.07 227.334);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  --popover-foreground: var(--ct-slate-850);
+  --pane: oklch(1 0 0);            /* editor / diff / terminal surface       */
+  --chrome: var(--ct-slate-50);    /* top bar, tab strip, status bar         */
+  --muted: var(--ct-slate-100);
+  --muted-foreground: var(--ct-slate-600);
+  --subtle-foreground: var(--ct-slate-500);
 
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #000;
-  --sidebar: hsl(0 0% 98%);
-  --sidebar-foreground: hsl(240 5.3% 26.1%);
-  --sidebar-primary: hsl(240 5.9% 10%);
-  --sidebar-primary-foreground: hsl(0 0% 98%);
-  --sidebar-accent: hsl(240 4.8% 95.9%);
-  --sidebar-accent-foreground: hsl(240 5.9% 10%);
-  --sidebar-border: hsl(220 13% 91%);
-  --sidebar-ring: hsl(217.2 91.2% 59.8%);
+  /* Interaction. `accent` is a hover/selection wash, not a brand colour. */
+  --accent: oklch(var(--ct-blue-500-ch) / 0.08);
+  --accent-foreground: var(--ct-slate-900);
+  --hover: oklch(var(--ct-slate-1000-ch) / 0.05);
+  --selected: oklch(var(--ct-blue-500-ch) / 0.11);
+  --selected-border: oklch(var(--ct-blue-500-ch) / 0.35);
+  --selected-foreground: var(--ct-slate-900);
+
+  --primary: var(--ct-blue-600);
+  --primary-hover: var(--ct-blue-700);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: var(--ct-slate-100);
+  --secondary-foreground: var(--ct-slate-800);
+  --destructive: var(--ct-red-600);
+  --destructive-foreground: oklch(1 0 0);
+  --success: var(--ct-green-600);
+  --warning: var(--ct-amber-600);
+
+  --border: var(--ct-slate-200);
+  --border-strong: var(--ct-slate-300);
+  --input: var(--ct-slate-200);
+  --ring: var(--ct-blue-500);
+
+  /* Agent state. Deliberately narrow: blue means the agent is working, amber
+     means it wants you, everything else is grey. Green is reserved for diff
+     additions and success, so an idle task never looks "good". */
+  --state-busy: var(--ct-blue-500);
+  --state-attention: var(--ct-amber-500);
+  --state-idle: var(--ct-slate-400);
+  --state-suspended: var(--ct-slate-300);
+  --state-exited: var(--ct-slate-300);
+  --state-error: var(--ct-red-500);
+
+  /* Diff. The gutter marker is the saturated edge; the row wash stays light
+     enough to read syntax colour through it. */
+  --diff-add: oklch(var(--ct-green-500-ch) / 0.13);
+  --diff-add-emphasis: oklch(var(--ct-green-500-ch) / 0.28);
+  --diff-add-marker: var(--ct-green-600);
+  --diff-del: oklch(var(--ct-red-500-ch) / 0.12);
+  --diff-del-emphasis: oklch(var(--ct-red-500-ch) / 0.26);
+  --diff-del-marker: var(--ct-red-600);
+  --diff-hunk: var(--ct-slate-100);
+  --diff-hunk-foreground: var(--ct-slate-600);
+
+  --sidebar: var(--ct-slate-50);
+  --sidebar-foreground: var(--ct-slate-700);
+  --sidebar-primary: var(--ct-blue-600);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: var(--selected);
+  --sidebar-accent-foreground: var(--ct-slate-900);
+  --sidebar-border: var(--ct-slate-200);
+  --sidebar-ring: var(--ct-blue-500);
+
+  --shadow-sm: 0 1px 2px oklch(0.192 0.015 258 / 0.06);
+  --shadow-md: 0 2px 6px oklch(0.192 0.015 258 / 0.08),
+               0 1px 2px oklch(0.192 0.015 258 / 0.06);
+  --shadow-overlay: 0 12px 32px oklch(0.192 0.015 258 / 0.14),
+                    0 2px 6px oklch(0.192 0.015 258 / 0.08);
+
+  /* Commit-graph lane colours; a branch keeps its lane colour down the list. */
+  --chart-1: var(--ct-blue-500);
+  --chart-2: var(--ct-cyan-500);
+  --chart-3: var(--ct-violet-500);
+  --chart-4: var(--ct-amber-500);
+  --chart-5: var(--ct-green-500);
 }
 
+/* Dark. Elevation goes up with lightness, borders carry almost all the
+   separation, and the accent steps one stop lighter so it holds the same
+   apparent weight against a dark field. */
 .dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0.002 247.839);
-  --card: oklch(0.141 0.005 285.823);
-  --card-foreground: oklch(0.985 0.002 247.839);
-  --popover: oklch(0.141 0.005 285.823);
-  --popover-foreground: oklch(0.985 0.002 247.839);
-  --primary: oklch(0.985 0.002 247.839);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0.002 247.839);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0.002 247.839);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.577 0.245 27.325);
-  --border: oklch(0.274 0.006 286.033);
-  --input: oklch(0.274 0.006 286.033);
-  --ring: oklch(0.442 0.017 285.786);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: hsl(240 5.9% 10%);
-  --sidebar-foreground: hsl(240 4.8% 95.9%);
-  --sidebar-primary: hsl(224.3 76.3% 48%);
-  --sidebar-primary-foreground: hsl(0 0% 100%);
-  --sidebar-accent: hsl(240 3.7% 15.9%);
-  --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
-  --sidebar-border: hsl(240 3.7% 15.9%);
-  --sidebar-ring: hsl(217.2 91.2% 59.8%);
-}
+  --background: var(--ct-slate-900);
+  --foreground: oklch(0.945 0.005 258);
+  --card: var(--ct-slate-850);
+  --card-foreground: oklch(0.945 0.005 258);
+  --popover: var(--ct-slate-850);
+  --popover-foreground: oklch(0.945 0.005 258);
+  --pane: var(--ct-slate-900);
+  --chrome: var(--ct-slate-950);
+  --muted: var(--ct-slate-800);
+  --muted-foreground: var(--ct-slate-400);
+  --subtle-foreground: var(--ct-slate-500);
 
+  --accent: oklch(var(--ct-blue-400-ch) / 0.12);
+  --accent-foreground: oklch(0.975 0.003 258);
+  --hover: oklch(1 0 0 / 0.05);
+  --selected: oklch(var(--ct-blue-500-ch) / 0.17);
+  --selected-border: oklch(var(--ct-blue-500-ch) / 0.35);
+  --selected-foreground: oklch(0.975 0.003 258);
+
+  --primary: var(--ct-blue-500);
+  --primary-hover: var(--ct-blue-400);
+  --primary-foreground: oklch(0.985 0.002 258);
+  --secondary: var(--ct-slate-800);
+  --secondary-foreground: oklch(0.945 0.005 258);
+  --destructive: var(--ct-red-500);
+  --destructive-foreground: oklch(0.985 0.002 258);
+  --success: var(--ct-green-500);
+  --warning: var(--ct-amber-500);
+
+  --border: oklch(0.295 0.016 258);
+  --border-strong: var(--ct-slate-700);
+  --input: oklch(0.295 0.016 258);
+  --ring: var(--ct-blue-400);
+
+  --state-busy: var(--ct-blue-400);
+  --state-attention: var(--ct-amber-400);
+  --state-idle: var(--ct-slate-500);
+  --state-suspended: var(--ct-slate-700);
+  --state-exited: var(--ct-slate-700);
+  --state-error: var(--ct-red-400);
+
+  --diff-add: oklch(var(--ct-green-500-ch) / 0.15);
+  --diff-add-emphasis: oklch(var(--ct-green-500-ch) / 0.32);
+  --diff-add-marker: var(--ct-green-400);
+  --diff-del: oklch(var(--ct-red-500-ch) / 0.15);
+  --diff-del-emphasis: oklch(var(--ct-red-500-ch) / 0.32);
+  --diff-del-marker: var(--ct-red-400);
+  --diff-hunk: var(--ct-slate-850);
+  --diff-hunk-foreground: var(--ct-slate-400);
+
+  --sidebar: var(--ct-slate-1000);
+  --sidebar-foreground: var(--ct-slate-300);
+  --sidebar-primary: var(--ct-blue-500);
+  --sidebar-primary-foreground: oklch(0.985 0.002 258);
+  --sidebar-accent: var(--selected);
+  --sidebar-accent-foreground: oklch(0.975 0.003 258);
+  --sidebar-border: oklch(0.265 0.015 258);
+  --sidebar-ring: var(--ct-blue-400);
+
+  /* Dark elevation is a top highlight plus a deep shadow, never a lighter
+     fill alone — a raised surface must still read as raised on an OLED
+     panel. */
+  --shadow-sm: inset 0 1px 0 oklch(1 0 0 / 0.04);
+  --shadow-md: inset 0 1px 0 oklch(1 0 0 / 0.05),
+               0 2px 8px oklch(0 0 0 / 0.35);
+  --shadow-overlay: inset 0 1px 0 oklch(1 0 0 / 0.06),
+                    0 16px 40px oklch(0 0 0 / 0.55);
+
+  --chart-1: var(--ct-blue-400);
+  --chart-2: var(--ct-cyan-500);
+  --chart-3: var(--ct-violet-500);
+  --chart-4: var(--ct-amber-400);
+  --chart-5: var(--ct-green-400);
+}
+/* ── tokens/base.css ────────────────────────────────────────────────────────
+   The app is a fixed shell: 13px sans with UI tracking, mono for code, and
+   nothing inherits a browser default. */
 @layer base {
   * {
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: var(--leading-ui);
+    letter-spacing: var(--tracking-ui);
+    -webkit-font-smoothing: antialiased;
   }
+  code, kbd, pre, samp {
+    font-family: var(--font-mono);
+    letter-spacing: var(--tracking-mono);
+  }
+  /* Focus is a 2px ring at 1px offset, and it is never removed. */
+  :focus-visible {
+    outline: var(--ring-width) solid var(--ring);
+    outline-offset: var(--ring-offset);
+  }
+  ::selection { background: var(--selected); }
 }
 
 html, body, #root {
@@ -291,12 +678,9 @@ html, body, #root {
   color: var(--muted-foreground);
 }
 .markdown-preview a {
-  color: oklch(0.55 0.18 259);
+  color: var(--primary);
   text-decoration: underline;
   text-underline-offset: 2px;
-}
-.dark .markdown-preview a {
-  color: oklch(0.7 0.15 259);
 }
 .markdown-preview hr {
   border: 0;
