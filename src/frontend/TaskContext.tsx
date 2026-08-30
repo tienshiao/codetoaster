@@ -76,6 +76,14 @@ export interface TaskContextValue {
   renameTask: (id: string, title: string) => Promise<TaskResult<TaskInfo>>;
   closeTask: (id: string) => Promise<TaskResult<TaskInfo>>;
   resumeTask: (id: string, options?: ResumeTaskOptions) => Promise<TaskResult<TaskInfo>>;
+  /** Open a plain shell inside a task, as a sibling of its agent (§3). Answers
+   * with the new PTY's id and the task it now belongs to — the task because it
+   * carries `shellPtyIds`, so the caller has the tab and the proof that its PTY
+   * is live from the same reply rather than from two transports. */
+  openShell: (id: string) => Promise<TaskResult<{ ptyId: string; task: TaskInfo }>>;
+  /** Kill one of a task's shells — what closing a shell tab means. Never the
+   * agent's terminal, which the server refuses. */
+  closeShell: (id: string, ptyId: string) => Promise<TaskResult<{ task: TaskInfo }>>;
   /**
    * Projects are the exception to the HTTP rule above: they touch a table and
    * nothing else — no git, no processes — so they stay on the socket, where
@@ -317,6 +325,26 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const openShell = useCallback(
+    (id: string) =>
+      request<{ ptyId: string; task: TaskInfo }>(
+        `/api/tasks/${id}/shell`,
+        { method: "POST" },
+        "Could not open a shell",
+      ),
+    [],
+  );
+
+  const closeShell = useCallback(
+    (id: string, ptyId: string) =>
+      request<{ task: TaskInfo }>(
+        `/api/tasks/${id}/shell/${ptyId}`,
+        { method: "DELETE" },
+        "Could not close the shell",
+      ),
+    [],
+  );
+
   // The id is the client's to mint: the socket has no reply channel, so a
   // server-assigned one would only come back with the next broadcast and the
   // caller could not tell which project in it was the one it just asked for.
@@ -348,6 +376,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       renameTask,
       closeTask,
       resumeTask,
+      openShell,
+      closeShell,
       createProject,
       deleteProject,
     }),
@@ -362,6 +392,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       renameTask,
       closeTask,
       resumeTask,
+      openShell,
+      closeShell,
       createProject,
       deleteProject,
     ],

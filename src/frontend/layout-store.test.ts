@@ -19,6 +19,7 @@ import {
   moveTab,
   setGroupFlex,
   pruneShellTabs,
+  reconcileShellTabs,
   reviveLayout,
   loadLayout,
   saveLayout,
@@ -1138,4 +1139,72 @@ test("reviveLayout accepts the same read-only key in two groups, as a split prod
     ]),
   )!;
   expect(keyGrid(layout)).toEqual([["agent", "file:a.ts"], ["file:a.ts"]]);
+});
+
+// ── reconcileShellTabs ──────────────────────────────────────────────────────
+//
+// §5.5's "shell tabs are not resumable", as a rule: drop one only on positive
+// knowledge that its PTY is gone, never on its absence from a list.
+
+test("a task that is not live drops every shell tab", () => {
+  let layout = createLayout();
+  layout = openTab(layout, shell("p1"));
+  layout = openTab(layout, shell("p2"));
+  layout = openTab(layout, file("a.ts"));
+
+  // Suspension is exactly "this task holds no processes", so nothing has to
+  // have been seen alive for this to be knowledge — which is what makes it
+  // survive a page reload across a harvest, where this client never saw them.
+  const pruned = reconcileShellTabs(
+    layout,
+    { lifecycle: "suspended", shellPtyIds: [] },
+    new Set<string>(),
+  );
+  expect(keyGrid(pruned)).toEqual([["agent", "file:a.ts"]]);
+});
+
+test("a live task drops a shell it had reported and no longer reports", () => {
+  let layout = createLayout();
+  layout = openTab(layout, shell("gone"));
+  layout = openTab(layout, shell("here"));
+
+  // "gone" was reported once — it exited, or another client closed it.
+  const pruned = reconcileShellTabs(
+    layout,
+    { lifecycle: "live", shellPtyIds: ["here"] },
+    new Set(["gone", "here"]),
+  );
+  expect(keyGrid(pruned)).toEqual([["agent", "shell:here"]]);
+});
+
+test("a live task keeps a shell nobody has reported yet", () => {
+  let layout = createLayout();
+  layout = openTab(layout, shell("just-opened"));
+
+  // The tab is opened from the response to POST …/shell, which races the task
+  // deltas on the socket: a delta computed a moment before the spawn carries a
+  // shellPtyIds without it. Pruning on absence would close the tab the user
+  // just asked for.
+  expect(
+    reconcileShellTabs(layout, { lifecycle: "live", shellPtyIds: [] }, new Set<string>()),
+  ).toBe(layout);
+  // ...and once it has been reported, the rule applies to it like any other.
+  expect(
+    keyGrid(
+      reconcileShellTabs(
+        layout,
+        { lifecycle: "live", shellPtyIds: [] },
+        new Set(["just-opened"]),
+      ),
+    ),
+  ).toEqual([["agent"]]);
+});
+
+test("a live task with every shell reported changes nothing", () => {
+  let layout = createLayout();
+  layout = openTab(layout, shell("p1"));
+  layout = openTab(layout, file("a.ts"));
+  expect(
+    reconcileShellTabs(layout, { lifecycle: "live", shellPtyIds: ["p1"] }, new Set(["p1"])),
+  ).toBe(layout);
 });

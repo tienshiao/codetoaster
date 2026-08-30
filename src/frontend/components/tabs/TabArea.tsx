@@ -49,6 +49,23 @@ export interface TabAreaProps {
   leading?: ReactNode;
   /** The overflow menu on a group's strip. */
   onTabActions?: (group: TabGroup) => void;
+  /** Open a plain shell in this task as a new tab (§3). The strip's `+`; absent
+   * where there is no task to open one in. */
+  onNewShell?: () => void;
+  /**
+   * A tab was closed *by the close gesture* — the X, or the keyboard reaching
+   * it — as opposed to disappearing because the layout was rewritten around it.
+   *
+   * The distinction is the whole reason this exists rather than the caller
+   * diffing layouts. Closing a shell tab has to kill its PTY, and a diff cannot
+   * tell that from a shell tab dropped by `pruneShellTabs`, whose PTY is
+   * already dead — which would have every reconciliation firing a DELETE
+   * against a terminal that is gone.
+   *
+   * Fired alongside `onLayoutChange`, not instead of it: the layout closes the
+   * tab either way.
+   */
+  onCloseTab?: (tab: TabState) => void;
   className?: string;
 }
 
@@ -99,6 +116,8 @@ export function TabArea({
   header,
   leading,
   onTabActions,
+  onNewShell,
+  onCloseTab,
   className,
 }: TabAreaProps) {
   const rowRef = useRef<HTMLDivElement>(null);
@@ -321,7 +340,12 @@ export function TabArea({
             onDoubleClick: () => onLayoutChange(pinTab(layout, tab.id)),
             // The agent tab gets no handler, so `Tab` draws the pin glyph in
             // place of an X: nothing to click, and nothing to reach by keyboard.
-            onClose: shown.closable ? () => onLayoutChange(closeTab(layout, tab.id)) : undefined,
+            onClose: shown.closable
+              ? () => {
+                  onCloseTab?.(tab);
+                  onLayoutChange(closeTab(layout, tab.id));
+                }
+              : undefined,
             onPointerDown: startDrag(tab, group),
             dragging: draggingId === tab.id,
             dropBefore: target === tabIndex,
@@ -368,6 +392,7 @@ export function TabArea({
                   active && splittable ? () => onLayoutChange(splitTab(layout, active.id)) : undefined
                 }
                 onTabActions={onTabActions ? () => onTabActions(group) : undefined}
+                onNewShell={onNewShell}
                 // A press anywhere on the strip — a tab, the empty stretch past
                 // the last one, the action cluster — is a press on this group.
                 onPointerDown={() => {

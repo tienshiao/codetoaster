@@ -253,6 +253,41 @@ describe("the guards", () => {
     stillRunning(manager, store, id);
   });
 
+  // TASK-27, and the guard §5.5 spells out as "no shell PTY in the task has a
+  // foreground process other than the shell itself". The agent being idle says
+  // nothing about a build the user started in a shell tab and walked away from,
+  // and harvesting takes every one of the task's terminals down with it — so
+  // the guard has to be asked of all of them, not of the agent alone.
+  test("a task with something running in a shell tab is left alone", async () => {
+    const { manager, store, harvester } = newManager();
+    // The agent itself is the model citizen: idle, silent, nothing running.
+    const id = await harvestableTask(manager, store);
+    const shell = manager.openShell(id)!;
+    expect(await waitFor(async () => !(await shell.hasForegroundProcess()))).toBe(true);
+    shell.write("sleep 30\n");
+    expect(await waitFor(() => shell.hasForegroundProcess())).toBe(true);
+
+    await harvester.tick();
+
+    stillRunning(manager, store, id);
+    expect(shell.exited).toBe(false);
+  });
+
+  // The same reasoning for the other guard the shells have to be counted in:
+  // one open tab anywhere in the task is somebody watching it.
+  test("a task with a client attached to a shell tab is left alone", async () => {
+    const { manager, store, harvester } = newManager();
+    const id = await harvestableTask(manager, store);
+    const shell = manager.openShell(id)!;
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    manager.attachClient(shell.id, client.id, client.ws, 80, 24);
+
+    await harvester.tick();
+
+    stillRunning(manager, store, id);
+  });
+
   // §9's risk 3, and the reason `hasForegroundProcess` answers `true` when it
   // cannot tell: a wedged mount, a killed `ps`, a machine under enough load to
   // miss the timeout. None of them are evidence that the terminal is empty.
@@ -330,11 +365,9 @@ describe("harvesting", () => {
     const agent = manager.primaryPty(id)!;
     expect(await waitFor(() => agent.serialize().includes("harvest me"))).toBe(true);
 
-    // A second terminal on the task, wired the way TASK-27's shell tabs will be
-    // — there is no public door onto one yet, and "every PTY of the task" is
-    // not an assertion a single-terminal task can make.
-    const shell = (manager as any).ptys.spawn(["cat"], {});
-    (manager as any).adopt(shell, id);
+    // A second terminal on the task: "every PTY of the task" is not an
+    // assertion a single-terminal task can make.
+    const shell = manager.openShell(id)!;
     client.received.length = 0;
 
     await harvester.tick();

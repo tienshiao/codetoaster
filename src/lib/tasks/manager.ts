@@ -81,6 +81,15 @@ export class TaskManager {
   // notification — has to be readdressed to the task before it goes out.
   private ptyToTask: Map<string, string> = new Map();
   private taskPtys: Map<string, Set<string>> = new Map();
+  // Which of a task's terminals is the agent's (§3). Held apart from the set
+  // above rather than inferred from it, because the set is unordered in every
+  // way that matters: `resumeTask` on a *live* task — an agent that exited, or
+  // a `fresh: true` — discards the old agent and adopts the new one after
+  // whatever shell tabs are open, so "the first live PTY the task holds" would
+  // answer with a shell. Everything that means *the agent* reads through here:
+  // `taskInfo.ptyId` (what a client attaches its agent tab to), `snapshot`,
+  // `refreshCwd`, and resume's own already-running test.
+  private agentPtys: Map<string, string> = new Map();
   private projects: ProjectInfo[] = [generalProject()];
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
   // Which tasks have ever reported a hook, and the timers waiting to find out
@@ -388,9 +397,22 @@ export class TaskManager {
     return row;
   }
 
-  /** Wire a PTY to a task: the association, plus the callbacks that readdress
-   * everything the PTY reports to the task that owns it. */
-  private adopt(pty: Pty, taskId: string): void {
+  /**
+   * Wire a PTY to a task: the association, plus the callbacks that readdress
+   * what the PTY reports to the task that owns it.
+   *
+   * `agent` is what separates the two kinds of terminal a task can hold (§3),
+   * and it decides far more than which map an id goes in. Everything below the
+   * ownership lines is the task speaking about *its agent* — that the
+   * conversation exited, what the agent is calling itself, whether it is
+   * working — and a shell tab has no standing to say any of it. Left
+   * undifferentiated, typing `exit` in a shell would record the task's agent as
+   * dead, a shell's OSC title would become the task's label, and a build
+   * running in a shell would drive the busy/idle inference that stands in for
+   * the agent's own hooks in degraded mode. `openShell` passes false; every
+   * other caller is spawning the agent.
+   */
+  private adopt(pty: Pty, taskId: string, agent = true): void {
     this.ptyToTask.set(pty.id, taskId);
     let held = this.taskPtys.get(taskId);
     if (!held) {
@@ -398,6 +420,12 @@ export class TaskManager {
       this.taskPtys.set(taskId, held);
     }
     held.add(pty.id);
+
+    if (!agent) {
+      this.adoptShell(pty, taskId);
+      return;
+    }
+    this.agentPtys.set(taskId, pty.id);
 
     pty.onExit((code) => {
       // Only if this is still the task's terminal. A rung of the resume ladder
@@ -432,6 +460,37 @@ export class TaskManager {
     pty.onNotification((_ptyId, title, body) => {
       this.broadcastToAll({ type: "notification", taskId, title, body });
       this.broadcastTask(taskId);
+    });
+  }
+
+  /**
+   * The much smaller half of `adopt`: what a shell tab is allowed to report.
+   *
+   * A shell is a process in the task's directory, not a voice for the task. So
+   * it moves the task up the recency list — a user running a build in a shell
+   * tab is working on that task, and a list ordered by recency that says
+   * otherwise is wrong — and it tells clients when it dies, because a tab bound
+   * to a PTY that is gone has to stop being drawn (§5.5, and `pruneShellTabs`).
+   * It does not touch `agent_state`, does not become the task's
+   * `terminalTitle`, does not feed the degraded-mode inference, and raises no
+   * notifications: those are all claims about the conversation.
+   *
+   * No `activity` message either, for a reason worth stating: activity is
+   * addressed to the *task*, and the sidebar's dot is edge-triggered off it. A
+   * shell and an agent both emitting would have each one's falling edge clear
+   * the other's dot, so a build finishing would put out the light on an agent
+   * still mid-turn.
+   */
+  private adoptShell(pty: Pty, taskId: string): void {
+    pty.onExit(() => {
+      // Only if the task still holds it: `discardPty` and `doSuspend` both kill
+      // shells on their way past, and an exit callback landing after the task
+      // has been deleted would broadcast a row that is no longer there.
+      if (this.ptyToTask.get(pty.id) !== taskId) return;
+      this.broadcastTask(taskId);
+    });
+    pty.onActivityChange((_ptyId, active) => {
+      if (active) this.store.update(taskId, { last_active_at: Date.now() });
     });
   }
 
@@ -563,6 +622,10 @@ export class TaskManager {
     this.ptys.kill(pty.id);
     this.ptyToTask.delete(pty.id);
     this.taskPtys.get(taskId)?.delete(pty.id);
+    // Only if it was the one: this is reached with the agent's terminal, and
+    // clearing the slot unconditionally would be right today and wrong the
+    // moment anything discards a shell through here.
+    if (this.agentPtys.get(taskId) === pty.id) this.agentPtys.delete(taskId);
     this.hookSeen.delete(taskId);
     this.disarmHookGrace(taskId);
   }
@@ -835,13 +898,70 @@ export class TaskManager {
     return this.ptyToTask.get(ptyId);
   }
 
-  /** The terminal a task's tabs open onto. One for now; TASK-27 adds more. */
+  /** The task's agent terminal — the one its agent tab opens onto, the one a
+   * snapshot is taken of, and the one asked where the task is. A task holds
+   * shell tabs beside it (§3); none of them is ever this. */
   primaryPty(taskId: string): Pty | undefined {
+    const ptyId = this.agentPtys.get(taskId);
+    return ptyId === undefined ? undefined : this.ptys.get(ptyId);
+  }
+
+  /** The task's shell terminals, in the order they were opened. What
+   * `TaskInfo.shellPtyIds` carries, and so what a client reconciles a restored
+   * tab layout against. */
+  shellPtys(taskId: string): Pty[] {
+    const agentPtyId = this.agentPtys.get(taskId);
+    const shells: Pty[] = [];
     for (const ptyId of this.taskPtys.get(taskId) ?? []) {
+      if (ptyId === agentPtyId) continue;
       const pty = this.ptys.get(ptyId);
-      if (pty) return pty;
+      if (pty) shells.push(pty);
     }
-    return undefined;
+    return shells;
+  }
+
+  /**
+   * Open a plain shell as a sibling of the task's agent (§3, §5.5).
+   *
+   * Undefined when the task is not live: a shell belongs to a task's running
+   * state, and spawning one against a suspended row would resurrect half a task
+   * — a process in the working directory of a conversation nobody has resumed,
+   * which the next harvest would not even find, since the harvester only walks
+   * live rows.
+   *
+   * Same environment as the agent, deliberately. A user who types `claude` in a
+   * shell tab is otherwise running inside the task's inherited marker, and the
+   * hooks that agent fires would be filed against this task's conversation.
+   */
+  openShell(taskId: string, options: { cols?: number; rows?: number } = {}): Pty | undefined {
+    const row = this.store.get(taskId);
+    if (!row || row.lifecycle !== "live") return undefined;
+    const pty = this.ptys.spawn([process.env.SHELL || "/bin/sh"], {
+      cols: options.cols,
+      rows: options.rows,
+      cwd: row.cwd,
+      env: taskEnv(process.env, { taskId, port: this.port, origin: this.origin }),
+    });
+    this.adopt(pty, taskId, false);
+    this.broadcastTask(taskId);
+    return pty;
+  }
+
+  /**
+   * Close one of a task's shells. False when the task does not hold that PTY,
+   * which includes the case worth being explicit about: the agent's own
+   * terminal is not closable through this door. Killing it here would leave the
+   * row saying `live` with no conversation behind it and no snapshot taken —
+   * `closeTask` is how a task is put down (§6).
+   */
+  closeShell(taskId: string, ptyId: string): boolean {
+    if (this.ptyToTask.get(ptyId) !== taskId) return false;
+    if (this.agentPtys.get(taskId) === ptyId) return false;
+    this.ptys.kill(ptyId);
+    this.ptyToTask.delete(ptyId);
+    this.taskPtys.get(taskId)?.delete(ptyId);
+    this.broadcastTask(taskId);
+    return true;
   }
 
   /** Every terminal a task is holding: the agent's, and any shell tabs opened
@@ -1072,6 +1192,7 @@ export class TaskManager {
       this.ptyToTask.delete(ptyId);
     }
     this.taskPtys.delete(taskId);
+    this.agentPtys.delete(taskId);
     // What a task without a process cannot have: a clock waiting for an agent's
     // first hook, which would wake up and relabel a task that is deliberately
     // quiet; a record that the agent now gone had reported, which is a claim
@@ -1139,6 +1260,7 @@ export class TaskManager {
       this.ptyToTask.delete(ptyId);
     }
     this.taskPtys.delete(taskId);
+    this.agentPtys.delete(taskId);
     this.store.delete(taskId);
     for (const project of this.projects) {
       const idx = project.taskIds.indexOf(taskId);
@@ -1234,6 +1356,7 @@ export class TaskManager {
       id: row.id,
       projectId: row.project_id,
       ptyId: pty?.id ?? null,
+      shellPtyIds: this.shellPtys(taskId).map((shell) => shell.id),
       title: row.title,
       titleSource: row.title_source,
       terminalTitle: pty?.title ?? "",

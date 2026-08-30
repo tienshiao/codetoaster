@@ -96,6 +96,7 @@ const task = (id: string): TaskInfo => ({
   id,
   projectId: "general",
   ptyId: null,
+  shellPtyIds: [],
   title: id,
   titleSource: "derived",
   terminalTitle: "",

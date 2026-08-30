@@ -800,3 +800,113 @@ describe("deleting a project", () => {
     expect(store.get("suspended")!.project_id).toBe("general");
   });
 });
+
+// TASK-27. A task holds an agent and however many plain shells the user has
+// opened beside it (§3). The two are the same kind of object to `PtyManager`
+// and must not be the same kind of thing to the task: everything the task says
+// about itself — that its conversation exited, what it is called, whether it is
+// working — is a claim about the agent, and a shell has no standing to make it.
+describe("shell tabs", () => {
+  test("a shell joins the task's terminals without becoming its agent", async () => {
+    const { manager } = newManager();
+    await manager.createTask({ id: "t1", command: shell() });
+    const agent = manager.primaryPty("t1")!;
+
+    const opened = manager.openShell("t1")!;
+
+    expect(opened.id).not.toBe(agent.id);
+    expect(manager.taskIdForPty(opened.id)).toBe("t1");
+    // What the harvester counts views over and asks what is running, and what
+    // a suspend kills.
+    expect(manager.taskPtyList("t1").map((p) => p.id).sort()).toEqual([agent.id, opened.id].sort());
+    // What a client attaches its agent tab to is unmoved.
+    expect(manager.primaryPty("t1")!.id).toBe(agent.id);
+    expect(manager.taskInfo("t1")!.ptyId).toBe(agent.id);
+    expect(manager.taskInfo("t1")!.shellPtyIds).toEqual([opened.id]);
+  });
+
+  test("a shell exiting is not the agent exiting", async () => {
+    const { manager, store } = newManager();
+    // A silent agent, so the only thing that can move the row is the shell.
+    await manager.createTask({ id: "t1", command: ["cat"] });
+    store.update("t1", { agent_state: "idle" });
+    const opened = manager.openShell("t1")!;
+
+    opened.write("exit\n");
+    expect(await waitFor(() => opened.exited)).toBe(true);
+    // The one thing this must not have done. `adopt`'s exit callback writes
+    // `agent_state: exited` and an exit code, and a user typing `exit` in a
+    // shell tab would otherwise put a tombstone on a conversation that is
+    // sitting there perfectly alive.
+    expect(store.get("t1")!.agent_state).toBe("idle");
+    expect(store.get("t1")!.exit_code).toBe(null);
+  });
+
+  test("a shell's terminal title is not the task's", async () => {
+    const { manager } = newManager();
+    await manager.createTask({ id: "t1", command: shell() });
+    const opened = manager.openShell("t1")!;
+
+    // OSC 2. Projected over the stored title at render time by `naming.ts`, so
+    // a shell allowed to set it would rename the task in the sidebar.
+    opened.write("printf '\\033]2;a shell said this\\007'\n");
+    expect(await waitFor(() => opened.title === "a shell said this")).toBe(true);
+    expect(manager.taskInfo("t1")!.terminalTitle).not.toBe("a shell said this");
+  });
+
+  test("a shell does not drive the degraded-mode state inference", async () => {
+    const { manager, store } = newManager();
+    manager.setHookGrace(60);
+    // `cat` never reports a hook and never paints, so the task is exactly the
+    // one degraded mode speaks for — and the only output it will ever see is
+    // the shell's.
+    await manager.createTask({ id: "t1", command: ["cat"] });
+    expect(await waitFor(() => store.get("t1")!.agent_state === "unknown")).toBe(true);
+    const before = store.get("t1")!.last_active_at;
+
+    const opened = manager.openShell("t1")!;
+    opened.write("printf 'a build, say'\n");
+    expect(await waitFor(() => opened.serialize().includes("a build, say"))).toBe(true);
+
+    // Recency moves — a user running something in a shell tab is working on
+    // this task — while the agent's state does not: the shell is not the
+    // conversation, and `inferState` speaks for the conversation.
+    expect(await waitFor(() => store.get("t1")!.last_active_at > before)).toBe(true);
+    expect(store.get("t1")!.agent_state).toBe("unknown");
+  });
+
+  test("closing a shell leaves the agent alone, and the agent cannot be closed as one", async () => {
+    const { manager } = newManager();
+    await manager.createTask({ id: "t1", command: shell() });
+    const agent = manager.primaryPty("t1")!;
+    const opened = manager.openShell("t1")!;
+
+    // The agent tab is not closable (§7.2), and a client that asked anyway must
+    // not take the conversation down by the wrong door.
+    expect(manager.closeShell("t1", agent.id)).toBe(false);
+    expect(agent.isDisposed).toBe(false);
+    // Nor may one task close another's terminal.
+    expect(manager.closeShell("t2", opened.id)).toBe(false);
+
+    expect(manager.closeShell("t1", opened.id)).toBe(true);
+    expect(opened.isDisposed).toBe(true);
+    expect(manager.taskIdForPty(opened.id)).toBeUndefined();
+    expect(manager.taskInfo("t1")!.shellPtyIds).toEqual([]);
+    expect(manager.primaryPty("t1")!.id).toBe(agent.id);
+    // Twice is not a failure to report differently, but it is not a second
+    // kill either.
+    expect(manager.closeShell("t1", opened.id)).toBe(false);
+  });
+
+  test("a suspended task opens no shell", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({ id: "t1", command: shell() });
+    store.update("t1", { lifecycle: "suspended" });
+
+    // A process in the working directory of a conversation nobody has resumed,
+    // that the next harvest would not even find — `liveTasks` is what the
+    // harvester walks.
+    expect(manager.openShell("t1")).toBeUndefined();
+    expect(manager.taskInfo("t1")!.shellPtyIds).toEqual([]);
+  });
+});

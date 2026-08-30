@@ -316,3 +316,92 @@ describe("GET /api/tasks", () => {
     expect(list[0].cwd).toBe(process.cwd());
   });
 });
+
+describe("POST /api/tasks/:id/shell", () => {
+  test("opens a shell beside the agent and hands back both", async () => {
+    const created = await (await post({})).json();
+
+    const res = await fetch(`${base}/api/tasks/${created.id}/shell`, { method: "POST" });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ptyId).toBeString();
+    expect(body.ptyId).not.toBe(created.ptyId);
+    // The agent is unmoved: what the task's agent tab attaches to has not
+    // become the shell.
+    expect(body.task.ptyId).toBe(created.ptyId);
+    // And the response carries the reconciliation the client needs, so the tab
+    // and the fact that its PTY is live arrive together rather than racing over
+    // two transports.
+    expect(body.task.shellPtyIds).toEqual([body.ptyId]);
+    expect(taskManager.getPty(body.ptyId)).toBeDefined();
+    expect(taskManager.taskIdForPty(body.ptyId)).toBe(created.id);
+  });
+
+  test("answers 404 for a task that does not exist", async () => {
+    const res = await fetch(`${base}/api/tasks/nope/shell`, { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+
+  test("refuses a suspended task rather than resuming it", async () => {
+    const created = await (await post({})).json();
+    await fetch(`${base}/api/tasks/${created.id}/close`, { method: "POST" });
+
+    const res = await fetch(`${base}/api/tasks/${created.id}/shell`, { method: "POST" });
+
+    // Reopening a task is the agent's affair (§5.5's two phases), and a click
+    // on `+` is not a request to restart a conversation.
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBeString();
+    expect(taskManager.taskInfo(created.id)!.shellPtyIds).toEqual([]);
+  });
+});
+
+describe("DELETE /api/tasks/:id/shell/:ptyId", () => {
+  test("kills that shell and leaves the conversation running", async () => {
+    const created = await (await post({})).json();
+    const { ptyId } = await (
+      await fetch(`${base}/api/tasks/${created.id}/shell`, { method: "POST" })
+    ).json();
+
+    const res = await fetch(`${base}/api/tasks/${created.id}/shell/${ptyId}`, { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).task.shellPtyIds).toEqual([]);
+    expect(taskManager.getPty(ptyId)).toBeUndefined();
+    // The task is still live, and still has its agent.
+    expect(taskManager.getTask(created.id)!.lifecycle).toBe("live");
+    expect(taskManager.getPty(created.ptyId)).toBeDefined();
+  });
+
+  test("will not take the agent's terminal down by the wrong door", async () => {
+    const created = await (await post({})).json();
+
+    const res = await fetch(`${base}/api/tasks/${created.id}/shell/${created.ptyId}`, {
+      method: "DELETE",
+    });
+
+    // The agent tab is not closable (§7.2); a client that asked anyway gets a
+    // 404 rather than a suspended task with no snapshot taken.
+    expect(res.status).toBe(404);
+    expect(taskManager.getPty(created.ptyId)).toBeDefined();
+    expect(taskManager.getTask(created.id)!.lifecycle).toBe("live");
+  });
+
+  test("answers 404 for a PTY the task does not hold", async () => {
+    const created = await (await post({})).json();
+    const other = await (await post({})).json();
+    const { ptyId } = await (
+      await fetch(`${base}/api/tasks/${other.id}/shell`, { method: "POST" })
+    ).json();
+
+    // Another task's shell is not this task's to close.
+    const res = await fetch(`${base}/api/tasks/${created.id}/shell/${ptyId}`, { method: "DELETE" });
+    expect(res.status).toBe(404);
+    expect(taskManager.getPty(ptyId)).toBeDefined();
+
+    expect(
+      (await fetch(`${base}/api/tasks/nope/shell/${ptyId}`, { method: "DELETE" })).status,
+    ).toBe(404);
+  });
+});

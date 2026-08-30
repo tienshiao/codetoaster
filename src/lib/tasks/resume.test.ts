@@ -405,6 +405,31 @@ describe("resuming a suspended task", () => {
     expect(manager.primaryPty(row.id)).toBeDefined();
   });
 
+  // TASK-27. A task can hold shell tabs beside its agent, and a fresh resume
+  // discards the agent and adopts its replacement *after* them. Read as "the
+  // first live PTY the task holds" — which is what `primaryPty` was — the
+  // task's agent would from here on be a shell: the agent tab would attach to
+  // it, the snapshot would serialize it, and the already-running test above
+  // would answer about it.
+  test("a shell tab does not become the task's agent when the agent is replaced", async () => {
+    const { manager, store } = newManager();
+    const row = suspendedTask(manager, store);
+    await manager.resumeTask(row.id);
+    const first = manager.primaryPty(row.id)!.id;
+    const shell = manager.openShell(row.id)!;
+
+    await manager.resumeTask(row.id, { fresh: true });
+
+    const agent = manager.primaryPty(row.id)!;
+    expect(agent.id).not.toBe(first);
+    expect(agent.id).not.toBe(shell.id);
+    // The shell is untouched by the agent being replaced under it: it is a
+    // process in the task's directory, not part of the conversation.
+    expect(shell.isDisposed).toBe(false);
+    expect(manager.taskInfo(row.id)!.shellPtyIds).toEqual([shell.id]);
+    expect(manager.taskInfo(row.id)!.ptyId).toBe(agent.id);
+  });
+
   test("starting fresh mints a new id rather than reusing a spent one", async () => {
     const { manager, store, agent } = newManager();
     const row = suspendedTask(manager, store);

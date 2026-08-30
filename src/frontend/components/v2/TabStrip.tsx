@@ -8,6 +8,7 @@ import {
   GitCommitHorizontal,
   GitCompare,
   Pin,
+  Plus,
   Sparkles,
   Terminal,
   X,
@@ -175,6 +176,10 @@ export interface TabStripProps {
    * rather than disappearing — a control that vanishes reads as a bug. */
   splitDisabled?: boolean;
   onTabActions?: () => void;
+  /** Open a plain shell in this task as a new tab (§3). Absent on a strip that
+   * has no task behind it — a design-system preview, say — where the button
+   * would be chrome that does nothing. */
+  onNewShell?: () => void;
   /** Emitted as `data-tab-group`: what a drag hit-tests to find the strip it is
    * over, and what tells `TabArea` which group a drop belongs to. */
   groupId?: string;
@@ -196,6 +201,7 @@ export function TabStrip({
   onSplit,
   splitDisabled = false,
   onTabActions,
+  onNewShell,
   groupId,
   onPointerDown,
   ref,
@@ -236,6 +242,9 @@ export function TabStrip({
         <div role="presentation" className="flex flex-none items-center gap-0.5 px-2">
           {actions ? (
             <>
+              {onNewShell ? (
+                <IconButton icon={Plus} label="New shell" size="sm" onClick={onNewShell} />
+              ) : null}
               <IconButton
                 icon={Columns2}
                 label={splitDisabled ? "Split right (not available for terminals)" : "Split right"}

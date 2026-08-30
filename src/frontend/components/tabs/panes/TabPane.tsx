@@ -7,6 +7,7 @@ import { CommitPane } from "./CommitPane";
 import { DiffFilePane } from "./DiffFilePane";
 import { FilePane } from "./FilePane";
 import { HistoryPane } from "./HistoryPane";
+import { ShellPane } from "./ShellPane";
 
 export interface TabPaneProps {
   taskId: string;
@@ -57,14 +58,10 @@ export function TabPane({ taskId, tab, onOpenTab, onSubmitReview, visible }: Tab
       return <AgentPane taskId={taskId} visible={visible} />;
 
     case "shell":
-      // A second PTY in the task, spawned at its cwd. Nothing opens one yet, so
-      // this says so rather than drawing an empty terminal that would look
-      // broken (TASK-27).
-      return (
-        <div className="grid h-full place-items-center text-sm text-subtle-foreground">
-          Shell tabs are not built yet — see TASK-27.
-        </div>
-      );
+      // A second PTY in the task, spawned at its cwd (§3). Named by the
+      // descriptor rather than by the task, since a task has one agent and
+      // however many of these.
+      return <ShellPane ptyId={descriptor.ptyId} visible={visible} />;
 
     case "diffAll":
       // Rendered directly rather than through a pane of its own: `DiffView`

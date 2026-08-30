@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { toast } from "sonner";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { usePty } from "@/frontend/PtyContext";
 import { useSession } from "@/frontend/SessionContext";
@@ -12,10 +13,13 @@ import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { TabArea, TabPane, useTaskLayout } from "@/frontend/components/tabs";
 import {
+  allTabs,
   descriptorFromKey,
   openTab,
+  reconcileShellTabs,
   type OpenOptions,
   type TabDescriptor,
+  type TabState,
 } from "@/frontend/layout-store";
 
 export interface TaskShellProps {
@@ -42,7 +46,7 @@ export interface TaskShellProps {
  * hooks, so the routes stay about addresses.
  */
 export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }: TaskShellProps) {
-  const { tasks, loaded } = useTasks();
+  const { tasks, loaded, openShell, closeShell } = useTasks();
   const openTask = useOpenTask();
   const explorerPanel = useExplorerPanel();
   const explorerSections = useExplorerRail(taskId);
@@ -134,6 +138,68 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   const ptyId = selected?.ptyId ?? null;
   const canDeliver = !!ptyId && !selected?.exited;
 
+  // ── shell tabs ────────────────────────────────────────────────────────────
+
+  const handleNewShell = useCallback(async () => {
+    if (!taskId || !layout) return;
+    const result = await openShell(taskId);
+    // The failure already reached the user as a toast; there is simply no tab
+    // to open. The commonest one by far is a 409 — the task was harvested while
+    // the strip sat on screen saying otherwise.
+    if (!result.ok) return;
+    setLayout(openTab(layout, { kind: "shell", ptyId: result.value.ptyId }));
+  }, [taskId, layout, openShell, setLayout]);
+
+  // Closing a shell tab is what kills its shell. Only from the close gesture:
+  // a shell tab dropped by the reconciliation below names a PTY that is already
+  // gone, and a DELETE for it would be a 404 and a toast about a terminal the
+  // user never asked to close.
+  const handleCloseTab = useCallback(
+    (tab: TabState) => {
+      if (!taskId || tab.descriptor.kind !== "shell") return;
+      void closeShell(taskId, tab.descriptor.ptyId);
+    },
+    [taskId, closeShell],
+  );
+
+  /**
+   * Shell tabs whose PTY the client has been told is live. The layout is
+   * per-device and persisted; the PTYs are not, and the two have to be
+   * reconciled on the way back — §5.5's "shell tabs are not resumable", made
+   * concrete below as: they are dropped, and the user is told.
+   *
+   * Held because the reconciliation acts on a PTY being *known dead*, never on
+   * one being merely absent. A shell just opened is in the layout before any
+   * broadcast has had to mention it, so pruning on absence would race a task
+   * delta computed a moment before the spawn against the response that opened
+   * the tab — and lose, by deleting the tab the user just asked for.
+   */
+  const seenShellsRef = useRef<Set<string>>(new Set());
+  const lifecycle = selected?.lifecycle;
+  const shellPtyIds = selected?.shellPtyIds;
+  useEffect(() => {
+    if (!taskId || !layout || !lifecycle || !shellPtyIds) return;
+    for (const ptyId of shellPtyIds) seenShellsRef.current.add(ptyId);
+
+    const pruned = reconcileShellTabs(layout, { lifecycle, shellPtyIds }, seenShellsRef.current);
+    if (pruned === layout) return;
+    const dropped = allTabs(layout).length - allTabs(pruned).length;
+    setLayout(pruned);
+    // Said out loud rather than done quietly: the user left a shell tab open
+    // and it is not there any more, and a workspace that rearranges itself
+    // without explanation reads as a bug.
+    toast(dropped === 1 ? "Closed a shell tab" : `Closed ${dropped} shell tabs`, {
+      description:
+        lifecycle === "live"
+          ? // A live task loses a shell when something killed it — this tab
+            // closed in another browser, or the route called directly. A shell
+            // that merely *exits* keeps its tab: the terminal is showing the
+            // exit code, which is the one place the reason is written down.
+            "That shell is no longer running."
+          : "Shells are not resumable, so they do not survive a task being suspended.",
+    });
+  }, [taskId, layout, lifecycle, shellPtyIds, setLayout]);
+
   const handleSubmitReview = useCallback(
     (promptText: string): boolean => {
       // No terminal, no delivery. Said out loud so the caller keeps the review:
@@ -160,6 +226,8 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
               <TabArea
                 layout={layout}
                 onLayoutChange={setLayout}
+                onNewShell={taskId ? handleNewShell : undefined}
+                onCloseTab={handleCloseTab}
                 leading={leading}
                 header={
                   // No path or branch yet: neither is on the wire, and a task

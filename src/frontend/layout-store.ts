@@ -435,6 +435,47 @@ export function pruneShellTabs(layout: TaskLayout, livePtyIds: ReadonlySet<strin
   return dead.reduce((acc, tab) => closeTab(acc, tab.id), layout);
 }
 
+/**
+ * Reconcile a restored layout against what the server says is running (§5.5).
+ *
+ * `pruneShellTabs` is the mechanism; this is the policy, and the policy is a
+ * single rule: **drop a shell tab only on positive knowledge that its PTY is
+ * gone, never on its absence from a list.** Two things count as knowledge.
+ *
+ * 1. The task is not `live`. A suspended task holds no processes at all — that
+ *    is what suspension *is* — so every shell tab in the layout is stale. This
+ *    is the reopen case §5.5 leaves to the UI to decide, and it is the one that
+ *    has to survive a page reload across a harvest, where this client was never
+ *    around to see the shells alive.
+ * 2. The task is live and a PTY it *had* reported is no longer reported. The
+ *    shell exited, or another client closed the tab.
+ *
+ * `seen` is what makes the second rule safe, and it is why this is not simply
+ * "prune everything not in `shellPtyIds`". A shell tab is opened from the
+ * response to `POST …/shell`, which races the task deltas coming down the
+ * socket: a delta computed a moment before the spawn carries a `shellPtyIds`
+ * without it. Pruning on absence would let that delta close the tab the user
+ * just asked for. A PTY that has never been reported is therefore left alone —
+ * we have been told nothing about it, and nothing is not evidence.
+ *
+ * The caller owns `seen` because it accumulates across renders; add this
+ * update's ids to it before calling.
+ */
+export function reconcileShellTabs(
+  layout: TaskLayout,
+  task: { lifecycle: string; shellPtyIds: readonly string[] },
+  seen: ReadonlySet<string>,
+): TaskLayout {
+  if (task.lifecycle !== "live") return pruneShellTabs(layout, new Set());
+  const reported = new Set(task.shellPtyIds);
+  const live = new Set(
+    allTabs(layout)
+      .flatMap((t) => (t.descriptor.kind === "shell" ? [t.descriptor.ptyId] : []))
+      .filter((ptyId) => reported.has(ptyId) || !seen.has(ptyId)),
+  );
+  return pruneShellTabs(layout, live);
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }

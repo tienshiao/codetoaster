@@ -365,8 +365,31 @@ screen that will not match the snapshot:
    a "suspended — resuming…" affordance. The user sees where they left off instantly.
 2. Spawn `claude --resume`; on its first paint, reset and swap to the live PTY.
 
-Shell tabs are not resumable. On reopen they respawn empty at the task cwd, or are
-dropped from the layout — a choice worth making in the UI, not silently.
+Shell tabs are not resumable, and the choice this left open is made: **they are
+dropped from the layout, and the user is told.** Respawning them empty was the
+alternative and it is worse — it puts N processes back that nobody asked for,
+and an empty shell at the task cwd carries no memory of what the tab was for, so
+it preserves the shape of the workspace while losing everything that made it
+one.
+
+The rule the client applies is *drop on positive knowledge, never on absence*
+(`reconcileShellTabs`), and there are exactly two things that count:
+
+- the task is not `live` — suspension is precisely "this task holds no
+  processes", so every shell tab in a restored layout is stale. This is what
+  survives a page reload across a harvest, where the client was never around to
+  see the shells alive.
+- the task is live and a PTY it *had* reported is no longer in `shellPtyIds` —
+  something killed it: this tab closed in another browser, or the route called
+  directly. A shell that merely *exits* keeps its tab, showing its exit code
+  the way an agent whose process died does; `PtyManager` only forgets a PTY
+  when something kills it, so the task goes on reporting that one and closing
+  the tab is what reaps it.
+
+The distinction matters because a shell tab is opened from the response to
+`POST /api/tasks/:id/shell`, which races the task deltas on the socket: one
+computed a moment before the spawn carries a `shellPtyIds` without it. Pruning
+on absence would let that delta close the tab the user just opened.
 
 ### 5.6 Worktrees
 

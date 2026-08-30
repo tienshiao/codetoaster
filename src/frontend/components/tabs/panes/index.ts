@@ -8,3 +8,4 @@ export { CommitPane } from "./CommitPane";
 export { DiffFilePane } from "./DiffFilePane";
 export { FilePane } from "./FilePane";
 export { HistoryPane } from "./HistoryPane";
+export { ShellPane } from "./ShellPane";

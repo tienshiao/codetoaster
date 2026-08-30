@@ -90,6 +90,15 @@ export interface TaskInfo {
    * Kept separate from `id` because a resumed task gets a fresh PTY while
    * staying the same task. */
   ptyId: string | null;
+  /** The task's shell terminals (§3), in the order they were opened, and empty
+   * for a task with no live process at all.
+   *
+   * On the wire because a tab layout outlives the processes it names: it is
+   * persisted per device and restored on load, while shell PTYs die with a
+   * harvest, a close or a daemon restart. This is the positive statement a
+   * client reconciles a restored layout against — see `pruneShellTabs`, which
+   * is careful to act on a PTY being *known* dead rather than merely absent. */
+  shellPtyIds: string[];
   /** The task's stable label — what §5.1 stores as `title`. */
   title: string;
   titleSource: TitleSource;

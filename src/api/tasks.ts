@@ -237,6 +237,74 @@ export const taskRoutes = {
     },
   },
 
+  "/api/tasks/:id/shell": {
+    // A plain shell as a sibling tab inside the task (§3, §5.5). HTTP for the
+    // same reason creating a task is: this spawns a process in a directory and
+    // can fail for reasons — a task that has been harvested since the tab strip
+    // last rendered, a $SHELL that has left PATH — the caller has to hear
+    // about, and a `+` that silently does nothing is the worst of them.
+    POST(req: Request & { params: { id: string } }) {
+      const task = taskManager.getTask(req.params.id);
+      if (!task) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      // 409 rather than resuming it here. Reopening a task is the agent's
+      // affair (§5.5's two phases) and a click on `+` is not a request to
+      // restart a conversation; the client resumes the task and asks again.
+      if (task.lifecycle !== "live") {
+        return Response.json(
+          { error: "This task is suspended — reopen it before opening a shell" },
+          { status: 409 },
+        );
+      }
+
+      let pty;
+      try {
+        pty = taskManager.openShell(req.params.id);
+      } catch (e) {
+        // `Bun.spawn` throws outright when the command is missing from PATH,
+        // which for a $SHELL inherited from the daemon's environment is a real
+        // possibility rather than a theoretical one.
+        return Response.json(
+          { error: e instanceof Error ? e.message : "Could not open a shell" },
+          { status: 500 },
+        );
+      }
+      // Suspended between the check above and the spawn: the harvester runs on
+      // its own timer and does not wait for us.
+      if (!pty) {
+        return Response.json({ error: "This task is no longer live" }, { status: 409 });
+      }
+
+      const info = taskManager.taskInfo(req.params.id);
+      // The whole task, not just the id: it carries `shellPtyIds`, which is
+      // what the client reconciles its restored tab layout against, and having
+      // it in the response means the tab and the fact that the PTY is live
+      // arrive together rather than racing over two transports.
+      return Response.json({ ptyId: pty.id, task: info });
+    },
+  },
+
+  "/api/tasks/:id/shell/:ptyId": {
+    // Closing the tab. Separate from `/close`, which puts the whole task down:
+    // this kills one terminal and leaves the conversation running.
+    DELETE(req: Request & { params: { id: string; ptyId: string } }) {
+      if (!taskManager.getTask(req.params.id)) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      // False for a PTY this task does not hold, and — deliberately — for the
+      // task's own agent: the agent tab is not closable, and a client that
+      // asked anyway must not take the conversation down by the wrong door.
+      if (!taskManager.closeShell(req.params.id, req.params.ptyId)) {
+        return Response.json(
+          { error: `Task "${req.params.id}" has no shell "${req.params.ptyId}"` },
+          { status: 404 },
+        );
+      }
+      return Response.json({ task: taskManager.taskInfo(req.params.id) });
+    },
+  },
+
   "/api/tasks/:id": {
     async PATCH(req: Request & { params: { id: string } }) {
       const body = await readJsonBody(req);
