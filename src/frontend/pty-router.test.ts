@@ -86,6 +86,12 @@ const attachedMsg = (ptyId: string, taskId = "task-1"): ServerMessage => ({
   taskId,
 });
 
+const errorFor = (ptyId: string, message = "Terminal not found"): ServerMessage => ({
+  type: "error",
+  message,
+  ptyId,
+});
+
 const task = (id: string): TaskInfo => ({
   id,
   ptyId: null,
@@ -353,6 +359,7 @@ test("non-PTY frames fan out to every subscriber and never reach a sink", () => 
     { type: "task", task: task("t1") },
     { type: "activity", taskId: "t1", active: true },
     { type: "notification", taskId: "t1", title: "done", body: "" },
+    // Unaddressed: the client-wide half of the error frame.
     { type: "error", message: "nope" },
   ];
   for (const frame of frames) router.route(frame);
@@ -534,6 +541,7 @@ test("ptyIdOf reports the ptyId of every PTY-addressed frame", () => {
   expect(ptyIdOf(resized("pty-a"))).toBe("pty-a");
   expect(ptyIdOf(exited("pty-a"))).toBe("pty-a");
   expect(ptyIdOf(attachedMsg("pty-a"))).toBe("pty-a");
+  expect(ptyIdOf(errorFor("pty-a"))).toBe("pty-a");
 });
 
 test("ptyIdOf reports null for frames that are not addressed to a terminal", () => {
@@ -542,4 +550,72 @@ test("ptyIdOf reports null for frames that are not addressed to a terminal", () 
   expect(ptyIdOf({ type: "activity", taskId: "t1", active: false })).toBe(null);
   expect(ptyIdOf({ type: "notification", taskId: "t1", title: "hi", body: "" })).toBe(null);
   expect(ptyIdOf({ type: "error", message: "nope" })).toBe(null);
+});
+
+// ── addressed errors (TASK-49) ──────────────────────────────────────────────
+
+test("an error naming a ptyId lands in that terminal and nowhere else", () => {
+  const { router } = makeRouter();
+  const a = makeSink();
+  const b = makeSink();
+  const watcher = makeSubscriber();
+  router.subscribe(watcher);
+  router.attach("pty-a", null);
+  router.attach("pty-b", null);
+  router.registerTerminal("pty-a", a);
+  router.registerTerminal("pty-b", b);
+
+  const refusal = errorFor("pty-a", 'Terminal "pty-a" not found');
+  router.route(refusal);
+
+  expect(a.received).toEqual([refusal]);
+  expect(b.received).toEqual([]);
+  // It is the terminal's explanation, not the task store's.
+  expect(watcher.received).toEqual([]);
+});
+
+test("a stale attach paints its refusal into the grid that provoked it", () => {
+  const { router } = makeRouter();
+  const grid = makeSink();
+  // The order a reconnect actually takes: the terminal is mounted and bound,
+  // then it asks for a ptyId the daemon no longer has.
+  router.registerTerminal("pty-gone", grid);
+  router.attach("pty-gone", { cols: 80, rows: 24 });
+
+  const refusal = errorFor("pty-gone", 'Terminal "pty-gone" not found');
+  router.route(refusal);
+
+  expect(grid.received).toEqual([refusal]);
+});
+
+test("an addressed error queues for a terminal that has not mounted yet", () => {
+  const { router } = makeRouter();
+  router.attach("pty-a", null);
+
+  const refusal = errorFor("pty-a");
+  router.route(refusal);
+  expect(router.queueDepth("pty-a")).toBe(1);
+
+  const a = makeSink();
+  router.registerTerminal("pty-a", a);
+  expect(a.received).toEqual([refusal]);
+});
+
+test("an addressed error for a PTY this client gave back is dropped", () => {
+  const { router } = makeRouter();
+  const a = makeSink();
+  const watcher = makeSubscriber();
+  router.subscribe(watcher);
+  router.registerTerminal("pty-a", a);
+  router.attach("pty-a", null);
+  router.detach("pty-a");
+
+  // The answer to a keystroke that raced the detach. There is no longer a
+  // grid it belongs to, and fanning it out would only turn it into a toast
+  // about a terminal the user has already closed.
+  router.route(errorFor("pty-a", 'Not attached to terminal "pty-a"'));
+
+  expect(a.received).toEqual([]);
+  expect(watcher.received).toEqual([]);
+  expect(router.queueDepth("pty-a")).toBe(0);
 });

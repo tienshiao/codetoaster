@@ -173,6 +173,17 @@ export function TaskProvider({ children }: { children: ReactNode }) {
 
           if (message.type === "activity") {
             setActivity((prev) => ({ ...prev, [message.taskId]: message.active }));
+            return;
+          }
+
+          // Only the client-wide ones get here: an error the server could
+          // address to a PTY goes to that terminal's grid instead (§7.4). This
+          // is bad JSON, an unknown message type, a task or project that is
+          // gone — nothing a terminal could sensibly display, and there may be
+          // several on screen anyway.
+          if (message.type === "error") {
+            console.error("Socket error:", message.message);
+            toast.error("The server refused a request", { description: message.message });
           }
         },
         onConnect: () => {

@@ -5,7 +5,8 @@ import { dirname, basename } from "node:path";
 import index from "./frontend/index.html";
 import { taskManager } from "./lib/tasks/manager";
 import { Harvester } from "./lib/tasks/harvester";
-import type { ClientMessage, WebSocketData } from "./lib/xtmux/types";
+import type { WebSocketData } from "./lib/xtmux/types";
+import { handleClientMessage } from "./lib/xtmux/client-messages";
 import { removePidFile } from "./cli/daemon";
 import { taskRoutes } from "./api/tasks";
 import { hookRoutes } from "./api/hooks";
@@ -34,10 +35,6 @@ const assetExtRe = /\.(js|css|mjs|woff2?|ttf|otf|eot|map|png|jpe?g|gif|svg|ico|w
 
 function generateClientId(): string {
   return `client-${++clientIdCounter}-${Date.now()}`;
-}
-
-function sendError(ws: { send: (data: string) => void }, message: string): void {
-  ws.send(JSON.stringify({ type: "error", message }));
 }
 
 /** Where a daemon bound to `hostname` can actually be reached.
@@ -290,117 +287,7 @@ export function startServer(options?: ServerOptions) {
       },
 
       message(ws, message) {
-        if (typeof message !== "string") {
-          sendError(ws, "Binary messages not supported");
-          return;
-        }
-
-        let parsed: ClientMessage;
-        try {
-          parsed = JSON.parse(message);
-        } catch {
-          sendError(ws, "Invalid JSON");
-          return;
-        }
-
-        const { clientId } = ws.data;
-
-        switch (parsed.type) {
-          case "attach": {
-            const { ptyId, cols, rows } = parsed;
-            const pty = taskManager.attachClient(ptyId, clientId, ws, cols, rows);
-            if (!pty) {
-              sendError(ws, `Terminal "${ptyId}" not found`);
-            }
-            break;
-          }
-
-          case "detach": {
-            // No ptyId detaches everything: what a client sends when it is
-            // going away rather than closing one tab.
-            taskManager.detachClient(clientId, parsed.ptyId);
-            break;
-          }
-
-          case "input": {
-            if (!taskManager.writeToPty(clientId, parsed.ptyId, parsed.data)) {
-              sendError(ws, `Not attached to terminal "${parsed.ptyId}"`);
-            }
-            break;
-          }
-
-          case "resize": {
-            taskManager.resizePty(clientId, parsed.ptyId, parsed.cols, parsed.rows);
-            break;
-          }
-
-          case "list": {
-            ws.send(JSON.stringify(taskManager.tasksSnapshot()));
-            break;
-          }
-
-          case "kill": {
-            // v1's name for a v2 suspend (§6). Renaming a wire message is a
-            // protocol change this is not, but what it does has moved: the
-            // destructive path is `DELETE /api/tasks/:id` and nothing a client
-            // sends can reach it, so a stale tab from before this change
-            // suspends a task rather than deleting one.
-            //
-            // Fired rather than awaited, because the message handler is
-            // synchronous and nothing later in it depends on the outcome.
-            // `suspendTask` broadcasts the row it changed, so the only thing
-            // left to say is that there was no such task — asked of the store
-            // rather than read off the answer, which is also false for a task
-            // that was already suspended and is therefore already closed.
-            const { taskId } = parsed;
-            if (!taskManager.getTask(taskId)) {
-              sendError(ws, `Task "${taskId}" not found`);
-              break;
-            }
-            void taskManager.closeTask(taskId).catch((e) => {
-              console.warn(`Could not close task ${taskId}:`, e);
-            });
-            break;
-          }
-
-          case "acknowledge": {
-            taskManager.acknowledgeTask(parsed.taskId);
-            break;
-          }
-
-          case "reorder": {
-            taskManager.reorderProjects(parsed.projects);
-            break;
-          }
-
-          case "createProject": {
-            try {
-              taskManager.createProject(parsed.id, parsed.name, parsed.initialPath);
-            } catch (e: any) {
-              sendError(ws, e.message);
-            }
-            break;
-          }
-
-          case "updateProject": {
-            const updated = taskManager.updateProject(parsed.id, parsed.name, parsed.initialPath);
-            if (!updated) {
-              sendError(ws, `Project "${parsed.id}" not found`);
-            }
-            break;
-          }
-
-          case "deleteProject": {
-            const deleted = taskManager.deleteProject(parsed.id);
-            if (!deleted) {
-              sendError(ws, `Cannot delete project "${parsed.id}"`);
-            }
-            break;
-          }
-
-          default:
-            sendError(ws, `Unknown message type`);
-        }
+        handleClientMessage(taskManager, ws, message);
       },
 
       close(ws) {

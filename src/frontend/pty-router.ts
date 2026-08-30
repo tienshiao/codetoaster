@@ -38,6 +38,13 @@ export function ptyIdOf(message: ServerMessage): string | null {
     case "exit":
     case "attached":
       return message.ptyId;
+    // The only frame that is addressed sometimes. The server names the PTY that
+    // provoked a refusal wherever there is one — a stale `attach`, a keystroke
+    // to a terminal this client no longer holds — and leaves it off for
+    // failures that are client-wide. So an explanation lands in the grid that
+    // asked for it, and only the genuinely client-wide ones fan out.
+    case "error":
+      return message.ptyId ?? null;
     default:
       return null;
   }

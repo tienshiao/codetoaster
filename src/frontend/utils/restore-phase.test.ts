@@ -171,7 +171,15 @@ describe("restoring", () => {
   });
 
   test("`error` leaves the phase too", () => {
-    const step = stepRestore(beginRestore(), { type: "error", message: "no such terminal" });
+    // An error only reaches a terminal if the server addressed it to that
+    // terminal's PTY (TASK-49), so by the time it gets here it really is about
+    // this reopen — which is what makes ending the phase on it right. An error
+    // some other action provoked is routed elsewhere and never lands here.
+    const step = stepRestore(beginRestore(), {
+      type: "error",
+      message: `Terminal "${PTY}" not found`,
+      ptyId: PTY,
+    });
     expect(trace(step.effects)).toEqual(["error"]);
     expect(step.state).toEqual(IDLE);
   });

@@ -144,6 +144,13 @@ export function stepRestore(state: RestorePhase, message: ServerMessage): Restor
       // let the frame land on top of the snapshot: it is the only explanation
       // the user is going to get, and the screen underneath it is still the
       // last thing that task had to say.
+      //
+      // Only an error the server addressed to *this* PTY reaches here — the
+      // router places it (§7.4). While errors were unaddressed they fanned out
+      // to whatever terminal was on screen, so one provoked by an unrelated
+      // action ended a reopen that was still perfectly on track, and the user
+      // was left typing into a snapshot the resumed agent would later append
+      // to rather than replace.
       return { state: IDLE, effects: [{ kind: "message", message }] };
 
     default:

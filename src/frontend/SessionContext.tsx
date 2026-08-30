@@ -340,14 +340,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // An `error` is the one piece of terminal-adjacent traffic the router
-    // cannot place: the server does not address it to a PTY, so it fans out
-    // here instead. It still belongs in the grid — `Terminal "…" not found`
-    // and `Not attached to terminal "…"` are the server's answer to an attach
-    // or a keystroke, and swallowing them leaves the user with a dead terminal
-    // and no reason given.
+    // Only the unaddressed errors reach here. `Terminal "…" not found` and
+    // `Not attached to terminal "…"` name the PTY that provoked them, so the
+    // router puts them in that terminal's grid, which is where the explanation
+    // belongs. What is left is client-wide — bad JSON, an unknown message
+    // type, a task or project that is gone — and belongs in no grid at all:
+    // painting it into whichever terminal happens to be on screen told the
+    // user that *that* terminal had failed, and, mid-reopen, told the restore
+    // phase the agent was never coming (§5.5).
     if (message.type === "error") {
-      terminalRef.current?.handleMessage(message);
+      console.error("Socket error:", message.message);
+      toast.error("The server refused a request", { description: message.message });
       return;
     }
 

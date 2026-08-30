@@ -54,7 +54,15 @@ export type ServerMessage =
   | { type: "data"; ptyId: string; data: string }
   | { type: "resize"; ptyId: string; cols: number; rows: number }
   | { type: "exit"; ptyId: string; code: number }
-  | { type: "error"; message: string }
+  // Addressed to the PTY that provoked it wherever there is one: `attach` and
+  // `input` both name a ptyId, and their refusals ("Terminal … not found",
+  // "Not attached to terminal …") are the only explanation the grid that
+  // asked is going to get. A client showing several terminals cannot place an
+  // unaddressed one — painting it into all of them is wrong and dropping it
+  // leaves a dead terminal with no reason given — so ptyId is absent only for
+  // failures that really are client-wide (bad JSON, an unknown type, a task or
+  // project that does not exist).
+  | { type: "error"; message: string; ptyId?: string }
   // The whole list, sent on connect and whenever the shape of it changes.
   | { type: "tasks"; list: TaskInfo[]; projects: ProjectInfo[] }
   // One row changed. A delta rather than a fresh snapshot, so a busy agent
