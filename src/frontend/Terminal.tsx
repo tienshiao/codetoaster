@@ -15,6 +15,8 @@ import {
   timeoutRestore,
   type RestorePhase,
 } from "./utils/restore-phase";
+import { usePtyOptional } from "./PtyContext";
+import type { PtySink } from "./pty-router";
 import type { ClientMessage, ServerMessage } from "../lib/xtmux/types";
 import "@xterm/xterm/css/xterm.css";
 
@@ -83,6 +85,11 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     const [isDragOver, setIsDragOver] = useState(false);
     const dragCounterRef = useRef(0);
     const [resizeHudSize, setResizeHudSize] = useState<TerminalSize | null>(null);
+    // Set once the xterm instance exists. Routing is gated on it because a
+    // frame delivered before then would be dropped on the floor by
+    // `handleMessage`, and the whole point of the router's per-PTY queue is
+    // that nothing arriving early is lost.
+    const [ready, setReady] = useState(false);
     const resizeHudTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hasInitialFitRef = useRef(false);
     const wasHiddenRef = useRef(false);
@@ -236,11 +243,9 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     }, [applyMessage]);
 
 
-    // Expose methods to parent
-    useImperativeHandle(ref, () => ({
-      handleMessage: (message: ServerMessage) => {
-        const term = termRef.current;
-        if (!term) return;
+    const handleMessage = useCallback((message: ServerMessage) => {
+      const term = termRef.current;
+      if (!term) return;
 
         // Idle is the ordinary path and costs one function call: the machine
         // hands every frame straight back. While a reopen is in flight it is
@@ -261,7 +266,11 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
           // walking its ladder, and each rung has a wait of its own.
           restoreTimerRef.current = setTimeout(swapOnTimeout, RESTORE_SWAP_TIMEOUT_MS);
         }
-      },
+    }, [applyMessage, clearRestoreTimer, swapOnTimeout]);
+
+    // Expose methods to parent
+    useImperativeHandle(ref, () => ({
+      handleMessage,
       beginRestore: () => {
         clearRestoreTimer();
         restorePhaseRef.current = beginRestore();
@@ -298,7 +307,30 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         termRef.current?.focus();
       },
       getSearchAddon: () => searchAddonRef.current,
-    }), [applyMessage]);
+    }), [handleMessage, clearRestoreTimer]);
+
+    // Bind this instance to its PTY. The sink is stable and delegates through a
+    // ref, so a new `handleMessage` identity does not churn the registration —
+    // and re-registering mid-stream would drop whatever the router had queued.
+    //
+    // Optional on purpose: a terminal rendered outside a provider (a design
+    // system preview) simply has no stream, which is not an error.
+    const pty = usePtyOptional();
+    // The router's own method, not the context value: the value is re-memoized
+    // whenever the socket connects or drops, and depending on it would unbind
+    // and rebind this terminal mid-stream on every reconnect. The method
+    // identity is the router's, which outlives the socket.
+    const registerTerminal = pty?.registerTerminal;
+    const handleMessageRef = useRef(handleMessage);
+    handleMessageRef.current = handleMessage;
+    const sinkRef = useRef<PtySink>({
+      handleMessage: (message) => handleMessageRef.current(message),
+    });
+
+    useEffect(() => {
+      if (!registerTerminal || !ptyId || !ready) return;
+      return registerTerminal(ptyId, sinkRef.current);
+    }, [registerTerminal, ptyId, ready]);
 
     // Initialize terminal - runs once
     useEffect(() => {
@@ -513,6 +545,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       container.addEventListener("paste", handlePaste, true);
 
       // Report ready
+      setReady(true);
       onReady();
 
       return () => {
@@ -526,6 +559,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         screenEl?.removeEventListener("touchend", handleTouchEnd);
         screenEl?.removeEventListener("touchcancel", handleTouchEnd);
         container.removeEventListener("paste", handlePaste, true);
+        setReady(false);
         term.dispose();
         termRef.current = null;
         fitAddonRef.current = null;

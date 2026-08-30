@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
 import { generateUUID } from "./utils/uuid";
 import { sessionDisplayNames, type NameSource } from "../lib/xtmux/naming";
-import { useWebSocket } from "./hooks/use-websocket";
+import { usePty, type PtyContextValue } from "./PtyContext";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { retainViewStates } from "./view-state-store";
 import type { ClientMessage, ProjectInfo as WireProject, ServerMessage, TaskInfo } from "../lib/xtmux/types";
@@ -223,8 +223,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const attachedPtyRef = useRef<string | null>(null);
   const sessionsRef = useRef<SessionInfo[]>([]);
   const projectsRef = useRef<ProjectInfo[]>([]);
-  const messageQueueRef = useRef<any[]>([]);
   const sendRef = useRef<(msg: ClientMessage) => void>(() => {});
+  // `onMessage` is stable by design, so it reaches the router the same way it
+  // already reaches `send`: through a ref rather than a dependency.
+  const ptyRef = useRef<PtyContextValue>(null as unknown as PtyContextValue);
 
   // Derive whether the user is viewing the terminal (not the diff tab)
   const matches = useMatches();
@@ -296,7 +298,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // tracks which task it is showing, and cannot map a ptyId onto one until
       // the list arrives — which is after this.
       if (message.taskId !== currentSessionIdRef.current) {
-        sendRef.current({ type: "detach", ptyId: message.ptyId });
+        ptyRef.current.detach(message.ptyId);
         return;
       }
       attachedPtyRef.current = message.ptyId;
@@ -338,65 +340,69 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Terminal messages name the PTY they belong to. Drop the ones for a
-    // terminal this client is no longer showing — output from the task we just
-    // switched away from is still in flight, and painting it into the new
-    // task's grid is exactly the corruption the addressing exists to avoid.
-    if (
-      (message.type === "data" ||
-        message.type === "restore" ||
-        message.type === "resize" ||
-        message.type === "exit") &&
-      message.ptyId !== attachedPtyRef.current
-    ) {
+    // An `error` is the one piece of terminal-adjacent traffic the router
+    // cannot place: the server does not address it to a PTY, so it fans out
+    // here instead. It still belongs in the grid — `Terminal "…" not found`
+    // and `Not attached to terminal "…"` are the server's answer to an attach
+    // or a keystroke, and swallowing them leaves the user with a dead terminal
+    // and no reason given.
+    if (message.type === "error") {
+      terminalRef.current?.handleMessage(message);
       return;
     }
 
-    // Forward terminal-related messages to terminal
-    if (terminalRef.current) {
-      terminalRef.current.handleMessage(message);
-    } else {
-      messageQueueRef.current.push(message);
-    }
+    // Other terminal frames are not handled here any more. `PtyContext` routes
+    // them to the one terminal bound to their ptyId and queues anything that
+    // arrives before it mounts, so this context is left with task traffic —
+    // which is all it was ever really about.
   }, []);
 
-  const { send, isConnected } = useWebSocket({
-    onMessage,
-    onConnect: () => {
-      if (terminalReadyRef.current) {
-        // Ask, and re-attach off the answer rather than from here. The list we
-        // are holding is the one from before the socket dropped, and a
-        // reconnect is exactly when its ptyIds stop being true: a daemon
-        // restart (or `bun run dev` reloading one) keeps every task row but
-        // gives them all new terminals, or none at all until they are resumed.
-        // Attaching to a remembered ptyId then draws `Terminal "…" not found`
-        // into the user's grid — an `error` frame is not addressed to a PTY, so
-        // the filter below cannot drop it — and nothing tries again. The route
-        // effect re-attaches when the fresh list lands, which is the only
-        // moment a ptyId is known to be real.
-        send({ type: "list" });
-      }
-      // Whatever we held, we no longer hold: the server forgot this client
-      // when the socket closed. Said out loud so `attachSession` can tell a
-      // live attachment from a remembered one.
-      attachedPtyRef.current = null;
-      setCurrentPtyId(null);
-    },
-    onDisconnect: () => {
-      setSessionsLoaded(false);
-    },
-  });
+  const pty = usePty();
+  // Destructured, and it is these — not `pty` — that the callbacks below
+  // depend on. The router's methods outlive every reconnect; the context value
+  // wrapping them does not, and keying a callback on the value alone churns it
+  // (and everything downstream) each time the socket flaps.
+  const {
+    send,
+    isConnected,
+    subscribe,
+    attach: attachPty,
+    detach: detachPty,
+    resize: resizePty,
+  } = pty;
+  const onConnect = useCallback(() => {
+    if (terminalReadyRef.current) {
+      // Ask, and re-attach off the answer rather than from here. The list we
+      // are holding is the one from before the socket dropped, and a
+      // reconnect is exactly when its ptyIds stop being true: a daemon
+      // restart (or `bun run dev` reloading one) keeps every task row but
+      // gives them all new terminals, or none at all until they are resumed.
+      // Attaching to a remembered ptyId then draws `Terminal "…" not found`
+      // into the user's grid — an `error` frame is not addressed to a PTY, so
+      // the router cannot drop it — and nothing tries again. The route
+      // effect re-attaches when the fresh list lands, which is the only
+      // moment a ptyId is known to be real.
+      send({ type: "list" });
+    }
+    // Whatever we held, we no longer hold: the server forgot this client
+    // when the socket closed. Said out loud so `attachSession` can tell a
+    // live attachment from a remembered one.
+    attachedPtyRef.current = null;
+    setCurrentPtyId(null);
+  }, [send]);
+  const onDisconnect = useCallback(() => {
+    setSessionsLoaded(false);
+  }, []);
+
+  useEffect(
+    () => subscribe({ onMessage, onConnect, onDisconnect }),
+    [subscribe, onMessage, onConnect, onDisconnect],
+  );
   sendRef.current = send;
+  ptyRef.current = pty;
 
   const handleTerminalReady = useCallback(() => {
     terminalReadyRef.current = true;
-
-    if (terminalRef.current && messageQueueRef.current.length > 0) {
-      for (const msg of messageQueueRef.current) {
-        terminalRef.current.handleMessage(msg);
-      }
-      messageQueueRef.current = [];
-    }
 
     send({ type: "list" });
   }, [send]);
@@ -405,10 +411,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     (size: TerminalSize) => {
       const ptyId = attachedPtyRef.current;
       if (ptyId) {
-        send({ type: "resize", ptyId, cols: size.cols, rows: size.rows });
+        resizePty(ptyId, size);
       }
     },
-    [send],
+    [resizePty],
   );
 
   const handleSendMessage = useCallback(
@@ -511,7 +517,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // addressed at whatever `currentPtyId` still names.
       terminalRef.current?.resetAttached();
       if (attachedPtyRef.current) {
-        sendRef.current({ type: "detach", ptyId: attachedPtyRef.current });
+        ptyRef.current.detach(attachedPtyRef.current);
         attachedPtyRef.current = null;
         setCurrentPtyId(null);
       }
@@ -707,7 +713,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       terminalRef.current?.resetAttached();
 
       if (attachedPtyRef.current) {
-        send({ type: "detach", ptyId: attachedPtyRef.current });
+        detachPty(attachedPtyRef.current);
       }
       // Let go of it here rather than waiting for `attached` to name the new
       // one. Output the server dispatched before it processed that detach is
@@ -722,14 +728,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // straight back as belonging to someone else.
       const size = terminalRef.current?.getSize();
       setCurrentSession(id);
-      send({ type: "attach", ptyId, ...(size ?? {}) });
+      attachPty(ptyId, size ?? null);
       if (isViewingTerminalRef.current) {
         send({ type: "acknowledge", taskId: id });
       }
       pushMru(id);
       return true;
     },
-    [send, pushMru, setCurrentSession, resumeSession, syncResumeFailed, endRestorePhase],
+    [
+      send,
+      attachPty,
+      detachPty,
+      pushMru,
+      setCurrentSession,
+      resumeSession,
+      syncResumeFailed,
+      endRestorePhase,
+    ],
   );
 
   // Creating a task is a request now, not a message: it resolves a directory,
@@ -797,7 +812,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // attachSession short-circuits on the task it thinks is current.
       terminalRef.current?.resetAttached();
       if (attachedPtyRef.current) {
-        send({ type: "detach", ptyId: attachedPtyRef.current });
+        detachPty(attachedPtyRef.current);
         attachedPtyRef.current = null;
         setCurrentPtyId(null);
       }
@@ -811,7 +826,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setCurrentSession(task.id);
       pushMru(task.id);
       if (task.ptyId) {
-        send({ type: "attach", ptyId: task.ptyId, ...(measured ?? {}) });
+        attachPty(task.ptyId, measured);
         // Recorded here rather than left to the `attached` frame that confirms
         // it, because the caller navigates to the new task immediately and the
         // route's attach effect runs in that same commit — long before the
@@ -827,7 +842,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
       return { id: task.id, name: session.name };
     },
-    [send, pushMru, setCurrentSession, endRestorePhase],
+    [attachPty, detachPty, pushMru, setCurrentSession, endRestorePhase],
   );
 
   const renameSession = useCallback(
@@ -988,7 +1003,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // harvester can never take that task (§5.5). On the success path the
         // server has already killed the PTY and the detach is a no-op.
         if (attachedPtyRef.current) {
-          sendRef.current({ type: "detach", ptyId: attachedPtyRef.current });
+          ptyRef.current.detach(attachedPtyRef.current);
         }
         // The terminal went with the suspend: leaving these set would keep the
         // killed PTY's `exit` past the message filter and address the next
