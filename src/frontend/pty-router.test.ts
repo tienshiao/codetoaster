@@ -93,6 +93,7 @@ const task = (id: string): TaskInfo => ({
   titleSource: "derived",
   terminalTitle: "",
   agentState: "idle",
+  lastMessage: null,
   lifecycle: "live",
   clientCount: 0,
   size: { cols: 80, rows: 24 },

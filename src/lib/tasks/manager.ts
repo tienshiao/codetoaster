@@ -1118,6 +1118,7 @@ export class TaskManager {
       terminalTitle: pty?.title ?? "",
       agentState: row.agent_state,
       lifecycle: row.lifecycle,
+      lastMessage: row.last_message,
       clientCount: pty?.getClientCount() ?? 0,
       // A suspended task remembers the grid it had, so resuming it does not
       // reflow the agent's output (§5.3).

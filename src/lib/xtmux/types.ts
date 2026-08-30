@@ -77,6 +77,11 @@ export interface TaskInfo {
   terminalTitle: string;
   agentState: AgentState;
   lifecycle: Lifecycle;
+  /** The last thing the agent said, from the Stop hook. The task list shows it
+   * under the title, which is how a list of thirty answers "which of these
+   * want me?" without opening any of them (§7.5). Null until the agent has
+   * finished a turn. */
+  lastMessage: string | null;
   clientCount: number;
   size: { cols: number; rows: number };
   createdAt: number;

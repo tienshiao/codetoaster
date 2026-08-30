@@ -1,0 +1,285 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { toast } from "sonner";
+import { usePty } from "./PtyContext";
+import type { TaskState } from "./components/v2/StatusDot";
+import type { ProjectInfo, TaskInfo } from "../lib/xtmux/types";
+
+/**
+ * The task store (§7.4): the list, the projects, and per-task liveness, fed by
+ * the socket and mutated over HTTP.
+ *
+ * The split is the point. Anything that creates a task runs git, spawns a
+ * process and fails in ways that want a status code and a body, so it is HTTP;
+ * the socket carries the push channel that says what changed. This context is
+ * the client half of both.
+ *
+ * It deliberately holds no side effects. While `SessionContext` is still live
+ * (until TASK-28) two subscribers see every frame, so a notification sound or
+ * an `acknowledge` here would fire twice — once each. Sound, web notifications
+ * and acknowledgement stay in `SessionContext` and move across when it goes.
+ */
+
+export interface TaskMutationError {
+  status: number;
+  message: string;
+}
+
+/** Mutations answer rather than throw: every caller would otherwise need a
+ * try/catch to do the thing it was going to do anyway. */
+export type TaskResult<T> = { ok: true; value: T } | { ok: false; error: TaskMutationError };
+
+export interface CreateTaskOptions {
+  prompt?: string;
+  projectId?: string;
+  cwd?: string;
+  model?: string;
+  permissionMode?: string;
+  cols?: number;
+  rows?: number;
+}
+
+export interface TaskContextValue {
+  tasks: TaskInfo[];
+  projects: ProjectInfo[];
+  /** False before the first snapshot and again after a drop, so the UI can
+   * tell "no tasks" from "not told yet" — they look identical and mean
+   * opposite things. */
+  loaded: boolean;
+  isConnected: boolean;
+  /** Debounced liveness per task id, straight from the socket's `activity`. */
+  activity: Record<string, boolean>;
+  taskById: (id: string) => TaskInfo | undefined;
+  createTask: (options?: CreateTaskOptions) => Promise<TaskResult<TaskInfo>>;
+  renameTask: (id: string, title: string) => Promise<TaskResult<TaskInfo>>;
+  closeTask: (id: string) => Promise<TaskResult<TaskInfo>>;
+  resumeTask: (id: string, options?: { fresh?: boolean }) => Promise<TaskResult<TaskInfo>>;
+}
+
+const TaskContext = createContext<TaskContextValue | null>(null);
+
+/**
+ * The dot a task shows in the list.
+ *
+ * The server's `AgentState` is finer-grained than the dot deliberately: the
+ * design gives colour exactly five meanings, so `starting` and `compacting`
+ * both read as working, and `unknown` — no hook has ever reported — reads as
+ * idle rather than as a fault, because it usually is one. `could_not_resume`
+ * is the exception worth its own colour: it is the one state with an action
+ * attached (§4.3).
+ *
+ * Lifecycle wins over agent state. A suspended task's agent state is whatever
+ * it was when the process was harvested, and showing that would make a resting
+ * task look busy.
+ */
+export function taskStateOf(task: Pick<TaskInfo, "agentState" | "lifecycle">): TaskState {
+  if (task.lifecycle === "suspended") return "suspended";
+  switch (task.agentState) {
+    case "starting":
+    case "busy":
+    case "compacting":
+      return "busy";
+    case "needs_attention":
+      return "attention";
+    case "exited":
+      return "exited";
+    case "could_not_resume":
+      return "error";
+    case "idle":
+    case "unknown":
+      return "idle";
+  }
+}
+
+async function request<T>(
+  input: string,
+  init: RequestInit,
+  failure: string,
+): Promise<TaskResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(input, init);
+  } catch (cause) {
+    // A fetch that never reached the daemon: it is down, or the browser is
+    // offline. Worth saying plainly rather than as a status code.
+    const error = { status: 0, message: cause instanceof Error ? cause.message : "Network error" };
+    toast.error(failure, { description: error.message });
+    return { ok: false, error };
+  }
+
+  if (!response.ok) {
+    // The routes answer `{ error }` on failure; a body that is not JSON at all
+    // means something upstream of them, so fall back to the status line.
+    let message = response.statusText || `HTTP ${response.status}`;
+    try {
+      const body = await response.json();
+      if (typeof body?.error === "string") message = body.error;
+    } catch {
+      // Keep the status line.
+    }
+    const error = { status: response.status, message };
+    toast.error(failure, { description: message });
+    return { ok: false, error };
+  }
+
+  return { ok: true, value: (await response.json()) as T };
+}
+
+export function TaskProvider({ children }: { children: ReactNode }) {
+  const { subscribe, send, isConnected } = usePty();
+  const [tasks, setTasks] = useState<TaskInfo[]>([]);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [activity, setActivity] = useState<Record<string, boolean>>({});
+  const tasksRef = useRef<TaskInfo[]>([]);
+  tasksRef.current = tasks;
+
+  useEffect(
+    () =>
+      subscribe({
+        onMessage: (message) => {
+          if (message.type === "tasks") {
+            setTasks(message.list);
+            setProjects(message.projects ?? []);
+            setLoaded(true);
+            return;
+          }
+
+          if (message.type === "task") {
+            // Upsert, not replace. A delta can arrive for a task this list does
+            // not carry yet — the row a create is still resolving — and
+            // dropping it would lose the server's resolved title and ptyId.
+            setTasks((prev) => {
+              const i = prev.findIndex((t) => t.id === message.task.id);
+              if (i === -1) return [...prev, message.task];
+              const next = [...prev];
+              next[i] = message.task;
+              return next;
+            });
+            return;
+          }
+
+          if (message.type === "activity") {
+            setActivity((prev) => ({ ...prev, [message.taskId]: message.active }));
+          }
+        },
+        onConnect: () => {
+          // The server sends the snapshot only when asked. v1 asked from
+          // `handleTerminalReady`, which meant the list arrived because a
+          // *terminal* had mounted — so a route with no terminal never got
+          // one. Asking here is the store's own business, and it is also what
+          // makes a reconnect recover: the ptyIds we are holding stopped being
+          // true the moment the socket dropped.
+          send({ type: "list" });
+        },
+        onDisconnect: () => {
+          // The list we hold is from before the drop, and a reconnect is
+          // exactly when its ptyIds stop being true. Saying "not loaded" is
+          // what stops the UI acting on it until the fresh snapshot lands.
+          setLoaded(false);
+        },
+      }),
+    [subscribe, send],
+  );
+
+  // The socket may already be open when this mounts — a remount inside a live
+  // page, or React running effects in an order that puts the connection first.
+  // `onConnect` only ever fires on a transition, so without this the store
+  // would sit empty until the next reconnect.
+  useEffect(() => {
+    if (isConnected) send({ type: "list" });
+  }, [isConnected, send]);
+
+  const createTask = useCallback(
+    (options: CreateTaskOptions = {}) =>
+      request<TaskInfo>(
+        "/api/tasks",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(options),
+        },
+        "Could not start the task",
+      ),
+    [],
+  );
+
+  const renameTask = useCallback(
+    (id: string, title: string) =>
+      request<TaskInfo>(
+        `/api/tasks/${id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title }),
+        },
+        "Could not rename the task",
+      ),
+    [],
+  );
+
+  const closeTask = useCallback(
+    (id: string) =>
+      request<TaskInfo>(`/api/tasks/${id}/close`, { method: "POST" }, "Could not close the task"),
+    [],
+  );
+
+  const resumeTask = useCallback(
+    (id: string, options: { fresh?: boolean } = {}) =>
+      request<TaskInfo>(
+        `/api/tasks/${id}/resume`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(options),
+        },
+        "Could not resume the task",
+      ),
+    [],
+  );
+
+  const taskById = useCallback((id: string) => tasksRef.current.find((t) => t.id === id), []);
+
+  const value = useMemo<TaskContextValue>(
+    () => ({
+      tasks,
+      projects,
+      loaded,
+      isConnected,
+      activity,
+      taskById,
+      createTask,
+      renameTask,
+      closeTask,
+      resumeTask,
+    }),
+    [
+      tasks,
+      projects,
+      loaded,
+      isConnected,
+      activity,
+      taskById,
+      createTask,
+      renameTask,
+      closeTask,
+      resumeTask,
+    ],
+  );
+
+  return <TaskContext.Provider value={value}>{children}</TaskContext.Provider>;
+}
+
+export function useTasks(): TaskContextValue {
+  const value = useContext(TaskContext);
+  if (!value) throw new Error("useTasks must be used within a TaskProvider");
+  return value;
+}

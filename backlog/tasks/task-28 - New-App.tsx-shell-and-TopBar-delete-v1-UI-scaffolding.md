@@ -4,7 +4,7 @@ title: New App.tsx shell and TopBar; delete v1 UI scaffolding
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-30 00:34'
+updated_date: '2026-08-30 01:35'
 labels:
   - frontend
 milestone: m-3
@@ -36,4 +36,6 @@ Assemble the §7.1 layout: task list left, tab area centre, Explorer right, both
 
 <!-- SECTION:NOTES:BEGIN -->
 The shell this task installs already exists: `frontend/components/v2/AppShell.tsx`, built in TASK-46 from the v2 design system, currently rendered with fixture data at `routes/shell.tsx`. This task is where it moves to `/` and the v1 scaffolding goes — not where it gets designed. AppShell is layout only, so the work here is wiring the props TASK-20/24/25/26 produce and deleting, not restructuring markup.
+
+TASK-20's AC #4 ('SessionContext.tsx and its consumers are gone') was removed there and lives here as AC #2, where it belongs. TASK-20 is additive: TaskContext is added alongside SessionContext, the way PtyContext was in TASK-19, so the branch stays runnable. This task is where both adapters come out — SessionContext itself, and the PtyContext bridge SessionContext currently goes through.
 <!-- SECTION:NOTES:END -->

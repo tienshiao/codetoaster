@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { FileDiff, Files, GitBranch, GitCommitHorizontal } from "lucide-react";
 import type { ExplorerRailItem } from "@/frontend/components/v2/ExplorerRail";
+import { taskStateOf, useTasks } from "@/frontend/TaskContext";
+import { sessionDisplayNames } from "@/lib/xtmux/naming";
 import {
   AppShell,
   SectionLabel,
@@ -25,52 +27,94 @@ const EXPLORER_SECTIONS: ExplorerRailItem[] = [
   { label: "Refs", icon: GitBranch },
 ];
 
+/** Coarse and mono, the way the design wants a timestamp: the list is scanned,
+ * not read. */
+function ago(timestamp: number, now: number): string {
+  const seconds = Math.max(0, Math.round((now - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
 /**
- * Preview of the v2 app shell (TASK-46), rendering the fixture data from the
- * design project's `templates/app-shell/AppShell.dc.html`.
+ * The v2 app shell, at `/shell` until TASK-28 puts it at `/`.
  *
- * The shell itself is real; the data is not. Nothing here talks to the daemon
- * — wiring is TASK-18/19/20/24/25/26, and TASK-28 is where this layout
- * replaces the v1 UI at `/`. Until then this route is how the chrome gets
- * looked at without the rest of Phase 4 existing.
+ * The left column is live: real tasks from `TaskContext`, in the design's rows.
+ * The tab strip, the Explorer and the terminal are still the fixture data from
+ * the design project's `templates/app-shell/AppShell.dc.html` — TASK-22 brings
+ * the tabs, TASK-26 the Explorer, and the agent terminal arrives with the tab
+ * host that knows which PTY it is showing.
+ *
+ * Ordering, the filter and the archived toggle are deliberately not built here:
+ * this is TaskContext's data in the shell, not TASK-25's sidebar.
  */
 function ShellPreview() {
+  const { tasks, projects, loaded, createTask } = useTasks();
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [explorerTab, setExplorerTab] = useState("Changes");
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    codetoaster: true,
-    atlas: false,
-  });
+  // Only the groups the user has closed; everything else defaults open.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [activeTab, setActiveTab] = useState("agent");
 
   const toggleGroup = (id: string) =>
     setOpenGroups((open) => ({ ...open, [id]: !open[id] }));
 
-  const groups: ShellTaskGroup[] = [
-    {
-      id: "codetoaster",
-      name: "CodeToaster",
-      open: openGroups.codetoaster,
-      onToggle: () => toggleGroup("codetoaster"),
-      tasks: [
-        { id: "1", title: "Extract Pty from Session", state: "busy", meta: "4m", selected: true, worktree: true },
-        { id: "2", title: "Worktree eviction grace", state: "attention", meta: "9m" },
-        { id: "3", title: "Multiplex protocol v2 tests", state: "idle", meta: "1h" },
-        { id: "4", title: "Hook reporter CLI", state: "suspended", meta: "2d" },
-      ],
-    },
-    {
-      id: "atlas",
-      name: "Atlas",
-      open: openGroups.atlas,
-      count: 2,
-      onToggle: () => toggleGroup("atlas"),
-      tasks: [
-        { id: "5", title: "Ingest retry budget", state: "idle", meta: "3d" },
-        { id: "6", title: "Drop the v1 exporter", state: "exited", meta: "6d" },
-      ],
-    },
-  ];
+  // Live, from TaskContext. Grouped by project because that is what the socket
+  // hands over today; recency ordering, the filter and the archived toggle are
+  // TASK-25's, so this is the store's data in the design's rows and nothing
+  // more.
+  const now = Date.now();
+  const needle = filter.trim().toLowerCase();
+  // The label is projected, not stored: an explicit rename, else the live
+  // terminal title when it carries real content *and is unique*, else the
+  // stable name. Claude Code sits on a bare "Claude Code" until it has a task,
+  // so without this every agent task in the list reads identically — which is
+  // the failure the projection exists to prevent (naming.ts).
+  const displayNames = useMemo(
+    () =>
+      sessionDisplayNames(
+        tasks.map((t) => ({
+          id: t.id,
+          name: t.title,
+          nameSource: t.titleSource,
+          title: t.terminalTitle,
+        })),
+      ),
+    [tasks],
+  );
+  const groups: ShellTaskGroup[] = useMemo(() => {
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    return projects.map((project) => {
+      const rows = project.taskIds
+        .map((id) => byId.get(id))
+        .filter((t): t is NonNullable<typeof t> => t != null)
+        .filter((t) => !needle || t.title.toLowerCase().includes(needle));
+      return {
+        id: project.id,
+        name: project.name,
+        open: openGroups[project.id] ?? true,
+        count: rows.length,
+        attention: rows.some((t) => taskStateOf(t) === "attention"),
+        onToggle: () => toggleGroup(project.id),
+        tasks: rows.map((task) => ({
+          id: task.id,
+          title: displayNames.get(task.id) ?? task.title,
+          state: taskStateOf(task),
+          preview: task.lastMessage ?? undefined,
+          meta: ago(task.lastActiveAt, now),
+          worktree: false,
+          selected: task.id === selectedTaskId,
+          onClick: () => setSelectedTaskId(task.id),
+        })),
+      };
+    });
+  }, [tasks, projects, openGroups, needle, selectedTaskId, now, displayNames]);
+
+  const selected = tasks.find((t) => t.id === selectedTaskId);
 
   const tabDefs: Omit<ShellTab, "active" | "onClick">[] = [
     { id: "agent", kind: "agent", label: "agent", detail: "claude", closable: false },
@@ -89,15 +133,22 @@ function ShellPreview() {
       groups={groups}
       taskFilter={filter}
       onTaskFilterChange={(e) => setFilter(e.target.value)}
-      endpoint=":4000"
+      onNewTask={() => void createTask({ cols: 120, rows: 30 })}
+      endpoint={loaded ? `:${location.port || "80"}` : "connecting…"}
       tabs={tabs}
       breadcrumb={{
-        title: "Extract Pty from Session",
+        title: selected ? (displayNames.get(selected.id) ?? selected.title) : "No task selected",
         path: "~/.codetoaster/worktrees/pty-extract",
         branch: "v2/pty-extract",
         badge: <Badge>sonnet · acceptEdits</Badge>,
       }}
-      status={{ state: "busy", items: ["80×24", "utf-8", "sonnet"], right: "+142 −38 · 4 files" }}
+      status={{
+        state: selected ? taskStateOf(selected) : undefined,
+        items: selected
+          ? [`${selected.size.cols}×${selected.size.rows}`, `${selected.clientCount} viewing`]
+          : ["no task"],
+        right: "+142 −38 · 4 files",
+      }}
       explorerSections={EXPLORER_SECTIONS}
       explorerTab={explorerTab}
       onExplorerTabChange={setExplorerTab}
