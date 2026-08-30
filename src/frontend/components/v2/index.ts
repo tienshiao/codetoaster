@@ -30,6 +30,9 @@ export type { ProjectGroupProps } from "./ProjectGroup";
 export { Tab, TabStrip, TAB_KINDS } from "./TabStrip";
 export type { TabKind, TabProps, TabStripProps } from "./TabStrip";
 
+export { TaskHeader } from "./TaskHeader";
+export type { TaskHeaderProps } from "./TaskHeader";
+
 // Kept because the design system owns it, though the shell navigates the
 // Explorer from the rail instead — a rail and a row of tabs over the same four
 // sections is the same control twice.

@@ -8,6 +8,7 @@ import { IconButton } from "./IconButton";
 import { ProjectGroup } from "./ProjectGroup";
 import { StatusBar, type StatusBarProps } from "./StatusBar";
 import { TabStrip, type TabProps } from "./TabStrip";
+import { TaskHeader, type TaskHeaderProps } from "./TaskHeader";
 import { TaskRow, type TaskRowProps } from "./TaskRow";
 import { cn } from "@/frontend/lib/utils";
 
@@ -26,15 +27,8 @@ export interface ShellTaskGroup {
 
 export type ShellTab = TabProps & { id: string };
 
-/** The 28px strip under the tabs: what this task is, where it lives, and what
- * it is running. Everything but the title is machine-facing, hence mono. */
-export interface ShellBreadcrumb {
-  title: string;
-  path?: string;
-  branch?: string;
-  /** Model and permission mode, as a `Badge` or anything else small. */
-  badge?: ReactNode;
-}
+/** @see TaskHeader — the band under the tabs. */
+export type ShellBreadcrumb = TaskHeaderProps;
 
 export interface AppShellProps {
   // ── left rail ──
@@ -48,13 +42,26 @@ export interface AppShellProps {
   endpoint?: string;
 
   // ── main area ──
+  /**
+   * The whole tabbed region — every strip, header and pane — when the task has
+   * a layout to draw. `TabArea` supplies it; `tabs`, `breadcrumb` and
+   * `children` are then unused, because with two groups on screen there is no
+   * single strip or header for the shell to place.
+   *
+   * A function, not a node, because the sidebar toggle rides the first strip
+   * and the shell owns whether the sidebar is open. Handing the toggle down is
+   * what lets the tab area stay ignorant of the sidebar and the shell stay
+   * ignorant of groups.
+   */
+  tabArea?: (chrome: { leading: ReactNode }) => ReactNode;
   tabs?: ShellTab[];
   onSplit?: () => void;
   onTabActions?: () => void;
   breadcrumb?: ShellBreadcrumb;
   status?: StatusBarProps;
   /** The active tab's content. The shell gives it a bounded, non-scrolling box
-   * — a terminal or a diff pane scrolls inside itself, never the page. */
+   * — a terminal or a diff pane scrolls inside itself, never the page. The
+   * composer at `/` (§7.5) is the case with no tabs at all. */
   children?: ReactNode;
 
   // ── explorer ──
@@ -104,6 +111,7 @@ export function AppShell({
   onNewTask,
   onOpenSettings,
   endpoint,
+  tabArea,
   tabs = [],
   onSplit,
   onTabActions,
@@ -135,6 +143,16 @@ export function AppShell({
     if (label !== explorerTab) onExplorerTabChange?.(label);
   };
   const activeSection = explorerSections.find((s) => s.label === explorerTab);
+
+  const sidebarToggle = (
+    <IconButton
+      icon={PanelLeft}
+      label={sidebarOpen ? "Hide tasks" : "Show tasks"}
+      size="sm"
+      active={sidebarOpen}
+      onClick={() => setSidebarOpen((open) => !open)}
+    />
+  );
 
   // Below the breakpoint there is no room for three columns, so an open
   // sidebar floats over the main area instead of squeezing it to nothing.
@@ -202,41 +220,20 @@ export function AppShell({
         {/* The sidebar toggles ride the tab strip, at the outer edges of the
             chrome they open — so each one sits against the sidebar it controls
             and stays put whether that sidebar is open or shut. */}
-        <TabStrip
-          tabs={tabs}
-          onSplit={onSplit}
-          onTabActions={onTabActions}
-          leading={
-            <IconButton
-              icon={PanelLeft}
-              label={sidebarOpen ? "Hide tasks" : "Show tasks"}
-              size="sm"
-              active={sidebarOpen}
-              onClick={() => setSidebarOpen((open) => !open)}
+        {tabArea ? (
+          tabArea({ leading: sidebarToggle })
+        ) : (
+          <>
+            <TabStrip
+              tabs={tabs}
+              onSplit={onSplit}
+              onTabActions={onTabActions}
+              leading={sidebarToggle}
             />
-          }
-        />
-
-        {breadcrumb && (
-          <div className="flex h-row flex-none items-center gap-2 border-b border-border bg-chrome px-3 font-mono text-micro tracking-mono text-muted-foreground">
-            <span className="truncate font-sans text-xs tracking-ui text-foreground">{breadcrumb.title}</span>
-            {breadcrumb.path && (
-              <>
-                <span className="flex-none text-border-strong">/</span>
-                <span className="truncate">{breadcrumb.path}</span>
-              </>
-            )}
-            {breadcrumb.branch && (
-              <>
-                <span className="flex-none text-border-strong">/</span>
-                <span className="flex-none text-primary">{breadcrumb.branch}</span>
-              </>
-            )}
-            {breadcrumb.badge && <span className="ml-auto flex-none">{breadcrumb.badge}</span>}
-          </div>
+            {breadcrumb && <TaskHeader {...breadcrumb} />}
+            <div className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+          </>
         )}
-
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
 
         {status && <StatusBar {...status} />}
       </main>

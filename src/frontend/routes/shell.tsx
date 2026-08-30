@@ -8,12 +8,14 @@ import type { TaskInfo } from "@/lib/xtmux/types";
 import {
   AppShell,
   SectionLabel,
-  type ShellTab,
   type ShellTaskGroup,
 } from "@/frontend/components/v2/AppShell";
 import { Badge } from "@/frontend/components/v2/Badge";
 import { Button } from "@/frontend/components/v2/Button";
 import { FileRow } from "@/frontend/components/v2/FileRow";
+import { TaskHeader } from "@/frontend/components/v2/TaskHeader";
+import { TabArea, useTaskLayout } from "@/frontend/components/tabs";
+import { openTab, type TabState } from "@/frontend/layout-store";
 
 export const Route = createFileRoute("/shell")({
   component: ShellPreview,
@@ -44,10 +46,10 @@ function ago(timestamp: number, now: number): string {
  * The v2 app shell, at `/shell` until TASK-28 puts it at `/`.
  *
  * The left column is live: real tasks from `TaskContext`, in the design's rows.
- * The tab strip, the Explorer and the terminal are still the fixture data from
- * the design project's `templates/app-shell/AppShell.dc.html` — TASK-22 brings
- * the tabs, TASK-26 the Explorer, and the agent terminal arrives with the tab
- * host that knows which PTY it is showing.
+ * The tab area is live too — a real `TaskLayout` per task, persisted, with
+ * drag, split, close and preview tabs (TASK-22). What a pane *contains* is
+ * still fixture: TASK-23 brings the hosts, TASK-26 the Explorer, and the agent
+ * terminal arrives with the tab host that knows which PTY it is showing.
  *
  * Ordering, the filter and the archived toggle are deliberately not built here:
  * this is TaskContext's data in the shell, not TASK-25's sidebar.
@@ -59,7 +61,8 @@ function ShellPreview() {
   const [explorerTab, setExplorerTab] = useState("Changes");
   // Only the groups the user has closed; everything else defaults open.
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
-  const [activeTab, setActiveTab] = useState("agent");
+  // A real layout for the selected task, persisted per task id.
+  const { layout, setLayout } = useTaskLayout(selectedTaskId);
 
   const toggleGroup = (id: string) =>
     setOpenGroups((open) => ({ ...open, [id]: !open[id] }));
@@ -128,17 +131,13 @@ function ShellPreview() {
 
   const selected = tasks.find((t) => t.id === selectedTaskId);
 
-  const tabDefs: Omit<ShellTab, "active" | "onClick">[] = [
-    { id: "agent", kind: "agent", label: "agent", detail: "claude", closable: false },
-    { id: "diff", kind: "diff", label: "pty.ts", detail: "+142 −38" },
-    { id: "file", kind: "file", label: "v2-architecture.md", preview: true },
-    { id: "shell", kind: "shell", label: "zsh" },
-  ];
-  const tabs: ShellTab[] = tabDefs.map((tab) => ({
-    ...tab,
-    active: tab.id === activeTab,
-    onClick: () => setActiveTab(tab.id),
-  }));
+  // Single-click opens a preview tab, which the next single click replaces;
+  // double-clicking the tab pins it (§7.2). The Explorer's file rows are the
+  // one place in this preview that opens tabs, so they are where that shows.
+  const openPreview = (path: string) => {
+    if (!layout) return;
+    setLayout(openTab(layout, { kind: "diff", path }, { preview: true }));
+  };
 
   return (
     <AppShell
@@ -147,13 +146,26 @@ function ShellPreview() {
       onTaskFilterChange={(e) => setFilter(e.target.value)}
       onNewTask={() => void createTask({ cols: 120, rows: 30 })}
       endpoint={loaded ? `:${location.port || "80"}` : "connecting…"}
-      tabs={tabs}
-      breadcrumb={{
-        title: selected ? (displayNames.get(selected.id) ?? selected.title) : "No task selected",
-        path: "~/.codetoaster/worktrees/pty-extract",
-        branch: "v2/pty-extract",
-        badge: <Badge>sonnet · acceptEdits</Badge>,
-      }}
+      tabArea={
+        layout
+          ? ({ leading }) => (
+              <TabArea
+                layout={layout}
+                onLayoutChange={setLayout}
+                leading={leading}
+                header={
+                  <TaskHeader
+                    title={selected ? (displayNames.get(selected.id) ?? selected.title) : "Task"}
+                    path="~/.codetoaster/worktrees/pty-extract"
+                    branch="v2/pty-extract"
+                    badge={<Badge>sonnet · acceptEdits</Badge>}
+                  />
+                }
+                renderPane={(tab) => <PaneFixture tab={tab} />}
+              />
+            )
+          : undefined
+      }
       status={{
         state: selected ? taskStateOf(selected) : undefined,
         items: selected
@@ -164,7 +176,13 @@ function ShellPreview() {
       explorerSections={EXPLORER_SECTIONS}
       explorerTab={explorerTab}
       onExplorerTabChange={setExplorerTab}
-      explorer={explorerTab === "Changes" ? <ChangesFixture /> : <UnbuiltSection name={explorerTab} />}
+      explorer={
+        explorerTab === "Changes" ? (
+          <ChangesFixture onOpen={openPreview} />
+        ) : (
+          <UnbuiltSection name={explorerTab} />
+        )
+      }
       explorerFooter={
         explorerTab === "Changes" ? (
           <>
@@ -174,8 +192,41 @@ function ShellPreview() {
         ) : undefined
       }
     >
-      <TerminalFixture />
+      <NoTaskFixture />
     </AppShell>
+  );
+}
+
+/** The main area before a task is picked. TASK-24 puts the composer here. */
+function NoTaskFixture() {
+  return (
+    <div className="grid h-full place-items-center text-sm text-subtle-foreground">
+      Pick a task on the left.
+    </div>
+  );
+}
+
+/**
+ * What a pane holds, until TASK-23's hosts exist. Deliberately says which
+ * descriptor it is showing: with two groups on screen, "the diff" is not enough
+ * to tell whether a drag put the right tab in the right place.
+ */
+function PaneFixture({ tab }: { tab: TabState }) {
+  const { descriptor } = tab;
+  if (descriptor.kind === "agent" || descriptor.kind === "shell") return <TerminalFixture />;
+  return (
+    <div className="flex h-full flex-col gap-1 overflow-auto px-3 py-2">
+      <span className="font-mono text-xs tracking-mono text-foreground">
+        {descriptor.kind === "diff" || descriptor.kind === "file"
+          ? descriptor.path
+          : descriptor.kind === "commit"
+            ? descriptor.sha
+            : descriptor.kind}
+      </span>
+      <span className="text-xs text-subtle-foreground">
+        The {descriptor.kind} host arrives with TASK-23.
+      </span>
+    </div>
   );
 }
 
@@ -189,16 +240,43 @@ function UnbuiltSection({ name }: { name: string }) {
   );
 }
 
-function ChangesFixture() {
+function ChangesFixture({ onOpen }: { onOpen: (path: string) => void }) {
   return (
     <>
       <SectionLabel>src/lib/xtmux</SectionLabel>
-      <FileRow name="pty.ts" status="modified" additions={142} deletions={38} selected />
-      <FileRow name="manager.ts" status="modified" additions={9} deletions={7} />
-      <FileRow name="multiplex.test.ts" status="added" additions={61} />
+      <FileRow
+        name="pty.ts"
+        status="modified"
+        additions={142}
+        deletions={38}
+        onClick={() => onOpen("src/lib/xtmux/pty.ts")}
+      />
+      <FileRow
+        name="manager.ts"
+        status="modified"
+        additions={9}
+        deletions={7}
+        onClick={() => onOpen("src/lib/xtmux/manager.ts")}
+      />
+      <FileRow
+        name="multiplex.test.ts"
+        status="added"
+        additions={61}
+        onClick={() => onOpen("src/lib/xtmux/multiplex.test.ts")}
+      />
       <SectionLabel className="mt-1.5">src/frontend</SectionLabel>
-      <FileRow name="SessionContext.tsx" status="deleted" deletions={214} />
-      <FileRow name="TopBar.tsx" status="renamed" note="renamed" />
+      <FileRow
+        name="SessionContext.tsx"
+        status="deleted"
+        deletions={214}
+        onClick={() => onOpen("src/frontend/SessionContext.tsx")}
+      />
+      <FileRow
+        name="TopBar.tsx"
+        status="renamed"
+        note="renamed"
+        onClick={() => onOpen("src/frontend/TopBar.tsx")}
+      />
     </>
   );
 }
