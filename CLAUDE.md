@@ -103,6 +103,18 @@ Server sends: `attached`, `restore`, `data`, `resize`, `exit`, `error`, `session
 import { test, expect } from "bun:test";
 ```
 
+Components and hooks render too: `bun test` preloads Happy DOM and Testing
+Library (`test/setup-*.ts`, wired in `bunfig.toml`), so a `.test.tsx` can
+`render()` and `renderHook()`. The preload is global, so it also runs for the
+server tests — it puts Bun's `fetch`/`Request`/`Response` back after
+registering, because those tests hand real requests to route handlers and the
+identity checks fail against Happy DOM's versions.
+
+Reach for a component test when the behaviour is a *lifecycle* one — when a
+subscription binds, when a ref is written, what survives a remount. Pure logic
+belongs in a plain `.test.ts` against the function that holds it, which is why
+`drag.ts` and `layout-store.ts` exist apart from the components using them.
+
 ## Frontend
 
 Uses Bun HTML imports with `Bun.serve()` - not Vite. HTML files import `.tsx` directly. Tailwind via `bun-plugin-tailwind`.
