@@ -266,15 +266,26 @@ export function startServer(options?: ServerOptions) {
           // Before the wait, not inside it: the exit is 100ms away so that this
           // response can be written, and a tick that starts in that window
           // would be halfway through snapshotting a task when the process goes.
-          harvester.stop();
+          //
+          // Disarming the interval says nothing about the tick already walking
+          // the tasks, though, and that one is the hazard: it awaits a snapshot,
+          // which writes `scrollback.tmp` and renames it over the real file, so
+          // an exit landing between the two leaves the staging file behind for
+          // as long as the task exists. So the drain is awaited, and the 100ms
+          // runs alongside it rather than after it.
+          const drained = harvester.stop();
           setTimeout(() => {
-            // The bound port, not the requested one: `--port 0` resolves late,
-            // and `cmdForeground` writes the pid file under what the listener
-            // actually got. Removing `daemon-0.json` would leave the real one
-            // behind, so the next `codetoaster start` sees a pid file for a
-            // daemon that has just exited.
-            removePidFile(server.port ?? PORT);
-            process.exit(0);
+            // `finally`, so a tick that somehow rejected still lets the daemon
+            // go: the pid file has to come off whatever the sweep did.
+            void drained.finally(() => {
+              // The bound port, not the requested one: `--port 0` resolves late,
+              // and `cmdForeground` writes the pid file under what the listener
+              // actually got. Removing `daemon-0.json` would leave the real one
+              // behind, so the next `codetoaster start` sees a pid file for a
+              // daemon that has just exited.
+              removePidFile(server.port ?? PORT);
+              process.exit(0);
+            });
           }, 100);
           return Response.json({ status: "shutting down" });
         },

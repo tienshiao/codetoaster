@@ -367,7 +367,12 @@ describe("harvesting", () => {
 
   test("suspending keeps the row and the task's directory", async () => {
     const { manager, store, harvester } = newManager();
-    const id = await harvestableTask(manager, store);
+    // A terminal that has painted, because that is what puts a scrollback file
+    // in the directory: an empty screen is nothing to write, and a task
+    // harvested before its first paint keeps whatever snapshot it already had
+    // rather than being given a blank one.
+    const id = await harvestableTask(manager, store, ["sh", "-c", "printf 'harvest me'; exec cat"]);
+    expect(await waitFor(() => manager.primaryPty(id)!.serialize().includes("harvest me"))).toBe(true);
 
     await harvester.tick();
 
@@ -440,10 +445,37 @@ describe("robustness", () => {
     const id = await harvestableTask(manager, store);
     harvester.start();
     harvester.start();
-    harvester.stop();
-    harvester.stop();
+    await harvester.stop();
+    await harvester.stop();
     // Not a claim about the interval's period — only that stopping it leaves a
-    // harvester nothing can wake up, and that saying so twice is safe.
+    // harvester nothing can wake up, and that saying so twice is safe. Both
+    // answers resolve, since there is no tick to wait for.
     stillRunning(manager, store, id);
+  });
+
+  // Clearing the interval only stops the *next* sweep. The one already walking
+  // the tasks is the hazard on the shutdown path: it awaits a snapshot, which
+  // writes `scrollback.tmp` and renames it over the real file, so a
+  // `process.exit` landing between the two orphans the staging file for as long
+  // as the task exists.
+  test("stop answers with the tick already running, so a shutdown can wait for it", async () => {
+    const { manager, store, harvester } = newManager();
+    const id = await harvestableTask(manager, store);
+    // Held open where the real sweep is slow: the guard that spawns a `ps` per
+    // terminal and waits up to two seconds for each.
+    (manager.primaryPty(id)! as any).hasForegroundProcess = async () => {
+      await Bun.sleep(100);
+      return false;
+    };
+
+    const ticking = harvester.tick();
+    await Bun.sleep(10);
+    expect(store.get(id)!.lifecycle).toBe("live");
+
+    await harvester.stop();
+
+    // The sweep ran to its end rather than being abandoned where it stood.
+    expect(store.get(id)!.lifecycle).toBe("suspended");
+    await ticking;
   });
 });

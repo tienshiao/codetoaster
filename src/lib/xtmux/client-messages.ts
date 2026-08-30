@@ -62,7 +62,16 @@ export function handleClientMessage(
     case "detach": {
       // No ptyId detaches everything: what a client sends when it is
       // going away rather than closing one tab.
-      manager.detachClient(clientId, parsed.ptyId);
+      //
+      // `?? undefined` because the wire type says `ptyId?: string` and JSON can
+      // say `null`, which is neither absent nor a terminal anyone holds:
+      // `PtyManager.detach` branches on `undefined`, so a null took neither
+      // road and detached nothing at all. The client stayed counted as a viewer
+      // of a terminal it had left — holding the task's grid down under
+      // smallest-wins, and keeping the harvester off a task nobody was
+      // watching. Reconciled here, at the parse boundary, so what JSON can
+      // deliver and what the type promises agree before anything acts on it.
+      manager.detachClient(clientId, parsed.ptyId ?? undefined);
       break;
     }
 

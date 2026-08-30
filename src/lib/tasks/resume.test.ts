@@ -272,6 +272,23 @@ describe("resuming a suspended task", () => {
     expect(await agent.settled(2)).toHaveLength(2);
   });
 
+  // The retry overlay is reached from a *live* row too — an agent that exited on
+  // its own, with the daemon still up — and a ladder that fails there used to
+  // leave the row saying `live` with no PTY behind it. Nothing reopens that:
+  // both the pane and the client's reconnect only resume a `suspended` task, and
+  // the harvester only takes an `idle` one, so the card sat there dead for the
+  // life of the daemon.
+  test("a live task whose retry fails ends suspended", async () => {
+    const { manager, store } = newManager(["--resume", "--continue"]);
+    const row = suspendedTask(manager, store, { lifecycle: "live", agent_state: "exited" });
+
+    const resumed = await manager.resumeTask(row.id);
+
+    expect(resumed!.agent_state).toBe("could_not_resume");
+    expect(resumed!.lifecycle).toBe("suspended");
+    expect(manager.primaryPty(row.id)).toBeUndefined();
+  });
+
   // Found in live verification: hooks from a task's *previous* agent made the
   // next resume think the new process had already checked in, so the first
   // rung was declared a success however dead it was, and the ladder never ran.
@@ -368,6 +385,32 @@ describe("resuming a suspended task", () => {
     await resume;
 
     expect(closed).toBe(true);
+    expect(store.get(row.id)!.lifecycle).toBe("suspended");
+    expect(manager.primaryPty(row.id)).toBeUndefined();
+  });
+
+  // Both of them park on the same in-flight resume, and the fresh start's
+  // continuation runs first: it registers a second ladder before the close's
+  // continuation gets to look. A close that merely carried on from there ran
+  // `doSuspend` alongside that ladder — reading a row still marked `live`,
+  // snapshotting nothing, killing an empty list of PTYs and reporting success —
+  // and the ladder then wrote `live` again, leaving an agent running on a task
+  // the user had closed.
+  test("a fresh start and a close behind it leave the task closed, not running", async () => {
+    const { manager, store } = newManager();
+    const row = suspendedTask(manager, store);
+
+    const first = manager.resumeTask(row.id);
+    // The window both of them land in: a rung's terminal is up and the ladder
+    // has not decided anything about it yet.
+    while (!manager.primaryPty(row.id)) await Bun.sleep(5);
+
+    const fresh = manager.resumeTask(row.id, { fresh: true });
+    const closed = manager.closeTask(row.id);
+
+    await first;
+    await fresh;
+    expect(await closed).toBe(true);
     expect(store.get(row.id)!.lifecycle).toBe("suspended");
     expect(manager.primaryPty(row.id)).toBeUndefined();
   });

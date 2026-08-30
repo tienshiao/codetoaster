@@ -34,12 +34,18 @@ const DEFAULT_HARVEST_AFTER_MS = THIRTY_MINUTES_MS;
 export class Harvester {
   private timer?: Timer;
   private harvestAfterMs = DEFAULT_HARVEST_AFTER_MS;
-  // Whether a tick is still running. The last guard spawns a `ps` per terminal
-  // and waits up to two seconds for each, so a daemon with enough live tasks
-  // can take longer than one interval to walk them — and two ticks over the
-  // same tasks would evaluate guards against a task the other one is in the
+  // The tick still running, if there is one. The last guard spawns a `ps` per
+  // terminal and waits up to two seconds for each, so a daemon with enough live
+  // tasks can take longer than one interval to walk them — and two ticks over
+  // the same tasks would evaluate guards against a task the other one is in the
   // middle of killing.
-  private ticking = false;
+  //
+  // Kept as the promise rather than as a flag because shutdown has to be able to
+  // wait for it: a snapshot is a write to `scrollback.tmp` and a rename over the
+  // real file, and a process that exits between the two leaves the staging file
+  // behind for good — nothing but `removeSnapshot`, on a task being deleted,
+  // ever clears one.
+  private inFlight?: Promise<void>;
 
   constructor(private manager: TaskManager) {}
 
@@ -63,10 +69,20 @@ export class Harvester {
     this.timer = timer;
   }
 
-  stop(): void {
-    if (!this.timer) return;
-    clearInterval(this.timer);
-    this.timer = undefined;
+  /** Disarm the interval, and answer with the tick that is still running so a
+   * caller on its way to `process.exit` can let it finish. Clearing the interval
+   * only stops the *next* sweep; the one already walking the tasks goes on
+   * awaiting a snapshot write, and killing it mid-write is what orphans a
+   * staging file.
+   *
+   * Safe with nothing in flight, and safe to call twice: both answer a promise
+   * that is already resolved. */
+  stop(): Promise<void> {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+    return this.inFlight ?? Promise.resolve();
   }
 
   /** One pass over the live tasks. Never rejects, and never stops early: it is
@@ -78,26 +94,30 @@ export class Harvester {
     // Before anything is listed, not after: disabled means the harvester does
     // no work at all, not that it does the work and discards the answer.
     if (this.harvestAfterMs <= 0) return;
-    if (this.ticking) return;
-    this.ticking = true;
+    if (this.inFlight) return;
+    // Held, not just flagged, so `stop` has something to hand a shutdown.
+    const sweep = this.sweep().finally(() => {
+      this.inFlight = undefined;
+    });
+    this.inFlight = sweep;
+    return sweep;
+  }
+
+  private async sweep(): Promise<void> {
+    const now = Date.now();
+    let tasks: TaskRow[];
     try {
-      const now = Date.now();
-      let tasks: TaskRow[];
+      tasks = this.manager.liveTasks();
+    } catch (e) {
+      console.warn("Idle harvester could not list tasks:", e);
+      return;
+    }
+    for (const task of tasks) {
       try {
-        tasks = this.manager.liveTasks();
+        if (await this.shouldHarvest(task.id, now)) await this.manager.suspendTask(task.id);
       } catch (e) {
-        console.warn("Idle harvester could not list tasks:", e);
-        return;
+        console.warn(`Idle harvester skipped task ${task.id}:`, e);
       }
-      for (const task of tasks) {
-        try {
-          if (await this.shouldHarvest(task.id, now)) await this.manager.suspendTask(task.id);
-        } catch (e) {
-          console.warn(`Idle harvester skipped task ${task.id}:`, e);
-        }
-      }
-    } finally {
-      this.ticking = false;
     }
   }
 

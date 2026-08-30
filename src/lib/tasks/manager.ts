@@ -102,7 +102,9 @@ export class TaskManager {
   // silently undone by the ladder walking on.
   //
   // Each side registers its entry only *after* waiting on the other's, so the
-  // two can never wait on each other.
+  // two can never wait on each other — and each starts over once that wait is
+  // done rather than carrying on, since the promise it waited on may have
+  // handed straight to another one of the other kind.
   private suspending: Map<string, Promise<boolean>> = new Map();
   // What `codetoaster hook` has to POST back to (§4.2), handed over by
   // startServer. Undefined until then: a manager with no server in front of it
@@ -693,7 +695,18 @@ export class TaskManager {
 
     // Nothing worked. The task is not a dead terminal and not a lie about
     // being live — it is a card with a button on it (§4.3).
-    this.store.update(taskId, { agent_state: "could_not_resume" });
+    //
+    // Which means the lifecycle has to be written and not merely left alone: a
+    // row that was already `live` when the ladder started — an agent that
+    // exited on its own, with the user then pressing the retry overlay's
+    // button — would keep saying `live` with `ptyId: null`, which is the lie.
+    // Nothing recovers it either, because everything that would reopen the task
+    // asks for one of the two states this is between: `AgentPane` and
+    // `SessionContext` only reopen a `suspended` task, and the harvester only
+    // takes an `idle` one. Left `live` the card sits in the sidebar dead for the
+    // life of the daemon; left `suspended` it is what it looks like, and the
+    // next click walks the ladder again.
+    this.store.update(taskId, { lifecycle: "suspended", agent_state: "could_not_resume" });
     this.broadcastTask(taskId);
     return this.store.get(taskId);
   }
@@ -920,12 +933,7 @@ export class TaskManager {
   async snapshot(taskId: string): Promise<boolean> {
     if (!this.store.get(taskId)) return false;
     const pty = this.primaryPty(taskId);
-    // A torn-down terminal is nothing to write, not an empty screen. `serialize`
-    // answers "" once disposed so a stray call cannot throw out of the
-    // harvester's tick — but persisting that "" would overwrite the last screen
-    // the task ever painted, which is the opposite of what the no-PTY branch
-    // above is careful to preserve.
-    if (!pty || pty.isDisposed) return false;
+    if (!pty) return false;
     // The screen and the grid it was taken at, read together, because they are
     // one fact: a snapshot repainted into a grid it was not taken at reflows
     // into nonsense. Reading the size after the write would let them disagree —
@@ -935,6 +943,18 @@ export class TaskManager {
     // screen serialized at the old one.
     const screen = pty.serialize();
     const size = pty.getSize();
+    // A screen with nothing on it is nothing to write, not an empty screen.
+    // `serialize` answers "" once the terminal is disposed, so that a stray call
+    // cannot throw out of the harvester's tick — and a live terminal that has
+    // painted nothing answers exactly the same, which is a second or two of
+    // every resume: close the task between the spawn of `claude` and the agent's
+    // first paint and this runs against a terminal with an empty buffer.
+    // Persisting either "" would overwrite the last screen the task ever
+    // painted, which is the opposite of what the no-PTY branch above is careful
+    // to preserve — so both stop here, before the write and before the row is
+    // told a size, since a `last_size_*` recorded for a screen that was never
+    // written describes the screen that is still on disk.
+    if (!screen) return false;
     try {
       await writeSnapshot(taskId, screen);
     } catch (e) {
@@ -986,7 +1006,21 @@ export class TaskManager {
     // Waiting means the click lands on the task the resume produced, which is
     // the task the user was looking at when they clicked.
     const inFlight = this.resuming.get(taskId);
-    if (inFlight) await inFlight.catch(() => undefined);
+    if (inFlight) {
+      await inFlight.catch(() => undefined);
+      // Started over rather than fallen through, because settling that resume
+      // is not the same as there being no resume. A `fresh` caller parks on the
+      // very same promise and registers a *new* ladder the instant it settles —
+      // and it registered its continuation before this one, so by the time we
+      // get here the second ladder is already in `resuming`. Falling through
+      // would run `doSuspend` alongside it: it reads a row still marked `live`,
+      // takes no snapshot and kills nothing (the fresh start discarded the
+      // PTYs), writes `suspended` and reports success — and then the ladder
+      // writes `live` again, leaving an agent running on a task the user
+      // closed. Asking again is the whole fix: the click lands on the task the
+      // *last* resume produced.
+      return this.suspendTask(taskId);
+    }
     // Registered only now, on the far side of that wait, so a resume waiting on
     // us and a suspend waiting on it can never be waiting on each other. A
     // second close joins the first rather than snapshotting the task twice.

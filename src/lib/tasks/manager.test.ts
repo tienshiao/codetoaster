@@ -62,6 +62,20 @@ function shell(exitImmediately = false): string[] {
   return exitImmediately ? ["true"] : [process.env.SHELL || "bash"];
 }
 
+/** A task whose terminal has actually painted something, and the wait for it to
+ * have done so.
+ *
+ * Anything asserting about a *file* on disk has to go through this: a screen
+ * with nothing on it is nothing to snapshot — an empty serialization is what a
+ * disposed terminal answers too, and persisting it would blank the last screen
+ * the task painted — so a task closed before its first paint writes no
+ * scrollback at all. A bare `shell()` is exactly that task for the first few
+ * milliseconds of its life. */
+async function paintedTask(manager: TaskManager, id: string): Promise<void> {
+  await manager.createTask({ id, command: ["sh", "-c", "printf 'on the screen'; exec cat"] });
+  expect(await waitFor(() => manager.primaryPty(id)!.serialize().includes("on the screen"))).toBe(true);
+}
+
 // §9's risk 4: an agent run with hooks disabled, or one whose payloads a
 // future version has changed, reports nothing at all. The task list has to
 // stay useful anyway.
@@ -503,7 +517,7 @@ describe("closing a task", () => {
   test("suspends the task instead of deleting it, and keeps what reopening it reads", async () => {
     const { manager, store } = newManager();
     const id = newTaskId();
-    await manager.createTask({ id, command: shell() });
+    await paintedTask(manager, id);
     // Written by hand because the stand-in command skips the agent path that
     // normally writes it. It is what `claude --settings` is pointed at on the
     // way back, so a close that took it would leave the task resumable only
@@ -569,7 +583,7 @@ describe("closing a task", () => {
   test("the snapshot survives a close, and goes on surviving it", async () => {
     const { manager } = newManager();
     const id = newTaskId();
-    await manager.createTask({ id, command: shell() });
+    await paintedTask(manager, id);
 
     expect(await manager.closeTask(id)).toBe(true);
 
@@ -691,14 +705,36 @@ describe("snapshotting a task", () => {
     expect(await readSnapshot(id)).toBe("the last thing it painted");
   });
 
+  // The same care, for a terminal that is perfectly alive. A dispose is not the
+  // only way to serialize to "": a task closed in the second or two between the
+  // resume spawning the agent and its first paint has a live PTY with an empty
+  // buffer, and writing that would blank the screen the user is about to be
+  // shown when they reopen it — with the old one gone for good.
+  test("a terminal that has painted nothing keeps the snapshot it already had", async () => {
+    const { manager, store } = newManager();
+    const id = newTaskId();
+    await manager.createTask({ id, command: shell() });
+    await writeSnapshot(id, "the last thing it painted");
+    store.update(id, { last_size_cols: 133, last_size_rows: 41 });
+    (manager.primaryPty(id)! as any).serialize = () => "";
+
+    expect(await manager.snapshot(id)).toBe(false);
+
+    expect(await readSnapshot(id)).toBe("the last thing it painted");
+    // The grid goes untouched with it: the two are one fact, so a size recorded
+    // for a screen that was never written describes the screen still on disk.
+    expect(store.get(id)!.last_size_cols).toBe(133);
+    expect(store.get(id)!.last_size_rows).toBe(41);
+  });
+
   // Deleting, not closing: a closed task's snapshot is exactly what reopening
   // it reads back (§5.5, phase 1), and only a delete leaves no row to read it
   // for.
   test("deleting a task takes its snapshot with it", async () => {
     const { manager } = newManager();
     const id = newTaskId();
-    await manager.createTask({ id, command: shell() });
-    await manager.snapshot(id);
+    await paintedTask(manager, id);
+    expect(await manager.snapshot(id)).toBe(true);
     expect(fs.existsSync(taskScrollbackPath(id))).toBe(true);
 
     manager.deleteTask(id);

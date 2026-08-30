@@ -209,6 +209,16 @@ describe("PATCH /api/tasks/:id", () => {
 describe("POST /api/tasks/:id/close", () => {
   test("suspends the task and kills its terminal, without deleting anything", async () => {
     const created = await (await post({})).json();
+    // Typed into the terminal so that there is a screen to save: the stand-in
+    // agent is `exec cat`, which paints nothing of its own, and a screen with
+    // nothing on it is nothing to snapshot — closing before the first paint
+    // leaves whatever snapshot the task already had rather than blanking it.
+    const pty = taskManager.getPty(created.ptyId)!;
+    pty.write("something on the screen\r");
+    for (let i = 0; i < 200 && !pty.serialize().includes("something on the screen"); i++) {
+      await Bun.sleep(10);
+    }
+
     const res = await fetch(`${base}/api/tasks/${created.id}/close`, { method: "POST" });
 
     expect(res.status).toBe(200);

@@ -1,7 +1,9 @@
 import { test, expect, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import * as fs from "fs";
 import type { ServerWebSocket } from "bun";
 import { applyMigrations } from "../db";
+import { taskDir } from "../agent/spawn";
 import { TaskManager } from "../tasks/manager";
 import { handleClientMessage } from "./client-messages";
 import type { ClientMessage, ServerMessage, WebSocketData } from "./types";
@@ -17,7 +19,15 @@ function newManager(): TaskManager {
 }
 
 afterEach(() => {
-  for (const m of managers) for (const task of m.listTasks()) m.deleteTask(task.id);
+  for (const m of managers) {
+    for (const task of m.listTasks()) {
+      m.deleteTask(task.id);
+      // `deleteTask` leaves `~/.codetoaster/tasks/<id>/` standing on purpose —
+      // that is archive's to clean up — but a test that made a real task should
+      // not leave one under the user's home either.
+      fs.rmSync(taskDir(task.id), { recursive: true, force: true });
+    }
+  }
   managers.length = 0;
 });
 
@@ -120,4 +130,28 @@ test("detach without a ptyId is not an error", () => {
   send(manager, client, { type: "detach" });
 
   expect(client.received).toEqual([]);
+});
+
+// The wire type says `ptyId?: string`, but JSON can say `null` — and null is
+// neither absent nor a terminal anyone holds, so `PtyManager.detach`'s
+// `undefined` branch was not taken and neither was the named one. The client
+// went on being counted as a viewer of a terminal it had left: the task's grid
+// stayed pinned by smallest-wins, and the harvester left the task alone because
+// somebody was apparently still watching it.
+test("a detach with a null ptyId detaches everything, the way an absent one does", async () => {
+  const manager = newManager();
+  const client = fakeClient();
+  // `cat` rather than an agent: it holds the PTY open and paints nothing.
+  await manager.createTask({ id: `test-${crypto.randomUUID()}`, command: ["cat"] });
+  const pty = manager.primaryPty(manager.listTasks()[0]!.id)!;
+
+  send(manager, client, { type: "attach", ptyId: pty.id, cols: 80, rows: 24 });
+  expect(pty.getClientCount()).toBe(1);
+
+  // Not through `send`, which cannot express a null the type forbids — this is
+  // the frame as it arrives off the socket.
+  handleClientMessage(manager, client.ws, JSON.stringify({ type: "detach", ptyId: null }));
+
+  expect(pty.getClientCount()).toBe(0);
+  expect(client.errors()).toEqual([]);
 });
