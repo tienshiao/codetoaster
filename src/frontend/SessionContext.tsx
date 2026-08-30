@@ -8,7 +8,6 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { useMatches } from "@tanstack/react-router";
 import { toast } from "sonner";
 import type { TerminalHandle, TerminalSize } from "./Terminal";
 import { generateUUID } from "./utils/uuid";
@@ -133,6 +132,11 @@ interface SessionContextValue {
   sessionLabels: Map<string, string>;
   /** False when the task has no terminal to attach to yet. */
   attachSession: (id: string) => boolean;
+  /** Tell the adapter which task the shell is showing, so a notification for
+   * it is acknowledged instead of rung. Null when no task is selected. Goes
+   * with the adapter in TASK-28, when sound and web notifications move to the
+   * component that knows what is on screen. */
+  setViewedTask: (id: string | null) => void;
   /** Null when the server refused: creating a task can fail on git or on the
    * spawn, and the caller should not navigate to something that isn't there. */
   createSession: (projectId?: string) => Promise<{ id: string; name: string } | null>;
@@ -227,13 +231,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // already reaches `send`: through a ref rather than a dependency.
   const ptyRef = useRef<PtyContextValue>(null as unknown as PtyContextValue);
 
-  // Derive whether the user is viewing the terminal (not the diff tab)
-  const matches = useMatches();
-  const isDiff = matches.some(m => m.routeId === "/sessions/$slug/diff");
-  const isViewingTerminalRef = useRef(!isDiff);
-  useEffect(() => {
-    isViewingTerminalRef.current = !isDiff;
-  }, [isDiff]);
+  // Whether the user is looking at the terminal. It used to be read off the
+  // route — v1's diff tab was a URL — and those routes are gone with TASK-21.
+  // The adapter now renders no UI at all, so nothing it could be showing is
+  // ever *not* the terminal, and the flag is pinned true until TASK-28 removes
+  // the adapter whole.
+  const isViewingTerminalRef = useRef(true);
+
+  // Which task the shell is showing, written by `TaskShell` (§7.3).
+  //
+  // Not `currentSessionIdRef`: that one is set by `attachSession`, whose only
+  // caller was the v1 session route and went with it in TASK-21. Left to it,
+  // the ref stays null for the life of the page and the notification handler
+  // below decides that no notification is ever for the task on screen — so
+  // every "Claude needs your attention" rings a sound and raises a desktop
+  // notification for the terminal the user is already watching, which
+  // `AgentPane` is at that moment acknowledging.
+  const viewedTaskIdRef = useRef<string | null>(null);
+  const setViewedTask = useCallback((id: string | null) => {
+    viewedTaskIdRef.current = id;
+  }, []);
 
   // The ref is written here, with the state, and never by an effect syncing it
   // afterwards. That sync was a bug the moment `attached` started handing back
@@ -321,7 +338,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (message.type === "notification") {
       const { taskId } = message;
       const isViewingThisSession =
-        taskId === currentSessionIdRef.current
+        taskId === viewedTaskIdRef.current
         && document.hasFocus()
         && isViewingTerminalRef.current;
 
@@ -485,18 +502,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
-  // Acknowledge pending notifications when switching from diff → terminal
-  useEffect(() => {
-    if (!isDiff) {
-      const sessionId = currentSessionIdRef.current;
-      if (sessionId) {
-        const session = sessionsRef.current.find(s => s.id === sessionId);
-        if (session?.hasNotification) {
-          sendRef.current({ type: "acknowledge", taskId: sessionId });
-        }
-      }
-    }
-  }, [isDiff]);
+  // The "switching from diff back to terminal acknowledges" effect went with
+  // the v1 diff route (TASK-21). In v2 the agent tab acknowledges for itself
+  // — `AgentPane` does it on mount and on focus — which is the same rule
+  // stated where the terminal actually is.
 
   const pushMru = useCallback((id: string) => {
     setMruSessionIds((prev) => [id, ...prev.filter((x) => x !== id)]);
@@ -1074,6 +1083,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sessionLabels,
         terminalRef,
         attachSession,
+        setViewedTask,
         createSession,
         closeSession,
         renameSession,

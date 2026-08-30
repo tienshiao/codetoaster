@@ -173,12 +173,6 @@ test("every slot kind starts at its defaults", () => {
 
   expect(getViewState("prefs", at("prefs")).treeLineWrap).toBe(false);
 
-  const nav = getViewState("nav", at("nav"));
-  expect(nav.lastTab).toBe("terminal");
-  expect(nav.gitCommit).toBeUndefined();
-  expect(nav.gitMode).toBeUndefined();
-  expect(nav.gitFile).toBeUndefined();
-
   resetViewStates(task);
 });
 
@@ -245,17 +239,15 @@ test("retainViewStates keeps the review when its diff tab closes", () => {
   resetViewStates(task);
 });
 
-test("retainViewStates never prunes the files, prefs and nav slots", () => {
+test("retainViewStates never prunes the files and prefs slots", () => {
   const task = "prune-nontabs";
   setViewField("files", viewRef(task, "files"), "selectedFile", "src/a.ts");
   setViewField("prefs", viewRef(task, "prefs"), "treeLineWrap", true);
-  setViewField("nav", viewRef(task, "nav"), "lastTab", "diff");
 
   retainViewStates(task, new Set());
 
   expect(getViewState("files", viewRef(task, "files")).selectedFile).toBe("src/a.ts");
   expect(getViewState("prefs", viewRef(task, "prefs")).treeLineWrap).toBe(true);
-  expect(getViewState("nav", viewRef(task, "nav")).lastTab).toBe("diff");
   resetViewStates(task);
 });
 
@@ -427,15 +419,6 @@ test("hunkExpansions is left out of the stored blob and comes back empty", () =>
   const revivedOne = getViewState("diffFile", one);
   expect(revivedOne.scrollTop).toBe(34);
   expect(revivedOne.hunkExpansions.size).toBe(0);
-  resetViewStates(task);
-});
-
-test("nav is never written to storage", () => {
-  const task = "persist-nav";
-  setViewField("nav", viewRef(task, "nav"), "lastTab", "diff");
-  setViewField("nav", viewRef(task, "nav"), "gitCommit", "abc123");
-  flushViewStates();
-  expect(storedBlob(task)).toBeNull();
   resetViewStates(task);
 });
 

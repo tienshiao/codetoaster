@@ -23,7 +23,6 @@
 // prune effect exists to prevent. It is left out of `PERSISTED` rather than
 // filtered on the way out, so it cannot be added back by accident.
 
-import type { TabType } from "./types/tab";
 import type { LineComment, HunkExpansionState } from "./types/diff";
 import type { FileInfo } from "./types/file";
 import type { GitViewMode } from "./types/git";
@@ -135,16 +134,6 @@ export interface PrefsViewState {
   treeLineWrap: boolean;
 }
 
-/** `nav`: v1 only. `utils/session-nav.ts` reconstructs a route from the last
- * tab and the git route's URL selection; TASK-21 deletes that file and this
- * slot with it. Nothing in v2 reads it. */
-export interface NavViewState {
-  lastTab: TabType;
-  gitCommit: string | undefined;
-  gitMode: GitViewMode | undefined;
-  gitFile: string | undefined;
-}
-
 export interface ViewStateShapes {
   diffAll: DiffAllViewState;
   diffFile: DiffFileViewState;
@@ -155,7 +144,6 @@ export interface ViewStateShapes {
   files: FilesViewState;
   explorer: ExplorerViewState;
   prefs: PrefsViewState;
-  nav: NavViewState;
 }
 
 export type ViewSlotKind = keyof ViewStateShapes;
@@ -200,7 +188,6 @@ const DEFAULTS: { [K in ViewSlotKind]: () => ViewStateShapes[K] } = {
     commitsScrollTop: 0,
   }),
   prefs: () => ({ treeLineWrap: false }),
-  nav: () => ({ lastTab: "terminal", gitCommit: undefined, gitMode: undefined, gitFile: undefined }),
 };
 
 /** What survives a reload, per kind. An allowlist rather than a denylist: a
@@ -246,9 +233,6 @@ const PERSISTED: { [K in ViewSlotKind]: ReadonlyArray<keyof ViewStateShapes[K] &
     "commitsScrollTop",
   ],
   prefs: ["treeLineWrap"],
-  // v1's nav shim reconstructs a route for a session that is already gone by
-  // the time the page comes back. Nothing worth keeping.
-  nav: [],
 };
 
 /** Slots a closing tab may take with it. The others outlive every tab in the
@@ -398,7 +382,7 @@ export function clearViewState(ref: ViewRef): void {
 /**
  * Drop every slot of `taskId` whose key is not in `validKeys` — the tabs the
  * task's layout still holds. Non-tab slots (`review`, `files`, `explorer`,
- * `prefs`, `nav`) belong to the task rather than to any pane and are never
+ * `prefs`) belong to the task rather than to any pane and are never
  * pruned by a tab closing.
  */
 export function retainViewStates(taskId: string, validKeys: ReadonlySet<string>): void {

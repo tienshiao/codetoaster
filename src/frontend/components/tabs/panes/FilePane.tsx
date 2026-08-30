@@ -17,6 +17,9 @@ interface FilePaneProps {
    * another line in an open file moves the cursor instead of opening the file
    * twice — which means this arrives as a changed prop, not a remount. */
   line?: number;
+  /** Opens a file at a line — where go-to-definition lands. Opening tabs is the
+   * layout's business, so it arrives here as a callback. */
+  onOpenFile: (path: string, line: number) => void;
 }
 
 /**
@@ -26,7 +29,7 @@ interface FilePaneProps {
  * file tab it opens, so a pane that carried one would be drawing the same tree
  * once per open file.
  */
-export function FilePane({ taskId, view, path, line }: FilePaneProps) {
+export function FilePane({ taskId, view, path, line, onOpenFile }: FilePaneProps) {
   const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const [lineWrap, setLineWrap] = useViewState("file", view, "lineWrap");
   const [markdownPreview, setMarkdownPreview] = useViewState("file", view, "markdownPreview");
@@ -80,7 +83,12 @@ export function FilePane({ taskId, view, path, line }: FilePaneProps) {
         highlightLine={line}
         onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}
       />
-      <SymbolPopover sessionId={taskId} target={symbolTarget} onClose={() => setSymbolTarget(null)} />
+      <SymbolPopover
+        sessionId={taskId}
+        target={symbolTarget}
+        onClose={() => setSymbolTarget(null)}
+        onGo={(entry) => onOpenFile(entry.path, entry.line)}
+      />
     </div>
   );
 }

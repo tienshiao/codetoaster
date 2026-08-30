@@ -21,6 +21,9 @@ interface DiffFilePaneProps {
   /** The `diff:<path>` slot. */
   view: ViewRef;
   path: string;
+  /** Opens a file at a line — where go-to-definition lands. Opening tabs is the
+   * layout's business, so it arrives here as a callback. */
+  onOpenFile: (path: string, line: number) => void;
 }
 
 /**
@@ -32,7 +35,7 @@ interface DiffFilePaneProps {
  * review, gathered by the same Submit, because they address the same `review`
  * slot rather than one per tab.
  */
-export function DiffFilePane({ taskId, view, path }: DiffFilePaneProps) {
+export function DiffFilePane({ taskId, view, path, onOpenFile }: DiffFilePaneProps) {
   const { data, isLoading, error: queryError, refetch } = useSessionDiff(taskId);
   const error = queryError
     ? queryError instanceof Error
@@ -128,7 +131,12 @@ export function DiffFilePane({ taskId, view, path }: DiffFilePaneProps) {
           onSymbolClick: (name, x, y) => setSymbolTarget({ name, x, y }),
         }}
       />
-      <SymbolPopover sessionId={taskId} target={symbolTarget} onClose={() => setSymbolTarget(null)} />
+      <SymbolPopover
+        sessionId={taskId}
+        target={symbolTarget}
+        onClose={() => setSymbolTarget(null)}
+        onGo={(entry) => onOpenFile(entry.path, entry.line)}
+      />
     </>
   );
 }

@@ -60,6 +60,50 @@ export function tabKey(descriptor: TabDescriptor): string {
   }
 }
 
+/**
+ * The descriptor a `tabKey` names, or null when it names nothing this build
+ * knows how to open.
+ *
+ * The inverse of `tabKey`, and the reason `?tab=` can *ensure* a tab rather
+ * than only focus one already open (§7.3). Split on the first colon only: a
+ * `file:` or `diff:` key carries a path, and a path may contain colons.
+ *
+ * A `file` key round-trips without its `line`, which is `tabKey`'s existing
+ * contract rather than a loss here — the line is a cursor position, not part of
+ * what identifies the tab, and a link that wanted one would carry it itself.
+ */
+export function descriptorFromKey(key: string): TabDescriptor | null {
+  const colon = key.indexOf(":");
+  if (colon === -1) {
+    switch (key) {
+      case "agent":
+        return { kind: "agent" };
+      case "diffAll":
+        return { kind: "diffAll" };
+      case "history":
+        return { kind: "history" };
+      default:
+        return null;
+    }
+  }
+
+  const rest = key.slice(colon + 1);
+  // An empty payload names no file, no PTY and no commit, so it is not a tab.
+  if (!rest) return null;
+  switch (key.slice(0, colon)) {
+    case "shell":
+      return { kind: "shell", ptyId: rest };
+    case "diff":
+      return { kind: "diff", path: rest };
+    case "file":
+      return { kind: "file", path: rest };
+    case "commit":
+      return { kind: "commit", sha: rest };
+    default:
+      return null;
+  }
+}
+
 export interface TabState {
   /** Unique across the layout. Distinct from `key` because splitting a
    * read-only tab puts the same descriptor — and so the same key — in two

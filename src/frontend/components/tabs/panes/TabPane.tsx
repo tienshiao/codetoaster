@@ -42,6 +42,15 @@ export function TabPane({ taskId, tab, onOpenTab, onSubmitReview, visible }: Tab
   );
   const openChanges = useCallback(() => onOpenTab({ kind: "diffAll" }), [onOpenTab]);
 
+  // Go-to-definition. Permanent rather than preview: the user asked for this
+  // file by name, and the next preview open would otherwise take its place.
+  // The line rides on the descriptor, so jumping into a file already open
+  // moves the cursor instead of opening it twice (`tabKey` ignores `line`).
+  const openFile = useCallback(
+    (path: string, line: number) => onOpenTab({ kind: "file", path, line }),
+    [onOpenTab],
+  );
+
   const { descriptor } = tab;
   switch (descriptor.kind) {
     case "agent":
@@ -62,14 +71,22 @@ export function TabPane({ taskId, tab, onOpenTab, onSubmitReview, visible }: Tab
       // already takes a task and a submit, and already addresses the `diffAll`
       // and `review` slots itself, so a wrapper would be a layer that forwards
       // two props.
-      return <DiffView sessionId={taskId} onSubmit={onSubmitReview} />;
+      return <DiffView sessionId={taskId} onSubmit={onSubmitReview} onOpenFile={openFile} />;
 
     case "diff":
-      return <DiffFilePane taskId={taskId} view={view} path={descriptor.path} />;
+      return (
+        <DiffFilePane taskId={taskId} view={view} path={descriptor.path} onOpenFile={openFile} />
+      );
 
     case "file":
       return (
-        <FilePane taskId={taskId} view={view} path={descriptor.path} line={descriptor.line} />
+        <FilePane
+          taskId={taskId}
+          view={view}
+          path={descriptor.path}
+          line={descriptor.line}
+          onOpenFile={openFile}
+        />
       );
 
     case "commit":

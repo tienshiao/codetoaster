@@ -30,9 +30,13 @@ interface DiffViewProps {
    * exited has no terminal to send it to. The review is kept in that case
    * rather than cleared, since the user's comments are the only copy. */
   onSubmit: (promptText: string) => boolean;
+  /** Opens a file at a line — where go-to-definition lands. The tab area owns
+   * opening tabs, so this arrives as a callback rather than being navigated to
+   * from inside the diff. */
+  onOpenFile: (path: string, line: number) => void;
 }
 
-export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
+export function DiffView({ sessionId, onSubmit, onOpenFile }: DiffViewProps) {
   const { data, isLoading: loading, error: queryError, refetch } = useSessionDiff(sessionId);
   const files = useMemo(() => data ?? [], [data]);
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
@@ -222,7 +226,12 @@ export function DiffView({ sessionId, onSubmit }: DiffViewProps) {
         </AlertDialogContent>
       </AlertDialog>
 
-      <SymbolPopover sessionId={sessionId} target={symbolTarget} onClose={() => setSymbolTarget(null)} />
+      <SymbolPopover
+        sessionId={sessionId}
+        target={symbolTarget}
+        onClose={() => setSymbolTarget(null)}
+        onGo={(entry) => onOpenFile(entry.path, entry.line)}
+      />
     </>
   );
 }

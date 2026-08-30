@@ -1,4 +1,3 @@
-import { useNavigate, useParams } from "@tanstack/react-router";
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
 import { useSymbolLookup } from "../hooks/use-symbol-lookup";
 import type { SymbolEntry } from "../../lib/symbols/types";
@@ -14,23 +13,21 @@ interface SymbolPopoverProps {
   sessionId: string;
   target: SymbolTarget | null;
   onClose: () => void;
+  /** Where a chosen definition or reference goes. A callback rather than a
+   * route: the same popover is rendered from three panes inside the tab area,
+   * and a `navigate` here would take the whole shell to a URL instead of
+   * opening a file tab beside the diff the user is reading. */
+  onGo: (entry: SymbolEntry) => void;
 }
 
-export function SymbolPopover({ sessionId, target, onClose }: SymbolPopoverProps) {
-  const navigate = useNavigate();
-  // Both the file and diff routes live under /sessions/$slug, so read the slug
-  // loosely rather than threading it through every caller.
-  const params = useParams({ strict: false }) as { slug?: string };
+export function SymbolPopover({ sessionId, target, onClose, onGo }: SymbolPopoverProps) {
   const { data, isLoading } = useSymbolLookup(sessionId, target?.name ?? null);
 
+  // Choosing an entry always dismisses: the popover is anchored to the click
+  // that opened it, so leaving it up over a pane that has moved on is never
+  // what the caller wants.
   const go = (entry: SymbolEntry) => {
-    if (params.slug) {
-      navigate({
-        to: "/sessions/$slug/file",
-        params: { slug: params.slug },
-        search: { file: entry.path, line: entry.line },
-      });
-    }
+    onGo(entry);
     onClose();
   };
 

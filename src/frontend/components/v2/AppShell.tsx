@@ -306,6 +306,12 @@ export function AppShell({
               placeholder="Filter tasks"
               value={taskFilter}
               onChange={onTaskFilterChange}
+              // No key hint while nothing binds one. The v1 command palette
+              // owned ⌘K and went with the session routes (TASK-21); TASK-35
+              // builds it back over tasks and tabs, and can turn the hint on
+              // when there is something behind it. A label promising a
+              // shortcut that does nothing is worse than no label.
+              shortcut={null}
               className="min-w-0 flex-1"
             />
             {onToggleArchived && (

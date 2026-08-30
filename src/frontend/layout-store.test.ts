@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import {
   isTerminalTab,
   tabKey,
+  descriptorFromKey,
   resetIdCounter,
   createLayout,
   findTab,
@@ -190,6 +191,49 @@ test("isTerminalTab is true for agent and shell only", () => {
   expect(isTerminalTab(file("a"))).toBe(false);
   expect(isTerminalTab(commit("a"))).toBe(false);
   expect(isTerminalTab(history)).toBe(false);
+});
+
+// ── descriptorFromKey ───────────────────────────────────────────────────────
+
+test("descriptorFromKey round-trips every kind a tabKey can name", () => {
+  const descriptors: TabDescriptor[] = [
+    agent,
+    diffAll,
+    history,
+    shell("pty-1"),
+    diff("src/a.ts"),
+    file("src/a.ts"),
+    commit("abc123"),
+  ];
+  for (const descriptor of descriptors) {
+    expect(descriptorFromKey(tabKey(descriptor))).toEqual(descriptor);
+  }
+});
+
+test("descriptorFromKey splits on the first colon, so a path may contain one", () => {
+  // Not hypothetical on the web: a path can hold a colon, and the key is built
+  // by concatenation. Splitting on the last one would open "src/a.ts" as a file
+  // named "ts" under a kind named "file:src/a".
+  expect(descriptorFromKey("file:src/weird:name.ts")).toEqual({
+    kind: "file",
+    path: "src/weird:name.ts",
+  });
+  expect(descriptorFromKey("diff:a:b:c")).toEqual({ kind: "diff", path: "a:b:c" });
+});
+
+test("descriptorFromKey drops a file's line, matching tabKey's contract", () => {
+  // The line is a cursor position, not identity: `tabKey` leaves it out so a
+  // second go-to-definition moves the cursor instead of opening the file twice.
+  expect(descriptorFromKey(tabKey(file("src/a.ts", 400)))).toEqual(file("src/a.ts"));
+});
+
+test("descriptorFromKey rejects what it cannot open", () => {
+  expect(descriptorFromKey("")).toBeNull();
+  expect(descriptorFromKey("nonsense")).toBeNull();
+  expect(descriptorFromKey("settings:theme")).toBeNull();
+  // A kind with nothing after the colon names no file, PTY or commit.
+  expect(descriptorFromKey("file:")).toBeNull();
+  expect(descriptorFromKey("commit:")).toBeNull();
 });
 
 // ── createLayout and lookup ─────────────────────────────────────────────────

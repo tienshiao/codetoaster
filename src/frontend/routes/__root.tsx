@@ -7,8 +7,6 @@ import { SessionProvider } from "../SessionContext";
 import { TerminalThemeProvider } from "../hooks/use-terminal-theme";
 import { useTheme } from "../hooks/use-theme";
 import { Toaster } from "../components/ui/sonner";
-import { CommandPalette } from "../components/CommandPalette";
-import { TabSwitcher } from "../components/TabSwitcher";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { useVisualViewportHeight } from "../hooks/use-visual-viewport";
 
@@ -33,8 +31,9 @@ function RootComponent() {
             <SessionProvider>
               <SidebarProvider className="h-[var(--app-height,100svh)] min-h-0">
                 <Outlet />
-                <CommandPalette />
-                <TabSwitcher />
+                {/* No command palette and no tab switcher: both were typed off
+                    the v1 session routes and went with them. TASK-35 builds the
+                    palette back over tasks and tabs. */}
                 <Toaster />
               </SidebarProvider>
             </SessionProvider>
