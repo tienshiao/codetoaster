@@ -880,8 +880,17 @@ export class TaskManager {
     // the task ever painted, which is the opposite of what the no-PTY branch
     // above is careful to preserve.
     if (!pty || pty.isDisposed) return false;
+    // The screen and the grid it was taken at, read together, because they are
+    // one fact: a snapshot repainted into a grid it was not taken at reflows
+    // into nonsense. Reading the size after the write would let them disagree —
+    // the write is queued behind any earlier one for this task, and in that
+    // window a client detaching or resizing re-runs smallest-wins and changes
+    // the PTY's grid under us. The row would then claim the new size for a
+    // screen serialized at the old one.
+    const screen = pty.serialize();
+    const size = pty.getSize();
     try {
-      await writeSnapshot(taskId, pty.serialize());
+      await writeSnapshot(taskId, screen);
     } catch (e) {
       console.warn(`Could not write scrollback snapshot for task ${taskId}:`, e);
       return false;
@@ -895,7 +904,6 @@ export class TaskManager {
       void removeSnapshot(taskId).catch(() => {});
       return false;
     }
-    const size = pty.getSize();
     this.store.update(taskId, { last_size_cols: size.cols, last_size_rows: size.rows });
     return true;
   }

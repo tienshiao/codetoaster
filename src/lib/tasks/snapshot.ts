@@ -51,8 +51,13 @@ export function writeSnapshot(taskId: string, data: string): Promise<void> {
 async function publishSnapshot(taskId: string, data: string): Promise<void> {
   const target = taskScrollbackPath(taskId);
   const staging = `${target}.tmp`;
-  await Bun.write(staging, data);
   try {
+    // The write is inside the guard too, not only the rename: a `Bun.write`
+    // that throws part-way — a full disk is the ordinary way — has already
+    // created the staging file, and nothing else would ever remove it. Only
+    // `removeSnapshot`, which runs when the task is deleted, and that may be
+    // never.
+    await Bun.write(staging, data);
     await rename(staging, target);
   } catch (e) {
     // Nothing readable was published, so the old snapshot still stands — but
