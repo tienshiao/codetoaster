@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { test, expect } from "vitest";
 import { act, render } from "@testing-library/react";
 import { TabArea } from "./TabArea";
@@ -124,4 +124,103 @@ test("a cancelled gesture drops the move rather than committing it", () => {
   area.on(window, "pointercancel", centreOf(2) + 40, 1);
 
   expect(area.order()).toEqual(["Agent", "Changes", "History"]);
+});
+
+/**
+ * The terminal tabs' one privilege: they survive being switched away from.
+ *
+ * A `useEffect` in the pane is what is under test, not the markup — a pane that
+ * unmounts loses its attachment and its xterm grid, and comes back only at the
+ * cost of a full `restore` from the server. Counting mounts is the only way to
+ * see the difference, because both arrangements look identical on screen.
+ */
+function mountWithPanes() {
+  resetIdCounter();
+  let layout = createLayout(); // the agent tab
+  layout = openTab(layout, { kind: "diffAll" }); // …which this makes active
+
+  const mounts: string[] = [];
+  const unmounts: string[] = [];
+  const visibility: string[] = [];
+
+  // Mount accounting is keyed on nothing, deliberately: `visible` changing is a
+  // prop change, and counting it as a remount would hide the very difference
+  // this file exists to measure.
+  function Pane({ kind, visible }: { kind: string; visible: boolean }) {
+    useEffect(() => {
+      mounts.push(kind);
+      return () => {
+        unmounts.push(kind);
+      };
+    }, [kind]);
+    useEffect(() => {
+      visibility.push(`${kind}:${visible}`);
+    }, [kind, visible]);
+    return <div>{kind}</div>;
+  }
+
+  function Host() {
+    const [current, setLayout] = useState(layout);
+    return (
+      <TabArea
+        layout={current}
+        onLayoutChange={setLayout}
+        renderPane={(tab, _group, visible) => (
+          <Pane key={tab.key} kind={tab.descriptor.kind} visible={visible} />
+        )}
+      />
+    );
+  }
+
+  const view = render(<Host />);
+  // `role=tab` rather than `[data-tab-id]`: the latter is the drag's outer
+  // handle, and the click lives on the button inside it.
+  const tabs = () => Array.from(view.container.querySelectorAll<HTMLElement>("[role=tab]"));
+  return {
+    mounts,
+    unmounts,
+    visibility,
+    click: (index: number) =>
+      act(() => {
+        tabs()[index]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      }),
+  };
+}
+
+test("a terminal tab is mounted even while another tab is showing", () => {
+  const area = mountWithPanes();
+
+  // `openTab` focused Changes, so the agent is the one off screen — and it is
+  // mounted anyway, which is the whole point.
+  expect(area.mounts).toEqual(["agent", "diffAll"]);
+  expect(area.visibility).toEqual(["agent:false", "diffAll:true"]);
+});
+
+test("switching between tabs never remounts the terminal", () => {
+  const area = mountWithPanes();
+
+  area.click(0); // to Agent
+  area.click(1); // back to Changes
+
+  // Mounted once, at the start, and never again: the attachment and the grid
+  // outlive every switch. Only its visibility moved, which is how it knows to
+  // stop reporting its size into smallest-wins.
+  expect(area.mounts.filter((k) => k === "agent")).toEqual(["agent"]);
+  expect(area.unmounts).not.toContain("agent");
+  expect(area.visibility.filter((v) => v.startsWith("agent"))).toEqual([
+    "agent:false",
+    "agent:true",
+    "agent:false",
+  ]);
+});
+
+test("a read-only tab is unmounted when it stops showing", () => {
+  const area = mountWithPanes();
+
+  area.click(0); // to Agent
+
+  // The diff pane goes: it is a query and a scroll offset, both cheap to
+  // rebuild and both already persisted by tab key. Keeping every pane alive
+  // would be the expensive half of the bargain with none of the benefit.
+  expect(area.unmounts).toEqual(["diffAll"]);
 });
