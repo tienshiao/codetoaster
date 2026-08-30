@@ -103,17 +103,41 @@ Server sends: `attached`, `restore`, `data`, `resize`, `exit`, `error`, `session
 import { test, expect } from "bun:test";
 ```
 
-Components and hooks render too: `bun test` preloads Happy DOM and Testing
-Library (`test/setup-*.ts`, wired in `bunfig.toml`), so a `.test.tsx` can
-`render()` and `renderHook()`. The preload is global, so it also runs for the
-server tests — it puts Bun's `fetch`/`Request`/`Response` back after
-registering, because those tests hand real requests to route handlers and the
-identity checks fail against Happy DOM's versions.
+**Two runners, split by whether the test renders.** The rule is the filename,
+and it is the filename precisely so nothing has to be configured to keep the two
+apart:
 
-Reach for a component test when the behaviour is a *lifecycle* one — when a
+| file | runner | command |
+| --- | --- | --- |
+| `*.test.ts` — everything that does not mount a component | `bun test` | `bun run test:unit` |
+| `*.render.tsx` — anything calling `render()` / `renderHook()` | Vitest, `environment: happy-dom` | `bun run test:render` |
+
+`bun run test` runs both, and is what CI and a pre-commit check should use.
+
+`*.render.tsx` deliberately does not contain `.test`, so `bun test` does not
+discover it: Bun requires `.test`/`.spec` in the name, so a suffix without one
+is invisible to it and no ignore flag has to hold. (Do not "fix" this by
+renaming them to `.test.tsx`. `--path-ignore-patterns` and `bunfig`'s
+`pathIgnorePatterns` both work from a shell but are silently ignored under
+`bun run`, so the exclusion would hold when you tested it by hand and fail in
+CI.)
+
+Vitest exists here for one reason: a rendering test needs a DOM, Bun has no
+per-file test environment, and its `preload` is global — so the only way to give
+the frontend a `document` from inside `bun test` is to give the server one too
+and then hand back the `fetch`/`Request`/`Response` its route tests compare by
+identity. Scoping by runner means the server tests never see a DOM at all.
+`vitest.config.ts` mirrors `tsconfig`'s `@/*` alias; if one moves the other has
+to, because a test resolving a module differently from the app is the one real
+hazard of two bundlers over one tree.
+
+Reach for a rendering test when the behaviour is a *lifecycle* one — when a
 subscription binds, when a ref is written, what survives a remount. Pure logic
-belongs in a plain `.test.ts` against the function that holds it, which is why
+belongs in a `.test.ts` against the function that holds it, which is why
 `drag.ts` and `layout-store.ts` exist apart from the components using them.
+Happy DOM has no layout engine, so anything depending on real geometry has to
+stub it (see `TabArea.render.tsx`) and is better verified in a browser via the
+`verify` skill.
 
 ## Frontend
 

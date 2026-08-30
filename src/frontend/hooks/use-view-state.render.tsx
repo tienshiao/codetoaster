@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useViewState } from "./use-view-state";
 import { getViewState, resetViewStates, setViewField, viewRef } from "../view-state-store";
@@ -16,6 +16,9 @@ function comment(filePath: string): LineComment {
     updatedAt: 0,
   };
 }
+
+// A rendering test, so Vitest's, not `bun test`'s — see CLAUDE.md, "Testing",
+// for why the two runners are split by filename.
 
 // ── two panes, one slot ─────────────────────────────────────────────────────
 //

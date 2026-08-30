@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { act, render } from "@testing-library/react";
 import { TabArea } from "./TabArea";
 import { createLayout, openTab, resetIdCounter, type TaskLayout } from "@/frontend/layout-store";
 
 /**
- * The tab strip's gestures.
+ * The tab strip's gestures. A rendering test, so Vitest's, not `bun test`'s —
+ * see CLAUDE.md, "Testing", for why the two runners are split by filename.
  *
  * `drag.test.ts` covers the arithmetic — which side of a tab a drop landed on,
  * how far a boundary may travel. What it cannot see is the part that went

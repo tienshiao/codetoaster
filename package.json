@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsr watch & tsc --noEmit --watch --preserveWatchOutput & bun --hot src/index.ts foreground",
+    "test": "bun run test:unit && bun run test:render",
+    "test:unit": "bun test",
+    "test:render": "vitest run",
     "build:server": "bun run build-single.ts",
     "build:server:all": "bun run build-all.ts",
     "start": "NODE_ENV=production bun src/index.ts foreground"
@@ -48,7 +51,6 @@
     "xterm-theme": "^1.1.0"
   },
   "devDependencies": {
-    "@happy-dom/global-registrator": "^20.12.0",
     "@tanstack/router-cli": "^1.161.4",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^7.0.1",
@@ -56,6 +58,9 @@
     "@types/bun": "latest",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "typescript": "^5.9.3"
+    "@vitejs/plugin-react": "^6.1.1",
+    "happy-dom": "^20.12.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
   }
 }
