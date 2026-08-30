@@ -497,18 +497,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setRestoringSessionId(null);
   }, []);
 
-  // Bring a suspended task back (§6): the agent is respawned on the stored
-  // conversation and the task gets a fresh terminal, which the attach effect
-  // picks up when the server broadcasts the row. Nothing is attached from here
-  // — this only starts the process and reports it failing.
-  const resumeSession = useCallback(
-    (id: string, retry = false) => {
-      if (resumingRef.current.has(id)) return;
-      if (resumeFailedRef.current.has(id) && !retry) return;
-      resumeFailedRef.current.delete(id);
-      syncResumeFailed();
-      markResuming(id, true);
-
+  // Put the terminal on the task being reopened and open the read-only phase
+  // (§5.5). Separate from the request below because it is what the *view* has
+  // to do, and the view has to do it whether or not this is the call that
+  // starts the agent: a resume already in flight is still the task the user is
+  // looking at.
+  const beginReopen = useCallback(
+    (id: string) => {
       // Let go of the terminal we were showing before the request, not after.
       // The user has already navigated to the task being resumed, so leaving
       // the old PTY attached leaves them looking at another task's output for
@@ -555,6 +550,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           // Nothing to say. The snapshot is a courtesy — the resume is what the
           // click was for, and it reports its own failures.
         });
+    },
+    [pushMru, setCurrentSession],
+  );
+
+  // Bring a suspended task back (§6): the agent is respawned on the stored
+  // conversation and the task gets a fresh terminal, which the attach effect
+  // picks up when the server broadcasts the row. Nothing is attached from here
+  // — this only starts the process and reports it failing.
+  const resumeSession = useCallback(
+    (id: string, retry = false) => {
+      if (resumingRef.current.has(id)) {
+        // The request is already out, so nothing more is sent — but this may
+        // still be the user *opening* the task: they clicked it, left while the
+        // ladder was walking, and came back. Returning outright left
+        // `currentSessionId` and the attachment on the task they came from, so
+        // the URL named one task while the grid showed another and every
+        // keystroke went to its terminal until the resume happened to land.
+        if (currentSessionIdRef.current !== id) beginReopen(id);
+        return;
+      }
+      if (resumeFailedRef.current.has(id) && !retry) return;
+      resumeFailedRef.current.delete(id);
+      syncResumeFailed();
+      markResuming(id, true);
+
+      beginReopen(id);
 
       // Same distinction as create: the request needs a concrete grid, so it
       // falls back, but a fabricated 80x24 must not reach the attach and enter
@@ -605,7 +626,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           markResuming(id, false);
         });
     },
-    [markResuming, pushMru, setCurrentSession, syncResumeFailed, endRestorePhase],
+    [beginReopen, markResuming, syncResumeFailed, endRestorePhase],
   );
 
   // The retry the toast offers calls back into the callback that created it, so
