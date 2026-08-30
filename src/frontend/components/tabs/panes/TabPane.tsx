@@ -1,7 +1,8 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo } from "react";
 import { DiffView } from "@/frontend/DiffView";
 import { viewRef } from "@/frontend/view-state-store";
 import type { OpenOptions, TabDescriptor, TabState } from "@/frontend/layout-store";
+import { AgentPane } from "./AgentPane";
 import { CommitPane } from "./CommitPane";
 import { DiffFilePane } from "./DiffFilePane";
 import { FilePane } from "./FilePane";
@@ -16,9 +17,9 @@ export interface TabPaneProps {
   /** Delivers a finished review to the agent. False when it could not be sent,
    * which is what keeps the user's comments from being cleared. */
   onSubmitReview: (promptText: string) => boolean;
-  /** The terminal tabs. Their host — which PTY a tab is attached to, and when
-   * to attach — is TASK-27/28's, so this pane does not invent one. */
-  renderTerminal: (tab: TabState) => ReactNode;
+  /** False for a terminal tab that is mounted but not showing. `TabArea` keeps
+   * those mounted; every other kind only renders while it is active. */
+  visible: boolean;
 }
 
 /**
@@ -29,13 +30,7 @@ export interface TabPaneProps {
  * point of keying `view-state-store` by tab: "which tab is this" and "whose
  * scroll offset is this" stop being two questions that can disagree.
  */
-export function TabPane({
-  taskId,
-  tab,
-  onOpenTab,
-  onSubmitReview,
-  renderTerminal,
-}: TabPaneProps) {
+export function TabPane({ taskId, tab, onOpenTab, onSubmitReview, visible }: TabPaneProps) {
   const view = useMemo(() => viewRef(taskId, tab.key), [taskId, tab.key]);
 
   // A preview open: clicking through a commit graph or a file tree replaces the
@@ -50,8 +45,17 @@ export function TabPane({
   const { descriptor } = tab;
   switch (descriptor.kind) {
     case "agent":
+      return <AgentPane taskId={taskId} visible={visible} />;
+
     case "shell":
-      return renderTerminal(tab);
+      // A second PTY in the task, spawned at its cwd. Nothing opens one yet, so
+      // this says so rather than drawing an empty terminal that would look
+      // broken (TASK-27).
+      return (
+        <div className="grid h-full place-items-center text-sm text-subtle-foreground">
+          Shell tabs are not built yet — see TASK-27.
+        </div>
+      );
 
     case "diffAll":
       // Rendered directly rather than through a pane of its own: `DiffView`

@@ -196,20 +196,25 @@ function ShellPreview() {
                     badge={<Badge>sonnet · acceptEdits</Badge>}
                   />
                 }
-                renderPane={(tab) => (
-                  // Keyed by the tab key. Within a group the active tab changes
-                  // without the pane unmounting, and `useViewState` binds its
-                  // slot once, at mount — so without this, switching from one
-                  // file tab to another would draw the second file's contents
-                  // under the first file's scroll offset and toggles, and write
-                  // them back to the first file's slot.
+                renderPane={(tab, _group, visible) => (
+                  // Keyed by task *and* tab. The tab key alone was not enough:
+                  // every task's agent tab keys as "agent", so switching tasks
+                  // handed the same React position the same key and the same
+                  // component type, and the previous task's terminal — grid,
+                  // attachment and all — was reused for the next one.
+                  //
+                  // Within a task it is still the tab key that matters:
+                  // `useViewState` binds its slot once, at mount, so switching
+                  // from one file tab to another without a key would draw the
+                  // second file's contents under the first file's scroll offset
+                  // and toggles, and write them back to the first file's slot.
                   <TabPane
-                    key={tab.key}
+                    key={`${selectedTaskId}:${tab.key}`}
                     taskId={selectedTaskId!}
                     tab={tab}
                     onOpenTab={handleOpenTab}
                     onSubmitReview={handleSubmitReview}
-                    renderTerminal={() => <TerminalFixture />}
+                    visible={visible}
                   />
                 )}
               />
@@ -305,55 +310,4 @@ function ChangesFixture({ onOpen }: { onOpen: (path: string) => void }) {
       />
     </>
   );
-}
-
-/**
- * Stands in for the agent terminal at the product's real metrics. The design
- * system ships a `TerminalFrame` for exactly this and says never to use it in
- * production — so it was not ported, and this fixture lives with the preview
- * route rather than in the component library. TASK-19 puts the real
- * multi-instance `Terminal` here.
- */
-function TerminalFixture() {
-  return (
-    <div className="h-full overflow-auto bg-pane px-3 py-2 font-mono text-base leading-code tracking-mono">
-      <div className="text-subtle-foreground">
-        $ claude --session-id 1fc1a3c8 --settings ./settings.json "extract Pty from Session"
-      </div>
-      <Gap />
-      <div>
-        <span className="text-state-busy">›</span> extract Pty from Session, keeping the OSC handlers intact
-      </div>
-      <Gap />
-      <div className="text-muted-foreground">
-        I'll split the process-owning half of <span className="text-foreground">Session</span> into{" "}
-        <span className="text-foreground">Pty</span> and leave naming on the task record.
-      </div>
-      <Gap />
-      <div>
-        <span className="text-success">●</span> <span className="text-muted-foreground">Read</span>{" "}
-        src/lib/xtmux/session.ts <span className="text-subtle-foreground">399 lines</span>
-      </div>
-      <div>
-        <span className="text-success">●</span> <span className="text-muted-foreground">Write</span>{" "}
-        src/lib/xtmux/pty.ts <span className="text-diff-add-marker">+142</span>{" "}
-        <span className="text-diff-del-marker">−38</span>
-      </div>
-      <div>
-        <span className="text-state-busy">●</span> <span className="text-muted-foreground">Bash</span>{" "}
-        bun test src/lib/xtmux
-      </div>
-      <Gap />
-      <div className="text-subtle-foreground">
-        {"  multiplex.test.ts:  "}
-        <span className="text-success">12 pass</span>
-        {"  0 fail"}
-      </div>
-      <div className="mt-1 inline-block h-[1.05em] w-[0.6em] translate-y-[0.15em] bg-foreground [animation:ct-caret_1s_step-end_infinite]" />
-    </div>
-  );
-}
-
-function Gap() {
-  return <div className="h-2.5" aria-hidden />;
 }

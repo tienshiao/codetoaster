@@ -3,6 +3,7 @@ import {
   canSplit,
   closeTab,
   focusTab,
+  isTerminalTab,
   moveTab,
   pinTab,
   setGroupFlex,
@@ -32,8 +33,14 @@ import { presentTab } from "./tab-labels";
 export interface TabAreaProps {
   layout: TaskLayout;
   onLayoutChange: (next: TaskLayout) => void;
-  /** What fills a group's pane. TASK-23's hosts; a fixture until then. */
-  renderPane: (tab: TabState, group: TabGroup) => ReactNode;
+  /**
+   * What fills a group's pane.
+   *
+   * `visible` is false for a terminal tab that is mounted but not the active
+   * one — see the pane container below. Every other tab only ever renders while
+   * it is showing, so it is only ever called with true.
+   */
+  renderPane: (tab: TabState, group: TabGroup, visible: boolean) => ReactNode;
   /** The band under each group's strip. Repeated per group — the task's own
    * values, beside the strip they belong to. */
   header?: ReactNode;
@@ -370,8 +377,32 @@ export function TabArea({
                 }}
               />
               {header}
-              <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-                {active ? renderPane(active, group) : null}
+              {/* Terminal tabs stay mounted and merely hide, which is the one
+                  place a pane's identity outlives its being on screen.
+                  Unmounting one would drop the attachment, throw the xterm grid
+                  away and cost a full `restore` to come back — on every switch
+                  to a diff tab and back. Everything else renders only while it
+                  is active: a diff pane is a query and a scroll offset, both
+                  cheap to rebuild and both already persisted by tab key.
+
+                  `Terminal.tsx` is built for exactly this: `fitIfVisible` skips
+                  a hidden or zero-sized container rather than fitting the grid
+                  to nothing, and remembers that it did so the next fit is
+                  treated as a first fit rather than a user resize. */}
+              <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+                {group.tabs.map((tab) =>
+                  isTerminalTab(tab.descriptor) ? (
+                    <div
+                      key={tab.id}
+                      className={cn("h-full", tab.id !== group.activeTabId && "hidden")}
+                    >
+                      {renderPane(tab, group, tab.id === group.activeTabId)}
+                    </div>
+                  ) : null,
+                )}
+                {active && !isTerminalTab(active.descriptor)
+                  ? renderPane(active, group, true)
+                  : null}
               </div>
             </section>
           </Fragment>

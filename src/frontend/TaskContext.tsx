@@ -47,6 +47,17 @@ export interface CreateTaskOptions {
   rows?: number;
 }
 
+export interface ResumeTaskOptions {
+  /** Start a new conversation rather than reopening the stored one (§4.3). */
+  fresh?: boolean;
+  /** The grid the reopened agent should be spawned at. Sent because the PTY is
+   * minted before any client has attached to it, so this is the only size the
+   * server has to go on — and a task that comes back at 80×24 and reflows on
+   * the first attach reflows the snapshot the user came back to read. */
+  cols?: number;
+  rows?: number;
+}
+
 export interface TaskContextValue {
   tasks: TaskInfo[];
   projects: ProjectInfo[];
@@ -61,7 +72,7 @@ export interface TaskContextValue {
   createTask: (options?: CreateTaskOptions) => Promise<TaskResult<TaskInfo>>;
   renameTask: (id: string, title: string) => Promise<TaskResult<TaskInfo>>;
   closeTask: (id: string) => Promise<TaskResult<TaskInfo>>;
-  resumeTask: (id: string, options?: { fresh?: boolean }) => Promise<TaskResult<TaskInfo>>;
+  resumeTask: (id: string, options?: ResumeTaskOptions) => Promise<TaskResult<TaskInfo>>;
 }
 
 const TaskContext = createContext<TaskContextValue | null>(null);
@@ -257,7 +268,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   );
 
   const resumeTask = useCallback(
-    (id: string, options: { fresh?: boolean } = {}) =>
+    (id: string, options: ResumeTaskOptions = {}) =>
       request<TaskInfo>(
         `/api/tasks/${id}/resume`,
         {
