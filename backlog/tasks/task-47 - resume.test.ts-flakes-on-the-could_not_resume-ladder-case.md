@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:09'
-updated_date: '2026-08-30 19:56'
+updated_date: '2026-08-30 20:42'
 labels:
   - test
   - flaky
@@ -80,6 +80,14 @@ Two coverage repairs that came with it. 'a hook settles the start sooner than th
 Verification. AC#2: 50 consecutive runs, 0 failures. Also 18/18 under 3x parallel contention. Full suite 684 unit + 56 render, tsc clean.
 
 Honest limit: under 6x parallel contention 6 of 24 runs still fail, but as 5001ms hangs on Bun's test timeout rather than wrong answers, and the pre-fix file fails 24/24 under that same load. Measured and ruled out as the cause: PTY spawn stays 6-8ms under that load, and the hook relay delivers in 0-7ms. So it is neither machine saturation nor the relay — it is the resume path's own event-loop behaviour under saturation, which is pre-existing, strictly better than before, and not what this task is about. Worth a separate task if 6x-parallel ever becomes a real CI shape.
+
+Post-review hardening (/code-review --fix), three low-severity findings, all verified rather than taken on trust:
+
+1. The generated stand-in's redirect targets were unquoted. os.tmpdir() honours $TMPDIR, so a temp root with a space sent the invocation and hook logs somewhere else. Pre-existing for the invocation log, newly duplicated for the hook log — and this change made the consequence worse: a hook line that never lands used to fall back to the 400ms cap, and now hangs on CAP_NEVER_MS and surfaces as an opaque 5001ms Bun timeout. Proven both ways under TMPDIR='/tmp/ct has space': quoted 22 pass, unquoted 17 fail.
+2. invocations() duplicated read()'s body verbatim; replaced with the function itself.
+3. transitionFor not mapping PreToolUse is what the whole determinism argument rests on, and nothing pinned it — PreToolUse is a real event and a natural 'busy' signal, so the day it gains a mapping the relay would start stamping agent_state on every surviving rung with no test failing at the cause. The payload is now RELAYED_HOOK with a test asserting transitionFor(RELAYED_HOOK) is undefined. Confirmed non-vacuous: swapping the event to UserPromptSubmit fails exactly that test.
+
+Not changed, worth knowing: newManager writes the process-global CODETOASTER_AGENT_BIN, so two newManager calls in one test would leave the first manager's relay watching a log nothing writes. No test does this, and fixing it would restructure the helper.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

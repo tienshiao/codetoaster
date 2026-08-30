@@ -8,6 +8,7 @@ import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import { taskDir } from "../agent/spawn";
 import { projectsDirFor } from "../agent/transcripts";
+import { transitionFor, type HookPayload } from "../agent/hook-state";
 
 const opened: Array<{ manager: TaskManager; taskId: string }> = [];
 const tempDirs: string[] = [];
@@ -78,14 +79,14 @@ function standInAgent(
   fs.writeFileSync(
     bin,
     `#!/bin/sh
-printf '%s\\t' "$@" >> ${log}
-printf '\\n' >> ${log}
+printf '%s\\t' "$@" >> "${log}"
+printf '\\n' >> "${log}"
 for bad in ${failWhen.join(" ")}; do
   case "$*" in
     *"$bad"*) echo "No conversation found"; exit 1 ;;
   esac
 done
-${reportsHooks ? `printf '%s\\n' "$CODETOASTER_TASK_ID" >> ${hookLog}` : ""}
+${reportsHooks ? `printf '%s\\n' "$CODETOASTER_TASK_ID" >> "${hookLog}"` : ""}
 exec cat
 `,
   );
@@ -105,10 +106,9 @@ exec cat
       for (let i = 0; i < 60 && read().length < n; i++) await Bun.sleep(25);
       return read();
     },
-    invocations: () =>
-      fs.existsSync(log)
-        ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => line.split("\t").filter(Boolean))
-        : [],
+    /** The log as it stands right now, for the cases that assert nothing was
+     * invoked — where waiting for a line would only wait out `settled`. */
+    invocations: read,
   };
 }
 
@@ -175,15 +175,31 @@ function relayHooks(manager: TaskManager, hookLog: string): void {
   const timer = setInterval(() => {
     if (!fs.existsSync(hookLog)) return;
     const lines = fs.readFileSync(hookLog, "utf8").split("\n").filter(Boolean);
-    for (const taskId of lines.slice(delivered)) {
-      manager.applyHook(taskId, { hook_event_name: "PreToolUse", session_id: "reported-by-stand-in" });
-    }
+    for (const taskId of lines.slice(delivered)) manager.applyHook(taskId, RELAYED_HOOK);
     delivered = lines.length;
   }, 5);
   hookRelays.push(timer);
 }
 
+/** What the relay reports. Held apart from `relayHooks` so the test below can
+ * assert the property the whole arrangement rests on. */
+const RELAYED_HOOK: HookPayload = {
+  hook_event_name: "PreToolUse",
+  session_id: "reported-by-stand-in",
+};
+
 describe("resuming a suspended task", () => {
+  // The relay's whole claim is that it signals "the agent is up" and nothing
+  // else, so every row the ladder tests read is one the ladder wrote. That is a
+  // property of `transitionFor`, not of this file: `PreToolUse` is a real hook
+  // event and a natural "busy" signal, and the day it gains a mapping the relay
+  // would start stamping `agent_state` and `last_active_at` on every surviving
+  // rung — silently, since nothing else here would notice. Pinned so it fails
+  // here, next to the reason, rather than somewhere downstream.
+  test("the relayed payload moves no row", () => {
+    expect(transitionFor(RELAYED_HOOK)).toBeUndefined();
+  });
+
   // AC #2/#3. The daemon's PTYs died with it, so every `live` row at boot is a
   // lie; what makes that a suspend rather than the v1 wipe is that the row it
   // leaves behind is one `resumeTask` away from running again. `bun --hot`
