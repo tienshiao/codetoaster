@@ -94,6 +94,7 @@ const errorFor = (ptyId: string, message = "Terminal not found"): ServerMessage 
 
 const task = (id: string): TaskInfo => ({
   id,
+  projectId: "general",
   ptyId: null,
   title: id,
   titleSource: "derived",

@@ -1112,6 +1112,7 @@ export class TaskManager {
     const pty = this.primaryPty(taskId);
     return {
       id: row.id,
+      projectId: row.project_id,
       ptyId: pty?.id ?? null,
       title: row.title,
       titleSource: row.title_source,
@@ -1133,21 +1134,29 @@ export class TaskManager {
     };
   }
 
-  /** In project order, everything a user can still get back to: live and
-   * suspended. A suspended task is not gone (§6) — it is one click from being
-   * live again — so leaving it out of the list would be the sidebar telling the
-   * user their work had been deleted, which is the one thing suspension exists
-   * not to do. Archived tasks stay out: those really have left (TASK-31).
+  /**
+   * Everything a user can still get back to, most recently active first: live
+   * and suspended. A suspended task is not gone (§6) — it is one click from
+   * being live again — so leaving it out would be the sidebar telling the user
+   * their work had been deleted, which is the one thing suspension exists not
+   * to do. Archived tasks stay out: those really have left (TASK-31).
    *
-   * Still the v1 project grouping; the recency list that replaces it is
-   * TASK-25's. */
+   * From the rows, not from `projects[].taskIds`. The in-memory grouping only
+   * ever holds what it has been told to hold, so every path that makes a task
+   * listable had to remember to call `ensureInProject` first — boot adoption
+   * and the resume ladder both carry a comment explaining that they are doing
+   * it for this reason, and a fourth such path would simply have been invisible
+   * with nothing to say it was. The rows are the tasks; the grouping is one
+   * view of them, and §7.5 demotes it to a toggle over a recency list anyway.
+   *
+   * That recency ordering is `store.list`'s own `last_active_at DESC`, which is
+   * the order the sidebar wants and the order project grouping never gave it.
+   */
   listTasks(): TaskInfo[] {
     const result: TaskInfo[] = [];
-    for (const project of this.projects) {
-      for (const taskId of project.taskIds) {
-        const info = this.taskInfo(taskId);
-        if (info && info.lifecycle !== "archived") result.push(info);
-      }
+    for (const row of this.store.list({ lifecycle: ["live", "suspended"] })) {
+      const info = this.taskInfo(row.id);
+      if (info) result.push(info);
     }
     return result;
   }

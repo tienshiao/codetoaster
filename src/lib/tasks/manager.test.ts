@@ -451,7 +451,35 @@ describe("task info", () => {
     store.update("t2", { lifecycle: "suspended" });
     store.update("t3", { lifecycle: "archived" });
 
-    expect(manager.listTasks().map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(manager.listTasks().map((t) => t.id).sort()).toEqual(["t1", "t2"]);
+  });
+
+  // §7.5: recency across projects is the sidebar's default order, and project
+  // grouping is a toggle over it. Asserted here rather than left to the client
+  // because the client sorting a list it was handed in some other order is the
+  // arrangement that made v1's sidebar disagree with itself.
+  test("the list is ordered by last activity, most recent first", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({ id: "old", command: shell() });
+    await manager.createTask({ id: "middle", command: shell() });
+    await manager.createTask({ id: "recent", command: shell() });
+    store.update("old", { last_active_at: 1_000 });
+    store.update("middle", { last_active_at: 2_000 });
+    store.update("recent", { last_active_at: 3_000 });
+
+    expect(manager.listTasks().map((t) => t.id)).toEqual(["recent", "middle", "old"]);
+  });
+
+  // The project a task belongs to travels on the task, so grouping does not
+  // have to be reconstructed by searching every project's `taskIds` for it.
+  test("a task carries its project id", () => {
+    const { manager, store } = newManager();
+    store.create({
+      id: "t1", project_id: "repo", title: "In a repo", initial_prompt: "",
+      repo_root: "/repo", cwd: "/repo",
+    });
+
+    expect(manager.taskInfo("t1")!.projectId).toBe("repo");
   });
 
 });
@@ -581,11 +609,13 @@ describe("boot reconciliation", () => {
     expect(manager.reconcileOnBoot()).toBe(0);
   });
 
-  // AC #2/#3. `loadProjects` starts every project's `taskIds` empty, and
-  // `listTasks` walks that grouping rather than the rows — so a restart that
-  // only rewrote the lifecycle column would leave every task of the previous
-  // run correct in the database and invisible in the sidebar, which from the
-  // user's side is the "restart nukes everything" this replaces.
+  // AC #2/#3: a restart must not read as "restart nukes everything". The
+  // lifecycle rewrite is the whole of it now — `listTasks` walks the rows, so a
+  // task of a previous run is listable the moment its row exists, and being
+  // listed no longer depends on the daemon having adopted it into the in-memory
+  // project grouping first. What this still has to prove is that the rewrite
+  // happens: a `live` row from a dead daemon is a lie (§5.5), and it has to come
+  // back as suspended rather than as a task with a terminal that is not there.
   test("the rows it suspends are in the list a connecting client is sent", () => {
     const { manager, store } = newManager();
     manager.loadProjects();
@@ -601,11 +631,10 @@ describe("boot reconciliation", () => {
       id: "archived", project_id: "general", title: "Gone", initial_prompt: "",
       repo_root: "/repo", cwd: "/repo", lifecycle: "archived",
     });
-    expect(manager.listTasks()).toHaveLength(0);
-
     manager.reconcileOnBoot();
 
     expect(manager.listTasks().map((t) => t.id).sort()).toEqual(["already", "stale"]);
+    expect(manager.listTasks().every((t) => t.lifecycle === "suspended")).toBe(true);
   });
 });
 

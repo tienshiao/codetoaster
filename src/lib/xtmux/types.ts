@@ -73,6 +73,12 @@ export type ServerMessage =
 
 export interface TaskInfo {
   id: string;
+  /** The project the task belongs to, straight off its row. Carried on the
+   * task rather than left to be looked up in `ProjectInfo.taskIds`, because the
+   * list is ordered by recency across projects now (§7.5) and grouping is a
+   * toggle over it — so the client needs to know a task's project without the
+   * grouping being what produced the list. */
+  projectId: string;
   /** The terminal to attach to, or null once the task has no live process.
    * Kept separate from `id` because a resumed task gets a fresh PTY while
    * staying the same task. */
