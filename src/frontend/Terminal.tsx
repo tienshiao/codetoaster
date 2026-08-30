@@ -61,7 +61,10 @@ interface XTerminalProps {
   // session" is no longer a thing the server can infer.
   ptyId: string | null;
   onSizeChange: (size: TerminalSize) => void;
-  onReady: () => void;
+  /** The grid exists. Held in a ref like every other callback here, so a host
+   * that passes an inline arrow cannot churn the init effect — see the
+   * dependency list at the end of it. */
+  onReady?: () => void;
   sendMessage: (msg: ClientMessage) => void;
   onFileDrop?: (files: File[]) => void;
   onSearchOpen?: () => void;
@@ -108,11 +111,13 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     // Store callbacks in refs
     const ptyIdRef = useRef(ptyId);
     ptyIdRef.current = ptyId;
+    const onReadyRef = useRef(onReady);
     const onSizeChangeRef = useRef(onSizeChange);
     const sendMessageRef = useRef(sendMessage);
     const onFileDropRef = useRef(onFileDrop);
     const onSearchOpenRef = useRef(onSearchOpen);
     const onRestoreEndRef = useRef(onRestoreEnd);
+    onReadyRef.current = onReady;
     onSizeChangeRef.current = onSizeChange;
     sendMessageRef.current = sendMessage;
     onFileDropRef.current = onFileDrop;
@@ -546,7 +551,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
 
       // Report ready
       setReady(true);
-      onReady();
+      onReadyRef.current?.();
 
       return () => {
         bellDisposable.dispose();
@@ -565,7 +570,16 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         fitAddonRef.current = null;
         searchAddonRef.current = null;
       };
-    }, [onReady, fitIfVisible]);
+      // Nothing in here but `fitIfVisible`, and that is the point. This effect
+      // *builds and disposes the xterm instance*, so anything in the list that
+      // changes identity per render tears the user's grid down and rebuilds it
+      // on every render — losing the scrollback, the attachment's painted
+      // `restore`, and every mode the running program had set. `onReady` used
+      // to be here, and a host passing an inline arrow for it got a terminal
+      // that rebuilt itself continuously and never showed anything. Every
+      // callback this effect uses goes through a ref for that reason; keep it
+      // that way.
+    }, [fitIfVisible]);
 
     // Apply terminal theme changes reactively
     useEffect(() => {

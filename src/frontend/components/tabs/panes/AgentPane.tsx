@@ -212,10 +212,9 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
         ref={terminalRef}
         ptyId={ptyId}
         onSizeChange={handleSizeChange}
-        // The task snapshot is asked for by `TaskContext` on connect, not by a
-        // terminal going ready — v1 asked from here, which meant a route with
-        // no terminal never got a list at all.
-        onReady={() => {}}
+        // No `onReady`: the task snapshot is asked for by `TaskContext` on
+        // connect, not by a terminal going ready — v1 asked from here, which
+        // meant a route with no terminal ever got a list at all.
         sendMessage={send}
         onSearchOpen={onSearchOpen}
         onFileDrop={onFileDrop}

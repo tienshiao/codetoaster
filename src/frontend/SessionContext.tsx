@@ -297,7 +297,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // Judged on taskId, which is why the message carries it: the client
       // tracks which task it is showing, and cannot map a ptyId onto one until
       // the list arrives — which is after this.
+      // Not ours to judge, and not ours to give back: another attacher on this
+      // socket asked for it.
+      if (!ownedPtysRef.current.has(message.ptyId)) return;
       if (message.taskId !== currentSessionIdRef.current) {
+        ownedPtysRef.current.delete(message.ptyId);
         ptyRef.current.detach(message.ptyId);
         return;
       }
@@ -369,10 +373,38 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     send,
     isConnected,
     subscribe,
-    attach: attachPty,
-    detach: detachPty,
+    attach: attachRouterPty,
+    detach: detachRouterPty,
     resize: resizePty,
   } = pty;
+
+  // The PTYs this context asked for.
+  //
+  // `attached` is fanned out to every socket subscriber, and there are two
+  // attachers now: this adapter, and the v2 `AgentPane` that will replace it.
+  // The handler below hands back any attachment for a task it is not showing —
+  // which was right while one attacher existed and is exactly wrong now. At
+  // `/shell` this context is showing no task at all, so it answered every
+  // `attached` the agent tab asked for by detaching it, and the terminal the
+  // user had just opened was given away before it had drawn anything.
+  //
+  // So this context gives back only what it took. It disappears with the rest
+  // of the adapter at TASK-28.
+  const ownedPtysRef = useRef<Set<string>>(new Set());
+  const attachPty = useCallback(
+    (ptyId: string, size: TerminalSize | null) => {
+      ownedPtysRef.current.add(ptyId);
+      attachRouterPty(ptyId, size);
+    },
+    [attachRouterPty],
+  );
+  const detachPty = useCallback(
+    (ptyId: string) => {
+      ownedPtysRef.current.delete(ptyId);
+      detachRouterPty(ptyId);
+    },
+    [detachRouterPty],
+  );
   const onConnect = useCallback(() => {
     if (terminalReadyRef.current) {
       // Ask, and re-attach off the answer rather than from here. The list we
@@ -520,6 +552,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // addressed at whatever `currentPtyId` still names.
       terminalRef.current?.resetAttached();
       if (attachedPtyRef.current) {
+        ownedPtysRef.current.delete(attachedPtyRef.current);
         ptyRef.current.detach(attachedPtyRef.current);
         attachedPtyRef.current = null;
         setCurrentPtyId(null);
@@ -1006,7 +1039,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // harvester can never take that task (§5.5). On the success path the
         // server has already killed the PTY and the detach is a no-op.
         if (attachedPtyRef.current) {
-          ptyRef.current.detach(attachedPtyRef.current);
+          ownedPtysRef.current.delete(attachedPtyRef.current);
+        ptyRef.current.detach(attachedPtyRef.current);
         }
         // The terminal went with the suspend: leaving these set would keep the
         // killed PTY's `exit` past the message filter and address the next
