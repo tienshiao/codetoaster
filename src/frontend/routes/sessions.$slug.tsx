@@ -50,13 +50,20 @@ function SessionComponent() {
   // terminal — reopening it the instant the user closed it. Losing the PTY is
   // what the suspended overlay's Reopen is for; that is a click, and this is
   // not.
+  //
+  // "A terminal it did not have" is any ptyId that is not the one we last saw,
+  // not only the first after a null. A `fresh` resume replaces a live PTY
+  // outright: the discarded one's exit is swallowed (its task mapping is gone
+  // before it fires), so the list goes straight from p1 to p2 with no null in
+  // between, and a latch keyed on that transition alone would leave the client
+  // attached to a terminal that no longer exists.
   const lastPtyIdRef = useRef<string | null>(null);
   useEffect(() => {
     const { id } = parseSessionSlug(slug);
     const ptyId = sessions.find((s) => s.id === id)?.ptyId ?? null;
     const previous = lastPtyIdRef.current;
     lastPtyIdRef.current = ptyId;
-    if (!previous && ptyId) lastSlugRef.current = null;
+    if (ptyId && previous !== ptyId) lastSlugRef.current = null;
   }, [slug, sessions]);
 
   // Attach to session when slug changes (only if session exists)
