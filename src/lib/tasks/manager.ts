@@ -932,13 +932,27 @@ export class TaskManager {
    * Same environment as the agent, deliberately. A user who types `claude` in a
    * shell tab is otherwise running inside the task's inherited marker, and the
    * hooks that agent fires would be filed against this task's conversation.
+   *
+   * Spawned at the task's own grid rather than at `PtyManager`'s 80×24 fallback
+   * when the caller names no size. The route that opens a shell has no terminal
+   * yet — the tab is drawn from its answer — so nobody is in a position to
+   * measure one, and left to the fallback the shell paints its first prompt
+   * laid out for 80 columns and reflows the moment the tab attaches. The agent
+   * is spawned at a real grid for the same reason.
    */
   openShell(taskId: string, options: { cols?: number; rows?: number } = {}): Pty | undefined {
     const row = this.store.get(taskId);
     if (!row || row.lifecycle !== "live") return undefined;
+    // The agent's live grid, else the one the task was last seen at. Both are
+    // what `taskInfo.size` reports, which is the size every client showing this
+    // task has already negotiated down to.
+    const taskSize = this.primaryPty(taskId)?.getSize() ?? {
+      cols: row.last_size_cols ?? DEFAULT_SIZE.cols,
+      rows: row.last_size_rows ?? DEFAULT_SIZE.rows,
+    };
     const pty = this.ptys.spawn([process.env.SHELL || "/bin/sh"], {
-      cols: options.cols,
-      rows: options.rows,
+      cols: options.cols ?? taskSize.cols,
+      rows: options.rows ?? taskSize.rows,
       cwd: row.cwd,
       env: taskEnv(process.env, { taskId, port: this.port, origin: this.origin }),
     });

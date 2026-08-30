@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-30 23:11'
+updated_date: '2026-08-30 23:29'
 labels:
   - frontend
 milestone: m-3
@@ -80,6 +80,18 @@ What is left here: rewrite TopBar.tsx (or drop it — AppShell carries its own h
 **AC #2's long tail:** `sessionId` → `taskId` across 23 files, `useSessionDiff`/`useSessionFiles` → `useTaskDiff`/`useTaskFiles`, the two hook files renamed, and the react-query key prefix `"sessions"` → `"tasks"` (checked first that nothing invalidates by that key). The URLs already said `/api/tasks/` — only the client's vocabulary still said session.
 
 Validation: `bun run test` (706 unit + 72 render), `tsc --noEmit` clean. `TaskContext.render.tsx` is new and pins the ported notification behaviour — all four tests confirmed to fail with the branch removed, which is the only thing that makes this a port rather than a rewrite that happens to share a name. AC #3 and #4 driven in a browser against an isolated daemon with a stand-in agent: boots with no console output but the HMR line, Settings opens and works, and create → close → reopen walks the two-phase restore back to `idle` with the snapshot repainted.
+
+Post-review (`/code-review --fix`), three findings, all real, all now pinned by tests confirmed to fail without their fix.
+
+**Settings was unreachable on every task page — a control I shipped and then verified on the one page it happened to work.** `AppShell` renders `children` only on the `else` branch of its `tabArea` test (AppShell.tsx:377), and `TaskShell` supplies `tabArea` whenever a layout exists, which is whenever a task is selected. So the dialog mounted at `/` and nowhere else, and I opened it from the composer when I checked. It is a sibling of `AppShell` now. The regression test is worth more than the fix: the render harness's `AppShell` stub renders no `children`, which is the real component's contract rather than a convenience, so anything passed through that slot is invisible to it — the test fails with the dialog as a child and passes as a sibling.
+
+**A shell PTY was leaked when the user changed task under the `POST …/shell` round trip.** The bail-out I added after the previous review returned silently, and my comment claimed §5.5's reconciliation would clean up — it does not: `reconcileShellTabs`/`pruneShellTabs` close *tabs*, and nothing reaps a PTY no tab names. The shell ran on in the task's directory until the next suspend, counting toward the harvester's guards the whole time. It is killed through `closeShell` now, the same door the close gesture uses.
+
+**Every shell spawned at `PtyManager`'s 80×24 fallback.** The route has no terminal to measure — the tab is drawn from its answer — so `openShell` now seeds the grid from the task's own: the agent PTY's live size, else `last_size_*`, else the default. Exactly the defect the composer sends `cols`/`rows` to avoid for the agent, and I had just fixed that one.
+
+Re-verified in the browser: Settings opens on a task page; a shell opened from the strip spawns at 102×42, the grid the client had negotiated, rather than 80×24. No console output.
+
+Not acted on, reported by the review and worth recording: `TaskInfo.clientCount` counts only the agent PTY's viewers, so the status bar reads "0 viewing" while you watch a shell tab. Pre-existing, and summing over `taskPtyList` would double-count one client holding two tabs — it needs distinct-client plumbing, which is TASK-53.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

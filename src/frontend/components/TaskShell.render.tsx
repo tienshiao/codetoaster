@@ -54,18 +54,47 @@ vi.mock("@/frontend/components/Explorer", () => ({
   useExplorerRail: () => [],
 }));
 vi.mock("@/frontend/components/TaskSidebar", () => ({ useTaskSidebar: () => ({}) }));
-vi.mock("@/frontend/components/SettingsDialog", () => ({ SettingsDialog: () => null }));
-// Only the slot. Everything else `AppShell` draws is chrome this file has no
-// question about, and all of it wants data from the contexts stubbed above.
+// Only the slot and the Settings button. Everything else `AppShell` draws is
+// chrome this file has no question about, and all of it wants data from the
+// contexts stubbed above.
+//
+// It renders no `children`, and that is the real component's contract rather
+// than a shortcut: `AppShell` renders `children` only on the branch where no
+// `tabArea` was supplied. Anything the shell passes through as a child is
+// therefore invisible on every page that has a layout — which is every task
+// page.
 vi.mock("@/frontend/components/v2/AppShell", () => ({
-  AppShell: ({ tabArea }: { tabArea?: (chrome: { leading: ReactNode }) => ReactNode }) => (
-    <div>{tabArea ? tabArea({ leading: null }) : null}</div>
+  AppShell: ({
+    tabArea,
+    onOpenSettings,
+  }: {
+    tabArea?: (chrome: { leading: ReactNode }) => ReactNode;
+    onOpenSettings?: () => void;
+  }) => (
+    <div>
+      <button type="button" onClick={onOpenSettings}>
+        Settings
+      </button>
+      {tabArea ? tabArea({ leading: null }) : null}
+    </div>
   ),
 }));
 // The panes are terminals and diff views; the strip is what this file reads.
 vi.mock("@/frontend/components/tabs/panes", () => ({ TabPane: () => null }));
 
 const { TaskShell } = await import("./TaskShell");
+const { TerminalThemeProvider } = await import("../hooks/use-terminal-theme");
+
+/** The shell under the one provider it genuinely needs: the settings dialog
+ * reads the terminal theme, and this file renders the real dialog rather than a
+ * stub precisely so it can see whether it mounts at all. */
+function renderShell(taskId: string | null = TASK_ID) {
+  return render(
+    <TerminalThemeProvider>
+      <TaskShell taskId={taskId} />
+    </TerminalThemeProvider>,
+  );
+}
 
 const TASK_ID = "task-1";
 
@@ -121,7 +150,7 @@ test("two presses on + inside one round trip open two tabs, not one", async () =
     () => new Promise((resolve) => answers.push(resolve)),
   );
 
-  render(<TaskShell taskId={TASK_ID} />);
+  renderShell();
   const plus = screen.getByLabelText("New shell");
   fireEvent.click(plus);
   fireEvent.click(plus);
@@ -138,7 +167,7 @@ test("two presses on + inside one round trip open two tabs, not one", async () =
 test("a failed open leaves the layout alone", async () => {
   stubs.openShell.mockResolvedValue({ ok: false, error: { status: 409, message: "suspended" } });
 
-  render(<TaskShell taskId={TASK_ID} />);
+  renderShell();
   await act(async () => {
     fireEvent.click(screen.getByLabelText("New shell"));
   });
@@ -152,7 +181,7 @@ test("closing a shell tab kills its PTY; closing anything else does not", async 
   saveLayout(TASK_ID, openTab(loadLayout(TASK_ID), { kind: "shell", ptyId: "pty-a" }));
   stubs.tasks = [task({ shellPtyIds: ["pty-a"] })];
 
-  render(<TaskShell taskId={TASK_ID} />);
+  renderShell();
   await act(async () => {
     fireEvent.click(screen.getByLabelText("Close shell"));
   });
@@ -167,7 +196,7 @@ test("a suspended task drops its restored shell tabs and says so", async () => {
   // client never saw that PTY alive, so only the lifecycle can be the evidence.
   stubs.tasks = [task({ lifecycle: "suspended", ptyId: null, shellPtyIds: [] })];
 
-  render(<TaskShell taskId={TASK_ID} />);
+  renderShell();
 
   await waitFor(() => expect(storedShells()).toEqual([]));
   expect(stubs.toast).toHaveBeenCalledWith(
@@ -185,7 +214,7 @@ test("a live task drops a restored shell tab it does not report", async () => {
   // is evidence rather than silence.
   stubs.tasks = [task({ lifecycle: "live", shellPtyIds: [] })];
 
-  render(<TaskShell taskId={TASK_ID} />);
+  renderShell();
 
   await waitFor(() => expect(storedShells()).toEqual([]));
 });
@@ -197,7 +226,7 @@ test("a shell tab this client just opened survives a delta that predates it", as
   // `shellPtyIds` without it.
   stubs.openShell.mockResolvedValue({ ok: true, value: { ptyId: "pty-a" } });
 
-  const { rerender } = render(<TaskShell taskId={TASK_ID} />);
+  const { rerender } = renderShell();
   await act(async () => {
     fireEvent.click(screen.getByLabelText("New shell"));
   });
@@ -206,9 +235,53 @@ test("a shell tab this client just opened survives a delta that predates it", as
   // The stale delta lands.
   stubs.tasks = [task({ lifecycle: "live", shellPtyIds: [] })];
   await act(async () => {
-    rerender(<TaskShell taskId={TASK_ID} />);
+    rerender(
+      <TerminalThemeProvider>
+        <TaskShell taskId={TASK_ID} />
+      </TerminalThemeProvider>,
+    );
   });
 
   expect(storedShells()).toEqual(["pty-a"]);
   expect(stubs.toast).not.toHaveBeenCalled();
+});
+
+test("Settings opens on a task page, not only where there is no layout", async () => {
+  // `AppShell` draws the Settings button on every page but renders `children`
+  // only where no `tabArea` was supplied. A dialog handed to it as a child was
+  // therefore mounted at `/` and nowhere else: on a task page the button
+  // flipped the state and nothing appeared.
+  renderShell();
+  await act(async () => {
+    fireEvent.click(screen.getByText("Settings"));
+  });
+
+  expect(screen.getByRole("dialog")).toBeDefined();
+  expect(screen.getByText("Notification Sound")).toBeDefined();
+});
+
+test("a shell answered after the user left the task is killed, not abandoned", async () => {
+  // The spawn has already succeeded by the time we find out, and there is
+  // nowhere to put its tab: the ref now holds another task's layout. Dropping
+  // it silently leaves a shell running in the original task's directory with
+  // nothing on screen to close it — `reconcileShellTabs` prunes tabs, and
+  // nothing reaps a PTY no tab names.
+  const answers: Array<(value: unknown) => void> = [];
+  stubs.openShell.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+
+  const { rerender } = renderShell();
+  fireEvent.click(screen.getByLabelText("New shell"));
+
+  // The user moves to another task under the round trip.
+  rerender(
+    <TerminalThemeProvider>
+      <TaskShell taskId="another-task" />
+    </TerminalThemeProvider>,
+  );
+  await act(async () => {
+    answers[0]!({ ok: true, value: { ptyId: "pty-orphan" } });
+  });
+
+  expect(stubs.closeShell).toHaveBeenCalledWith(TASK_ID, "pty-orphan");
+  expect(storedShells()).toEqual([]);
 });

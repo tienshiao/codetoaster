@@ -898,6 +898,22 @@ describe("shell tabs", () => {
     expect(manager.closeShell("t1", opened.id)).toBe(false);
   });
 
+  test("a shell inherits the task's grid rather than the 80x24 fallback", async () => {
+    const { manager } = newManager();
+    await manager.createTask({ id: "t1", command: shell(), cols: 120, rows: 40 });
+
+    // The route that opens a shell has no terminal yet — the tab is drawn from
+    // its answer — so nobody is in a position to measure one. Left to
+    // `PtyManager`'s fallback the shell paints its first prompt laid out for 80
+    // columns and reflows the moment the tab attaches.
+    expect(manager.openShell("t1")!.getSize()).toEqual({ cols: 120, rows: 40 });
+    // A caller that does know still wins.
+    expect(manager.openShell("t1", { cols: 100, rows: 30 })!.getSize()).toEqual({
+      cols: 100,
+      rows: 30,
+    });
+  });
+
   test("a suspended task opens no shell", async () => {
     const { manager, store } = newManager();
     await manager.createTask({ id: "t1", command: shell() });

@@ -167,13 +167,19 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     if (!result.ok) return;
     // The user can have moved to another task under the round trip, and the
     // ref now holds *that* task's layout. The shell belongs to the task that
-    // was asked, so the tab is dropped rather than opened somewhere it would
-    // name a PTY the layout's task does not hold; §5.5's reconciliation drops
-    // it from the other side when the user comes back.
+    // was asked, so it must not be opened somewhere it would name a PTY the
+    // layout's task does not hold — and it cannot simply be dropped either.
+    // §5.5's reconciliation prunes *tabs*; nothing there reaps a PTY no tab
+    // names, so an abandoned shell would go on running in the task's directory
+    // until the next suspend, with nothing on screen to close it. Killed here
+    // instead, through the same door the close gesture uses.
     const current = layoutRef.current;
-    if (!current || taskIdRef.current !== taskId) return;
+    if (!current || taskIdRef.current !== taskId) {
+      void closeShell(taskId, result.value.ptyId);
+      return;
+    }
     applyLayout(openTab(current, { kind: "shell", ptyId: result.value.ptyId }));
-  }, [taskId, openShell, applyLayout]);
+  }, [taskId, openShell, closeShell, applyLayout]);
 
   // Closing a shell tab is what kills its shell. Only from the close gesture:
   // a shell tab dropped by the reconciliation below names a PTY that is already
@@ -261,83 +267,90 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   );
 
   return (
-    <AppShell
-      {...sidebar}
-      endpoint={loaded ? `:${location.port || "80"}` : "connecting…"}
-      onOpenSettings={() => setSettingsOpen(true)}
-      tabArea={
-        layout
-          ? ({ leading }) => (
-              <TabArea
-                layout={layout}
-                onLayoutChange={applyLayout}
-                onNewShell={taskId ? handleNewShell : undefined}
-                onCloseTab={handleCloseTab}
-                leading={leading}
-                header={
-                  // No path or branch yet: neither is on the wire, and a task
-                  // header is the wrong place to invent one. They arrive with
-                  // the worktree work in Phase 5, which is what makes a task's
-                  // checkout a fact the server knows.
-                  <TaskHeader
-                    title={selected ? (displayNames.get(selected.id) ?? selected.title) : "Task"}
-                  />
-                }
-                renderPane={(tab, _group, visible) => (
-                  // Keyed by task *and* tab. The tab key alone was not enough:
-                  // every task's agent tab keys as "agent", so switching tasks
-                  // handed the same React position the same key and the same
-                  // component type, and the previous task's terminal — grid,
-                  // attachment and all — was reused for the next one.
-                  //
-                  // Within a task it is still the tab key that matters:
-                  // `useViewState` binds its slot once, at mount, so switching
-                  // from one file tab to another without a key would draw the
-                  // second file's contents under the first file's scroll offset
-                  // and toggles, and write them back to the first file's slot.
-                  <TabPane
-                    key={`${taskId}:${tab.key}`}
-                    taskId={taskId!}
-                    tab={tab}
-                    onOpenTab={handleOpenTab}
-                    onSubmitReview={handleSubmitReview}
-                    visible={visible}
-                  />
-                )}
-              />
-            )
-          : undefined
-      }
-      status={{
-        state: selected ? taskStateOf(selected) : undefined,
-        items: selected
-          ? [`${selected.size.cols}×${selected.size.rows}`, `${selected.clientCount} viewing`]
-          : ["no task"],
-      }}
-      explorerSections={explorerSections}
-      explorerTab={explorerPanel.section}
-      onExplorerTabChange={explorerPanel.setSection}
-      explorerOpen={explorerPanel.open}
-      onExplorerOpenChange={explorerPanel.setOpen}
-      explorer={
-        <Explorer taskId={taskId} section={explorerPanel.section} onOpenTab={handleOpenTab} />
-      }
-      // No "Commit" button beside it: every route under `src/api/git.ts` is a
-      // read-only GET, so there is nothing behind one.
-      explorerFooter={
-        explorerPanel.section === "Changes" && layout ? (
-          <Button
-            variant="outline"
-            className="flex-1"
-            onClick={() => handleOpenTab({ kind: "diffAll" })}
-          >
-            Review all
-          </Button>
-        ) : undefined
-      }
-    >
-      {children}
+    <>
+      <AppShell
+        {...sidebar}
+        endpoint={loaded ? `:${location.port || "80"}` : "connecting…"}
+        onOpenSettings={() => setSettingsOpen(true)}
+        tabArea={
+          layout
+            ? ({ leading }) => (
+                <TabArea
+                  layout={layout}
+                  onLayoutChange={applyLayout}
+                  onNewShell={taskId ? handleNewShell : undefined}
+                  onCloseTab={handleCloseTab}
+                  leading={leading}
+                  header={
+                    // No path or branch yet: neither is on the wire, and a task
+                    // header is the wrong place to invent one. They arrive with
+                    // the worktree work in Phase 5, which is what makes a task's
+                    // checkout a fact the server knows.
+                    <TaskHeader
+                      title={selected ? (displayNames.get(selected.id) ?? selected.title) : "Task"}
+                    />
+                  }
+                  renderPane={(tab, _group, visible) => (
+                    // Keyed by task *and* tab. The tab key alone was not enough:
+                    // every task's agent tab keys as "agent", so switching tasks
+                    // handed the same React position the same key and the same
+                    // component type, and the previous task's terminal — grid,
+                    // attachment and all — was reused for the next one.
+                    //
+                    // Within a task it is still the tab key that matters:
+                    // `useViewState` binds its slot once, at mount, so switching
+                    // from one file tab to another without a key would draw the
+                    // second file's contents under the first file's scroll offset
+                    // and toggles, and write them back to the first file's slot.
+                    <TabPane
+                      key={`${taskId}:${tab.key}`}
+                      taskId={taskId!}
+                      tab={tab}
+                      onOpenTab={handleOpenTab}
+                      onSubmitReview={handleSubmitReview}
+                      visible={visible}
+                    />
+                  )}
+                />
+              )
+            : undefined
+        }
+        status={{
+          state: selected ? taskStateOf(selected) : undefined,
+          items: selected
+            ? [`${selected.size.cols}×${selected.size.rows}`, `${selected.clientCount} viewing`]
+            : ["no task"],
+        }}
+        explorerSections={explorerSections}
+        explorerTab={explorerPanel.section}
+        onExplorerTabChange={explorerPanel.setSection}
+        explorerOpen={explorerPanel.open}
+        onExplorerOpenChange={explorerPanel.setOpen}
+        explorer={
+          <Explorer taskId={taskId} section={explorerPanel.section} onOpenTab={handleOpenTab} />
+        }
+        // No "Commit" button beside it: every route under `src/api/git.ts` is a
+        // read-only GET, so there is nothing behind one.
+        explorerFooter={
+          explorerPanel.section === "Changes" && layout ? (
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => handleOpenTab({ kind: "diffAll" })}
+            >
+              Review all
+            </Button>
+          ) : undefined
+        }
+      >
+        {children}
+      </AppShell>
+      {/* A sibling of the shell, not one of its children: `AppShell` renders
+          `children` only on the branch where no `tabArea` was supplied, so a
+          dialog passed through there would never mount on a task page — which
+          is every page with a layout, and so every page the Settings button in
+          the sidebar footer is reachable from. */}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-    </AppShell>
+    </>
   );
 }
