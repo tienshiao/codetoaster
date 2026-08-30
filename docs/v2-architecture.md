@@ -525,6 +525,20 @@ The trees move right; the content moves into tabs. The agent terminal is tab one
 cannot be closed — closing it would mean "kill the task", which is what the task list's
 close action is for.
 
+This layout is built, as `frontend/components/v2/AppShell.tsx`, together with the v2
+design system it is drawn from — the token layer in `frontend/index.css` and the shell
+components beside it (see CLAUDE.md, "The v2 design system is the new UI"). It is layout
+only: the lists, tabs and status values below all arrive as props, so the tasks in this
+section supply data rather than restructure markup. `routes/shell.tsx` renders it with
+fixture data until TASK-28 puts it at `/`.
+
+One departure from the sketch above. The Explorer's four sections are reached from a
+rail on the window's right edge rather than a row of tabs inside the panel, and that
+rail is also the panel's toggle: clicking a section switches to it, clicking the section
+already showing hides the panel. A separate collapse button sat next to Split and read
+as the same control, and a rail names the section a click will open and keeps a
+section's count legible with the panel shut.
+
 ### 7.2 Tab model
 
 ```ts

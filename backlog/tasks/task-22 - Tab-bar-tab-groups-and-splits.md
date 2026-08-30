@@ -4,6 +4,7 @@ title: 'Tab bar, tab groups, and splits'
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:02'
+updated_date: '2026-08-30 00:34'
 labels:
   - frontend
 milestone: m-3
@@ -30,3 +31,9 @@ frontend/components/tabs/* (§7.1, §7.2): the VSCode-style tab area. Tab bar pe
 - [ ] #4 Preview tabs render italic; double-click pins; a second single-click open replaces the preview
 - [ ] #5 Closing the last tab in a non-first group removes the group
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Build against `frontend/components/v2/` — the v2 design system is the new UI, not a parallel track (CLAUDE.md, "The v2 design system is the new UI"). `AppShell` and the shell components already exist from TASK-46; this task supplies their data. Do not extend `components/ui/` (v1 shadcn) for new surfaces.
+<!-- SECTION:NOTES:END -->

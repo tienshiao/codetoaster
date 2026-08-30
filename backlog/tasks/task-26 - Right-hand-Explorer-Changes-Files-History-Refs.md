@@ -4,6 +4,7 @@ title: 'Right-hand Explorer: Changes, Files, History, Refs'
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
+updated_date: '2026-08-30 00:34'
 labels:
   - frontend
 milestone: m-3
@@ -28,3 +29,9 @@ frontend/components/Explorer.tsx (§7.1): a collapsible right sidebar hosting th
 - [ ] #3 Clicking an entry whose tab is already open focuses it instead of duplicating
 - [ ] #4 The Explorer collapses and remembers its collapsed state per device
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Build against `frontend/components/v2/` — the v2 design system is the new UI, not a parallel track (CLAUDE.md, "The v2 design system is the new UI"). `AppShell` and the shell components already exist from TASK-46; this task supplies their data. Do not extend `components/ui/` (v1 shadcn) for new surfaces.
+<!-- SECTION:NOTES:END -->

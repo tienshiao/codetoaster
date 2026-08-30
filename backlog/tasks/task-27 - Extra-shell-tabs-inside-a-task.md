@@ -4,6 +4,7 @@ title: Extra shell tabs inside a task
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
+updated_date: '2026-08-30 00:34'
 labels:
   - frontend
   - server
@@ -30,3 +31,9 @@ Open a plain shell PTY as a sibling tab in a task (§3, §5.5). Shell PTYs spawn
 - [ ] #3 The harvester's foreground-process guard considers every shell PTY of the task
 - [ ] #4 Reopening a suspended task applies a visible, documented policy for stale shell tabs (respawn empty or drop)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Build against `frontend/components/v2/` — the v2 design system is the new UI, not a parallel track (CLAUDE.md, "The v2 design system is the new UI"). `AppShell` and the shell components already exist from TASK-46; this task supplies their data. Do not extend `components/ui/` (v1 shadcn) for new surfaces.
+<!-- SECTION:NOTES:END -->

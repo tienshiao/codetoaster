@@ -4,6 +4,7 @@ title: TaskContext replacing SessionContext
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:02'
+updated_date: '2026-08-30 00:34'
 labels:
   - frontend
   - tasks
@@ -29,3 +30,9 @@ Task list, projects, per-task agent state, notifications, fed by the socket's ta
 - [ ] #3 agent_state, last_message, lifecycle are available per task for the sidebar
 - [ ] #4 SessionContext.tsx and its consumers are gone
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Build against `frontend/components/v2/` — the v2 design system is the new UI, not a parallel track (CLAUDE.md, "The v2 design system is the new UI"). `AppShell` and the shell components already exist from TASK-46; this task supplies their data. Do not extend `components/ui/` (v1 shadcn) for new surfaces.
+<!-- SECTION:NOTES:END -->

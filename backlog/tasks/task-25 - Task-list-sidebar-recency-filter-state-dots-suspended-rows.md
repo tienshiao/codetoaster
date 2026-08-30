@@ -4,7 +4,7 @@ title: 'Task list sidebar: recency, filter, state dots, suspended rows'
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-29 03:19'
+updated_date: '2026-08-30 00:34'
 labels:
   - frontend
 milestone: m-3
@@ -35,4 +35,6 @@ Rework AppSidebar.tsx into the chat-history / resume list (§7.5). Recency order
 
 <!-- SECTION:NOTES:BEGIN -->
 Carried over from TASK-6's review: TaskManager.loadProjects() rebuilds ProjectInfo from the projects table but never repopulates project.taskIds, and listTasks() reads only those arrays — placeInProject runs on create alone. Today nothing shows, because reconcileOnBoot suspends every row at startup and listTasks filters to live. The moment TASK-13 resumes a task, taskInfo()/broadcastTask() will answer for it while listTasks() still will not. Whichever of TASK-13 or this task lands first owns fixing it — most likely by dropping the in-memory grouping for the recency list §7.5 describes.
+
+Build against `frontend/components/v2/` — the v2 design system is the new UI, not a parallel track (CLAUDE.md, "The v2 design system is the new UI"). `AppShell` and the shell components already exist from TASK-46; this task supplies their data. Do not extend `components/ui/` (v1 shadcn) for new surfaces.
 <!-- SECTION:NOTES:END -->

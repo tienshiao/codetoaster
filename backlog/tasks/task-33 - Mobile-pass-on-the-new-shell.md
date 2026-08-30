@@ -4,6 +4,7 @@ title: Mobile pass on the new shell
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
+updated_date: '2026-08-30 00:34'
 labels:
   - frontend
   - mobile
@@ -28,3 +29,9 @@ Risk 6 (§9): v1 has real accumulated mobile work — touch scrolling in the alt
 - [ ] #3 Alt-buffer touch scrolling, pinch, and keyboard viewport handling work as in v1 (checked on a real device)
 - [ ] #4 The composer is usable on a phone
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Build against `frontend/components/v2/` — the v2 design system is the new UI, not a parallel track (CLAUDE.md, "The v2 design system is the new UI"). `AppShell` and the shell components already exist from TASK-46; this task supplies their data. Do not extend `components/ui/` (v1 shadcn) for new surfaces.
+<!-- SECTION:NOTES:END -->

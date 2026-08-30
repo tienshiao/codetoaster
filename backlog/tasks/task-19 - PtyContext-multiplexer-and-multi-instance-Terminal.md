@@ -4,6 +4,7 @@ title: PtyContext multiplexer and multi-instance Terminal
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:02'
+updated_date: '2026-08-30 00:34'
 labels:
   - frontend
   - xtmux
@@ -30,3 +31,9 @@ Replace the single terminalRef + message queue in SessionContext with PtyContext
 - [ ] #4 Closing a tab sends close and unregisters the handler
 - [ ] #5 Existing Terminal.tsx behaviours (fit, theme, touch, search, drop, RIS restore) still work
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Build against `frontend/components/v2/` — the v2 design system is the new UI, not a parallel track (CLAUDE.md, "The v2 design system is the new UI"). `AppShell` and the shell components already exist from TASK-46; this task supplies their data. Do not extend `components/ui/` (v1 shadcn) for new surfaces.
+<!-- SECTION:NOTES:END -->

@@ -4,6 +4,7 @@ title: Composer pane
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
+updated_date: '2026-08-30 00:34'
 labels:
   - frontend
 milestone: m-3
@@ -28,3 +29,9 @@ frontend/Composer.tsx (§7.5): rendered at / inside the app shell (task list lef
 - [ ] #3 Successful submit navigates to the new task with the agent tab active
 - [ ] #4 Server errors from POST /api/tasks are shown inline, and the prompt is not lost
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Build against `frontend/components/v2/` — the v2 design system is the new UI, not a parallel track (CLAUDE.md, "The v2 design system is the new UI"). `AppShell` and the shell components already exist from TASK-46; this task supplies their data. Do not extend `components/ui/` (v1 shadcn) for new surfaces.
+<!-- SECTION:NOTES:END -->

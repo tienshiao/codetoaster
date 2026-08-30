@@ -28,7 +28,8 @@ src/
     components/diff/     # Diff viewer; DiffLayout is the shared read-only core
     components/file/     # File tree, content, markdown/mermaid preview
     components/git/      # Commit list, graph, detail, ref sidebar
-    components/ui/       # shadcn/ui primitives
+    components/ui/       # shadcn/ui primitives (v1)
+    components/v2/       # The v2 design system: shell components + AppShell
     hooks/               # React hooks (WebSocket, theme, git queries, etc.)
     utils/               # Diff parsing, commit graph lanes, ref tree, slug generation
     routes/              # TanStack Router file-based routes
@@ -107,6 +108,32 @@ import { test, expect } from "bun:test";
 Uses Bun HTML imports with `Bun.serve()` - not Vite. HTML files import `.tsx` directly. Tailwind via `bun-plugin-tailwind`.
 
 For Bun API docs: `node_modules/bun-types/docs/**.mdx`
+
+## The v2 design system is the new UI
+
+`components/v2/` is not an experiment or a parallel track: it is the UI this
+branch is being rebuilt into. Everything Phase 4 builds — task list, tab bar,
+Explorer, composer — is composed from it, and TASK-28 is where `AppShell`
+replaces `App.tsx` at `/` and the v1 scaffolding is deleted. Until then
+`routes/shell.tsx` renders it with fixture data so it can be looked at, and v1
+keeps running.
+
+So when building new frontend work:
+
+- Compose from `components/v2/`. Reach for `components/ui/` (shadcn) only when
+  touching v1 code that is still live, and do not grow it.
+- `AppShell` is layout only. Every list, tab and status value arrives as a
+  prop, so the wiring tasks supply data rather than restructure markup.
+- Use the semantic tokens (`bg-pane`, `text-state-busy`, `h-row`, `text-micro`,
+  `bg-selected`) and never a colour literal. The raw `--ct-*` palette is not
+  component vocabulary.
+- The source of truth is the Claude Design project "CodeToaster v2 Design
+  System" (`06f63995-570a-486c-af82-d70b8fa5976b`) — distinct from the older
+  `.design-sync/` pipeline, which pushes the *v1* component surface upward.
+- Before editing the token layer in `index.css`, read the comment above the
+  palette block: transparent washes must be `oklch(var(--ct-x-ch) / <alpha>)`,
+  because a `color-mix()` over a `var()` does not survive bundling and renders
+  fully opaque.
 
 ## Model delegation when running as Fable
 
