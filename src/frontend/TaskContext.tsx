@@ -10,6 +10,8 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { usePty } from "./PtyContext";
+import { retainLayouts } from "./layout-store";
+import { retainTaskViewStates } from "./view-state-store";
 import { generateUUID } from "./utils/uuid";
 import type { TaskState } from "./components/v2/StatusDot";
 import type { ProjectInfo, TaskInfo } from "../lib/xtmux/types";
@@ -242,6 +244,30 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     askedRef.current = true;
     send({ type: "list" });
   }, [isConnected, send]);
+
+  // What this client is still allowed to keep on disk.
+  //
+  // Both stores are keyed by task id and neither is swept by anything else, so
+  // a task removed here — archived, deleted, or closed from another client —
+  // otherwise leaves its layout and its view state in `localStorage` for good.
+  //
+  // The one exception to this context holding no side effects, and it earns it:
+  // the rule exists because `SessionContext` is still subscribed to the same
+  // socket, so a notification or an `acknowledge` here would fire twice. A
+  // retain sweep is idempotent — running it twice removes nothing the first run
+  // did not — and it lives here rather than in the adapter precisely so it
+  // survives TASK-28.
+  //
+  // Guarded on `loaded` for the reason the store keeps that flag at all: before
+  // the first snapshot, and after a drop, "no tasks" and "not told yet" look
+  // identical — and sweeping against a list we have not been given would wipe
+  // every layout on the page.
+  useEffect(() => {
+    if (!loaded) return;
+    const ids = new Set(tasks.map((t) => t.id));
+    retainTaskViewStates(ids);
+    retainLayouts(ids);
+  }, [tasks, loaded]);
 
   const createTask = useCallback(
     (options: CreateTaskOptions = {}) =>

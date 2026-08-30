@@ -236,7 +236,19 @@ export function AppShell({
       label={sidebarOpen ? "Hide tasks" : "Show tasks"}
       size="sm"
       active={sidebarOpen}
-      onClick={() => setSidebarOpen((open) => !open)}
+      onClick={() => {
+        const next = !sidebarOpen;
+        // In overlay mode the Explorer being open suppresses the sidebar
+        // (`showSidebar` below), so a toggle that only set its own flag was a
+        // dead control on a phone whenever the Explorer was showing — which,
+        // since the stored Explorer state defaults to open, is the state the
+        // shell boots into. Opening one panel closes the other instead, which
+        // is what "one at a time is enough" was already trying to say. Read off
+        // `sidebarOpen` rather than from inside an updater, so the second
+        // setter is not a side effect in a function React may call twice.
+        if (next && overlay) setExplorerOpen(false);
+        setSidebarOpen(next);
+      }}
     />
   );
 

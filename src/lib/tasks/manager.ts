@@ -92,6 +92,18 @@ export class TaskManager {
   // resumes both see no PTY and both start an agent on the same conversation
   // in the same directory, one of which is unreachable and never killed.
   private resuming: Map<string, Promise<TaskRow | undefined>> = new Map();
+  // The mirror of `resuming`, and it has to exist for the same reason. Suspend
+  // is not synchronous either: it awaits `snapshot`, which is a multi-hundred-KB
+  // screen written to disk, and only *after* that does it kill the task's PTYs
+  // and write `suspended`. A resume arriving inside that window saw a live,
+  // unexited PTY and answered 200 with the ptyId of a terminal about to be
+  // killed — or, where the agent had already exited, spawned a fresh one that
+  // the suspend then killed along with the rest, leaving the user's close
+  // silently undone by the ladder walking on.
+  //
+  // Each side registers its entry only *after* waiting on the other's, so the
+  // two can never wait on each other.
+  private suspending: Map<string, Promise<boolean>> = new Map();
   // What `codetoaster hook` has to POST back to (§4.2), handed over by
   // startServer. Undefined until then: a manager with no server in front of it
   // — a test — has no port to name, and an agent spawned from one simply
@@ -465,8 +477,14 @@ export class TaskManager {
     // awaitAgentStart would return true before the process had drawn a
     // character, and the very first rung of the ladder would be declared a
     // success however dead it was.
-    this.hookSeen.delete(row.id);
+    //
+    // Cleared on the far side of the settings write, not before it. `codetoaster
+    // hook` is a separate process that `Bun.spawn().kill()` does not signal, so
+    // a hook POSTed by the rung the ladder just discarded can land during that
+    // await — and a flag set then would make `awaitAgentStart` return true
+    // instantly for the *next* rung, declaring it a success however dead it is.
     const settingsPath = await writeTaskSettings(row.id);
+    this.hookSeen.delete(row.id);
     const pty = this.ptys.spawn(
       buildAgentCommand(row, { mode: options.mode, sessionId: options.sessionId, settingsPath }),
       {
@@ -503,7 +521,11 @@ export class TaskManager {
         if (this.hookSeen.has(taskId)) finish(true);
         else if (pty.exited) finish(false);
       }, 25);
-      const cap = setTimeout(() => finish(true), capMs);
+      // `!pty.exited`, not a bare `true`: the cap means "quiet, but still up",
+      // and a process that has already died is neither. The poll would catch it
+      // 25ms later anyway — this only stops the timer winning that race and
+      // declaring a corpse a working agent.
+      const cap = setTimeout(() => finish(!pty.exited), capMs);
     });
   }
 
@@ -527,6 +549,19 @@ export class TaskManager {
   ): Promise<TaskRow | undefined> {
     const row = this.store.get(taskId);
     if (!row) return undefined;
+    // A close already in flight settles first, and then this starts over
+    // against the row it left. Suspend awaits a snapshot write before it kills
+    // anything, so without this the checks below inspect a task whose PTYs are
+    // moments from being killed: the "already running" arm hands back a ptyId
+    // the close is about to kill, and the ladder arm spawns an agent the close
+    // then kills along with the rest — undoing the user's close, or leaving
+    // them attached to a corpse. Waiting means the resume is judged against the
+    // task the close produced, which is the task as it now is.
+    const suspendInFlight = this.suspending.get(taskId);
+    if (suspendInFlight) {
+      await suspendInFlight.catch(() => undefined);
+      return this.resumeTask(taskId, options);
+    }
     // Joined to a resume already in flight *before* anything is inspected. The
     // ladder adopts each rung's PTY before awaiting `awaitAgentStart`, so for
     // most of its run there is a live terminal on this task that belongs to a
@@ -736,6 +771,17 @@ export class TaskManager {
     this.disarmHookGrace(taskId);
     const update = transitionFor(payload);
     if (!update) return false;
+    // `SessionStart` claims the task is live, and for a task with a terminal it
+    // is. But `codetoaster hook` outlives the agent that spawned it — killing
+    // the PTY does not signal it — so one can land just after `suspendTask`
+    // killed everything, and taking its word would leave a row marked `live`
+    // with `ptyId: null`: a task the sidebar shows as running that nothing is
+    // behind, and whose freshly stamped `idle_since` keeps the harvester off it
+    // for a full `harvestAfterMs`. The rest of the transition still applies —
+    // it is only the claim about liveness that needs a process to back it.
+    if (update.lifecycle === "live" && !this.primaryPty(taskId)) {
+      delete update.lifecycle;
+    }
     if (!this.store.update(taskId, update)) return false;
     this.broadcastTask(taskId);
     return true;
@@ -941,6 +987,19 @@ export class TaskManager {
     // the task the user was looking at when they clicked.
     const inFlight = this.resuming.get(taskId);
     if (inFlight) await inFlight.catch(() => undefined);
+    // Registered only now, on the far side of that wait, so a resume waiting on
+    // us and a suspend waiting on it can never be waiting on each other. A
+    // second close joins the first rather than snapshotting the task twice.
+    const alreadySuspending = this.suspending.get(taskId);
+    if (alreadySuspending) return alreadySuspending;
+    const attempt = this.doSuspend(taskId).finally(() => {
+      this.suspending.delete(taskId);
+    });
+    this.suspending.set(taskId, attempt);
+    return attempt;
+  }
+
+  private async doSuspend(taskId: string): Promise<boolean> {
     const row = this.store.get(taskId);
     if (!row || row.lifecycle !== "live") return false;
     await this.snapshot(taskId);

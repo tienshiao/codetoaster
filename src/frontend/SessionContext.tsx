@@ -15,7 +15,6 @@ import { generateUUID } from "./utils/uuid";
 import { sessionDisplayNames, type NameSource } from "../lib/xtmux/naming";
 import { usePty, type PtyContextValue } from "./PtyContext";
 import { playNotificationSound } from "./hooks/use-notification-sound";
-import { retainTaskViewStates } from "./view-state-store";
 import type { ClientMessage, ProjectInfo as WireProject, ServerMessage, TaskInfo } from "../lib/xtmux/types";
 import type { Lifecycle } from "../lib/db";
 
@@ -459,16 +458,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
-  // Clean up stale MRU entries and view state when sessions change, so entries
-  // for sessions removed by the server or another client don't linger/leak.
+  // Stale MRU entries, when the server or another client removes a session.
+  // The persistent-storage sweeps that used to live here are `TaskContext`'s
+  // now — this adapter is deleted at TASK-28, and a sweep that vanished with it
+  // would silently reintroduce the leak it was added to fix.
   useEffect(() => {
     const ids = new Set(sessions.map((s) => s.id));
     setMruSessionIds((prev) => {
       const filtered = prev.filter((id) => ids.has(id));
       return filtered.length === prev.length ? prev : filtered;
     });
-    if (sessionsLoaded) retainTaskViewStates(ids);
-  }, [sessions, sessionsLoaded]);
+  }, [sessions]);
 
   // When the window regains focus, ack any pending notification for the current session
   useEffect(() => {

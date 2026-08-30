@@ -103,14 +103,20 @@ export function useGitHistory(
   // debounced activity signal flipping off is a good proxy for "a command just
   // finished" — refs may have moved. Track the previous value so mount and
   // false→true transitions don't refetch.
+  //
+  // Keyed to the task, because this hook is not remounted per task: the
+  // Explorer renders its History and Refs sections at a fixed position with no
+  // `key`, so `taskId` changes underneath one instance. Unkeyed, the previous
+  // task's `true` followed by the new task's `false` read as a command settling
+  // and refetched refs that were never stale.
   const active = activity[taskId] ?? false;
-  const prevActiveRef = useRef(active);
+  const prevActiveRef = useRef<{ taskId: string; active: boolean }>({ taskId, active });
   const refsRefetch = refsQuery.refetch;
   useEffect(() => {
-    const wasActive = prevActiveRef.current;
-    prevActiveRef.current = active;
-    if (wasActive && !active) refsRefetch();
-  }, [active, refsRefetch]);
+    const previous = prevActiveRef.current;
+    prevActiveRef.current = { taskId, active };
+    if (previous.taskId === taskId && previous.active && !active) refsRefetch();
+  }, [taskId, active, refsRefetch]);
 
   // Held in a ref so a caller passing an inline closure does not re-run — and
   // so re-reset — the effect below on every render.
@@ -122,12 +128,23 @@ export function useGitHistory(
   // tell the caller, so anything keyed to the old history is dropped with it.
   // Only a change between two DEFINED hashes acts, so undefined→A (initial) and
   // A→A (unchanged refetch) never reset or loop.
+  //
+  // Keyed to the task for the same reason `prevActiveRef` is: one hook instance
+  // outlives the task selection. Two different repositories' hashes are not one
+  // repository's refs moving, and with both tasks' refs still in the query cache
+  // the switch delivers hashA→hashB in a single run — so clicking back to a
+  // task reset the log it had just restored, throwing away several hundred
+  // paged-in commits and landing the restored scroll offset nowhere.
   const refsHash = refsQuery.data?.hash;
-  const prevRefsHashRef = useRef<string | undefined>(undefined);
+  const prevRefsHashRef = useRef<{ taskId: string; hash: string | undefined }>({
+    taskId,
+    hash: refsHash,
+  });
   useEffect(() => {
-    const prev = prevRefsHashRef.current;
-    prevRefsHashRef.current = refsHash;
-    if (prev !== undefined && refsHash !== undefined && prev !== refsHash) {
+    const previous = prevRefsHashRef.current;
+    prevRefsHashRef.current = { taskId, hash: refsHash };
+    if (previous.taskId !== taskId) return;
+    if (previous.hash !== undefined && refsHash !== undefined && previous.hash !== refsHash) {
       queryClient.resetQueries({ queryKey: ["git-log", taskId] });
       onResetRef.current?.();
     }

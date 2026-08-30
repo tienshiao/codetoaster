@@ -110,7 +110,16 @@ export const taskRoutes = {
       }
 
       taskManager.broadcastTasks();
-      return Response.json(taskManager.taskInfo(task.id), { status: 201 });
+      // The same guard the other routes carry. `createTask` awaits the settings
+      // write and the spawn *after* `store.create` has made the row visible to
+      // `store.list`, so a concurrent `codetoaster kill <title>` can delete it
+      // inside that window — and `Response.json(undefined)` throws rather than
+      // serializing, turning a task that did spawn into an opaque 500.
+      const created = taskManager.taskInfo(task.id);
+      if (!created) {
+        return Response.json({ error: "The task was removed while it was being created" }, { status: 409 });
+      }
+      return Response.json(created, { status: 201 });
     },
   },
 

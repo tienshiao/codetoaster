@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useViewState } from "./use-view-state";
 import { pruneMap, type ViewRef } from "../view-state-store";
 import { applySyntaxToLine } from "../utils/wordDiff";
@@ -37,6 +37,9 @@ export function useHunkExpansions(
   files: FileDiff[] | undefined,
 ): HunkExpansions {
   const [hunkExpansions, setHunkExpansions] = useViewState(kind, view, "hunkExpansions");
+  /** Ranges already being fetched, keyed `${filePath}:${hunkIndex}:${direction}`
+   * — see `expandContext`. */
+  const inFlight = useRef<Set<string>>(new Set());
 
   // Drop loaded context expansions that no longer line up with the diff. Keys
   // are `${filePath}:${hunkIndex}` (see DiffFile). An expansion is kept only
@@ -72,6 +75,15 @@ export function useHunkExpansions(
       nextHunk: DiffHunk | null,
     ) => {
       const expansionKey = `${filePath}:${hunkIndex}`;
+      // One request per chevron at a time. The range below is derived from the
+      // map as it was at render, but only committed after the fetch — so a
+      // second click before the first response landed read the same
+      // `beforeLines.length`, computed the identical range, and both responses
+      // prepended it. Twenty context lines rendered twice, and the prune effect
+      // could not tell: the outermost line number still lines up with the hunk.
+      const inFlightKey = `${expansionKey}:${direction}`;
+      if (inFlight.current.has(inFlightKey)) return;
+      inFlight.current.add(inFlightKey);
       const existing = hunkExpansions.get(expansionKey) || {
         beforeLines: [],
         afterLines: [],
@@ -109,7 +121,10 @@ export function useHunkExpansions(
         }
       }
 
-      if (startLine > endLine) return;
+      if (startLine > endLine) {
+        inFlight.current.delete(inFlightKey);
+        return;
+      }
 
       try {
         const res = await fetch(
@@ -160,6 +175,10 @@ export function useHunkExpansions(
         });
       } catch {
         // ignore
+      } finally {
+        // Released whether or not the range landed, so a failed request does
+        // not leave the chevron permanently dead.
+        inFlight.current.delete(inFlightKey);
       }
     },
     [taskId, hunkExpansions, setHunkExpansions],

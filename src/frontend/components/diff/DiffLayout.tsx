@@ -23,6 +23,19 @@ import "./DiffView.css";
 const FILE_COUNT_THRESHOLD = 30;
 const TOTAL_LINES_THRESHOLD = 1500;
 
+// Which mounted `DiffLayout` the single-file arrow keys belong to.
+//
+// The listener has to be on `window`: nothing inside a diff pane is focusable,
+// so arrowing between files must work without the user having clicked a row
+// first. That was harmless while a route mounted exactly one of these, but
+// `TabArea` renders every group's active pane at once — so a split showing the
+// working-tree diff beside a commit's changes had one ArrowRight advance the
+// file in *both*, each writing a new selection and a reset scroll offset into
+// its own slot. The panes take turns instead: the last one pointed at owns the
+// keys, and a lone pane owns them without being asked.
+const mountedDiffLayouts = new Set<symbol>();
+let diffKeyboardOwner: symbol | null = null;
+
 // Optional Cmd/Ctrl-click go-to-symbol wiring. When absent, the code area gets
 // no symbol-clickable affordance (the git changes view has none).
 export interface DiffLayoutSymbol {
@@ -197,11 +210,32 @@ export function DiffLayout({
     }
   }, [selectedFile, files, navigateToFile]);
 
+  // This pane's claim on the arrow keys. A ref rather than a memo, because a
+  // memo React is free to discard would hand the same pane a new identity and
+  // orphan whatever it had claimed.
+  const layoutIdRef = useRef<symbol | null>(null);
+  layoutIdRef.current ??= Symbol("diff-layout");
+  const layoutId = layoutIdRef.current;
+
+  useEffect(() => {
+    mountedDiffLayouts.add(layoutId);
+    diffKeyboardOwner ??= layoutId;
+    return () => {
+      mountedDiffLayouts.delete(layoutId);
+      // Hand the keys to whatever is still on screen, so closing the owning tab
+      // does not leave the remaining pane unable to arrow anywhere.
+      if (diffKeyboardOwner === layoutId) {
+        diffKeyboardOwner = mountedDiffLayouts.values().next().value ?? null;
+      }
+    };
+  }, [layoutId]);
+
   // Keyboard navigation in single-file mode
   useEffect(() => {
     if (viewMode !== "single") return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (diffKeyboardOwner !== layoutId) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === "ArrowLeft") {
         navigateToPrevFile();
@@ -212,7 +246,7 @@ export function DiffLayout({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [viewMode, navigateToPrevFile, navigateToNextFile]);
+  }, [viewMode, navigateToPrevFile, navigateToNextFile, layoutId]);
 
   // Track which file is visible during scroll in "all files" mode
   useEffect(() => {
@@ -310,7 +344,9 @@ export function DiffLayout({
   const symbolClasses = symbol ? `symbol-clickable ${symbol.modHeld ? "mod-held" : ""}` : "";
 
   return (
-    <div className="flex h-full">
+    // Capture, so a click anywhere in the pane claims the arrow keys before any
+    // handler inside it can stop the event.
+    <div className="flex h-full" onPointerDownCapture={() => { diffKeyboardOwner = layoutId; }}>
       {/* File tree sidebar */}
       {showFileTree && (
         <div className="w-[280px] shrink-0">

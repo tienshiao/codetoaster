@@ -75,6 +75,14 @@ export function PathField({
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blur = useRef<ReturnType<typeof setTimeout> | null>(null);
   const list = useRef<HTMLDivElement>(null);
+  // A suggestion has been taken and the list re-asked, but the answer is still
+  // a debounce plus a round trip away. In that window the list is shut and
+  // `directories` is the *previous* level's, so `onKeyDown` used to return
+  // before preventing anything — and the Enter that took the suggestion, struck
+  // again to go one level deeper, reached the dialog's form instead and created
+  // the project at the half-walked path. Cleared by the answer landing, and by
+  // any further typing, so a field that never gets one still submits.
+  const awaitingSuggestions = useRef(false);
 
   const { data: suggestions } = useDirectories(query, { enabled: query.length > 0 });
   const directories = suggestions?.directories ?? [];
@@ -93,6 +101,7 @@ export function PathField({
   // that resolves after the user has stopped still lands.
   useEffect(() => {
     if (!suggestions) return;
+    awaitingSuggestions.current = false;
     setOpen(suggestions.directories.length > 0);
     setIndex(0);
   }, [suggestions]);
@@ -125,6 +134,7 @@ export function PathField({
       const next = suggestionValue(suggestions.parent, name);
       onChange(next);
       setOpen(false);
+      awaitingSuggestions.current = true;
       // Ask again for what is inside the directory just accepted, so tabbing
       // down a tree of them is one keystroke per level.
       ask(next);
@@ -133,7 +143,16 @@ export function PathField({
   );
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (!open || directories.length === 0) return;
+    if (!open || directories.length === 0) {
+      // The list is shut because a suggestion was just taken and the next level
+      // has not answered yet. Enter must not fall through to the dialog's
+      // implicit submit, and Tab must not walk focus to Cancel: neither is what
+      // the second keystroke of "descend two levels" meant.
+      if (awaitingSuggestions.current && (e.key === "Enter" || e.key === "Tab")) {
+        e.preventDefault();
+      }
+      return;
+    }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       setIndex((i) => moveSelection(i, directories.length, e.key === "ArrowDown" ? 1 : -1));
@@ -178,6 +197,10 @@ export function PathField({
           id={id}
           value={value}
           onChange={(e) => {
+            // Typing supersedes the pending re-ask, and clears the gate even if
+            // that answer never arrives — a field stuck refusing Enter would be
+            // the worse failure of the two.
+            awaitingSuggestions.current = false;
             onChange(e.target.value);
             ask(e.target.value);
           }}
@@ -428,15 +451,27 @@ export function DirectoryBrowser({
     seeded.current = true;
 
     const name = target.slice(target.lastIndexOf("/") + 1);
-    const real = !parent || (parentListing?.directories.includes(name) ?? false);
-    const branch = real ? target : parent;
+    // Only the last segment was ever checked. `/api/directories` answers 200
+    // with an empty `home` when it cannot read the path at all rather than
+    // failing, so an unreadable *parent* arrives as a defined, empty listing
+    // and fell straight through to being selected: a typo'd "~/Projcts/foo"
+    // opened on "~/Projcts", armed "Use this folder", and wrote a directory
+    // that does not exist into the project. (`revealPath` named a row that
+    // could never mount either, so the tree scrolled nowhere.)
+    const parentReadable = !parent || (parentListing?.home ?? "") !== "";
+    const real =
+      parentReadable && (!parent || (parentListing?.directories.includes(name) ?? false));
+    // Home is the honest fallback for a path with nothing real in it: somewhere
+    // to look around from, which is what browsing is for.
+    const branch = real ? target : parentReadable ? parent : trimSlash(home);
     setExpanded(new Set(ancestorsOf(branch)));
     // Scrolled to even when nothing is selected: on an empty field the branch
     // is home, which is a long way down a tree that starts at "/".
     setRevealPath(branch);
-    // An empty field opens on home without pre-arming "Use this folder": the
-    // user asked to look around, not to confirm a folder they have not seen.
-    if (typed) {
+    // An empty field — or one naming a path with no readable parent — opens
+    // without pre-arming "Use this folder": the user asked to look around, not
+    // to confirm a folder they have not seen.
+    if (typed && parentReadable) {
       setSelected(branch);
       onSelectionChange(toDisplayPath(branch, home));
     }

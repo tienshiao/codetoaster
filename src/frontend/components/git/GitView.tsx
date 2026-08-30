@@ -100,10 +100,28 @@ export function GitView({ sessionId }: GitViewProps) {
   // The bottom-pane mode persists independently of selection; default to commit.
   const mode: GitViewMode = search.mode ?? "commit";
 
-  // The detail pane's slot. Keyed by the sha as the URL spells it, so the
-  // detail pane and its state change identity together; with no selection at
-  // all the pane renders its empty state and the slot is never written.
-  const commitView = useMemo(() => viewRef(sessionId, `commit:${selectedSha ?? ""}`), [sessionId, selectedSha]);
+  // The detail pane's slot, keyed by the *resolved* hash rather than by the sha
+  // as the URL spells it.
+  //
+  // A deep link carries an abbreviated sha while log rows are full 40-char
+  // hashes, so clicking that same commit's row rewrites the URL to the full one
+  // — and a slot keyed on the URL form changed identity under a pane that was
+  // still showing the same commit, emptying its expanded folders, its Changes
+  // selection and its scroll offset with nothing on screen to explain it. The
+  // full hash is also what v2's `commit:` tab keys off, so the two stop
+  // addressing different slots for one commit. With no selection at all the
+  // pane renders its empty state and the slot is never written.
+  const resolvedSha = useMemo(
+    () =>
+      selectedSha
+        ? (commits.find((c) => shaMatches(c.hash, selectedSha))?.hash ?? selectedSha)
+        : "",
+    [commits, selectedSha],
+  );
+  const commitView = useMemo(
+    () => viewRef(sessionId, `commit:${resolvedSha}`),
+    [sessionId, resolvedSha],
+  );
 
   // Mirror the explicit URL selection into the nav slot so tab/session switches
   // restore it (session-nav reads gitCommit/gitMode/gitFile).

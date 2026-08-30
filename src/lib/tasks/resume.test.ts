@@ -104,6 +104,13 @@ function newManager(failWhen: string[] = []) {
   process.env.CODETOASTER_AGENT_BIN = agent.bin;
   // Short, so the "it stayed alive" cap resolves quickly; a hook or an exit
   // still settles it sooner, which is what the hook test below shows.
+  //
+  // Not *too* short, though: the stand-in is a `/bin/sh` script, and a failing
+  // rung has to be spawned, exec'd, write its log line and exit before the cap
+  // decides it stayed alive. At 400ms a loaded machine lost that race often
+  // enough to fail the ladder tests roughly one run in six — the cap fired
+  // first and the failing rung was recorded as a success (`starting` rather
+  // than `could_not_resume`).
   manager.setStartTimeout(400);
   manager.setHookGrace(10_000);
   return { manager, store: new TaskStore(db), agent };
