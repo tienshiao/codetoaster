@@ -8,6 +8,15 @@ import { taskScrollbackPath } from "../agent/spawn";
 // the harvester (TASK-15) from having to reach through the policy layer to
 // write one.
 
+/** The newest write in flight for a task, so a second one queues behind it
+ * rather than running alongside. Two writers for one task is not hypothetical:
+ * `suspendTask` reads the lifecycle *before* it awaits the snapshot, so the
+ * harvester's tick and a user's close both pass that check and both get here.
+ * Sharing one staging path, the second could truncate the file the first was
+ * about to rename into place — publishing a torn screen through the very
+ * rename that exists to stop readers seeing one. */
+const writesInFlight = new Map<string, Promise<void>>();
+
 /** Replace the task's snapshot with `data`. Bun.write creates the task's
  * directory on the way, so this works for a task whose only other file — the
  * settings.json — was never written.
@@ -18,8 +27,28 @@ import { taskScrollbackPath } from "../agent/spawn";
  * harvester's tick — or another client's close — is writing one. A partial
  * ANSI stream repaints as garbage, and a daemon killed mid-write would leave
  * that garbage as the task's screen for good. `rename` within one directory is
- * atomic, so a reader sees either the old snapshot or the new one. */
-export async function writeSnapshot(taskId: string, data: string): Promise<void> {
+ * atomic, so a reader sees either the old snapshot or the new one.
+ *
+ * Serialized per task for the other half of that: the staging path is shared,
+ * so two writes running at once corrupt each other rather than the reader. The
+ * later screen still wins — it simply waits its turn. */
+export function writeSnapshot(taskId: string, data: string): Promise<void> {
+  const publish = () => publishSnapshot(taskId, data);
+  const previous = writesInFlight.get(taskId);
+  // Whichever way the one before it went: a failed write is not a reason to
+  // skip the next screen.
+  const next = previous ? previous.then(publish, publish) : publish();
+  // Forgotten once it is no longer the newest, so this does not grow one entry
+  // per task for the life of the daemon.
+  const tracked: Promise<void> = next.then(
+    () => { if (writesInFlight.get(taskId) === tracked) writesInFlight.delete(taskId); },
+    () => { if (writesInFlight.get(taskId) === tracked) writesInFlight.delete(taskId); },
+  );
+  writesInFlight.set(taskId, tracked);
+  return next;
+}
+
+async function publishSnapshot(taskId: string, data: string): Promise<void> {
   const target = taskScrollbackPath(taskId);
   const staging = `${target}.tmp`;
   await Bun.write(staging, data);
