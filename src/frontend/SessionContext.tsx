@@ -15,7 +15,7 @@ import { generateUUID } from "./utils/uuid";
 import { sessionDisplayNames, type NameSource } from "../lib/xtmux/naming";
 import { usePty, type PtyContextValue } from "./PtyContext";
 import { playNotificationSound } from "./hooks/use-notification-sound";
-import { retainViewStates } from "./view-state-store";
+import { retainTaskViewStates } from "./view-state-store";
 import type { ClientMessage, ProjectInfo as WireProject, ServerMessage, TaskInfo } from "../lib/xtmux/types";
 import type { Lifecycle } from "../lib/db";
 
@@ -435,7 +435,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const filtered = prev.filter((id) => ids.has(id));
       return filtered.length === prev.length ? prev : filtered;
     });
-    if (sessionsLoaded) retainViewStates(ids);
+    if (sessionsLoaded) retainTaskViewStates(ids);
   }, [sessions, sessionsLoaded]);
 
   // When the window regains focus, ack any pending notification for the current session
@@ -974,7 +974,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // dropped from the list, and the recent files and view state this used to
   // clear are kept: they describe the task, not its process, and a close the
   // user undoes with a click should come back to the tab and file they left
-  // open. `retainViewStates` still collects them when the task really does go.
+  // open. `retainTaskViewStates` still collects them when the task really does go.
   const closeSession = useCallback(
     (id: string) => {
       resumeFailedRef.current.delete(id);

@@ -1,67 +1,61 @@
-import { useState, useCallback, type Dispatch, type SetStateAction } from "react";
+import { useState, useCallback, useEffect, type Dispatch, type SetStateAction } from "react";
 import {
   getViewState,
-  gitDetailState,
-  peekGitDetailState,
-  type SessionViewState,
-  type GitDetailViewState,
+  setViewField,
+  subscribeViewField,
+  type ViewRef,
+  type ViewSlotKind,
+  type ViewStateShapes,
 } from "../view-state-store";
 
-type Section = "fileView" | "diffView" | "gitView";
-
 /**
- * useState backed by the per-session view-state store: hydrates from the store
- * on mount and writes through on every set. Components using this hook must
- * remount when the session changes (the diff/file routes key their views by
- * session id), so `sessionId` is stable for the lifetime of a hook instance.
+ * useState backed by the view-state store: hydrates from the slot on mount and
+ * writes through on every set.
+ *
+ * A hook instance is bound to one `ref` for its lifetime, so a component whose
+ * view changes identity must remount — which the tab hosts get for free, since
+ * a tab's key *is* its React key. That is the whole reason the old
+ * `useGitDetailState` and its stale-slot guard are gone: a commit tab's key
+ * carries the sha, so there is no second identity to fall out of step with.
+ *
+ * The store, not this hook's copy, is the value. A split can put two live panes
+ * on one slot — the all-files diff beside a single file of it share the task's
+ * one `review` — and each would otherwise resolve its updates against a copy
+ * taken before the other's write, quietly throwing that write away.
  */
-export function useViewState<S extends Section, K extends keyof SessionViewState[S]>(
-  sessionId: string,
-  section: S,
-  key: K,
-): [SessionViewState[S][K], Dispatch<SetStateAction<SessionViewState[S][K]>>] {
-  type V = SessionViewState[S][K];
-  const [value, setValue] = useState<V>(() => getViewState(sessionId)[section][key]);
+export function useViewState<K extends ViewSlotKind, F extends keyof ViewStateShapes[K]>(
+  kind: K,
+  ref: ViewRef,
+  field: F,
+): [ViewStateShapes[K][F], Dispatch<SetStateAction<ViewStateShapes[K][F]>>] {
+  type V = ViewStateShapes[K][F];
+  const [value, setValue] = useState<V>(() => getViewState(kind, ref)[field]);
+  // Destructured rather than depending on `ref`, so a caller passing an inline
+  // `{ taskId, key }` object does not rebuild the setter every render.
+  const { taskId, key } = ref;
+
+  // Follow the slot for as long as this instance is bound to it, so a write
+  // from another pane reaches this one's render as well as the store.
+  useEffect(() => {
+    const slot = { taskId, key };
+    const read = () => setValue(getViewState(kind, slot)[field]);
+    // Also catches a write that landed between the mount-time read above and
+    // this subscription.
+    read();
+    return subscribeViewField(slot, field as string, read);
+  }, [kind, taskId, key, field]);
+
   const set = useCallback<Dispatch<SetStateAction<V>>>(
     (next) => {
-      setValue((prev) => {
-        const resolved = typeof next === "function" ? (next as (p: V) => V)(prev) : next;
-        getViewState(sessionId)[section][key] = resolved;
-        return resolved;
-      });
+      const slot = { taskId, key };
+      const prev = getViewState(kind, slot)[field];
+      const resolved = typeof next === "function" ? (next as (p: V) => V)(prev) : next;
+      // Writing notifies every other instance on this field, including nothing
+      // at all when this pane is the only one open.
+      setViewField(kind, slot, field, resolved);
+      setValue(resolved);
     },
-    [sessionId, section, key],
-  );
-  return [value, set];
-}
-
-/**
- * useState backed by the per-session git detail cache for a single sha. Mirrors
- * useViewState: hydrates from `gitDetailState(sessionId, sha)` on mount and
- * writes through on every set. Sound only when the consuming component remounts
- * as the commit changes — CommitDetail keys its sub-mode components by the full
- * hash, so `sha` is stable for a hook instance's lifetime.
- */
-export function useGitDetailState<K extends keyof GitDetailViewState>(
-  sessionId: string,
-  sha: string,
-  key: K,
-): [GitDetailViewState[K], Dispatch<SetStateAction<GitDetailViewState[K]>>] {
-  type V = GitDetailViewState[K];
-  const [value, setValue] = useState<V>(() => gitDetailState(sessionId, sha)[key]);
-  const set = useCallback<Dispatch<SetStateAction<V>>>(
-    (next) => {
-      setValue((prev) => {
-        const resolved = typeof next === "function" ? (next as (p: V) => V)(prev) : next;
-        // Guarded write: if the slot has moved to another commit (a stale
-        // caller violating the remount-per-sha contract), skip rather than
-        // destructively re-seeding the slot for the old sha.
-        const slot = peekGitDetailState(sessionId, sha);
-        if (slot) slot[key] = resolved;
-        return resolved;
-      });
-    },
-    [sessionId, sha, key],
+    [kind, taskId, key, field],
   );
   return [value, set];
 }

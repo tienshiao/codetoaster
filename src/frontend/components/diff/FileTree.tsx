@@ -4,35 +4,27 @@ import { FileIcon } from "./FileIcon";
 import { DiffStat } from "./DiffStat";
 import { FilterInput } from "../FilterInput";
 import { buildTree, FILE_KEY, compareTreeSiblings } from "../../utils/sortFiles";
-import { useViewState } from "../../hooks/use-view-state";
 import { collectPathPrefixes, pruneSet, toggleInSet } from "../../view-state-store";
 import type { FileTreeNode } from "../../utils/sortFiles";
 import type { FileDiff } from "../../types/diff";
 
 interface FileTreeProps {
-  sessionId?: string;
   files: FileDiff[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
   totalAdditions: number;
   totalDeletions: number;
   commentCounts?: Map<string, number>;
-  // Controlled collapse state (git commit view supplies its own so reusing the
-  // tree for a commit's file list never corrupts the diff tab's persisted set).
-  // When omitted, falls back to the diffView view-state store.
-  collapsedPaths?: Set<string>;
-  onCollapsedPathsChange?: Dispatch<SetStateAction<Set<string>>>;
+  // Collapse-tracking (not expansion): directories newly entering the diff
+  // default to expanded, while the user's collapses survive refetches. Owned by
+  // the caller so one tree can serve two views without either writing the
+  // other's persisted set.
+  collapsedPaths: Set<string>;
+  onCollapsedPathsChange: Dispatch<SetStateAction<Set<string>>>;
 }
 
-export function FileTree({ sessionId, files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts, collapsedPaths: collapsedPathsProp, onCollapsedPathsChange }: FileTreeProps) {
+export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts, collapsedPaths, onCollapsedPathsChange: setCollapsedPaths }: FileTreeProps) {
   const [filter, setFilter] = useState("");
-  // Collapse-tracking (not expansion): directories newly entering the diff
-  // default to expanded, while the user's collapses survive refetches. Hooks
-  // must run unconditionally, so always read the store then pick which pair to
-  // use — the controlled props win when supplied.
-  const [storeCollapsedPaths, setStoreCollapsedPaths] = useViewState(sessionId ?? "", "diffView", "treeCollapsedPaths");
-  const collapsedPaths = collapsedPathsProp ?? storeCollapsedPaths;
-  const setCollapsedPaths = onCollapsedPathsChange ?? setStoreCollapsedPaths;
 
   const filteredFiles = filter
     ? files.filter((file) =>

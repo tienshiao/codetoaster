@@ -1,5 +1,5 @@
 import { buildSessionSlug } from "./slug";
-import { getViewState } from "../view-state-store";
+import { getViewState, viewRef } from "../view-state-store";
 import type { TabType } from "../types/tab";
 import type { GitViewMode } from "../types/git";
 
@@ -38,19 +38,17 @@ export function tabNavTarget(session: { id: string; name: string }, tab: TabType
     return {
       to: "/sessions/$slug/file",
       params: { slug },
-      search: { file: getViewState(session.id).fileView.selectedFile ?? undefined },
+      search: {
+        file: getViewState("files", viewRef(session.id, "files")).selectedFile ?? undefined,
+      },
     };
   }
   if (tab === "git") {
-    const gitView = getViewState(session.id).gitView;
+    const nav = getViewState("nav", viewRef(session.id, "nav"));
     return {
       to: "/sessions/$slug/git",
       params: { slug },
-      search: {
-        commit: gitView.commit ?? undefined,
-        mode: gitView.mode ?? undefined,
-        file: gitView.file ?? undefined,
-      },
+      search: { commit: nav.gitCommit, mode: nav.gitMode, file: nav.gitFile },
     };
   }
   return { to: "/sessions/$slug", params: { slug } };
@@ -61,7 +59,7 @@ export function tabNavTarget(session: { id: string; name: string }, tab: TabType
  * was last on in that session. New sessions default to the terminal.
  */
 export function sessionNavTarget(session: { id: string; name: string }): SessionNavTarget {
-  return tabNavTarget(session, getViewState(session.id).lastTab);
+  return tabNavTarget(session, getViewState("nav", viewRef(session.id, "nav")).lastTab);
 }
 
 /**

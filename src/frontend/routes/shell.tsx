@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { FileDiff, Files, GitBranch, GitCommitHorizontal } from "lucide-react";
 import type { ExplorerRailItem } from "@/frontend/components/v2/ExplorerRail";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
+import { usePty } from "@/frontend/PtyContext";
 import { sessionDisplayNames } from "@/lib/xtmux/naming";
 import type { TaskInfo } from "@/lib/xtmux/types";
 import {
@@ -14,8 +15,8 @@ import { Badge } from "@/frontend/components/v2/Badge";
 import { Button } from "@/frontend/components/v2/Button";
 import { FileRow } from "@/frontend/components/v2/FileRow";
 import { TaskHeader } from "@/frontend/components/v2/TaskHeader";
-import { TabArea, useTaskLayout } from "@/frontend/components/tabs";
-import { openTab, type TabState } from "@/frontend/layout-store";
+import { TabArea, TabPane, useTaskLayout } from "@/frontend/components/tabs";
+import { openTab, type OpenOptions, type TabDescriptor } from "@/frontend/layout-store";
 
 export const Route = createFileRoute("/shell")({
   component: ShellPreview,
@@ -47,9 +48,10 @@ function ago(timestamp: number, now: number): string {
  *
  * The left column is live: real tasks from `TaskContext`, in the design's rows.
  * The tab area is live too — a real `TaskLayout` per task, persisted, with
- * drag, split, close and preview tabs (TASK-22). What a pane *contains* is
- * still fixture: TASK-23 brings the hosts, TASK-26 the Explorer, and the agent
- * terminal arrives with the tab host that knows which PTY it is showing.
+ * drag, split, close and preview tabs (TASK-22) — and so is what a pane holds:
+ * the diff, file, commit and history tabs render the real thing. What is left
+ * is the Explorer (TASK-26) and the agent terminal, which arrives with the tab
+ * host that knows which PTY it is showing.
  *
  * Ordering, the filter and the archived toggle are deliberately not built here:
  * this is TaskContext's data in the shell, not TASK-25's sidebar.
@@ -130,6 +132,7 @@ function ShellPreview() {
   }, [tasks, projects, openGroups, needle, selectedTaskId, displayNames]);
 
   const selected = tasks.find((t) => t.id === selectedTaskId);
+  const { sendInput } = usePty();
 
   // Single-click opens a preview tab, which the next single click replaces;
   // double-clicking the tab pins it (§7.2). The Explorer's file rows are the
@@ -138,6 +141,38 @@ function ShellPreview() {
     if (!layout) return;
     setLayout(openTab(layout, { kind: "diff", path }, { preview: true }));
   };
+
+  const handleOpenTab = useCallback(
+    (descriptor: TabDescriptor, options?: OpenOptions) => {
+      if (!layout) return;
+      setLayout(openTab(layout, descriptor, options));
+    },
+    [layout, setLayout],
+  );
+
+  // Having a ptyId is not the same as having somewhere to write. A PTY whose
+  // process exited on its own is never removed from PtyManager — only `kill`
+  // does that — so `TaskInfo.ptyId` stays non-null for the whole life of the
+  // daemon while `Pty.write` silently drops everything. Testing the id alone
+  // therefore passed for exactly the case this guard exists for.
+  const ptyId = selected?.ptyId ?? null;
+  const canDeliver = !!ptyId && !selected?.exited;
+
+  const handleSubmitReview = useCallback(
+    (promptText: string): boolean => {
+      // No terminal, no delivery. Said out loud so the caller keeps the review:
+      // a task whose agent has exited cannot take the prompt, and silently
+      // swallowing it while the comments were cleared threw the whole review
+      // away with nothing to show for it.
+      if (!canDeliver || !ptyId || !layout) return false;
+      sendInput(ptyId, promptText);
+      // The review has gone to the agent, so the agent is what the user wants
+      // to be looking at.
+      setLayout(openTab(layout, { kind: "agent" }));
+      return true;
+    },
+    [canDeliver, ptyId, sendInput, layout, setLayout],
+  );
 
   return (
     <AppShell
@@ -161,7 +196,22 @@ function ShellPreview() {
                     badge={<Badge>sonnet · acceptEdits</Badge>}
                   />
                 }
-                renderPane={(tab) => <PaneFixture tab={tab} />}
+                renderPane={(tab) => (
+                  // Keyed by the tab key. Within a group the active tab changes
+                  // without the pane unmounting, and `useViewState` binds its
+                  // slot once, at mount — so without this, switching from one
+                  // file tab to another would draw the second file's contents
+                  // under the first file's scroll offset and toggles, and write
+                  // them back to the first file's slot.
+                  <TabPane
+                    key={tab.key}
+                    taskId={selectedTaskId!}
+                    tab={tab}
+                    onOpenTab={handleOpenTab}
+                    onSubmitReview={handleSubmitReview}
+                    renderTerminal={() => <TerminalFixture />}
+                  />
+                )}
               />
             )
           : undefined
@@ -202,30 +252,6 @@ function NoTaskFixture() {
   return (
     <div className="grid h-full place-items-center text-sm text-subtle-foreground">
       Pick a task on the left.
-    </div>
-  );
-}
-
-/**
- * What a pane holds, until TASK-23's hosts exist. Deliberately says which
- * descriptor it is showing: with two groups on screen, "the diff" is not enough
- * to tell whether a drag put the right tab in the right place.
- */
-function PaneFixture({ tab }: { tab: TabState }) {
-  const { descriptor } = tab;
-  if (descriptor.kind === "agent" || descriptor.kind === "shell") return <TerminalFixture />;
-  return (
-    <div className="flex h-full flex-col gap-1 overflow-auto px-3 py-2">
-      <span className="font-mono text-xs tracking-mono text-foreground">
-        {descriptor.kind === "diff" || descriptor.kind === "file"
-          ? descriptor.path
-          : descriptor.kind === "commit"
-            ? descriptor.sha
-            : descriptor.kind}
-      </span>
-      <span className="text-xs text-subtle-foreground">
-        The {descriptor.kind} host arrives with TASK-23.
-      </span>
     </div>
   );
 }

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FileTree } from "./components/file/FileTree";
 import { FileContent } from "./components/file/FileContent";
 import { Button } from "./components/ui/button";
 import { Loader2, RefreshCw, WrapText, Eye } from "lucide-react";
 import { useSessionFiles, useFileContent } from "./hooks/use-session-files";
 import { useViewState } from "./hooks/use-view-state";
-import { getViewState } from "./view-state-store";
+import { getViewState, setViewField, touchViewState, viewRef } from "./view-state-store";
 import { getLanguageFromPath } from "./utils/languageDetection";
 import { SymbolPopover, type SymbolTarget } from "./components/SymbolPopover";
 
@@ -22,19 +22,26 @@ export function FileView({ sessionId, file, highlightLine, onSelectFile }: FileV
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
   const files = filesData?.files ?? [];
   const selectedFile = file ?? null;
-  const [lineWrap, setLineWrap] = useViewState(sessionId, "fileView", "lineWrap");
-  const [markdownPreview, setMarkdownPreview] = useViewState(sessionId, "fileView", "markdownPreview");
+  // The tree is chrome the whole task shares; the editor's own toggles and
+  // scroll offsets belong to the pane. "fileView" is a v1-only key that can
+  // never collide with a real `file:<path>` tab; it dies with this route in
+  // TASK-21.
+  const tree = useMemo(() => viewRef(sessionId, "files"), [sessionId]);
+  const editor = useMemo(() => viewRef(sessionId, "fileView"), [sessionId]);
+  const [lineWrap, setLineWrap] = useViewState("file", editor, "lineWrap");
+  const [markdownPreview, setMarkdownPreview] = useViewState("file", editor, "markdownPreview");
+  const [expandedPaths, setExpandedPaths] = useViewState("files", tree, "expandedPaths");
   const isMarkdown = selectedFile ? getLanguageFromPath(selectedFile)?.name === "Markdown" : false;
   const restoredRef = useRef(false);
   // Snapshot the stored selection at mount, before the mirror effect below
   // overwrites it with the (possibly absent) URL selection
-  const initialStoredFileRef = useRef(getViewState(sessionId).fileView.selectedFile);
+  const initialStoredFileRef = useRef(getViewState("files", tree).selectedFile);
 
   // Mirror the URL selection into the store so tab/session switches restore it.
   // Track null too, so clearing a selection doesn't leave a stale stored path.
   useEffect(() => {
-    getViewState(sessionId).fileView.selectedFile = selectedFile;
-  }, [selectedFile, sessionId]);
+    setViewField("files", tree, "selectedFile", selectedFile);
+  }, [selectedFile, tree]);
 
   // Mounted without a ?file= param: restore the last-viewed file, but only once
   // the file list has loaded and only if the file still exists (no stale flash).
@@ -68,7 +75,7 @@ export function FileView({ sessionId, file, highlightLine, onSelectFile }: FileV
 
   const { data: fileContent = null, isLoading: contentLoading } = useFileContent(sessionId, selectedFile);
 
-  const scrollTops = getViewState(sessionId).fileView.scrollTops;
+  const scrollTops = getViewState("file", editor).scrollTops;
   // Source and rendered-markdown views have unrelated content heights, so
   // scroll offsets (and FileContent's mount) are keyed by mode as well as path
   const previewActive = isMarkdown && markdownPreview;
@@ -98,10 +105,11 @@ export function FileView({ sessionId, file, highlightLine, onSelectFile }: FileV
     <div className="flex h-full">
       <div className="w-[280px] shrink-0">
         <FileTree
-          sessionId={sessionId}
           files={files}
           selectedFile={selectedFile}
           onSelectFile={onSelectFile}
+          expandedPaths={expandedPaths}
+          onExpandedPathsChange={setExpandedPaths}
         />
       </div>
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -142,7 +150,10 @@ export function FileView({ sessionId, file, highlightLine, onSelectFile }: FileV
           markdownPreview={markdownPreview}
           initialScrollTop={scrollKey ? scrollTops.get(scrollKey) : undefined}
           onScrollTopChange={(top) => {
-            if (scrollKey) scrollTops.set(scrollKey, top);
+            if (!scrollKey) return;
+            // Mutated in place, so the store has to be told to persist it.
+            scrollTops.set(scrollKey, top);
+            touchViewState(editor);
           }}
           highlightLine={highlightLine}
           onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}

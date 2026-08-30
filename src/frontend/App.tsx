@@ -7,7 +7,7 @@ import { useSession } from "./SessionContext";
 import { useUploadFiles } from "./hooks/use-upload-mutation";
 import { buildSessionSlug, parseSessionSlug } from "./utils/slug";
 import { tabNavTarget, closeNavTarget, TAB_ROUTES } from "./utils/session-nav";
-import { setLastTab } from "./view-state-store";
+import { setViewField, viewRef } from "./view-state-store";
 import type { TabType } from "./types/tab";
 import {
   AlertDialog,
@@ -77,7 +77,9 @@ export function SessionLayout({ showNotFound = false, children }: { showNotFound
     ? parseSessionSlug((slugMatch.params as { slug: string }).slug).id
     : null;
   useEffect(() => {
-    if (routeSessionId) setLastTab(routeSessionId, currentTab);
+    if (routeSessionId) {
+      setViewField("nav", viewRef(routeSessionId, "nav"), "lastTab", currentTab);
+    }
   }, [routeSessionId, currentTab]);
 
   // The slug carries the session name, but the name is not known at creation:

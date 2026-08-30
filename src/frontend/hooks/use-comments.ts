@@ -2,12 +2,15 @@ import { useState, useCallback, useMemo } from "react";
 import type { LineComment } from "../types/diff";
 import { generateUUID } from "../utils/uuid";
 import { useViewState } from "./use-view-state";
-import { pruneComments as pruneCommentsMap } from "../view-state-store";
+import { pruneComments as pruneCommentsMap, type ViewRef } from "../view-state-store";
 
-export function useComments(sessionId: string) {
-  // Draft review comments survive tab/session switches (store-backed);
-  // the editing UI state below is transient and resets on unmount.
-  const [comments, setComments] = useViewState(sessionId, "diffView", "comments");
+/** `review` addresses the task's draft review — one slot for every diff view in
+ * the task, so a comment left on a per-file diff and one left on the all-files
+ * diff are gathered by the same Submit. */
+export function useComments(review: ViewRef) {
+  // Draft review comments survive tab switches (store-backed); the editing UI
+  // state below is transient and resets on unmount.
+  const [comments, setComments] = useViewState("review", review, "comments");
   const [activeCommentLines, setActiveCommentLines] = useState<Set<string>>(new Set());
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);

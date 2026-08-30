@@ -1,18 +1,13 @@
 import { useMemo, useEffect, useCallback, useRef, useState } from "react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { Loader2, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
-import { useGitLog, type FetchUntilStatus } from "../../hooks/use-git-log";
-import { useGitRefs } from "../../hooks/use-git-refs";
-import { setGitViewSelection } from "../../view-state-store";
+import { getViewState, setViewField, viewRef } from "../../view-state-store";
 import { useViewState } from "../../hooks/use-view-state";
-import { useSession } from "../../SessionContext";
-import { queryClient } from "../../query-client";
+import { useGitHistory } from "../../hooks/use-git-history";
 import { Button } from "../ui/button";
 import { CommitList } from "./CommitList";
 import { CommitDetail } from "./CommitDetail";
-import { RefSidebar } from "./RefSidebar";
-import { useRefSets } from "./RefChip";
+import { RefSidebar, type RefSidebarHeadExpanded } from "./RefSidebar";
 import type { GitViewMode } from "../../types/git";
 
 interface GitViewProps {
@@ -31,51 +26,9 @@ export function GitView({ sessionId }: GitViewProps) {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const search = useSearch({ strict: false }) as { commit?: string; mode?: GitViewMode; file?: string };
 
-  const { sessionActivity } = useSession();
-
-  const logQuery = useGitLog(sessionId);
-  const refsQuery = useGitRefs(sessionId);
-  const refSets = useRefSets(refsQuery.data);
-  const { fetchUntil } = logQuery;
-
-  // Sha whose fetch-until is in flight after a sidebar click (drives the
-  // sidebar spinner and gates further clicks).
-  const [pendingRefSha, setPendingRefSha] = useState<string | null>(null);
-
-  // Draggable top/bottom split. Backed by the per-session view-state store
-  // (GitView remounts per session via route key, so the hook's mount-time seed
-  // restores the persisted ratio), written back once per drag on pointerup.
-  const [splitRatio, setSplitRatio] = useViewState(sessionId, "gitView", "splitRatio");
-  const [dragging, setDragging] = useState(false);
-  const splitContainerRef = useRef<HTMLDivElement>(null);
-  // The top pane whose height the divider drives. During a drag the height is
-  // written imperatively on this element (see onDividerPointerMove).
-  const topPaneRef = useRef<HTMLDivElement>(null);
-  // Last ratio produced by the in-flight drag; committed to state on pointerup.
-  const dragRatioRef = useRef<number | null>(null);
-
-  const commits = useMemo(
-    () => logQuery.data?.pages.flatMap((p) => p.commits) ?? [],
-    [logQuery.data],
-  );
-
-  // ?commit= is the source of truth; fall back to HEAD when unset, and to the
-  // newest loaded commit (topo-order) when refs are unavailable (e.g. the refs
-  // request failed) so a selection is still made.
-  const selectedSha = search.commit ?? refsQuery.data?.head.sha ?? commits[0]?.hash;
-
-  // The bottom-pane mode persists independently of selection; default to commit.
-  const mode: GitViewMode = search.mode ?? "commit";
-
-  // Mirror the explicit URL selection into the store so tab/session switches
-  // restore it (session-nav reads gitView.commit/mode/file).
-  useEffect(() => {
-    setGitViewSelection(sessionId, { commit: search.commit, mode: search.mode, file: search.file });
-  }, [sessionId, search.commit, search.mode, search.file]);
-
   // Single navigation entry point: merge a search delta over the current search
   // and apply the file-only-in-tree invariant centrally so no caller can leave a
-  // stale path in the URL. The selection→store mirror effect above keeps the
+  // stale path in the URL. The selection→store mirror effect below keeps the
   // store in sync, so navigation is the single source of truth.
   const navigateGit = useCallback(
     (delta: Partial<{ commit: string | undefined; mode: GitViewMode; file: string | undefined }>) => {
@@ -90,6 +43,75 @@ export function GitView({ sessionId }: GitViewProps) {
 
   // Keep the current mode; only the commit changes.
   const selectCommit = useCallback((sha: string) => navigateGit({ commit: sha }), [navigateGit]);
+
+  // Attempted shas are remembered so a deep-link miss (too-deep/error) never
+  // re-seeks and loops. A refs change invalidates the loaded log and with it the
+  // answer to "have we already tried this one?", so the seek effect re-attempts
+  // the current ?commit= against the fresh history.
+  const attemptedShas = useRef<Set<string>>(new Set());
+  const forgetAttempts = useCallback(() => attemptedShas.current.clear(), []);
+  const {
+    logQuery,
+    refsQuery,
+    refSets,
+    commits,
+    pendingRefSha,
+    setPendingRefSha,
+    selectRef,
+    reportSeekFailure,
+    fetchUntil,
+  } = useGitHistory(sessionId, selectCommit, forgetAttempts);
+
+  // The history view's slot (graph + ref sidebar), and v1's nav shim slot.
+  const history = useMemo(() => viewRef(sessionId, "history"), [sessionId]);
+  const nav = useMemo(() => viewRef(sessionId, "nav"), [sessionId]);
+
+  // Draggable top/bottom split. Backed by the history slot (GitView remounts
+  // per session via route key, so the hook's mount-time bind restores the
+  // persisted ratio), written back once per drag on pointerup.
+  const [splitRatio, setSplitRatio] = useViewState("history", history, "splitRatio");
+  const [refsClosedSections, setRefsClosedSections] = useViewState("history", history, "refsClosedSections");
+  const [refsExpanded, setRefsExpanded] = useViewState("history", history, "refsExpanded");
+
+  // Read/write handle rather than a value: RefSidebar's HEAD-reveal effect has
+  // to read and write this synchronously, so it runs once per HEAD value and
+  // not once per remount — which would undo a user's collapse of HEAD's
+  // ancestor folders on every tab switch.
+  const headExpanded = useMemo<RefSidebarHeadExpanded>(
+    () => ({
+      get: () => getViewState("history", history).refsHeadExpandedFor,
+      set: (branch) => setViewField("history", history, "refsHeadExpandedFor", branch),
+    }),
+    [history],
+  );
+  const [dragging, setDragging] = useState(false);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  // The top pane whose height the divider drives. During a drag the height is
+  // written imperatively on this element (see onDividerPointerMove).
+  const topPaneRef = useRef<HTMLDivElement>(null);
+  // Last ratio produced by the in-flight drag; committed to state on pointerup.
+  const dragRatioRef = useRef<number | null>(null);
+
+  // ?commit= is the source of truth; fall back to HEAD when unset, and to the
+  // newest loaded commit (topo-order) when refs are unavailable (e.g. the refs
+  // request failed) so a selection is still made.
+  const selectedSha = search.commit ?? refsQuery.data?.head.sha ?? commits[0]?.hash;
+
+  // The bottom-pane mode persists independently of selection; default to commit.
+  const mode: GitViewMode = search.mode ?? "commit";
+
+  // The detail pane's slot. Keyed by the sha as the URL spells it, so the
+  // detail pane and its state change identity together; with no selection at
+  // all the pane renders its empty state and the slot is never written.
+  const commitView = useMemo(() => viewRef(sessionId, `commit:${selectedSha ?? ""}`), [sessionId, selectedSha]);
+
+  // Mirror the explicit URL selection into the nav slot so tab/session switches
+  // restore it (session-nav reads gitCommit/gitMode/gitFile).
+  useEffect(() => {
+    setViewField("nav", nav, "gitCommit", search.commit);
+    setViewField("nav", nav, "gitMode", search.mode);
+    setViewField("nav", nav, "gitFile", search.file);
+  }, [nav, search.commit, search.mode, search.file]);
 
   const selectFile = useCallback(
     (path: string | null) => navigateGit({ file: path ?? undefined }),
@@ -150,53 +172,12 @@ export function GitView({ sessionId }: GitViewProps) {
     [setSplitRatio],
   );
 
-  // Toast for the non-found outcomes of a fetch-until seek. "found" is handled
-  // by the caller (it decides whether to also select the commit).
-  const reportSeekFailure = useCallback((status: Exclude<FetchUntilStatus, "found">) => {
-    switch (status) {
-      case "too-deep":
-        toast("Ref is too deep in history (>50k commits) to load here.");
-        break;
-      case "stale":
-        toast("History changed — reloading");
-        break;
-      case "error":
-        toast("Failed to load history for this ref");
-        break;
-    }
-  }, []);
-
-  // Sidebar ref click: select directly if the head is already loaded, else
-  // fetch history through to it before selecting. Refs deeper than the hard cap
-  // surface a notice rather than paging in tens of thousands of rows.
-  const selectRef = useCallback(
-    async (sha: string) => {
-      if (commits.some((c) => c.hash === sha)) {
-        selectCommit(sha);
-        return;
-      }
-      setPendingRefSha(sha);
-      try {
-        const status = await fetchUntil(sha);
-        if (status === "found") {
-          selectCommit(sha);
-        } else {
-          reportSeekFailure(status);
-        }
-      } finally {
-        setPendingRefSha(null);
-      }
-    },
-    [commits, fetchUntil, selectCommit, reportSeekFailure],
-  );
-
   // Deep link: ?commit= may point past the loaded window (a sidebar click is the
   // only other path that pages there). When the log has loaded, a commit is
   // requested, and nothing loaded matches it, seek the same way selectRef does.
   // The URL already carries the selection, so on "found" we let CommitList's own
   // scroll effect reveal it — no selectCommit here. Attempted shas are remembered
   // so a miss (too-deep/error) never re-seeks and loops.
-  const attemptedShas = useRef<Set<string>>(new Set());
   useEffect(() => {
     const target = search.commit;
     if (!target) return;
@@ -236,35 +217,8 @@ export function GitView({ sessionId }: GitViewProps) {
     fetchUntil,
     reportSeekFailure,
     navigateGit,
+    setPendingRefSha,
   ]);
-
-  // Refetch refs when the session's PTY activity settles (true→false). The 300ms
-  // debounced activity signal flipping off is a good proxy for "a command just
-  // finished" — refs may have moved. Track the previous value so mount and
-  // false→true transitions don't refetch.
-  const active = sessionActivity[sessionId] ?? false;
-  const prevActiveRef = useRef(active);
-  useEffect(() => {
-    const wasActive = prevActiveRef.current;
-    prevActiveRef.current = active;
-    if (wasActive && !active) refsQuery.refetch();
-  }, [active, refsQuery.refetch]);
-
-  // When the refs payload hash actually changes (not first load, not an
-  // identical refetch), the log window may be invalid: reset it to page one and
-  // clear attemptedShas so the seek effect re-attempts the current ?commit=
-  // against the fresh history. Only a change between two DEFINED hashes acts, so
-  // undefined→A (initial) and A→A (unchanged refetch) never reset or loop.
-  const refsHash = refsQuery.data?.hash;
-  const prevRefsHashRef = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    const prev = prevRefsHashRef.current;
-    prevRefsHashRef.current = refsHash;
-    if (prev !== undefined && refsHash !== undefined && prev !== refsHash) {
-      queryClient.resetQueries({ queryKey: ["git-log", sessionId] });
-      attemptedShas.current.clear();
-    }
-  }, [refsHash, sessionId]);
 
   if (logQuery.isLoading || refsQuery.isLoading) {
     return (
@@ -297,11 +251,15 @@ export function GitView({ sessionId }: GitViewProps) {
   return (
     <div className="h-full flex flex-row">
       <RefSidebar
-        sessionId={sessionId}
         refs={refsQuery.data}
         refsError={!!refsQuery.error}
         onSelectRef={selectRef}
         pendingSha={pendingRefSha}
+        closedSections={refsClosedSections}
+        onClosedSectionsChange={setRefsClosedSections}
+        refsExpanded={refsExpanded}
+        onRefsExpandedChange={setRefsExpanded}
+        headExpanded={headExpanded}
       />
 
       <div
@@ -331,7 +289,6 @@ export function GitView({ sessionId }: GitViewProps) {
           style={{ height: `${splitRatio * 100}%` }}
         >
           <CommitList
-            sessionId={sessionId}
             commits={commits}
             selectedSha={selectedSha}
             onSelect={selectCommit}
@@ -344,6 +301,8 @@ export function GitView({ sessionId }: GitViewProps) {
             }}
             refSets={refSets}
             onLocalChanges={onLocalChanges}
+            initialScrollTop={getViewState("history", history).listScrollTop}
+            onScrollTopChange={(top) => setViewField("history", history, "listScrollTop", top)}
           />
         </div>
 
@@ -364,6 +323,7 @@ export function GitView({ sessionId }: GitViewProps) {
         <div className="flex-1 min-h-0 overflow-hidden">
           <CommitDetail
             sessionId={sessionId}
+            view={commitView}
             sha={selectedSha}
             mode={mode}
             onSelectMode={selectMode}

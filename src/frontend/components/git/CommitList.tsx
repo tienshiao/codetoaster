@@ -3,7 +3,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { FileDiff, Loader2 } from "lucide-react";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
 import { assignLanes, type GraphRow, type GraphState } from "../../utils/commitGraph";
-import { getViewState } from "../../view-state-store";
 import { CommitGraph } from "./CommitGraph";
 import { RefChip, displayRefs, type RefSets } from "./RefChip";
 import type { GitLogCommit } from "../../types/git";
@@ -13,7 +12,6 @@ import type { GitLogCommit } from "../../types/git";
 const ROW_HEIGHT = 28;
 
 interface CommitListProps {
-  sessionId: string;
   commits: GitLogCommit[];
   selectedSha: string | undefined;
   onSelect: (sha: string) => void;
@@ -22,6 +20,10 @@ interface CommitListProps {
   onLoadMore: () => void;
   refSets: RefSets;
   onLocalChanges: () => void;
+  // Scroll persistence, owned by the caller (the list itself has no view
+  // identity). Restored once, on the first render with commits present.
+  initialScrollTop?: number;
+  onScrollTopChange?: (top: number) => void;
 }
 
 // A commit row matches the selected SHA when either equals the other's prefix
@@ -87,7 +89,6 @@ const CommitRow = memo(function CommitRow({
 });
 
 export function CommitList({
-  sessionId,
   commits,
   selectedSha,
   onSelect,
@@ -96,6 +97,8 @@ export function CommitList({
   onLoadMore,
   refSets,
   onLocalChanges,
+  initialScrollTop,
+  onScrollTopChange,
 }: CommitListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   // Scroll-into-view guard (also primed by the mount-time scroll restore below).
@@ -191,7 +194,7 @@ export function CommitList({
 
     if (!didRestoreScroll.current) {
       didRestoreScroll.current = true;
-      const stored = getViewState(sessionId).gitView.listScrollTop;
+      const stored = initialScrollTop ?? 0;
       if (stored > 0) {
         suppressScrollPersist.current = true;
         el.scrollTop = stored;
@@ -211,7 +214,7 @@ export function CommitList({
     }
     // virtualizer identity is stable across renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSha, commits, sessionId]);
+  }, [selectedSha, commits, initialScrollTop]);
 
   return (
     <div className="h-full flex flex-col">
@@ -236,7 +239,7 @@ export function CommitList({
             suppressScrollPersist.current = false;
             return;
           }
-          getViewState(sessionId).gitView.listScrollTop = e.currentTarget.scrollTop;
+          onScrollTopChange?.(e.currentTarget.scrollTop);
         }}
       >
         <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>

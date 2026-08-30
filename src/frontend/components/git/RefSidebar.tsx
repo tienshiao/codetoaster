@@ -3,20 +3,35 @@ import { ChevronDown, ChevronRight, Check, Loader2 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { FilterInput } from "../FilterInput";
 import { buildRefTree, countRefs, isRefFolder, type RefTreeNode } from "../../utils/refTree";
-import { collectPathPrefixes, getViewState, toggleInSet, withAll } from "../../view-state-store";
-import { useViewState } from "../../hooks/use-view-state";
+import { collectPathPrefixes, toggleInSet, withAll } from "../../view-state-store";
 import type { GitRef, GitRefsResponse } from "../../types/git";
 
 // Shared empty-set default for sections with no persisted expansion state.
 const EMPTY_SET: Set<string> = new Set();
 
+/** Read/write access to the HEAD branch whose ancestor folders were last
+ * revealed. A handle rather than a value: the reveal effect below must read and
+ * write it synchronously, so a re-render carrying a stale value can't run it
+ * twice for the same HEAD. */
+export interface RefSidebarHeadExpanded {
+  get: () => string | null;
+  set: (branch: string) => void;
+}
+
 interface RefSidebarProps {
-  sessionId: string;
   refs: GitRefsResponse | undefined;
   refsError: boolean;
   onSelectRef: (sha: string) => void;
   /** Sha whose fetch-until is currently in flight (shows a spinner). */
   pendingSha: string | null;
+  // Section open/closed (tracked as closures — sections default open) and
+  // per-section folder expansion, both owned by the caller so they persist
+  // with the view rather than with this component's mount.
+  closedSections: Set<string>;
+  onClosedSectionsChange: Dispatch<SetStateAction<Set<string>>>;
+  refsExpanded: Map<string, Set<string>>;
+  onRefsExpandedChange: Dispatch<SetStateAction<Map<string, Set<string>>>>;
+  headExpanded: RefSidebarHeadExpanded;
 }
 
 interface SectionProps {
@@ -27,8 +42,8 @@ interface SectionProps {
   pendingSha: string | null;
   /** True while the sidebar filter is non-empty — forces every folder open. */
   filterActive: boolean;
-  // Controlled section open/closed and folder-expansion state, lifted to
-  // RefSidebar so both persist in the per-session view-state store.
+  // Controlled section open/closed and folder-expansion state, lifted through
+  // RefSidebar to whoever owns the view's persisted state.
   open: boolean;
   onOpenChange: (open: boolean) => void;
   expanded: Set<string>;
@@ -145,15 +160,20 @@ function RefSection({
   );
 }
 
-export function RefSidebar({ sessionId, refs, refsError, onSelectRef, pendingSha }: RefSidebarProps) {
+export function RefSidebar({
+  refs,
+  refsError,
+  onSelectRef,
+  pendingSha,
+  closedSections,
+  onClosedSectionsChange: setClosedSections,
+  refsExpanded,
+  onRefsExpandedChange: setRefsExpanded,
+  headExpanded,
+}: RefSidebarProps) {
   const [filter, setFilter] = useState("");
 
   const filterActive = filter.trim() !== "";
-
-  // Persisted section open/closed (tracked as closures — sections default open)
-  // and per-section folder expansion, both surviving tab switches.
-  const [closedSections, setClosedSections] = useViewState(sessionId, "gitView", "refsClosedSections");
-  const [refsExpanded, setRefsExpanded] = useViewState(sessionId, "gitView", "refsExpanded");
 
   // setState-style update scoped to one section's expansion set. Replaces that
   // section's Set inside a new Map immutably; a same-reference result bails
@@ -180,11 +200,10 @@ export function RefSidebar({ sessionId, refs, refsError, onSelectRef, pendingSha
   // of those folders on every tab switch now that the expansion set persists.
   useEffect(() => {
     if (!headBranch) return;
-    const gitView = getViewState(sessionId).gitView;
-    if (gitView.refsHeadExpandedFor === headBranch) return;
-    gitView.refsHeadExpandedFor = headBranch;
+    if (headExpanded.get() === headBranch) return;
+    headExpanded.set(headBranch);
     handleExpandedChange("Branches", (prev) => withAll(prev, collectPathPrefixes([headBranch])));
-  }, [headBranch, sessionId, handleExpandedChange]);
+  }, [headBranch, headExpanded, handleExpandedChange]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();

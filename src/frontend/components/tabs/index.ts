@@ -8,5 +8,8 @@ export type { TabPresentation } from "./tab-labels";
 
 export { useTaskLayout } from "./use-task-layout";
 
+export { TabPane } from "./panes";
+export type { TabPaneProps } from "./panes";
+
 export { dropIndexAt, moveIndexFor, resizeFlex } from "./drag";
 export type { TabBox } from "./drag";

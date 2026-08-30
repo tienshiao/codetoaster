@@ -79,6 +79,12 @@ interface DiffLayoutProps {
   // Extra toolbar content, right-aligned (e.g. the Submit Review button).
   toolbarExtra?: ReactNode;
 
+  // Chrome for choosing *which* file is shown. Both default on; a per-file diff
+  // tab turns them off, because a tree of one row and an All/Single toggle over
+  // one file are controls with nothing to control — the tab already is the file.
+  showFileTree?: boolean;
+  showViewModeToggle?: boolean;
+
   symbol?: DiffLayoutSymbol;
 }
 
@@ -104,6 +110,8 @@ export function DiffLayout({
   commentCounts,
   imageRefs,
   toolbarExtra,
+  showFileTree = true,
+  showViewModeToggle = true,
   symbol,
 }: DiffLayoutProps) {
   const diffContainerRef = useRef<HTMLDivElement>(null);
@@ -304,48 +312,54 @@ export function DiffLayout({
   return (
     <div className="flex h-full">
       {/* File tree sidebar */}
-      <div className="w-[280px] shrink-0">
-        <FileTree
-          sessionId={sessionId}
-          files={files}
-          selectedFile={selectedFile}
-          onSelectFile={handleSelectFile}
-          totalAdditions={totalAdditions}
-          totalDeletions={totalDeletions}
-          commentCounts={commentCounts}
-          collapsedPaths={treeCollapsedPaths}
-          onCollapsedPathsChange={onTreeCollapsedPathsChange}
-        />
-      </div>
+      {showFileTree && (
+        <div className="w-[280px] shrink-0">
+          <FileTree
+            files={files}
+            selectedFile={selectedFile}
+            onSelectFile={handleSelectFile}
+            totalAdditions={totalAdditions}
+            totalDeletions={totalDeletions}
+            commentCounts={commentCounts}
+            collapsedPaths={treeCollapsedPaths}
+            onCollapsedPathsChange={onTreeCollapsedPathsChange}
+          />
+        </div>
+      )}
 
       {/* Diff content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* View mode toggle + toolbar extras */}
-        <div className="flex items-center text-xs px-4 py-2 shrink-0">
-          <div className="inline-flex rounded-md border border-border overflow-hidden">
-            <button
-              className={`px-2.5 py-1 transition-colors ${viewMode === "all" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}
-              onClick={() => onViewModeOverride("all")}
-            >
-              All Files
-            </button>
-            <button
-              className={`px-2.5 py-1 transition-colors border-l border-border ${viewMode === "single" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}
-              onClick={() => {
-                onViewModeOverride("single");
-                // Seeding a selection is explicit navigation — reveal it in
-                // the tree so the highlighted row isn't hidden in a collapsed
-                // directory.
-                if (!selectedFile && files[0]) {
-                  navigateToFile(files[0].newPath);
-                }
-              }}
-            >
-              Single File
-            </button>
+        {/* View mode toggle + toolbar extras. Skipped entirely when neither is
+            present, so a bare pane does not carry an empty band. */}
+        {(showViewModeToggle || toolbarExtra) && (
+          <div className="flex items-center text-xs px-4 py-2 shrink-0">
+            {showViewModeToggle && (
+              <div className="inline-flex rounded-md border border-border overflow-hidden">
+                <button
+                  className={`px-2.5 py-1 transition-colors ${viewMode === "all" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}
+                  onClick={() => onViewModeOverride("all")}
+                >
+                  All Files
+                </button>
+                <button
+                  className={`px-2.5 py-1 transition-colors border-l border-border ${viewMode === "single" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}
+                  onClick={() => {
+                    onViewModeOverride("single");
+                    // Seeding a selection is explicit navigation — reveal it in
+                    // the tree so the highlighted row isn't hidden in a collapsed
+                    // directory.
+                    if (!selectedFile && files[0]) {
+                      navigateToFile(files[0].newPath);
+                    }
+                  }}
+                >
+                  Single File
+                </button>
+              </div>
+            )}
+            {toolbarExtra}
           </div>
-          {toolbarExtra}
-        </div>
+        )}
 
         {/* Scrollable file diffs */}
         <div
@@ -371,8 +385,10 @@ export function DiffLayout({
         >
           {renderFiles()}
 
-          {/* Floating prev/next navigation for single-file mode */}
-          {viewMode === "single" && (
+          {/* Floating prev/next navigation for single-file mode. Nothing to
+              page through when the diff is one file — a per-file tab always is
+              — so the bar would be two dead buttons over "1 of 1". */}
+          {viewMode === "single" && files.length > 1 && (
             <div className="sticky bottom-4 z-50 flex items-center justify-center pointer-events-none">
               <div className="pointer-events-auto flex items-center gap-3 px-5 py-2.5 bg-popover border border-border rounded-lg shadow-lg">
                 <Button

@@ -3,22 +3,19 @@ import { ChevronRight, ChevronDown } from "lucide-react";
 import { FileIcon } from "../diff/FileIcon";
 import { FilterInput } from "../FilterInput";
 import { formatSize } from "../../utils/formatSize";
-import { useViewState } from "../../hooks/use-view-state";
 import { collectDirectoryPaths, collectPathPrefixes, pruneSet, toggleInSet, withAll } from "../../view-state-store";
 import { compareTreeSiblings } from "../../utils/sortFiles";
 import type { FileInfo } from "../../types/file";
 
 interface FileTreeProps {
-  sessionId: string;
   files: FileInfo[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
-  // Controlled expansion state (git tree view supplies its own so reusing the
-  // tree for an old commit never corrupts the file tab's persisted set — an old
-  // commit's tree lacks directories that exist today). When omitted, falls back
-  // to the fileView view-state store.
-  expandedPaths?: Set<string>;
-  onExpandedPathsChange?: Dispatch<SetStateAction<Set<string>>>;
+  // Expansion state is owned by the caller, so reusing the tree for an old
+  // commit never corrupts the file view's persisted set — an old commit's tree
+  // lacks directories that exist today.
+  expandedPaths: Set<string>;
+  onExpandedPathsChange: Dispatch<SetStateAction<Set<string>>>;
 }
 
 interface TreeNode {
@@ -72,13 +69,8 @@ function sortTree(nodes: TreeNode[]): TreeNode[] {
     .sort((a, b) => compareTreeSiblings(a.isDirectory, b.isDirectory, a.name, b.name));
 }
 
-export function FileTree({ sessionId, files, selectedFile, onSelectFile, expandedPaths: expandedPathsProp, onExpandedPathsChange }: FileTreeProps) {
+export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onExpandedPathsChange: setExpandedPaths }: FileTreeProps) {
   const [filter, setFilter] = useState("");
-  // Hooks must run unconditionally, so always read the store then pick which
-  // pair to use — the controlled props win when supplied.
-  const [storeExpandedPaths, setStoreExpandedPaths] = useViewState(sessionId, "fileView", "expandedPaths");
-  const expandedPaths = expandedPathsProp ?? storeExpandedPaths;
-  const setExpandedPaths = onExpandedPathsChange ?? setStoreExpandedPaths;
 
   const filteredFiles = useMemo(() => {
     if (!filter) return files;
