@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { FolderPlus, Pencil, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Archive, FolderPlus, Pencil, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
+import { archiveSummary } from "@/frontend/archive-summary";
 import { groupByProject, selectTasks } from "@/frontend/task-list";
 import { meaningfulTitle, sessionDisplayNames } from "@/lib/xtmux/naming";
-import type { ProjectInfo, ProjectSettings, TaskInfo } from "@/lib/xtmux/types";
+import type { ArchivePreview, ProjectInfo, ProjectSettings, TaskInfo } from "@/lib/xtmux/types";
 import type { AppShellProps, ShellTask } from "@/frontend/components/v2/AppShell";
 import { Dialog } from "@/frontend/components/v2/Dialog";
 import { IconButton } from "@/frontend/components/v2/IconButton";
@@ -54,6 +55,43 @@ function previewOf(task: TaskInfo, label: string): string | undefined {
   return title && title !== label ? title : undefined;
 }
 
+/**
+ * The body of the archive confirmation: what this particular task would cost.
+ *
+ * The preview is fetched when the dialog opens rather than held on the row,
+ * because answering it runs git against a working tree — see `ArchivePreview`.
+ * Three states, and the middle one is why this is a component at all:
+ *
+ * - **checking** — the confirm is disabled, because the dialog has not yet said
+ *   anything for the user to confirm *against*.
+ * - **failed** — the confirm comes back, and the text says plainly that the
+ *   cost could not be established. Fail closed on the claim, not on the
+ *   action: refusing to archive because git was slow is the worse failure, and
+ *   the archive itself reports what it actually did afterwards.
+ * - **answered** — `archiveSummary`'s sentences.
+ */
+function ArchiveBody({ preview, failed }: { preview: ArchivePreview | null; failed: boolean }) {
+  if (failed) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        What this would remove could not be established, so nothing here is
+        promised. Archiving still snapshots the work first, and reports what it
+        did.
+      </p>
+    );
+  }
+  if (!preview) {
+    return <p className="text-xs text-muted-foreground">Checking what this would remove…</p>;
+  }
+  return (
+    <ul className="flex list-none flex-col gap-1 text-xs text-muted-foreground">
+      {archiveSummary(preview).map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
 interface TaskRowActionsProps {
   taskId: string;
   label: string;
@@ -61,17 +99,58 @@ interface TaskRowActionsProps {
   busy: boolean;
   onRename: (id: string, title: string) => void;
   onClose: (id: string) => void;
+  /** What archiving would cost, fetched when the dialog opens. Resolving to
+   * null is a failure the dialog says out loud rather than a blank. */
+  onArchivePreview: (id: string) => Promise<ArchivePreview | null>;
+  onArchive: (id: string) => void;
 }
 
 /**
- * Rename and close, as siblings of the row rather than children of it — see
- * `ShellTask.actions`. Two plain buttons and not a menu behind an ellipsis:
+ * Rename, archive and close, as siblings of the row rather than children of it
+ * — see `ShellTask.actions`. Plain buttons and not a menu behind an ellipsis:
  * a menu would need a popover the v2 system does not have yet, and would put
- * both actions two keystrokes away instead of one.
+ * every action two keystrokes away instead of one.
+ *
+ * Close and archive sit next to each other and mean very different things, so
+ * only one of them is destructive: closing suspends a task and keeps its row,
+ * which is the resting state of a finished conversation (§5.5), while
+ * archiving is how one leaves (§6). The archive is the one that always asks.
  */
-export function TaskRowActions({ taskId, label, busy, onRename, onClose }: TaskRowActionsProps) {
+export function TaskRowActions({
+  taskId,
+  label,
+  busy,
+  onRename,
+  onClose,
+  onArchivePreview,
+  onArchive,
+}: TaskRowActionsProps) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmingClose, setConfirmingClose] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [preview, setPreview] = useState<ArchivePreview | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+
+  // Asked on open, and asked again on every open: the counts are what the user
+  // is being shown, and a dialog reopened an hour later must not quote what
+  // git said the first time.
+  useEffect(() => {
+    if (!archiving) return;
+    let live = true;
+    setPreview(null);
+    setPreviewFailed(false);
+    void onArchivePreview(taskId).then((answer) => {
+      if (!live) return;
+      setPreview(answer);
+      setPreviewFailed(answer === null);
+    });
+    // Not a cancellation of the request — there is nothing to cancel — but of
+    // its effect: a dialog closed and reopened has two in flight, and the
+    // slower one would otherwise land on top of the newer answer.
+    return () => {
+      live = false;
+    };
+  }, [archiving, taskId, onArchivePreview]);
 
   return (
     <>
@@ -84,11 +163,31 @@ export function TaskRowActions({ taskId, label, busy, onRename, onClose }: TaskR
         onClick={() => setRenaming(label)}
       />
       <IconButton
+        icon={Archive}
+        label={`Archive ${label}`}
+        size="sm"
+        onClick={() => setArchiving(true)}
+      />
+      <IconButton
         icon={X}
         label={`Close ${label}`}
         size="sm"
         onClick={() => (busy ? setConfirmingClose(true) : onClose(taskId))}
       />
+
+      <Dialog
+        open={archiving}
+        title="Archive this task?"
+        description={`${label} leaves the list, and the archived toggle is where it can be found again. What that costs:`}
+        confirmLabel="Archive"
+        confirmVariant="destructive"
+        // Nothing to confirm against until the dialog has said what it costs.
+        confirmDisabled={!preview && !previewFailed}
+        onConfirm={() => onArchive(taskId)}
+        onClose={() => setArchiving(false)}
+      >
+        <ArchiveBody preview={preview} failed={previewFailed} />
+      </Dialog>
 
       <Dialog
         open={renaming !== null}
@@ -115,6 +214,50 @@ export function TaskRowActions({ taskId, label, busy, onRename, onClose }: TaskR
         confirmVariant="destructive"
         onConfirm={() => onClose(taskId)}
         onClose={() => setConfirmingClose(false)}
+      />
+    </>
+  );
+}
+
+/**
+ * The one control an archived row carries: delete, for good.
+ *
+ * Not rename, and not close — there is nothing running and nothing the label
+ * is used for once the row is out of the list — and deliberately no unarchive,
+ * because there is no server path back: `resumeTask` and `openTask` both refuse
+ * an archived row, and offering a button that could only fail would be worse
+ * than offering none.
+ *
+ * The confirmation is unconditional and the wording is blunt. Archiving is the
+ * recoverable half of §5.6 — the snapshot is still there, and this is what
+ * throws it away.
+ */
+export function ArchivedRowActions({
+  taskId,
+  label,
+  onDelete,
+}: {
+  taskId: string;
+  label: string;
+  onDelete: (id: string) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <>
+      <IconButton
+        icon={Trash2}
+        label={`Delete ${label}`}
+        size="sm"
+        onClick={() => setConfirming(true)}
+      />
+      <Dialog
+        open={confirming}
+        title="Delete this task for good?"
+        description={`${label} and the snapshot of the work archiving saved will be deleted. Nothing else has a copy, and this cannot be undone.`}
+        confirmLabel="Delete for good"
+        confirmVariant="destructive"
+        onConfirm={() => onDelete(taskId)}
+        onClose={() => setConfirming(false)}
       />
     </>
   );
@@ -339,11 +482,16 @@ export function useTaskSidebar({
 }: TaskSidebarOptions): TaskSidebarProps {
   const {
     tasks,
+    archivedTasks,
     projects,
     unclaimed,
     createTask,
     renameTask,
     closeTask,
+    loadArchivedTasks,
+    archivePreview,
+    archiveTask,
+    deleteTaskForGood,
     deleteUnclaimedWorktree,
     createProject,
     updateProject,
@@ -360,6 +508,29 @@ export function useTaskSidebar({
     [renameTask],
   );
   const handleClose = useCallback((id: string) => void closeTask(id), [closeTask]);
+  const handleArchive = useCallback((id: string) => void archiveTask(id), [archiveTask]);
+  const handleDeleteForGood = useCallback(
+    (id: string) => void deleteTaskForGood(id),
+    [deleteTaskForGood],
+  );
+  /** The dialog wants "the answer, or nothing"; the context answers with a
+   * result carrying the failure it has already declined to toast. Flattened
+   * here so `TaskRowActions` stays a component over plain values and can be
+   * rendered in a test without one. */
+  const handleArchivePreview = useCallback(
+    async (id: string) => {
+      const result = await archivePreview(id);
+      return result.ok ? result.value : null;
+    },
+    [archivePreview],
+  );
+
+  // On every turn-on, not once: these rows are fetched rather than pushed, so
+  // a list loaded before three tasks were archived would go on showing the
+  // three it knew about.
+  useEffect(() => {
+    if (showArchived) void loadArchivedTasks();
+  }, [showArchived, loadArchivedTasks]);
   const handleDeleteUnclaimed = useCallback(
     (path: string) => void deleteUnclaimedWorktree(path),
     [deleteUnclaimedWorktree],
@@ -383,18 +554,34 @@ export function useTaskSidebar({
   // stable name. Claude Code sits on a bare "Claude Code" until it has a task,
   // so without this every agent task in the list reads identically — which is
   // the failure the projection exists to prevent (naming.ts).
-  const labels = useMemo(
-    () =>
-      sessionDisplayNames(
-        tasks.map((t) => ({
-          id: t.id,
-          name: t.title,
-          nameSource: t.titleSource,
-          title: t.terminalTitle,
-        })),
-      ),
-    [tasks],
-  );
+  //
+  // Over the live list only. `sessionDisplayNames` demotes a terminal title
+  // that is not unique, and it counts stored names alongside titles — so
+  // folding the archived rows in would let an archived task's stored name make
+  // a live task's title ambiguous, and every label on screen could change the
+  // moment the toggle went on. An archived task has no live terminal anyway, so
+  // the projection would only ever hand back its stored title, which is what
+  // its row uses directly.
+  //
+  // Directly, but still through this map: `selectTasks` matches the filter
+  // against whatever this holds and falls back to the task *id* when it holds
+  // nothing, so an archived row left out of it would be searchable only by its
+  // UUID — type the name of the task you archived and it disappears from the
+  // list you turned the toggle on to find it in. So the stored titles are added
+  // after the projection has run, where they cannot make a live task's terminal
+  // title ambiguous.
+  const labels = useMemo(() => {
+    const projected = sessionDisplayNames(
+      tasks.map((t) => ({
+        id: t.id,
+        name: t.title,
+        nameSource: t.titleSource,
+        title: t.terminalTitle,
+      })),
+    );
+    for (const t of archivedTasks) if (!projected.has(t.id)) projected.set(t.id, t.title);
+    return projected;
+  }, [tasks, archivedTasks]);
 
   const projectNames = useMemo(
     () => new Map(projects.map((p) => [p.id, p.name])),
@@ -404,9 +591,22 @@ export function useTaskSidebar({
   // Recency across projects, flat, and in the order the server sent: `TaskInfo`
   // arrives sorted `last_active_at DESC`, so re-sorting here could only
   // disagree with it.
+  //
+  // Archived rows are appended rather than merged by recency: they are their
+  // own answer to a different question, and re-sorting the whole list would
+  // reorder the live rows under the pointer the moment the toggle went on.
+  // `selectTasks` keeps its `archived` predicate all the same — it is the
+  // guarantee that an archived row never draws while the toggle is off,
+  // whoever concatenated what.
   const visible = useMemo(
-    () => selectTasks(tasks, { labels, projectNames, filter, showArchived }),
-    [tasks, labels, projectNames, filter, showArchived],
+    () =>
+      selectTasks(showArchived ? [...tasks, ...archivedTasks] : tasks, {
+        labels,
+        projectNames,
+        filter,
+        showArchived,
+      }),
+    [tasks, archivedTasks, labels, projectNames, filter, showArchived],
   );
 
   const rows = useMemo(() => {
@@ -419,6 +619,23 @@ export function useTaskSidebar({
     return visible.map((task): ShellTask => {
       const label = labels.get(task.id) ?? task.title;
       const state = taskStateOf(task);
+      if (task.lifecycle === "archived") {
+        // No `onClick`, and that is the sidebar agreeing with the server rather
+        // than being cautious: `resumeTask` and `openTask` both refuse an
+        // archived row, so a row that navigated would land on a slug the route
+        // then bounced straight back off.
+        return {
+          id: task.id,
+          title: label,
+          state,
+          archived: true,
+          meta: ago(task.lastActiveAt, now),
+          indent: false,
+          actions: (
+            <ArchivedRowActions taskId={task.id} label={label} onDelete={handleDeleteForGood} />
+          ),
+        };
+      }
       return {
         id: task.id,
         title: label,
@@ -445,11 +662,23 @@ export function useTaskSidebar({
             busy={state === "busy"}
             onRename={handleRename}
             onClose={handleClose}
+            onArchivePreview={handleArchivePreview}
+            onArchive={handleArchive}
           />
         ),
       };
     });
-  }, [visible, labels, selectedTaskId, onSelectTask, handleRename, handleClose]);
+  }, [
+    visible,
+    labels,
+    selectedTaskId,
+    onSelectTask,
+    handleRename,
+    handleClose,
+    handleArchivePreview,
+    handleArchive,
+    handleDeleteForGood,
+  ]);
 
   const groups = useMemo(() => {
     const rowById = new Map(rows.map((row) => [row.id, row]));

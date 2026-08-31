@@ -47,6 +47,22 @@ export interface TaskRowProps {
    * of noise saying so.
    */
   worktreeFacts?: TaskRowWorktreeFacts | null;
+  /**
+   * The task has been archived (§5.6) — shown only while the list's archived
+   * toggle is on.
+   *
+   * Not a `TaskState`, and the omission is the point: the dot says what a
+   * running thing is doing, and an archived task is not one. It is also not a
+   * colour the palette has — `suspended` and `exited` already share a fill, so
+   * a sixth grey would have to be invented to say something the row can say in
+   * words and a glyph.
+   *
+   * What it changes: the row dims, the trailing mark is the archive glyph
+   * rather than the branch one, and the checkout line is suppressed. All three
+   * are the same fact — the checkout is gone — and a branch mark or a dirty
+   * count would be naming something that is no longer on disk.
+   */
+  archived?: boolean;
   onClick?: () => void;
   className?: string;
 }
@@ -124,11 +140,13 @@ export function TaskRow({
   indent = true,
   worktree = false,
   worktreeFacts,
+  archived = false,
   onClick,
   className,
 }: TaskRowProps) {
-  const dim = state === "suspended" || state === "exited";
-  const facts = worktreeFacts && worthShowing(worktreeFacts) ? worktreeFacts : null;
+  const dim = archived || state === "suspended" || state === "exited";
+  const facts =
+    !archived && worktreeFacts && worthShowing(worktreeFacts) ? worktreeFacts : null;
   // Anything below the title makes the row a stack, and the trailing column has
   // to align to the first line rather than to the middle of all of them.
   const stacked = Boolean(preview) || facts !== null;
@@ -142,7 +160,8 @@ export function TaskRow({
       // lands there.
       style={indent ? { paddingLeft: 21 } : undefined}
       className={cn(
-        "flex min-h-row w-full cursor-pointer gap-[9px] rounded-md px-2 text-left",
+        "flex min-h-row w-full gap-[9px] rounded-md px-2 text-left",
+        onClick ? "cursor-pointer" : "cursor-default",
         "transition-[background-color] duration-[var(--duration-instant)] ease-[var(--ease-out)]",
         "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
         stacked ? "items-start py-[5px]" : "items-center",
@@ -165,7 +184,13 @@ export function TaskRow({
         {preview ? <span className="truncate text-xs text-subtle-foreground">{preview}</span> : null}
         {facts ? <WorktreeLine facts={facts} /> : null}
       </span>
-      {worktree ? (
+      {archived ? (
+        <Archive
+          size={11}
+          aria-label="archived"
+          className={cn("flex-none text-subtle-foreground", stacked && "mt-[5px]")}
+        />
+      ) : worktree ? (
         <GitBranch
           size={11}
           className={cn("flex-none text-subtle-foreground", stacked && "mt-[5px]")}

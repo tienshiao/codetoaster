@@ -2,7 +2,13 @@ import { test, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppShell } from "./v2/AppShell";
-import { NewProjectButton, TaskRowActions, UnclaimedActions } from "./TaskSidebar";
+import {
+  ArchivedRowActions,
+  NewProjectButton,
+  TaskRowActions,
+  UnclaimedActions,
+} from "./TaskSidebar";
+import type { ArchivePreview } from "@/lib/xtmux/types";
 
 /** The project dialog's path field asks the server for directories, so it needs
  * a client even here, where nothing types enough to make it fetch. What the
@@ -27,9 +33,26 @@ function renderNewProject(onCreate: (name: string, path: string) => void) {
  * there against inputs rather than against the DOM.
  */
 
-function mountActions(busy: boolean) {
+/** A preview with nothing interesting in it. The counts are what individual
+ * tests vary; everything else is scaffolding. */
+function previewOf(over: Partial<ArchivePreview> = {}): ArchivePreview {
+  return {
+    status: { exists: true, dirty: 0, unpushed: 0, merged: false, pushed: false, atBase: false },
+    branch: "task/fix-the-parser",
+    branchWouldBeDeleted: false,
+    wipRetentionDays: 30,
+    ...over,
+  };
+}
+
+function mountActions(
+  busy: boolean,
+  preview: () => Promise<ArchivePreview | null> = async () => previewOf(),
+) {
   const onClose = vi.fn();
   const onRename = vi.fn();
+  const onArchive = vi.fn();
+  const onArchivePreview = vi.fn(preview);
   render(
     <TaskRowActions
       taskId="t1"
@@ -37,9 +60,11 @@ function mountActions(busy: boolean) {
       busy={busy}
       onRename={onRename}
       onClose={onClose}
+      onArchivePreview={onArchivePreview}
+      onArchive={onArchive}
     />,
   );
-  return { onClose, onRename };
+  return { onClose, onRename, onArchive, onArchivePreview };
 }
 
 test("closing an idle task does not ask", () => {
@@ -95,6 +120,71 @@ test("Escape dismisses a dialog without doing what it asked", () => {
   expect(onRename).not.toHaveBeenCalled();
 });
 
+/**
+ * Archive (§5.6). The confirmation is the feature — the button is the easy part
+ * — so what is asserted is that the dialog cannot be confirmed before it has
+ * said what confirming costs, and that what it says comes from the preview.
+ */
+test("archive waits for the preview before it will let anything be confirmed", async () => {
+  let answer: (preview: ArchivePreview) => void = () => {};
+  const { onArchive } = mountActions(
+    false,
+    () => new Promise<ArchivePreview | null>((resolve) => (answer = resolve)),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
+
+  screen.getByText("Checking what this would remove…");
+  const confirm = screen.getByRole("button", { name: "Archive" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+  fireEvent.click(confirm);
+  expect(onArchive).not.toHaveBeenCalled();
+
+  answer(previewOf({ status: { exists: true, dirty: 3, unpushed: 2, merged: false, pushed: false, atBase: false } }));
+  await screen.findByText("3 uncommitted files will be saved to a snapshot, kept for 30 days.");
+  screen.getByText("The branch has 2 unpushed commits.");
+  screen.getByText(
+    "The branch task/fix-the-parser will be kept, since deleting it would take that work with it.",
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+  expect(onArchive).toHaveBeenCalledWith("t1");
+});
+
+test("a preview that fails says so and still lets the archive through", async () => {
+  const { onArchive } = mountActions(false, async () => null);
+  fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
+
+  // Fail closed on the *claim*, not on the action: refusing to archive because
+  // git was slow is the worse failure.
+  await screen.findByText(/could not be established/);
+  fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+  expect(onArchive).toHaveBeenCalledWith("t1");
+});
+
+test("cancelling the archive leaves the task alone", async () => {
+  const { onArchive } = mountActions(false);
+  fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
+  await screen.findByRole("dialog", { name: "Archive this task?" });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onArchive).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("an archived row offers only delete, and it confirms first", () => {
+  const onDelete = vi.fn();
+  render(<ArchivedRowActions taskId="t1" label="Fix the parser" onDelete={onDelete} />);
+
+  // No rename, no close, and above all no unarchive: nothing on the server can
+  // reopen one, so a control that could only fail must not be offered.
+  expect(screen.getAllByRole("button")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Delete Fix the parser" }));
+  expect(onDelete).not.toHaveBeenCalled();
+
+  screen.getByRole("dialog", { name: "Delete this task for good?" });
+  fireEvent.click(screen.getByRole("button", { name: "Delete for good" }));
+  expect(onDelete).toHaveBeenCalledWith("t1");
+});
+
 test("a row's actions are focusable, so they are not hover-only", () => {
   render(
     <AppShell
@@ -139,6 +229,8 @@ test("a row's dialog is not inside the cluster that fades with the hover", () =>
               busy
               onRename={vi.fn()}
               onClose={vi.fn()}
+              onArchivePreview={async () => previewOf()}
+              onArchive={vi.fn()}
             />
           ),
         },

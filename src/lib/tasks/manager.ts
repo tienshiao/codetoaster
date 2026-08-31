@@ -7,6 +7,9 @@ import * as path from "path";
 import type { Pty } from "../xtmux/pty";
 import { PtyManager } from "../xtmux/pty-manager";
 import type {
+  ArchiveOutcome,
+  ArchivePreview,
+  DeleteOutcome,
   ProjectInfo,
   ProjectSettings,
   ServerMessage,
@@ -201,44 +204,12 @@ function keptReason(branch: string, baseRef: string | null, status: BranchStatus
  * a ref costs a commit object, which is the cheapest thing in the design. */
 export const WIP_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
-/** What an archive found, and what it did about it (§5.6).
- *
- * Read *before* anything was destroyed, which is the point: the confirmation
- * quotes these numbers from a preview taken moments earlier, and a user who
- * came back to their laptop an hour later deserves to be told what was actually
- * true when the button took effect rather than when it was drawn. */
-export interface ArchiveOutcome {
-  /** Null for a task that never had a checkout of its own — it ran in the
-   * project's directory, where nothing is ours to describe or to delete. */
-  status: BranchStatus | null;
-  branch: string | null;
-  branchDeleted: boolean;
-  /** Why the branch is still there, in a sentence the dialog can print. Null
-   * when there was no branch, or when it was deleted. */
-  branchKept: string | null;
-  /** Where the work went, kept for `WIP_RETENTION_MS`. */
-  wipRef: string | null;
-}
-
-/** What a hard delete did about the branch. The rest of a delete has nothing to
- * report — the row, the checkout and the files are simply gone — but a branch
- * kept back is a thing left on the user's disk that they did not ask for and
- * would not otherwise hear about, and `codetoaster kill` is a command whose
- * whole output is one line. */
-export interface DeleteOutcome {
-  branch: string | null;
-  branchDeleted: boolean;
-  branchKept: string | null;
-}
-
-/** The same questions, asked without answering them: what archiving this task
- * would cost, for the confirmation to state before it is confirmed. */
-export interface ArchivePreview {
-  status: BranchStatus | null;
-  branch: string | null;
-  /** Whether the branch would be deleted, on what is true right now. */
-  branchWouldBeDeleted: boolean;
-}
+// `ArchiveOutcome`, `ArchivePreview` and `DeleteOutcome` used to be declared
+// here. They are serialized straight out of the archive and delete routes and
+// read by the sidebar's confirmations, which makes them wire shapes — so they
+// live in `xtmux/types` with the rest of the contract, and are re-exported
+// here because this is where they are produced.
+export type { ArchiveOutcome, ArchivePreview, DeleteOutcome };
 
 export interface CreateTaskOptions {
   id: string;
@@ -1363,11 +1334,12 @@ export class TaskManager {
     const row = this.store.get(taskId);
     if (!row) return undefined;
     // An archived task is not resumable, and this is the guard that says so.
-    // Nothing routes here — `listTasks` leaves archived rows out, so no client
-    // can name one — but the row is still in the database with a `branch` and a
-    // `worktree_path` on it, and `restoreTaskWorktree` would happily rebuild a
-    // checkout from a branch archive may have deleted. The one operation with
-    // no way back needs the guard that makes it stay that way.
+    // It is load-bearing rather than defensive: `listArchivedTasks` hands the
+    // sidebar's archived toggle exactly these ids, so a client *can* name one,
+    // and the row is still in the database with a `branch` and a
+    // `worktree_path` on it that `restoreTaskWorktree` would happily rebuild a
+    // checkout from — off a branch the archive may have deleted. The one
+    // operation with no way back needs the guard that makes it stay that way.
     if (row.lifecycle === "archived") return undefined;
     // An archive already in flight settles first, and then this starts over
     // against the row it left — which will be archived, and refused above. It
@@ -2401,6 +2373,7 @@ export class TaskManager {
       status,
       branch: row.branch,
       branchWouldBeDeleted: status !== null && status.exists && branchIsExpendable(status),
+      wipRetentionDays: Math.round(WIP_RETENTION_MS / 86_400_000),
     };
   }
 
@@ -3104,6 +3077,26 @@ export class TaskManager {
   listTasks(): TaskInfo[] {
     const result: TaskInfo[] = [];
     for (const row of this.store.list({ lifecycle: ["live", "suspended"] })) {
+      const info = this.taskInfo(row.id);
+      if (info) result.push(info);
+    }
+    return result;
+  }
+
+  /**
+   * The rows `listTasks` leaves out, for the sidebar's archived toggle (§7.5).
+   *
+   * Its own call and not a flag on the snapshot, because archived rows only
+   * ever accumulate: `broadcastTasks` re-sends the whole list on every create,
+   * close and project change, and a year of finished tasks would ride each one
+   * to every attached client. The toggle is what asks.
+   *
+   * Same `last_active_at DESC` as the live list, so the archived rows are in
+   * the order the sidebar would have put them in anyway.
+   */
+  listArchivedTasks(): TaskInfo[] {
+    const result: TaskInfo[] = [];
+    for (const row of this.store.list({ lifecycle: "archived" })) {
       const info = this.taskInfo(row.id);
       if (info) result.push(info);
     }

@@ -78,3 +78,21 @@ test("a task with no checkout of its own carries none of this", () => {
   expect(screen.queryByLabelText(/uncommitted/)).toBeNull();
   expect(screen.queryByLabelText(/archive/)).toBeNull();
 });
+
+test("an archived row says so, and stops describing a checkout that is gone", () => {
+  render(
+    <TaskRow
+      title="Fix the parser"
+      archived
+      worktree
+      worktreeFacts={facts({ dirty: 3, unpushed: 1 })}
+    />,
+  );
+
+  screen.getByLabelText("archived");
+  // The archive removed the checkout, so the counts describe nothing that is
+  // still on disk — and the branch glyph would name a branch it may have
+  // deleted.
+  expect(screen.queryByLabelText(/uncommitted/)).toBeNull();
+  expect(screen.queryByLabelText(/unpushed/)).toBeNull();
+});

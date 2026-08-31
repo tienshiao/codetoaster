@@ -16,7 +16,15 @@ import { retainLayouts } from "./layout-store";
 import { retainTaskViewStates } from "./view-state-store";
 import { generateUUID } from "./utils/uuid";
 import type { TaskState } from "./components/v2/StatusDot";
-import type { ProjectInfo, ProjectSettings, TaskInfo, UnclaimedInfo } from "../lib/xtmux/types";
+import type {
+  ArchivePreview,
+  ArchiveResponse,
+  DeleteResponse,
+  ProjectInfo,
+  ProjectSettings,
+  TaskInfo,
+  UnclaimedInfo,
+} from "../lib/xtmux/types";
 
 /**
  * The task store (§7.4): the list, the projects, and per-task liveness, fed by
@@ -116,6 +124,34 @@ export interface TaskContextValue {
    * (§5.6). The path identifies it; the server takes it only if it is a path
    * the server itself is currently offering. */
   deleteUnclaimedWorktree: (path: string) => Promise<TaskResult<{ deleted: boolean }>>;
+  /**
+   * The archived rows, and empty until something asks for them.
+   *
+   * Deliberately a second array rather than archived rows folded into `tasks`.
+   * `taskById` reads `tasks`, and it is what `/t/$slug` uses to decide a slug
+   * names nothing and bounce to `/` — so an archived task found there would
+   * keep the shell mounted on a task with no checkout, no process and nothing
+   * to resume. Two lists is the cheap way to keep "openable" and "listable"
+   * from being the same question.
+   */
+  archivedTasks: TaskInfo[];
+  /** Fetch them. Called when the sidebar's archived toggle goes on, and again
+   * by `archiveTask` once anything has ever asked — the `tasks` broadcast does
+   * not carry archived rows, so nothing else can correct this list. */
+  loadArchivedTasks: () => Promise<TaskResult<TaskInfo[]>>;
+  /** What archiving would cost, for the confirmation to state (§5.6). Always
+   * `inline`: the dialog is the only place this can be shown, and a toast
+   * behind an open dialog is a message for a question already on screen. */
+  archivePreview: (id: string) => Promise<TaskResult<ArchivePreview>>;
+  /** The only way a task leaves the list (§6). Recoverable: the row stays
+   * behind `lifecycle=archived`, the WIP snapshot is kept for its retention
+   * window, and a branch holding commits is not touched. */
+  archiveTask: (id: string) => Promise<TaskResult<ArchiveResponse>>;
+  /** The one irreversible operation: the row, the checkout, the snapshot and
+   * the branch. Sends `confirm: true`, which the route requires — a dialog in
+   * front of it is not the same thing as the request saying it knows what it
+   * is asking for. */
+  deleteTaskForGood: (id: string) => Promise<TaskResult<DeleteResponse>>;
   /** Open a plain shell inside a task, as a sibling of its agent (§3). Answers
    * with the new PTY's id and the task it now belongs to — the task because it
    * carries `shellPtyIds`, so the caller has the tab and the proof that its PTY
@@ -159,9 +195,16 @@ const TaskContext = createContext<TaskContextValue | null>(null);
  *
  * Lifecycle wins over agent state. A suspended task's agent state is whatever
  * it was when the process was harvested, and showing that would make a resting
- * task look busy.
+ * task look busy — and an archived one is the same trap with no way out of it:
+ * a task archived mid-turn keeps `agent_state: busy` on its row for good, so
+ * its dot would pulse away in the archived list for a process that has been
+ * dead for a month. `exited` rather than a state of its own, because that is
+ * what is true — the agent is gone and nothing will resume it — and because
+ * the row already says "archived" in a glyph, which is the part a colour
+ * cannot carry.
  */
 export function taskStateOf(task: Pick<TaskInfo, "agentState" | "lifecycle">): TaskState {
+  if (task.lifecycle === "archived") return "exited";
   if (task.lifecycle === "suspended") return "suspended";
   switch (task.agentState) {
     case "starting":
@@ -300,6 +343,12 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   const [activity, setActivity] = useState<Record<string, boolean>>({});
   const tasksRef = useRef<TaskInfo[]>([]);
   tasksRef.current = tasks;
+  const [archivedTasks, setArchivedTasks] = useState<TaskInfo[]>([]);
+  /** Whether anything has ever asked for the archived list. `archivedTasks`
+   * being empty cannot answer that — an account with nothing archived looks
+   * identical — and the difference decides whether archiving a task has to go
+   * and refetch. */
+  const archivedAskedRef = useRef(false);
   // Whether the snapshot has already been asked for on the connection that is
   // open now. Two things ask — the socket's own `onConnect` and the mount
   // effect below — and exactly one of them should get to.
@@ -339,8 +388,21 @@ export function TaskProvider({ children }: { children: ReactNode }) {
             // Upsert, not replace. A delta can arrive for a task this list does
             // not carry yet — the row a create is still resolving — and
             // dropping it would lose the server's resolved title and ptyId.
+            //
+            // With one exception, and it is the delta's own word for it. This
+            // list mirrors `listTasks`, which is live and suspended rows; an
+            // archived one belongs to `archivedTasks`, which is fetched. A
+            // task's last moments emit deltas from several places at once —
+            // the suspend, the eviction, a PTY's exit callback — and any of
+            // them landing after the archive's snapshot would insert the row
+            // straight back into the sidebar, as a second copy of a task now
+            // also in the archived list. So an archived delta removes rather
+            // than upserts: it is the server saying this row has left.
             setTasks((prev) => {
               const i = prev.findIndex((t) => t.id === message.task.id);
+              if (message.task.lifecycle === "archived") {
+                return i === -1 ? prev : prev.filter((t) => t.id !== message.task.id);
+              }
               if (i === -1) return [...prev, message.task];
               const next = [...prev];
               next[i] = message.task;
@@ -545,6 +607,86 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const loadArchivedTasks = useCallback(async () => {
+    const result = await request<TaskInfo[]>(
+      "/api/tasks?lifecycle=archived",
+      { method: "GET" },
+      "Could not load the archived tasks",
+    );
+    // Latched before the guard below, not after: a failed fetch still means
+    // something asked, and the alternative is an archive that quietly stops
+    // refetching because the one load that ran happened to fail.
+    archivedAskedRef.current = true;
+    if (result.ok) setArchivedTasks(result.value);
+    return result;
+  }, []);
+
+  const archivePreview = useCallback(
+    (id: string) =>
+      request<ArchivePreview>(
+        `/api/tasks/${id}/archive`,
+        { method: "GET" },
+        "Could not check what archiving would remove",
+        // The dialog is showing this, and it is the dialog's whole subject.
+        { inline: true },
+      ),
+    [],
+  );
+
+  const archiveTask = useCallback(
+    async (id: string) => {
+      const result = await request<ArchiveResponse>(
+        `/api/tasks/${id}/archive`,
+        { method: "POST" },
+        "Could not archive the task",
+      );
+      // The row leaves `tasks` by way of the server's broadcast. Nothing
+      // brings it into `archivedTasks`, though — that list is fetched, never
+      // pushed — so a sidebar with the toggle on would watch the task vanish
+      // from both. Refetch, but only if anything ever asked for the list.
+      if (result.ok && archivedAskedRef.current) void loadArchivedTasks();
+      // Success is normally silent — the row leaving the list is the feedback —
+      // with one exception. A branch archive would not delete is a thing left
+      // standing on the user's disk that they did not ask to keep, and the
+      // dialog could only ever have predicted it from a status read moments
+      // earlier. `branchKept` is the server's sentence saying why.
+      if (result.ok && result.value.branchKept) {
+        toast.success("Task archived", { description: result.value.branchKept });
+      }
+      return result;
+    },
+    [loadArchivedTasks],
+  );
+
+  const deleteTaskForGood = useCallback(async (id: string) => {
+    const result = await request<DeleteResponse>(
+      `/api/tasks/${id}/delete`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // The route requires this, and requires it in the *request* rather
+        // than trusting that a dialog stood in front of it. Nothing here may
+        // default it: a caller that reached this by a replayed fetch or a
+        // shortcut nobody meant to press should not be able to spend a user's
+        // work.
+        body: JSON.stringify({ confirm: true }),
+      },
+      "Could not delete the task",
+    );
+    // Dropped locally, because no broadcast covers this list. Only on success:
+    // a row that vanished optimistically would come back if the delete failed,
+    // which for the one operation with no way back is the wrong direction to
+    // be wrong in.
+    if (result.ok) setArchivedTasks((prev) => prev.filter((t) => t.id !== id));
+    // Same exception as `archiveTask`, and here there was no preview at all to
+    // have warned them: the delete dialog asks about the task, and the branch
+    // it declines to remove is the one thing left over to report.
+    if (result.ok && result.value.branchKept) {
+      toast.success("Task deleted", { description: result.value.branchKept });
+    }
+    return result;
+  }, []);
+
   const openShell = useCallback(
     (id: string) =>
       request<{ ptyId: string; task: TaskInfo }>(
@@ -611,6 +753,11 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       resumeTask,
       resolveWip,
       deleteUnclaimedWorktree,
+      archivedTasks,
+      loadArchivedTasks,
+      archivePreview,
+      archiveTask,
+      deleteTaskForGood,
       openShell,
       closeShell,
       setViewedTask,
@@ -632,6 +779,11 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       resumeTask,
       resolveWip,
       deleteUnclaimedWorktree,
+      archivedTasks,
+      loadArchivedTasks,
+      archivePreview,
+      archiveTask,
+      deleteTaskForGood,
       openShell,
       closeShell,
       setViewedTask,

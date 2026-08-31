@@ -32,11 +32,13 @@ export interface TaskListOptions {
   projectNames: ReadonlyMap<string, string>;
   filter?: string;
   /**
-   * Archived tasks are hidden unless this is on. Nothing sets
-   * `lifecycle: "archived"` yet — TASK-31 (Phase 5) is what archives a task,
-   * and `listTasks` does not send archived rows today — so the toggle shows an
-   * empty list until then. The predicate is here rather than waiting for it
-   * because the alternative is a toggle that lies about what it does.
+   * Archived tasks are hidden unless this is on.
+   *
+   * The rows are not in the task broadcast — archived ones only accumulate, and
+   * that payload is re-sent on every create and close — so the sidebar fetches
+   * them when the toggle goes on and concatenates them onto the live list. This
+   * predicate stays the second guarantee: it is what makes an archived row
+   * undrawable while the toggle is off, whatever the caller happened to hand in.
    */
   showArchived?: boolean;
 }

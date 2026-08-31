@@ -36,7 +36,13 @@ afterEach(async () => {
   // Awaited now that delete also removes the checkout and the task's directory
   // (TASK-31): the git in it runs after the row is gone, so a test that did not
   // wait would hand the next one a repository still being changed.
-  for (const task of taskManager.listTasks()) await taskManager.deleteTask(task.id);
+  //
+  // Both lists: an archived row is out of `listTasks` but very much still in
+  // the database, and `?lifecycle=archived` is now a thing tests read — so one
+  // test's archive would otherwise turn up in the next one's list.
+  for (const task of [...taskManager.listTasks(), ...taskManager.listArchivedTasks()]) {
+    await taskManager.deleteTask(task.id);
+  }
   // Delete takes `~/.codetoaster/tasks/<id>/` with it now, but this still has
   // to run: a test that archived or deleted its own task is already out of
   // `listTasks`, and one whose route 500'd never got as far as either. Cleanup
@@ -418,7 +424,7 @@ describe("/api/tasks/:id/archive", () => {
     const res = await fetch(`${base}/api/tasks/${task.id}/archive`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      status: null, branch: null, branchWouldBeDeleted: false,
+      status: null, branch: null, branchWouldBeDeleted: false, wipRetentionDays: 30,
     });
     // Still live: reading what an archive would cost must not cost it.
     expect(taskManager.getTask(task.id)?.lifecycle).toBe("live");
@@ -436,6 +442,38 @@ describe("GET /api/tasks", () => {
     const list = await (await fetch(`${base}/api/tasks`)).json();
     expect(list.map((t: any) => t.id)).toEqual([created.id]);
     expect(list[0].cwd).toBe(process.cwd());
+  });
+
+  // The sidebar's archived toggle (§7.5). The two lists are disjoint, and that
+  // is the whole contract: the live list is what the socket broadcasts and the
+  // archived one only ever grows, which is why it is fetched rather than
+  // pushed.
+  test("?lifecycle=archived answers with exactly the rows the live list drops", async () => {
+    const kept = await (await post({})).json();
+    const gone = await (await post({})).json();
+    await post({}, `/api/tasks/${gone.id}/archive`);
+
+    const live = await (await fetch(`${base}/api/tasks`)).json();
+    expect(live.map((t: any) => t.id)).toEqual([kept.id]);
+
+    const archived = await (await fetch(`${base}/api/tasks?lifecycle=archived`)).json();
+    expect(archived.map((t: any) => t.id)).toEqual([gone.id]);
+    expect(archived[0].lifecycle).toBe("archived");
+  });
+
+  test("?lifecycle=active is the default, spelled out", async () => {
+    const created = await (await post({})).json();
+    const list = await (await fetch(`${base}/api/tasks?lifecycle=active`)).json();
+    expect(list.map((t: any) => t.id)).toEqual([created.id]);
+  });
+
+  // Refused rather than quietly answered with the live list: a caller that
+  // misspelled `archived` would otherwise get the opposite set of rows and no
+  // sign that it had asked for the wrong thing.
+  test("an unknown lifecycle is a 400, not the live list", async () => {
+    const res = await fetch(`${base}/api/tasks?lifecycle=archvied`);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBeString();
   });
 });
 

@@ -37,7 +37,25 @@ function optionalSize(value: unknown): number | undefined | null {
 // which create failed, or why, or with what status.
 export const taskRoutes = {
   "/api/tasks": {
-    async GET() {
+    // `?lifecycle=archived` is the sidebar's archived toggle (§7.5). A
+    // parameter on this route rather than a `/api/tasks/archived` of its own,
+    // which would be a static segment sitting beside `/api/tasks/:id` and so a
+    // question about route precedence that nobody should have to answer — and
+    // it is the same list, asked for at a different lifecycle.
+    async GET(req: Request) {
+      const lifecycle = new URL(req.url).searchParams.get("lifecycle");
+      // Anything else is refused rather than quietly answered with the live
+      // list: a caller that misspelled `archived` is asking for rows it will
+      // not get, and silently handing back the opposite set is the failure it
+      // would take longest to notice.
+      if (lifecycle !== null && lifecycle !== "active" && lifecycle !== "archived") {
+        return badRequest(`"lifecycle" must be "active" or "archived"`);
+      }
+      // No `refreshCwd` below: an archived task has no live process to ask, and
+      // no checkout left for the answer to name.
+      if (lifecycle === "archived") {
+        return Response.json(taskManager.listArchivedTasks());
+      }
       const tasks = taskManager.listTasks();
       // The one place a live PTY is still asked anything: listing is when we
       // happen to have the processes to hand, so it is where an agent that has

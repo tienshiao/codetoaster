@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import type { AgentState, Lifecycle, TitleSource, WorktreeState } from "../db";
+import type { BranchStatus } from "../worktree/status";
 
 /** What a project decides on behalf of the tasks started in it.
  *
@@ -221,6 +222,83 @@ export interface TaskInfo {
   lastActiveAt: number;
   exited: boolean;
   hasNotification: boolean;
+}
+
+/** What archiving a task would cost, asked without answering it (§5.6).
+ *
+ * Its own request — `GET /api/tasks/:id/archive` — and not a field on the task
+ * list, because it runs git against a working tree: paying for that on every
+ * row in the sidebar to answer a question about the one under the pointer is
+ * not a trade the list can make. The confirmation reads it so it can state what
+ * will be lost rather than hedge.
+ *
+ * Every field of `status` is separately unknowable and every one of them fails
+ * closed — a git that did not exit 0 answers "we could not establish this",
+ * never "it is safe" — so a dialog drawing these must draw only what is known,
+ * the same rule `TaskWorktreeInfo` puts on the row.
+ */
+export interface ArchivePreview {
+  /** Null for a task that never had a checkout of its own — it ran in the
+   * project's directory, where nothing is ours to describe or to delete. */
+  status: BranchStatus | null;
+  branch: string | null;
+  /** Whether the branch would be deleted, on what is true right now. */
+  branchWouldBeDeleted: boolean;
+  /** How long the snapshot archiving writes will be kept, in whole days.
+   *
+   * Sent rather than known: the confirmation's promise is that this is
+   * recoverable *for a while*, and a client printing its own idea of how long
+   * would go on printing it after the server's retention changed. The number
+   * has to come from whatever will actually do the expiring. */
+  wipRetentionDays: number;
+}
+
+/** What an archive found, and what it did about it (§5.6).
+ *
+ * Read *before* anything was destroyed, which is the point: the confirmation
+ * quotes these numbers from a preview taken moments earlier, and a user who
+ * came back to their laptop an hour later deserves to be told what was actually
+ * true when the button took effect rather than when it was drawn. */
+export interface ArchiveOutcome {
+  status: BranchStatus | null;
+  branch: string | null;
+  branchDeleted: boolean;
+  /** Why the branch is still there, in a sentence the dialog can print. Null
+   * when there was no branch, or when it was deleted. */
+  branchKept: string | null;
+  /** Where the work went, kept for the retention window. */
+  wipRef: string | null;
+}
+
+/** `POST /api/tasks/:id/archive`'s answer.
+ *
+ * The outcome is spread in only when there was one: `archived: false` is a
+ * second click on a dialog two browsers were both showing, and inventing an
+ * outcome for it would report a branch deletion this request did not make. So
+ * every field of `ArchiveOutcome` is optional here, and `archived` is what says
+ * whether to read them. */
+export interface ArchiveResponse extends Partial<ArchiveOutcome> {
+  archived: boolean;
+  /** Absent only if the row went between the archive and the render of it. */
+  task?: TaskInfo;
+}
+
+/** What a hard delete did about the branch. The rest of a delete has nothing to
+ * report — the row, the checkout and the files are simply gone — but a branch
+ * kept back is a thing left on the user's disk that they did not ask for and
+ * would not otherwise hear about, and `codetoaster kill` is a command whose
+ * whole output is one line. */
+export interface DeleteOutcome {
+  branch: string | null;
+  branchDeleted: boolean;
+  branchKept: string | null;
+}
+
+/** `POST /api/tasks/:id/delete`'s answer. Unlike archive there is no "already
+ * done" case to distinguish: an unknown id is a 404, so a 200 means this
+ * request is the one that deleted it. */
+export interface DeleteResponse extends DeleteOutcome {
+  deleted: true;
 }
 
 export interface ClientInfo {

@@ -118,6 +118,60 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * The dot, where lifecycle and agent state disagree.
+ *
+ * `agent_state` is frozen at whatever the agent was doing when the process was
+ * put down, and neither suspending nor archiving clears it — so this is the
+ * only thing standing between the archived list and a row pulsing "busy" for a
+ * process that died a month ago.
+ */
+test("lifecycle wins over a frozen agent state", async () => {
+  const { taskStateOf } = await import("./TaskContext");
+  expect(taskStateOf({ lifecycle: "archived", agentState: "busy" })).toBe("exited");
+  expect(taskStateOf({ lifecycle: "suspended", agentState: "busy" })).toBe("suspended");
+  // And does not win where there is no disagreement to settle.
+  expect(taskStateOf({ lifecycle: "live", agentState: "busy" })).toBe("busy");
+  expect(taskStateOf({ lifecycle: "live", agentState: "needs_attention" })).toBe("attention");
+});
+
+/**
+ * The list this store keeps is `listTasks`'s — live and suspended — and an
+ * archived row belongs to the fetched list instead.
+ *
+ * The trap is timing, not classification: archiving a task emits deltas from
+ * the suspend, the eviction and the dying PTY's exit callback, and any one of
+ * them landing after the archive's snapshot would put the row back. It then
+ * shows twice, once here as an ordinary row and once in the archived list.
+ */
+test("a delta for an archived task takes the row out rather than putting it back", () => {
+  let ids: string[] = [];
+  function Watch() {
+    ids = useTasks().tasks.map((t) => t.id);
+    return null;
+  }
+  render(
+    <TaskProvider>
+      <Watch />
+    </TaskProvider>,
+  );
+
+  deliver({ type: "tasks", list: [task("t1"), task("t2")], projects: [] });
+  expect(ids).toEqual(["t1", "t2"]);
+
+  deliver({ type: "task", task: task("t1", { lifecycle: "archived" }) });
+  expect(ids).toEqual(["t2"]);
+
+  // And one for a task this list never held is not inserted by the back door.
+  deliver({ type: "task", task: task("t3", { lifecycle: "archived" }) });
+  expect(ids).toEqual(["t2"]);
+
+  // An ordinary delta still upserts, which is what makes the guard a guard
+  // rather than a change of shape.
+  deliver({ type: "task", task: task("t4") });
+  expect(ids).toEqual(["t2", "t4"]);
+});
+
 test("a notification for the task on screen is acknowledged, not rung", () => {
   render(
     <TaskProvider>
