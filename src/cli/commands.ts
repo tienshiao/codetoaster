@@ -95,8 +95,18 @@ export async function cmdStart(port: number, dbPath?: string, hostname?: string,
   // may simply have been slower than the budget. Killing it would take down a
   // healthy daemon on exactly the loaded machine that made it slow. So say
   // where it is and leave it alone.
+  //
+  // Alive, though: a pid file is only evidence that it *was* listening. A
+  // daemon that bound, wrote the file and then died — a migration that threw
+  // after serve(), a crash on the first request — leaves exactly the same
+  // file, and reporting that as "listening, stop it with --port N" sends the
+  // user after a process that is not there. That one falls through to the
+  // sweep at the end of this function, which is already looking for a pid file
+  // naming a process that is not running: nothing else would ever clear it,
+  // since `start` only consults the port it was asked for and `--port 0` is
+  // never the port it got.
   const bound = findPidFileByPid(daemonPid);
-  if (bound) {
+  if (bound && isProcessRunning(daemonPid)) {
     console.error(`Daemon is listening on port ${bound.port} but did not answer ${originOf(bound)}/api/ping.`);
     console.error(`  Stop it with: codetoaster stop --port ${bound.port}`);
     console.error(`  Logs: ${getLogFile()}`);
