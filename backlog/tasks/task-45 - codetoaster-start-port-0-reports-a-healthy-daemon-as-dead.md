@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 09:05'
-updated_date: '2026-08-31 01:05'
+updated_date: '2026-08-31 02:35'
 labels:
   - cli
   - bug
@@ -35,6 +35,10 @@ Fixing this needs the child to report its bound port back to the parent (a hands
 spawnDaemon now returns the child's pid, and daemon.ts gained findPidFileByPid/originOf. cmdStart polls for the pid file *that pid* wrote rather than deriving a path from the port it asked for, so --port 0 finds the daemon at whatever the kernel gave it and reports that port and origin. It also breaks out early when the child has already exited (bad bind, bad --db) instead of spending all fifteen attempts, and on any failure kills the process it spawned and removes its pid file — the orphan was the worse half of the bug, since no later command could find a daemon whose port nobody knew.
 
 Note the CLI has no 'start' subcommand: starting the daemon is the bare invocation (case "" in index.ts). New src/cli/start.test.ts drives the real process with a HOME of its own so the pid files land somewhere disposable; verified the port-0 test fails without the fix.
+
+Follow-on found by code review, committed as 4eedc4e: the "bound but not answering" branch this task added polls `findPidFileByPid`, but a pid file only proves the daemon *bound* — one that wrote it and then died (a migration throwing after `serve()`, a crash on the first request) left the same evidence and was reported as "listening on port N, stop it with `codetoaster stop --port N`" for a process that was gone. The branch now also checks `isProcessRunning`, and the dead case falls through to the sweep already at the end of `cmdStart`. It matters most under `--port 0`, since `start` only ever consults the port it was asked for, so nothing would ever clear that file.
+
+Not covered by `start.test.ts`: reaching the branch needs a daemon that binds, writes its pid file and then dies, which cannot be arranged from the CLI without a fault-injection hook the daemon does not have.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

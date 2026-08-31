@@ -1,39 +1,27 @@
 import { useCallback, useState, type KeyboardEvent } from "react";
-import { CornerDownLeft, Folder } from "lucide-react";
+import { CornerDownLeft, Folder, GitBranch } from "lucide-react";
 import { useTasks } from "@/frontend/TaskContext";
 import { useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { Button } from "@/frontend/components/v2/Button";
+import { Checkbox } from "@/frontend/components/v2/Checkbox";
 import { KeyHint } from "@/frontend/components/v2/KeyHint";
-import { Select, type SelectOption } from "@/frontend/components/v2/Select";
+import { Select } from "@/frontend/components/v2/Select";
+import {
+  knownValue,
+  MODEL_VALUES,
+  optionsWithFallback,
+  PERMISSION_MODE_VALUES,
+  UNSET,
+} from "@/frontend/lib/agent-options";
+import { TextInput } from "@/frontend/components/v2/TextInput";
 import { Textarea } from "@/frontend/components/v2/Textarea";
 
 /** `""` is not a model — it is the absence of an override, which lets the
  * server answer with the project's column. Same for the mode. */
-const PROJECT_DEFAULT = "";
+const PROJECT_DEFAULT = UNSET;
 
-const MODELS: SelectOption[] = [
-  { value: PROJECT_DEFAULT, label: "Project default" },
-  { value: "opus", label: "opus" },
-  { value: "sonnet", label: "sonnet" },
-  { value: "haiku", label: "haiku" },
-];
-
-const MODES: SelectOption[] = [
-  { value: PROJECT_DEFAULT, label: "Project default" },
-  { value: "default", label: "default" },
-  { value: "acceptEdits", label: "acceptEdits" },
-  { value: "plan", label: "plan" },
-  { value: "bypassPermissions", label: "bypassPermissions" },
-];
-
-/** A seeded value the selects can actually display. A project column holding
- * something this build has no option for would otherwise leave the control
- * blank; "Project default" is both honest and identical in effect, since the
- * server resolves an absent field to that very column. */
-function knownValue(options: SelectOption[], value: string | null): string {
-  if (value && options.some((o) => o.value === value)) return value;
-  return PROJECT_DEFAULT;
-}
+const MODELS = optionsWithFallback(MODEL_VALUES, "Project default");
+const MODES = optionsWithFallback(PERMISSION_MODE_VALUES, "Project default");
 
 /**
  * Starting a task (§7.5).
@@ -42,10 +30,11 @@ function knownValue(options: SelectOption[], value: string | null): string {
  * starting a task and resuming one are the same gesture in the same place. No
  * "recent tasks" list belongs under it — the sidebar already is the history.
  *
- * The worktree toggle and base-ref select the design puts in the options row
- * are deliberately absent: a task's checkout only becomes a fact the server
- * knows in Phase 5, and a control over something nothing implements yet would
- * be a lie the user could click.
+ * The options row is worktree, base ref, project, model, mode — everything a
+ * task is decided by before it starts. All five send nothing when they match
+ * the project's own answer, because the server resolves an absent field
+ * against the project's columns and that is what gives the HTTP API and the
+ * CLI the same behaviour for free (§7.5).
  */
 
 export function Composer() {
@@ -56,6 +45,8 @@ export function Composer() {
   const [projectId, setProjectId] = useState("");
   const [model, setModel] = useState(PROJECT_DEFAULT);
   const [mode, setMode] = useState(PROJECT_DEFAULT);
+  const [worktree, setWorktree] = useState(false);
+  const [baseRef, setBaseRef] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -74,7 +65,15 @@ export function Composer() {
     setSeededFor(project.id);
     setModel(knownValue(MODELS, project.defaultModel));
     setMode(knownValue(MODES, project.defaultPermissionMode));
+    setWorktree(project.worktreeDefault);
+    setBaseRef(project.defaultBaseRef ?? "");
   }
+
+  // A project with nowhere to make one. "General" is the case in practice: it
+  // has no directory, so a task in it runs wherever the daemon does and there
+  // is no repository to add a worktree to. Disabled rather than hidden, so the
+  // row does not reflow as the project selection moves.
+  const canWorktree = Boolean(project?.initialPath);
 
   const canSubmit = prompt.trim().length > 0 && !submitting;
 
@@ -95,6 +94,15 @@ export function Composer() {
         projectId: project?.id,
         model: model || undefined,
         permissionMode: mode || undefined,
+        // Sent only when it differs from what the project would have done on
+        // its own, so "I did not touch this" and "I chose the same thing"
+        // stay the same request — and a project whose default later changes
+        // moves the tasks that never overrode it.
+        worktree:
+          canWorktree && worktree !== (project?.worktreeDefault ?? false) ? worktree : undefined,
+        // Blank is not a ref, and the server refuses one. It is how this field
+        // says "no override", which is exactly what leaving it out means.
+        baseRef: worktree && baseRef.trim() ? baseRef.trim() : undefined,
         // The grid the agent is spawned at, before any client has attached and
         // so the only size the server has to go on. Left off, the agent paints
         // its opening banner at the 80×24 fallback and reflows the moment the
@@ -120,7 +128,7 @@ export function Composer() {
     // Left submitting: the navigation unmounts this, and until it does the
     // button must not take a second ⌘⏎.
     openTask(result.value.id, { tab: "agent" });
-  }, [prompt, submitting, createTask, project, model, mode, openTask]);
+  }, [prompt, submitting, createTask, project, model, mode, worktree, baseRef, canWorktree, openTask]);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -163,6 +171,36 @@ export function Composer() {
             value={mode}
             onChange={(e) => setMode(e.target.value)}
           />
+          <Checkbox
+            variant="chip"
+            label="worktree"
+            checked={worktree && canWorktree}
+            disabled={!canWorktree}
+            title={
+              canWorktree
+                ? "Give this task a checkout of its own"
+                : "This project has no directory to branch from"
+            }
+            onChange={(e) => setWorktree(e.target.checked)}
+          />
+          {/* Only alongside a worktree, because it decides nothing without
+              one: a task running in the project's own checkout is on whatever
+              branch the user left it on. Placeholder rather than a value, so
+              an empty field reads as "the project's default" instead of
+              claiming the project has none. */}
+          {worktree && canWorktree ? (
+            <label className="inline-flex h-control items-center gap-1.5 rounded-md border border-input bg-pane pl-2 pr-1.5 text-sm">
+              <GitBranch size={13} className="flex-none text-muted-foreground" />
+              <span className="flex-none text-muted-foreground">from</span>
+              <TextInput
+                aria-label="Base ref"
+                value={baseRef}
+                placeholder={project?.defaultBaseRef ?? "HEAD"}
+                onChange={(e) => setBaseRef(e.target.value)}
+                className="h-control w-28 border-0 bg-transparent px-0 focus:border-0"
+              />
+            </label>
+          ) : null}
           <div className="ml-auto flex items-center gap-2">
             {error ? (
               <span role="alert" className="text-xs text-destructive">

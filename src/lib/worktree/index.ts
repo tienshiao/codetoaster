@@ -1,4 +1,4 @@
-export { createWorktree, parseCopyList } from "./create";
+export { createWorktree, parseCopyList, removeWorktree } from "./create";
 export type { CreatedWorktree, WorktreeProject, WorktreeTask } from "./create";
 export { WorktreeError } from "./errors";
 export type { WorktreeErrorKind } from "./errors";

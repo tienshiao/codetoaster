@@ -138,7 +138,12 @@ export function handleClientMessage(
     }
 
     case "updateProject": {
-      const updated = manager.updateProject(parsed.id, parsed.name, parsed.initialPath);
+      const updated = manager.updateProject(
+        parsed.id,
+        parsed.name,
+        parsed.initialPath,
+        parsed.settings,
+      );
       if (!updated) {
         sendError(ws, `Project "${parsed.id}" not found`);
       }

@@ -16,7 +16,7 @@ import { retainLayouts } from "./layout-store";
 import { retainTaskViewStates } from "./view-state-store";
 import { generateUUID } from "./utils/uuid";
 import type { TaskState } from "./components/v2/StatusDot";
-import type { ProjectInfo, TaskInfo } from "../lib/xtmux/types";
+import type { ProjectInfo, ProjectSettings, TaskInfo } from "../lib/xtmux/types";
 
 /**
  * The task store (§7.4): the list, the projects, and per-task liveness, fed by
@@ -50,6 +50,12 @@ export interface CreateTaskOptions {
   cwd?: string;
   model?: string;
   permissionMode?: string;
+  /** Give the task a checkout of its own (§5.6). Left out to mean "whatever
+   * the project says", the same way an absent model does — the server owns
+   * that resolution so the HTTP API and the CLI inherit it. */
+  worktree?: boolean;
+  /** What that checkout branches from. Left out for the project's default. */
+  baseRef?: string;
   cols?: number;
   rows?: number;
 }
@@ -110,6 +116,13 @@ export interface TaskContextValue {
    * id it minted so the caller can select what it just made.
    */
   createProject: (name: string, initialPath: string) => string;
+  /** `settings` is a patch — an absent field keeps what the project has. */
+  updateProject: (
+    id: string,
+    name: string,
+    initialPath: string,
+    settings?: Partial<ProjectSettings>,
+  ) => void;
   deleteProject: (id: string) => void;
 }
 
@@ -501,6 +514,18 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
+  /** Rename a project, move it, and set what it decides for its tasks.
+   *
+   * `settings` is a patch: a field left out keeps what the project has, so the
+   * rename dialog can send none of them without clearing a setup command it
+   * never showed. There is no reply to wait for — the server re-broadcasts the
+   * whole list, the same as create and delete. */
+  const updateProject = useCallback(
+    (id: string, name: string, initialPath: string, settings?: Partial<ProjectSettings>) =>
+      send({ type: "updateProject", id, name, initialPath, settings }),
+    [send],
+  );
+
   const deleteProject = useCallback(
     (id: string) => send({ type: "deleteProject", id }),
     [send],
@@ -524,6 +549,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       closeShell,
       setViewedTask,
       createProject,
+      updateProject,
       deleteProject,
     }),
     [
@@ -541,6 +567,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       closeShell,
       setViewedTask,
       createProject,
+      updateProject,
       deleteProject,
     ],
   );

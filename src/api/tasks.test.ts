@@ -162,6 +162,31 @@ describe("POST /api/tasks", () => {
     expect((await res.json()).error).toBe('Unknown project "no-such-project"');
   });
 
+  test("rejects a non-boolean worktree flag", async () => {
+    const res = await post({ prompt: "x", worktree: "yes" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("worktree");
+  });
+
+  test("a blank base ref is a mistake, not a way of asking for the default", async () => {
+    // Absent means "the project's default", and the route has to keep that
+    // distinct from a ref named nothing, which git would refuse anyway.
+    const res = await post({ prompt: "x", baseRef: "   " });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("baseRef");
+  });
+
+  // Graded off `WorktreeError.kind`, and this one is the caller's mistake. The
+  // composer disables the toggle for a project with no directory, so only the
+  // API and the CLI can ask for it — exactly the callers a 5xx would tell to
+  // retry something that can never succeed.
+  test("asking for a worktree where there is no repository is a 400, not a 500", async () => {
+    const res = await post({ prompt: "x", projectId: "general", worktree: true });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("no directory");
+  });
+
   test("404s when asked to sit after a task that isn't there", async () => {
     const res = await post({ afterTaskId: "no-such-task" });
     expect(res.status).toBe(404);

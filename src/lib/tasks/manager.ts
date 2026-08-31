@@ -4,10 +4,16 @@ import * as fs from "fs";
 import * as os from "os";
 import type { Pty } from "../xtmux/pty";
 import { PtyManager } from "../xtmux/pty-manager";
-import type { ProjectInfo, ServerMessage, TaskInfo, WebSocketData } from "../xtmux/types";
+import type {
+  ProjectInfo,
+  ProjectSettings,
+  ServerMessage,
+  TaskInfo,
+  WebSocketData,
+} from "../xtmux/types";
 import { uniqueName } from "../xtmux/naming";
 import * as db from "../db";
-import type { TaskRow } from "../db";
+import type { ProjectRow, TaskRow } from "../db";
 import { TaskStore } from "./store";
 import { buildAgentCommand, taskDir, taskEnv, type AgentMode } from "../agent/spawn";
 import {
@@ -27,6 +33,15 @@ import {
 } from "../agent/hook-state";
 import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
+import {
+  createWorktree,
+  readSetupOutcome,
+  removeWorktree,
+  setupStampPath,
+  wrapWithSetup,
+  WorktreeError,
+  type CreatedWorktree,
+} from "../worktree";
 
 function expandTilde(filepath: string): string {
   if (filepath.startsWith("~/") || filepath === "~") {
@@ -45,9 +60,89 @@ function generalProject(): ProjectInfo {
     name: "General",
     initialPath: "",
     taskIds: [],
-    defaultModel: null,
-    defaultPermissionMode: null,
+    ...UNSET_PROJECT_SETTINGS,
   };
+}
+
+/** A project that decides nothing on its tasks' behalf. Every field here is
+ * "ask someone else": the agent's own default for the model and mode, the
+ * repository's HEAD for the base ref, and no setup at all. Spelled once so a
+ * project minted in memory — General, and a freshly created one — cannot
+ * drift from the shape `loadProjects` reads off a row. */
+const UNSET_PROJECT_SETTINGS: ProjectSettings = {
+  defaultModel: null,
+  defaultPermissionMode: null,
+  defaultBaseRef: null,
+  setupCommand: null,
+  worktreeCopy: null,
+  worktreeDefault: false,
+};
+
+/** A project row's settings, in the shape the client reads them. The one
+ * conversion is `worktree_default`: SQLite has no boolean, and doing it here
+ * means no reader downstream has to remember that 0 is a number. */
+function projectSettingsOf(row: ProjectRow): ProjectSettings {
+  return {
+    defaultModel: row.default_model,
+    defaultPermissionMode: row.default_permission_mode,
+    defaultBaseRef: row.default_base_ref,
+    setupCommand: row.setup_command,
+    worktreeCopy: row.worktree_copy,
+    worktreeDefault: row.worktree_default !== 0,
+  };
+}
+
+/** A settings patch with `""` resolved to "unset", which is the one thing a
+ * text field cannot say for itself. A cleared input sends an empty string, and
+ * a project storing one would put an empty `--model` on the agent's argv or
+ * branch a worktree from a ref called nothing — so blank becomes `null`, which
+ * is how unset is spelled everywhere else.
+ *
+ * Normalized once, before either the database or the in-memory projection sees
+ * it, so the client is told back what was actually stored rather than what it
+ * sent. A client echoing its own `""` would show a value the next reload
+ * contradicts.
+ *
+ * Absence is `undefined`, not a missing key. A patch assembled from a form —
+ * `{ setupCommand: form.setup }` where that field was not on this dialog —
+ * carries the key with nothing behind it, and reading that as "unset it" would
+ * clear a setting the caller never mentioned. Everywhere else a patch is
+ * written here (`TaskStore.update`, `db.updateProject`) `undefined` already
+ * means "leave alone"; this agrees with them. `null` is still a value, and is
+ * how a setting is deliberately cleared. */
+function normalizeSettingsPatch(patch: Partial<ProjectSettings>): Partial<ProjectSettings> {
+  const next: Partial<ProjectSettings> = {};
+  // `unknown` in, because this arrives off the socket with nothing between it
+  // and here: a client sending a number for `defaultModel` must get it
+  // rejected as unset, not throw `.trim is not a function` out of the message
+  // handler and take the frame with it.
+  const text = (value: unknown) => (typeof value === "string" ? value.trim() || null : null);
+  if (patch.defaultModel !== undefined) next.defaultModel = text(patch.defaultModel);
+  if (patch.defaultPermissionMode !== undefined) {
+    next.defaultPermissionMode = text(patch.defaultPermissionMode);
+  }
+  if (patch.defaultBaseRef !== undefined) next.defaultBaseRef = text(patch.defaultBaseRef);
+  if (patch.setupCommand !== undefined) next.setupCommand = text(patch.setupCommand);
+  // Blank-as-a-whole is unset here too, but the entries inside are left alone:
+  // this is a list, one path per line, and trimming each is `parseCopyList`'s
+  // job at the point of use.
+  if (patch.worktreeCopy !== undefined) next.worktreeCopy = text(patch.worktreeCopy);
+  if (patch.worktreeDefault !== undefined) next.worktreeDefault = patch.worktreeDefault === true;
+  return next;
+}
+
+/** The columns a normalized patch writes. */
+function settingsColumns(patch: Partial<ProjectSettings>): Partial<ProjectRow> {
+  const columns: Partial<ProjectRow> = {};
+  if ("defaultModel" in patch) columns.default_model = patch.defaultModel;
+  if ("defaultPermissionMode" in patch) {
+    columns.default_permission_mode = patch.defaultPermissionMode;
+  }
+  if ("defaultBaseRef" in patch) columns.default_base_ref = patch.defaultBaseRef;
+  if ("setupCommand" in patch) columns.setup_command = patch.setupCommand;
+  if ("worktreeCopy" in patch) columns.worktree_copy = patch.worktreeCopy;
+  if ("worktreeDefault" in patch) columns.worktree_default = patch.worktreeDefault ? 1 : 0;
+  return columns;
 }
 
 export interface CreateTaskOptions {
@@ -62,6 +157,13 @@ export interface CreateTaskOptions {
   /** Recorded on the row, and passed through to the agent's argv. */
   model?: string;
   permissionMode?: string;
+  /** Give the task a checkout of its own (§5.6). Absent means the project's
+   * `worktree_default`, resolved here rather than in the client so the HTTP
+   * API and the CLI answer the same as the composer. */
+  worktree?: boolean;
+  /** What that checkout branches from. Absent means the project's
+   * `default_base_ref`, and absent again means `HEAD`. */
+  baseRef?: string;
   /** Overrides what the task's first terminal runs. A task runs its agent by
    * default — that is what a task *is* (§3) — so this is for the callers that
    * want something else in front of a task: tests, and the extra shell tabs
@@ -111,6 +213,13 @@ export class TaskManager {
   // a restart is not missing anything — and a resumed task genuinely is
   // unknown again until its agent reports in.
   private hookSeen: Set<string> = new Set();
+  /** When each task's agent was last spawned, for turning the setup wrapper's
+   * stamp into a duration. Not `created_at`: a restore (TASK-39) runs setup
+   * again years after the row was written, and dating the reinstall from the
+   * task's birth would say the checkout took a fortnight to build. In memory
+   * because it is only read once, by the first hook of the process it dates —
+   * a daemon that restarted in between killed that process anyway. */
+  private spawnedAt: Map<string, number> = new Map();
   private hookGraceTimers: Map<string, Timer> = new Map();
   // When each task's directory was last checked against its live terminal.
   // The data routes ask on every request; this is what keeps that from being a
@@ -214,8 +323,7 @@ export class TaskManager {
       name: row.name,
       initialPath: row.initial_path,
       taskIds: [],
-      defaultModel: row.default_model,
-      defaultPermissionMode: row.default_permission_mode,
+      ...projectSettingsOf(row),
     }));
     // Ensure General always exists
     if (!this.projects.some((p) => p.id === "general")) {
@@ -292,6 +400,14 @@ export class TaskManager {
       throw new Error(`Task "${id}" already exists`);
     }
 
+    // Resolved before anything reads it, rather than at the row. The worktree
+    // path is keyed on the project's id and its base ref comes off the
+    // project's column, so both are needed while there is still no row — and
+    // `resolveProjectId` keys off `afterTaskId` still being in some project's
+    // `taskIds`, which a delete landing mid-create would change under us.
+    const projectId = this.resolveProjectId(options);
+    const project = this.projects.find((p) => p.id === projectId);
+
     // Inherit cwd from afterTaskId's terminal, or from the project's initialPath
     let cwd: string | undefined;
     if (options.afterTaskId) {
@@ -301,9 +417,8 @@ export class TaskManager {
       cwd = (await this.primaryPty(options.afterTaskId)?.getCwd())
         ?? this.store.get(options.afterTaskId)?.cwd;
     }
-    if (!cwd && options.projectId) {
-      const named = this.projects.find((p) => p.id === options.projectId);
-      if (named?.initialPath) cwd = expandTilde(named.initialPath);
+    if (!cwd && options.projectId && project?.initialPath) {
+      cwd = expandTilde(project.initialPath);
     }
     // Spelled out rather than left undefined: the PTY inherits this directory
     // either way, but a derived title can only describe a cwd it knows.
@@ -333,53 +448,113 @@ export class TaskManager {
     const title = options.title
       || uniqueName(titleFromPrompt(options.prompt) || (await deriveTitle(cwd)), this.taskTitles());
 
-    // Resolved once and reused below, rather than asked again after the
-    // settings write and the spawn. `resolveProjectId` keys off `afterTaskId`
-    // still being in some project's `taskIds`, and `deleteTask` splices ids out
-    // of that list — so a task deleted while this create is awaiting would have
-    // the row say one project and the sidebar say General.
-    const projectId = this.resolveProjectId(options);
-    const project = this.projects.find((p) => p.id === projectId);
+    // The checkout, if this task is getting one (§5.6) — and before the row,
+    // which is what makes a failed create leave nothing behind. `createWorktree`
+    // already backs its own partial state out, so a throw here means no
+    // directory, no branch, and now no row either.
+    //
+    // After the title, because the branch is named from it, and the title is
+    // derived against the *project's* checkout rather than the worktree that
+    // does not exist yet. That is the honest reading anyway: the fallback
+    // label is "<dir> · <branch>", and the directory a task was started from
+    // is what it describes. Every path through the composer has a prompt, so
+    // the derived label loses to `titleFromPrompt` there regardless.
+    let worktree: CreatedWorktree | undefined;
+    // Resolved once and reused by the row below, so what the checkout was
+    // branched from and what `base_ref` records cannot disagree.
+    let baseRef: string | undefined;
+    // Kept for the rollback: the two failure paths below have to undo the
+    // checkout, and they need the same directory `createWorktree` was given.
+    let projectPath: string | undefined;
+    if (options.worktree ?? project?.worktreeDefault ?? false) {
+      if (!project?.initialPath) {
+        // A `WorktreeError`, and `not-a-repo` specifically, because the route
+        // grades the failure off the kind and this one is the caller's: the
+        // composer disables the toggle for a project with no directory, so
+        // only the HTTP API and the CLI can ask for this, and answering them
+        // with a 500 tells them to retry something that will never work.
+        throw new WorktreeError(
+          "not-a-repo",
+          `Project "${project?.name ?? projectId}" has no directory to add a worktree to`,
+        );
+      }
+      projectPath = expandTilde(project.initialPath);
+      baseRef = options.baseRef ?? project.defaultBaseRef ?? "HEAD";
+      worktree = await createWorktree(
+        { id: projectId, initial_path: projectPath, worktree_copy: project.worktreeCopy },
+        { id, title },
+        baseRef,
+      );
+      // The whole point: the agent runs *in* its checkout, so everything that
+      // reads the task's directory — the git routes, the file tree, the next
+      // resume — lands there rather than in the project's own tree.
+      cwd = worktree.worktreePath;
+    }
 
-    const row = this.store.create({
-      id,
-      project_id: projectId,
-      // Allocated here, before anything starts: passing `--session-id` is how
-      // we know what to resume without asking the agent afterwards (§4.1).
-      // A used id cannot be reused, so this is minted per task and only ever
-      // replaced — by a `/clear` reported through SessionStart (TASK-11), or
-      // by a start-fresh fallback (TASK-13).
-      agent_session_id: crypto.randomUUID(),
-      title,
-      title_source: options.title ? "manual" : "derived",
-      // Trimmed, because `buildAgentCommand` judges this on truthiness and
-      // `titleFromPrompt` above judges it on having a non-blank line: the two
-      // must agree, or a whitespace-only prompt gets the directory label as
-      // though it said nothing while still travelling in argv to submit a blank
-      // opening turn. `POST /api/tasks` refuses a blank prompt outright, so
-      // this is what keeps the invariant true for a caller reaching the manager
-      // directly rather than a second line of defence against the route.
-      initial_prompt: options.prompt?.trim() ?? "",
-      // Resolved once and stored, so the data routes never have to ask a
-      // process where they are (§5.4). `undefined` (the lookup never ran) is
-      // recorded as "no repository" here, since there is no earlier value to
-      // keep — refreshCwd is where the distinction matters.
-      repo_root: (await resolveRepoRoot(cwd)) ?? null,
-      cwd,
-      // The project's column is what an absent option means. The composer
-      // sends only what the user actually overrode — "Project default" is no
-      // field at all — so resolving here rather than in the client is what
-      // gives the API and the CLI the same answer for free.
-      //
-      // Read off `projectId`, the project the task actually joins, and not off
-      // `options.projectId`, the one the caller happened to name. A create that
-      // names no project still lands in "general", so keying this off the
-      // option meant `POST /api/tasks {prompt}` — the API and CLI shape, the
-      // very callers this is resolved server-side for — inherited nothing at
-      // all while the row sat in a project with defaults set.
-      model: options.model ?? project?.defaultModel ?? null,
-      permission_mode: options.permissionMode ?? project?.defaultPermissionMode ?? null,
-    });
+    // Guarded like the two steps after it, and for the same reason: from the
+    // moment `createWorktree` returns, *everything* left in this function has
+    // to take the checkout with it if it throws. The insert is the one step
+    // that is easy to read as infallible and is not — a constraint, a locked
+    // or full database — and a throw here would leave a registered worktree
+    // and a branch named off the title behind for a task that never existed.
+    let row: TaskRow;
+    try {
+      row = this.store.create({
+        id,
+        project_id: projectId,
+        // Allocated here, before anything starts: passing `--session-id` is how
+        // we know what to resume without asking the agent afterwards (§4.1).
+        // A used id cannot be reused, so this is minted per task and only ever
+        // replaced — by a `/clear` reported through SessionStart (TASK-11), or
+        // by a start-fresh fallback (TASK-13).
+        agent_session_id: crypto.randomUUID(),
+        title,
+        title_source: options.title ? "manual" : "derived",
+        // Trimmed, because `buildAgentCommand` judges this on truthiness and
+        // `titleFromPrompt` above judges it on having a non-blank line: the two
+        // must agree, or a whitespace-only prompt gets the directory label as
+        // though it said nothing while still travelling in argv to submit a blank
+        // opening turn. `POST /api/tasks` refuses a blank prompt outright, so
+        // this is what keeps the invariant true for a caller reaching the manager
+        // directly rather than a second line of defence against the route.
+        initial_prompt: options.prompt?.trim() ?? "",
+        // Resolved once and stored, so the data routes never have to ask a
+        // process where they are (§5.4). `undefined` (the lookup never ran) is
+        // recorded as "no repository" here, since there is no earlier value to
+        // keep — refreshCwd is where the distinction matters.
+        repo_root: (await resolveRepoRoot(cwd)) ?? null,
+        cwd,
+        // The project's column is what an absent option means. The composer
+        // sends only what the user actually overrode — "Project default" is no
+        // field at all — so resolving here rather than in the client is what
+        // gives the API and the CLI the same answer for free.
+        //
+        // Read off `projectId`, the project the task actually joins, and not off
+        // `options.projectId`, the one the caller happened to name. A create that
+        // names no project still lands in "general", so keying this off the
+        // option meant `POST /api/tasks {prompt}` — the API and CLI shape, the
+        // very callers this is resolved server-side for — inherited nothing at
+        // all while the row sat in a project with defaults set.
+        model: options.model ?? project?.defaultModel ?? null,
+        permission_mode: options.permissionMode ?? project?.defaultPermissionMode ?? null,
+        // What the task owns in git, and what boot reconciliation (TASK-32) and
+        // the evict tier (TASK-39) read to know there is anything to reconcile.
+        // `worktree_state` stays "none" for a task running in the project's own
+        // checkout, which is the difference between "we made this" and "we found
+        // the user already working here".
+        ...(worktree
+          ? {
+              worktree_path: worktree.worktreePath,
+              branch: worktree.branch,
+              base_ref: baseRef,
+              worktree_state: "present" as const,
+            }
+          : {}),
+      });
+    } catch (e) {
+      await this.undoWorktree(worktree, projectPath);
+      throw e;
+    }
 
     // The row is only worth keeping if something is running behind it: Bun.spawn
     // throws outright when the command is missing from PATH, and a row left
@@ -399,13 +574,27 @@ export class TaskManager {
         // failure part-way through leaves one behind exactly as a failed spawn
         // does — and with the row gone, nothing will ever read it again.
         fs.rmSync(taskDir(id), { recursive: true, force: true });
+        await this.undoWorktree(worktree, projectPath);
         throw e;
       }
     }
 
+    // Setup runs in the agent's own terminal, not before it (§5.6), and only
+    // for a checkout this create just made: a task running in the project's
+    // own tree is in a directory the user already set up, and re-running
+    // `bun install` over it would be presumptuous at best. `options.command`
+    // is left alone for the same reason it skips the settings write — a shell
+    // tab is not the agent.
+    const command = options.command
+      ?? wrapWithSetup(
+        buildAgentCommand(row, { settingsPath }),
+        worktree ? project?.setupCommand : null,
+        setupStampPath(id),
+      );
+
     let pty: Pty;
     try {
-      pty = this.ptys.spawn(options.command ?? buildAgentCommand(row, { settingsPath }), {
+      pty = this.ptys.spawn(command, {
         id: options.ptyId,
         cols: options.cols,
         rows: options.rows,
@@ -423,12 +612,69 @@ export class TaskManager {
       // be issued a second time — so leaving it behind leaks a directory per
       // failed create.
       if (settingsPath) fs.rmSync(taskDir(id), { recursive: true, force: true });
+      await this.undoWorktree(worktree, projectPath);
       throw e;
     }
+    this.spawnedAt.set(id, Date.now());
     this.adopt(pty, id);
     this.armHookGrace(id);
     this.placeInProject(id, projectId, options);
     return row;
+  }
+
+  /** Take back a checkout this create made, for a create that failed after it.
+   *
+   * `createWorktree` backs its own partial state out, but the create keeps
+   * going afterwards — the settings file, the spawn — and both of those throw
+   * on things the user does hit: a `$SHELL` or an agent binary that is no
+   * longer on PATH. Without this, that leaves a checkout and a branch on disk
+   * for a task whose row was just deleted, and no code path will ever look at
+   * them again. The branch is the worse half: it is named from the title, so
+   * the next attempt at the same task would silently get a `-2`.
+   *
+   * Best effort. The create is already failing and the caller is owed the
+   * original reason for that, not a cleanup error on top of it. */
+  private async undoWorktree(
+    worktree: CreatedWorktree | undefined,
+    projectPath: string | undefined,
+  ): Promise<void> {
+    if (!worktree || !projectPath) return;
+    await removeWorktree(projectPath, worktree.worktreePath, worktree.branch).catch(() => {});
+  }
+
+  /** How long the checkout took to become usable, off the setup wrapper's
+   * stamp (§5.6, `lib/worktree/setup.ts`).
+   *
+   * Read exactly once, when the task's first hook arrives, and that timing is
+   * the whole design: the wrapper only `exec`s the agent after setup exits
+   * zero, so a hook — which only an agent that loaded our settings can send —
+   * is proof the stamp is already on disk. Nothing polls, and nothing waits.
+   *
+   * Fire-and-forget from `applyHook`, which is synchronous and answers a live
+   * HTTP request. Nothing downstream needs this to have landed: the only
+   * consumer is the eviction grace scale, days later.
+   *
+   * A task with no setup command records nothing, which is correct — there was
+   * no cost to remember. So does one whose setup aborted before the stamp was
+   * written, and so does a non-zero exit: the agent never started, so what was
+   * measured is the cost of failing, not the cost of a restore. */
+  private async recordSetupOutcome(taskId: string): Promise<void> {
+    const spawnedAt = this.spawnedAt.get(taskId);
+    // Spent on the first read, which is also what keeps a *resumed* task from
+    // overwriting a real duration with a meaningless one. `spawnAgent` clears
+    // `hookSeen`, so every resume presents a fresh edge to `applyHook` and
+    // arrives back here — and the stamp still on disk belongs to the create,
+    // not to this spawn. Only the run that wrote a stamp gets to date it, and
+    // when a restore re-runs setup (TASK-39) it will record its own moment.
+    this.spawnedAt.delete(taskId);
+    if (spawnedAt === undefined) return;
+    const outcome = await readSetupOutcome(setupStampPath(taskId), spawnedAt);
+    if (!outcome || outcome.exitCode !== 0) return;
+    // Checked again on the far side of the await: a task deleted while this
+    // was reading would otherwise be resurrected as a row holding one column.
+    if (!this.store.get(taskId)) return;
+    this.store.update(taskId, { setup_duration_ms: outcome.durationMs });
+    this.broadcastTask(taskId);
   }
 
   /**
@@ -919,7 +1165,21 @@ export class TaskManager {
     // Recorded before the mapping runs, and for any payload at all: what this
     // says is "the hooks are wired up", which a payload we do not map answers
     // just as well as one we do. From here the heuristic stays out of the way.
-    this.hookSeen.add(taskId);
+    //
+    // The *first* one is also the moment the setup wrapper's stamp is known to
+    // be on disk, because the wrapper only execs the agent once setup has
+    // exited zero and only an agent that loaded our settings sends a hook. So
+    // the reading is hung here rather than on a timer, and only on the edge —
+    // a task reports hundreds of these.
+    if (!this.hookSeen.has(taskId)) {
+      this.hookSeen.add(taskId);
+      // Caught for the same reason every other fire-and-forget here is:
+      // `applyHook` is synchronous and answers a live HTTP request, so a
+      // rejection travelling out of this has no caller left to reach and
+      // becomes an unhandled one. Nothing downstream needs the reading — its
+      // only consumer is the eviction grace scale, days later.
+      void this.recordSetupOutcome(taskId).catch(() => {});
+    }
     this.disarmHookGrace(taskId);
     // A compaction is two hooks: PreCompact names the trigger, and the
     // SessionStart that ends it is the one that has to decide what the agent
@@ -1341,6 +1601,10 @@ export class TaskManager {
     this.hookSeen.delete(taskId);
     this.compactTriggers.delete(taskId);
     this.cwdCheckedAt.delete(taskId);
+    // Normally spent by the first hook. A task deleted before its agent ever
+    // reported one never spends it, and without this the map keeps an entry
+    // per such task for the life of the daemon.
+    this.spawnedAt.delete(taskId);
     for (const ptyId of [...(this.taskPtys.get(taskId) ?? [])]) {
       this.ptys.kill(ptyId);
       this.ptyToTask.delete(ptyId);
@@ -1596,23 +1860,33 @@ export class TaskManager {
     // No defaults yet: `createProject` writes the identity columns only, so a
     // fresh project resolves to whatever the caller asks for until something
     // sets them.
-    this.projects.push({
-      id,
-      name,
-      initialPath,
-      taskIds: [],
-      defaultModel: null,
-      defaultPermissionMode: null,
-    });
+    this.projects.push({ id, name, initialPath, taskIds: [], ...UNSET_PROJECT_SETTINGS });
     this.broadcastTasks();
   }
 
-  updateProject(id: string, name: string, initialPath: string): boolean {
+  /** Rename a project, move it, and set what it decides for its tasks.
+   *
+   * `settings` is a patch and an absent field keeps what the project has —
+   * the rename dialog sends none of them, and must not clear a setup command
+   * it never showed the user. An explicit `null` (or a cleared text field,
+   * which normalizes to one) is how a setting is unset. */
+  updateProject(
+    id: string,
+    name: string,
+    initialPath: string,
+    settings?: Partial<ProjectSettings>,
+  ): boolean {
     const project = this.projects.find((p) => p.id === id);
     if (!project) return false;
-    db.updateProject(id, { name, initial_path: initialPath }, this.db);
+    const patch = settings ? normalizeSettingsPatch(settings) : {};
+    db.updateProject(
+      id,
+      { name, initial_path: initialPath, ...settingsColumns(patch) },
+      this.db,
+    );
     project.name = name;
     project.initialPath = initialPath;
+    Object.assign(project, patch);
     this.broadcastTasks();
     return true;
   }

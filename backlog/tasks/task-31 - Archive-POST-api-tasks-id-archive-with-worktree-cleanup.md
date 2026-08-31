@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-29 05:04'
+updated_date: '2026-08-31 03:40'
 labels:
   - server
   - api
@@ -37,3 +37,11 @@ The only way a task leaves (§5.6, §6), made recoverable. POST /api/tasks/:id/a
 - [ ] #7 Tests cover clean, dirty, unpushed, merged, no-worktree, and hard-delete cases
 - [ ] #8 Archive removes the whole of ~/.codetoaster/tasks/<id>/, not only the files it knows to name — closeTask deliberately leaves that directory behind (see its comment), so archive is where it finally goes
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+From TASK-61 (project rename/move): archive resolves the repository from the *project's* path, and a project can now be pointed at a different repository. Its existing worktrees stay checkouts of the old one, registered in the old repo's `.git/worktrees` — their tasks keep working, since a task's cwd is its own worktree — but `removeWorktree(projectPath, …)` would then run `git -C <new repo> worktree remove <old path>` and fail, leaving the checkout and its branch behind.
+
+Resolve the repository from the worktree instead: `git -C <worktree> rev-parse --git-common-dir` names the repository that actually owns it, whatever the project now points at. The row already carries `worktree_path`, so nothing new has to be stored.
+<!-- SECTION:NOTES:END -->

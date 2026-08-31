@@ -1,20 +1,43 @@
 import type { ServerWebSocket } from "bun";
 import type { AgentState, Lifecycle, TitleSource } from "../db";
 
-export interface ProjectInfo {
+/** What a project decides on behalf of the tasks started in it.
+ *
+ * All of it is on the wire so the composer can *show* what "Project default"
+ * will resolve to before anything is submitted. The resolution itself stays
+ * the server's, in `createTask`, so the HTTP API and the CLI inherit it
+ * without having to ask — the client sends only what the user actually
+ * overrode.
+ *
+ * `null` is a real value here and means unset: it hands the choice back to
+ * whatever Claude Code or git would have done anyway, which is why none of
+ * these carry a default. An empty string is not a way of saying it — the
+ * writer turns one back into `null` — because a project storing `""` as its
+ * model would put an empty `--model` on the agent's argv. */
+export interface ProjectSettings {
+  defaultModel: string | null;
+  defaultPermissionMode: string | null;
+  /** What a new worktree branches from. Null means the project's HEAD, which
+   * is what `git worktree add` does when told nothing. */
+  defaultBaseRef: string | null;
+  /** Run after a worktree is created, in the agent's own terminal (§5.6). */
+  setupCommand: string | null;
+  /** Ignored-but-needed files to copy into a new worktree, one per line — the
+   * `.env` that `git add -A` will not carry through a WIP snapshot. */
+  worktreeCopy: string | null;
+  /** Whether the composer's worktree toggle starts on. A boolean here and an
+   * INTEGER in SQLite, converted at the projection rather than left for every
+   * reader to remember. */
+  worktreeDefault: boolean;
+}
+
+export interface ProjectInfo extends ProjectSettings {
   id: string;
   name: string;
   initialPath: string;
   /** Ordered by hand, not by recency: this is the v1 sidebar's grouping, which
    * TASK-25 replaces with the recency list §7.5 describes. */
   taskIds: string[];
-  /** What a task started in this project runs as when the caller names neither
-   * (§3.2). On the wire so the composer can *show* what "Project default" will
-   * resolve to; the resolution itself is the server's, in `createTask`, so the
-   * API and the CLI get it without asking. Null until something sets it —
-   * nothing writes these columns yet. */
-  defaultModel: string | null;
-  defaultPermissionMode: string | null;
 }
 
 // Client -> Server messages
@@ -48,7 +71,16 @@ export type ClientMessage =
   | { type: "acknowledge"; taskId: string }
   | { type: "reorder"; projects: Array<{ id: string; taskIds: string[] }> }
   | { type: "createProject"; id: string; name: string; initialPath: string }
-  | { type: "updateProject"; id: string; name: string; initialPath: string }
+  | {
+      type: "updateProject";
+      id: string;
+      name: string;
+      initialPath: string;
+      /** A patch, not a replacement: a field left out keeps what the project
+       * has. The rename dialog sends none of these and must not silently
+       * clear a setup command it never showed the user. */
+      settings?: Partial<ProjectSettings>;
+    }
   | { type: "deleteProject"; id: string };
 
 // Server -> Client messages

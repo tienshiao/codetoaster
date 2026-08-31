@@ -1,6 +1,6 @@
-import { test, expect, vi, beforeEach } from "vitest";
+import { test, expect, describe, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { TaskResult } from "../TaskContext";
+import type { CreateTaskOptions, TaskResult } from "../TaskContext";
 import type { ProjectInfo, TaskInfo } from "../../lib/xtmux/types";
 
 /**
@@ -34,6 +34,10 @@ function project(id: string, overrides: Partial<ProjectInfo> = {}): ProjectInfo 
     taskIds: [],
     defaultModel: null,
     defaultPermissionMode: null,
+    defaultBaseRef: null,
+    setupCommand: null,
+    worktreeCopy: null,
+    worktreeDefault: false,
     ...overrides,
   };
 }
@@ -91,6 +95,99 @@ test("⌘⏎ starts the task and opens its agent tab", async () => {
   // `request` not to toast them a second time (TASK-57).
   expect(stubs.createTask.mock.calls[0]![1]).toEqual({ inline: true });
   await waitFor(() => expect(stubs.openTask).toHaveBeenCalledWith("task-1", { tab: "agent" }));
+});
+
+describe("the worktree options", () => {
+  /** A project with somewhere to branch from. The two default fixtures have no
+   * `initialPath`, which is the General case: nowhere to add a worktree to. */
+  function withRepo(overrides: Partial<ProjectInfo> = {}) {
+    stubs.projects = [project("web", { initialPath: "~/projects/web", ...overrides })];
+  }
+
+  function worktreeBox(): HTMLInputElement {
+    return screen.getByLabelText("worktree") as HTMLInputElement;
+  }
+
+  /** The options the composer actually built, typed — the mock records them as
+   * `unknown`, and every assertion below is about one field of them. */
+  function sent(): CreateTaskOptions {
+    return stubs.createTask.mock.calls[0]![0] as CreateTaskOptions;
+  }
+
+  test("is off, and unusable, for a project with no directory", () => {
+    render(<Composer />);
+
+    // Disabled rather than absent, so the options row does not reflow as the
+    // project selection moves between one kind of project and the other.
+    expect(worktreeBox().disabled).toBe(true);
+    expect(worktreeBox().checked).toBe(false);
+    expect(screen.queryByLabelText("Base ref")).toBeNull();
+    // And the reason is on the *label*, not the input. `Checkbox` renders its
+    // input `sr-only`, and a 1px clipped element that is also disabled takes no
+    // pointer events at all — so a tooltip left to land there is one nobody can
+    // ever hover, which is worst for the message that most needs reading.
+    expect(screen.getByTitle(/no directory to branch from/).tagName).toBe("LABEL");
+  });
+
+  test("starts where the project's default puts it", () => {
+    withRepo({ worktreeDefault: true, defaultBaseRef: "release" });
+    render(<Composer />);
+
+    expect(worktreeBox().checked).toBe(true);
+    // Seeded during the render that moves the selection, not in an effect —
+    // otherwise ⌘⏎ in the first frame would send the previous project's answer.
+    expect(valueOf("Base ref")).toBe("release");
+  });
+
+  test("sends nothing when it agrees with the project", async () => {
+    withRepo({ worktreeDefault: true, defaultBaseRef: "release" });
+    render(<Composer />);
+    submitKey(type("inherit it"));
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    // "I did not touch this" and "I chose the same thing" are the same
+    // request, so a project whose default later changes moves the tasks that
+    // never overrode it.
+    expect(sent().worktree).toBeUndefined();
+    expect(sent().baseRef).toBe("release");
+  });
+
+  test("sends the override when it disagrees", async () => {
+    withRepo({ worktreeDefault: false });
+    render(<Composer />);
+    fireEvent.click(worktreeBox());
+    submitKey(type("branch it"));
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    expect(sent().worktree).toBe(true);
+  });
+
+  test("the base ref appears with the worktree and not without it", async () => {
+    withRepo({ worktreeDefault: false });
+    render(<Composer />);
+
+    // It decides nothing on its own: a task in the project's own checkout is
+    // on whatever branch the user left it on.
+    expect(screen.queryByLabelText("Base ref")).toBeNull();
+    fireEvent.click(worktreeBox());
+    fireEvent.change(screen.getByLabelText("Base ref"), { target: { value: " main " } });
+    submitKey(type("from main"));
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    expect(sent().baseRef).toBe("main");
+  });
+
+  test("a blank base ref is no override, not a ref called nothing", async () => {
+    withRepo({ worktreeDefault: true });
+    render(<Composer />);
+    fireEvent.change(screen.getByLabelText("Base ref"), { target: { value: "   " } });
+    submitKey(type("default base"));
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    // The server refuses a blank ref outright, so sending one would turn
+    // "leave it to the project" into a 400.
+    expect(sent().baseRef).toBeUndefined();
+  });
 });
 
 test("Ctrl+⏎ is the same binding", async () => {

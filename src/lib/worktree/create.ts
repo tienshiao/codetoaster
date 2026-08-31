@@ -210,25 +210,53 @@ export function createWorktree(
         return { worktreePath, branch, copied };
       } catch (e) {
         // Back out to nothing rather than leaving a checkout the project's
-        // setup would run against a half-copied tree. `--force` because the
-        // copy may have written files git does not know about, which is
-        // exactly what `worktree remove` refuses to discard on its own.
-        //
-        // Checked rather than fired and forgotten, because "or it produces
-        // none" is a promise and a `worktree remove` that fails breaks it
-        // twice over: the half-copied checkout stays, and `branch -D` then
-        // fails too — the branch is still checked out in it — so the name is
-        // burned and the next create for the same title gets a `-2` it did not
-        // earn. Deleting the directory ourselves and pruning the registration
-        // it leaves is the same end state by a blunter route.
-        const removed = await gitSpawn(repoRoot, ["worktree", "remove", "--force", worktreePath]);
-        if (removed.exitCode !== 0) {
-          await fsp.rm(worktreePath, { recursive: true, force: true }).catch(() => {});
-          await gitSpawn(repoRoot, ["worktree", "prune"]);
-        }
-        await gitSpawn(repoRoot, ["branch", "-D", branch]);
+        // setup would run against a half-copied tree.
+        await discard(repoRoot, worktreePath, branch);
         throw e;
       }
     }),
   );
+}
+
+/** Take a checkout and its branch back off disk.
+ *
+ * `--force` because the tree may hold files git does not know about — the
+ * `worktree_copy` entries, anything setup wrote — which is exactly what
+ * `worktree remove` refuses to discard on its own.
+ *
+ * Checked rather than fired and forgotten, because "or it produces none" is a
+ * promise and a `worktree remove` that fails breaks it twice over: the
+ * checkout stays, and `branch -D` then fails too — the branch is still checked
+ * out in it — so the name is burned and the next create for the same title
+ * gets a `-2` it did not earn. Deleting the directory ourselves and pruning
+ * the registration it leaves is the same end state by a blunter route. */
+async function discard(repoRoot: string, worktreePath: string, branch: string): Promise<void> {
+  const removed = await gitSpawn(repoRoot, ["worktree", "remove", "--force", worktreePath]);
+  if (removed.exitCode !== 0) {
+    await fsp.rm(worktreePath, { recursive: true, force: true }).catch(() => {});
+    await gitSpawn(repoRoot, ["worktree", "prune"]);
+  }
+  await gitSpawn(repoRoot, ["branch", "-D", branch]);
+}
+
+/** Undo a `createWorktree` from outside it.
+ *
+ * The create is only half of "a task either gets a checkout or it does not":
+ * the caller goes on to write a row and spawn an agent, and either of those
+ * can still fail. Without this, a `$SHELL` that is no longer on PATH would
+ * leave a checkout and a branch behind for a task that does not exist — and
+ * the branch name, allocated from the title, would make the next attempt at
+ * the same task a `-2`.
+ *
+ * Takes the project's directory rather than a repo root for the same reason
+ * `createWorktree` does: the caller has the project, not the repository. Runs
+ * under the same per-repository lock, because removing a worktree mutates the
+ * list branch allocation reads. */
+export async function removeWorktree(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+): Promise<void> {
+  const repoRoot = await repoRootOf(projectPath);
+  await withRepoLock(await lockKeyFor(repoRoot), () => discard(repoRoot, worktreePath, branch));
 }

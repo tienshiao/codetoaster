@@ -1,6 +1,7 @@
 import { taskManager } from "../lib/tasks/manager";
 import type { CreateTaskOptions } from "../lib/tasks/manager";
 import { readSnapshot } from "../lib/tasks/snapshot";
+import { WorktreeError } from "../lib/worktree";
 
 function badRequest(message: string): Response {
   return Response.json({ error: message }, { status: 400 });
@@ -63,9 +64,28 @@ export const taskRoutes = {
         model: optionalString(body.model),
         permissionMode: optionalString(body.permissionMode),
         afterTaskId: optionalString(body.afterTaskId),
+        // What the worktree branches from (§5.6). Absent means the project's
+        // `default_base_ref`, and absent again means HEAD — resolved in
+        // `createTask` so this route, the CLI and the composer agree.
+        baseRef: optionalString(body.baseRef),
       };
       for (const [name, value] of Object.entries(fields)) {
         if (value === null) return badRequest(`"${name}" must be a string`);
+      }
+      // Tri-state on purpose: absent hands the decision to the project's
+      // `worktree_default`, and only an explicit boolean overrides it. Reading
+      // a missing field as `false` would make every API and CLI create ignore
+      // a project configured to want worktrees.
+      if (body.worktree !== undefined && typeof body.worktree !== "boolean") {
+        return badRequest(`"worktree" must be a boolean`);
+      }
+      const worktree = body.worktree as boolean | undefined;
+      // A ref is a name, and a blank one is not a name. Same bar as the title
+      // and the prompt: absent and blank are two things, and the blank one is
+      // a mistake rather than a way of asking for the default.
+      if (typeof fields.baseRef === "string") {
+        if (!fields.baseRef.trim()) return badRequest(`"baseRef" cannot be blank`);
+        fields.baseRef = fields.baseRef.trim();
       }
       // Same bar as PATCH: a title is either a deliberate choice or absent, and
       // a blank one is neither — it would be stored verbatim, leaving a row
@@ -108,16 +128,30 @@ export const taskRoutes = {
         task = await taskManager.createTask({
           id: crypto.randomUUID(),
           ...(fields as Omit<CreateTaskOptions, "id">),
+          worktree,
           cols: cols ?? undefined,
           rows: rows ?? undefined,
         });
       } catch (e: any) {
         // Spawning is the interesting failure: a $SHELL that is no longer on
         // PATH throws out of Bun.spawn, and the caller deserves to know that
-        // rather than watching a session never appear.
+        // rather than watching a session never appear. Creating the worktree
+        // is the other one, and it fails for reasons the user can act on — a
+        // base ref that does not resolve, a path with something already in it
+        // — so `WorktreeError`'s message carries git's own stderr through to
+        // here. Nothing is left behind either way: the worktree is made before
+        // the row, and backs itself out.
+        //
+        // And the ones the *request* got wrong are a 400, not a 500: a base
+        // ref that names nothing is a typo in the body, and answering it with
+        // a server error tells the caller to retry something that will never
+        // work. The kinds left over — git refusing an add, a copy that failed
+        // — are ours.
+        const clientError = e instanceof WorktreeError
+          && (e.kind === "bad-base-ref" || e.kind === "path-occupied" || e.kind === "not-a-repo");
         return Response.json(
           { error: e?.message ?? "Could not create the task" },
-          { status: 500 },
+          { status: clientError ? 400 : 500 },
         );
       }
 

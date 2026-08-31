@@ -27,6 +27,9 @@ export type { TextInputProps } from "./TextInput";
 export { Textarea } from "./Textarea";
 export type { TextareaProps } from "./Textarea";
 
+export { Checkbox } from "./Checkbox";
+export type { CheckboxProps, CheckboxVariant } from "./Checkbox";
+
 export { Select } from "./Select";
 export type { SelectOption, SelectProps, SelectSize } from "./Select";
 
