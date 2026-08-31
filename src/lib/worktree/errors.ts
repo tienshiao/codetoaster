@@ -1,0 +1,39 @@
+/** What went wrong, as something a caller can branch on.
+ *
+ * `bad-base-ref`     — the ref the task asked to branch from does not resolve
+ *                      to a commit. A user typo, or a branch deleted since the
+ *                      project's default was set.
+ * `path-occupied`    — something is already at the task's worktree path. The
+ *                      path is derived from ids (`paths.ts`), so this is never
+ *                      a name clash between two tasks; it is a leftover from a
+ *                      create that died, or a directory the user made.
+ * `worktree-add-failed` — git refused, and `stderr` says why.
+ * `copy-failed`      — a `worktree_copy` entry could not be copied. The
+ *                      checkout is removed again before this is thrown, so a
+ *                      create either produces a set-up worktree or none.
+ * `not-a-repo`       — the project's directory is not inside a git repository,
+ *                      so there is nothing to add a worktree to. */
+export type WorktreeErrorKind =
+  | "bad-base-ref"
+  | "path-occupied"
+  | "worktree-add-failed"
+  | "copy-failed"
+  | "not-a-repo";
+
+/** A worktree operation that failed, carrying git's own account of it.
+ *
+ * `stderr` is the whole reason this is a class rather than a rejected string.
+ * git explains itself in stderr and nowhere else — `fatal: invalid reference`,
+ * `fatal: '<path>' already exists` — and a "could not create worktree" that
+ * drops it leaves the user with a failure and no fact about it. Empty when the
+ * failure was ours rather than git's. */
+export class WorktreeError extends Error {
+  constructor(
+    readonly kind: WorktreeErrorKind,
+    message: string,
+    readonly stderr: string = "",
+  ) {
+    super(stderr ? `${message}: ${stderr.trim()}` : message);
+    this.name = "WorktreeError";
+  }
+}

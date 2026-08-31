@@ -69,21 +69,44 @@ export interface GitSpawnOptions {
   // A killed child exits 143 (128 + SIGTERM), so the usual `exitCode !== 0`
   // check treats a timeout as a failed lookup without any special casing.
   timeoutMs?: number;
+  // Keep git's stderr instead of discarding it. Off by default because the
+  // read routes ask git questions whose failure *is* the answer — a path with
+  // no history, a ref that is not there — and reading a pipe nobody wants is
+  // work per call for a string thrown away.
+  //
+  // Worth it where a failure has to be reported rather than absorbed: git says
+  // why in stderr and nowhere else, and "worktree add failed" without
+  // "fatal: invalid reference: nosuchref" is a message the user can do nothing
+  // with (TASK-29).
+  captureStderr?: boolean;
 }
 
 export async function gitSpawn(
   dir: string,
   args: string[],
   options?: GitSpawnOptions,
-): Promise<{ stdout: string; exitCode: number }> {
-  const proc = Bun.spawn(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "ignore" });
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const capture = options?.captureStderr === true;
+  const proc = Bun.spawn(["git", "-C", dir, ...args], {
+    stdout: "pipe",
+    stderr: capture ? "pipe" : "ignore",
+  });
   const timer =
     options?.timeoutMs === undefined ? null : setTimeout(() => proc.kill(), options.timeoutMs);
   try {
-    // The kill ends both awaits: stdout hits EOF and exited resolves, so this
-    // never outlives the child.
-    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    return { stdout, exitCode };
+    // Both pipes are drained in the same `Promise.all` as `exited`, and that is
+    // not tidiness: a child whose stderr fills the pipe buffer blocks writing
+    // to it, so awaiting `exited` first would hang on exactly the failure this
+    // option exists to report — the verbose one.
+    //
+    // The kill ends every await here: the pipes hit EOF and `exited` resolves,
+    // so this never outlives the child.
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      capture ? new Response(proc.stderr).text() : Promise.resolve(""),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
   } finally {
     if (timer) clearTimeout(timer);
   }
