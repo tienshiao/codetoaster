@@ -5,12 +5,14 @@ import * as path from "path";
 import {
   continueIsSafe,
   findResumableTranscript,
+  runsInOwnWorktree,
   sessionIdFromTranscript,
   listTranscripts,
   projectsDirFor,
   transcriptDirFor,
   transcriptExists,
 } from "./transcripts";
+import { worktreePathFor, worktreesRoot } from "../worktree/paths";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -99,7 +101,7 @@ describe("finding a task's conversations", () => {
       created_at: Date.now() - 60_000,
     };
 
-    expect(findResumableTranscript(task, { notThis: "the-broken-one" })).toBeUndefined();
+    expect(findResumableTranscript(task, { notThese: ["the-broken-one"] })).toBeUndefined();
   });
 });
 
@@ -192,5 +194,79 @@ describe("sessionIdFromTranscript", () => {
     expect(sessionIdFromTranscript("/a/b/1fc1-abcd.jsonl")).toBe("1fc1-abcd");
     expect(sessionIdFromTranscript("/a/b/notes.txt")).toBeUndefined();
     expect(sessionIdFromTranscript(null)).toBeUndefined();
+  });
+});
+
+// The gate the scan rung hangs on (TASK-60). Pure path work — nothing here
+// touches disk, because provenance is a property of what we recorded when we
+// made the checkout, not of what is in it now.
+describe("runsInOwnWorktree", () => {
+  const ours = (over: Record<string, unknown> = {}) => {
+    const id = "task-abc";
+    const worktree = worktreePathFor("proj-1", id);
+    return {
+      id,
+      cwd: worktree,
+      worktree_path: worktree,
+      worktree_state: "present" as const,
+      ...over,
+    };
+  };
+
+  test("a checkout we made, for this task, that the task is sitting in", () => {
+    expect(runsInOwnWorktree(ours())).toBe(true);
+  });
+
+  test("a task running where the user pointed it is not in one", () => {
+    expect(runsInOwnWorktree({
+      id: "task-abc",
+      cwd: "/Users/me/proj",
+      worktree_path: null,
+      worktree_state: "none",
+    })).toBe(false);
+  });
+
+  // The directory is gone or reclaimed, so nothing can be claimed about what is
+  // in it. Both are reachable on the resume path only if a restore was skipped,
+  // and answering `true` there would send the scan at a path that is not there.
+  test("an evicted or missing checkout is not one we are holding", () => {
+    expect(runsInOwnWorktree(ours({ worktree_state: "evicted" }))).toBe(false);
+    expect(runsInOwnWorktree(ours({ worktree_state: "missing" }))).toBe(false);
+  });
+
+  // The claim is not "a worktree" but "*this task's* worktree". A path under
+  // our root named by another task's id is exactly the shared directory the
+  // gate exists to exclude, one level up.
+  test("another task's checkout is not this task's", () => {
+    expect(runsInOwnWorktree(ours({ worktree_path: worktreePathFor("proj-1", "task-xyz") })))
+      .toBe(false);
+  });
+
+  // What says we created it. A row can name any directory — a hand-edited
+  // database, a column written before the checkout was ours — and a directory
+  // we merely found says nothing about who else runs an agent there.
+  test("a directory outside the worktrees root is one we found, not one we made", () => {
+    const elsewhere = path.join(os.tmpdir(), "somebody-elses", "task-abc");
+    expect(runsInOwnWorktree(ours({ cwd: elsewhere, worktree_path: elsewhere }))).toBe(false);
+  });
+
+  // TASK-65 will put the agent below the checkout's root when a project points
+  // at a subdirectory. The exclusivity being claimed is the whole checkout's,
+  // so that has to keep passing — and a sibling directory whose name merely
+  // starts the same must not, which is why this is `path.relative` and not a
+  // prefix test.
+  test("a cwd inside the checkout counts; one merely beside it does not", () => {
+    const worktree = worktreePathFor("proj-1", "task-abc");
+    expect(runsInOwnWorktree(ours({ cwd: path.join(worktree, "frontend") }))).toBe(true);
+    expect(runsInOwnWorktree(ours({ cwd: `${worktree}-scratch` }))).toBe(false);
+    expect(runsInOwnWorktree(ours({ cwd: path.dirname(worktree) }))).toBe(false);
+  });
+
+  // A task reassigned when its project was deleted (TASK-64) keeps the checkout
+  // it already has, so the path still names the old project. The id in the last
+  // segment is what has to carry the claim, and it does.
+  test("survives the task being reassigned to another project", () => {
+    const kept = path.join(worktreesRoot(), "deleted-project", "task-abc");
+    expect(runsInOwnWorktree(ours({ cwd: kept, worktree_path: kept }))).toBe(true);
   });
 });

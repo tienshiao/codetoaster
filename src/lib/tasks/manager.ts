@@ -19,6 +19,8 @@ import { buildAgentCommand, removeTaskDir, taskDir, taskEnv, type AgentMode } fr
 import {
   canResumeSessionId,
   continueIsSafe,
+  findResumableTranscript,
+  runsInOwnWorktree,
   sessionIdFromTranscript,
   transcriptExists,
 } from "../agent/transcripts";
@@ -1337,33 +1339,53 @@ export class TaskManager {
     // most recent one there is by elimination somebody else's. The guard used
     // to wave that case through on the grounds that it could not tell.
     if (continueIsSafe(row)) ladder.push({ mode: "continue" });
-    // §4.3 has one more rung here — scan the directory for a conversation
-    // nobody told us about — and it is deliberately not built, because with
-    // the guard above corrected there is no longer anything for it to find.
+    // §4.3's last rung: scan the directory for a conversation nobody ever told
+    // us about. Offered only in a checkout we made for this task, and that
+    // gate is the whole of TASK-60.
     //
-    // The scan is `findResumableTranscript`: the newest transcript in the
-    // directory, inside the task's lifetime, that is not the id we already
-    // tried. Follow what that can return once `--continue` is gated on "the
-    // newest transcript is demonstrably ours". If the gate passed, the newest
-    // *is* ours — and rungs 1-3 have already offered it by id and by
-    // `--continue`, so the scan can only reach past it to something older,
-    // which nothing has shown to be this task's. If the gate failed, the scan
-    // has to be refused for the reason the gate was: declining `--continue`
-    // because the newest conversation belongs to a stranger and then opening
-    // that very file by id one rung later would make the guard theatre.
+    // Why it needs one. Follow what the scan can return in a directory the
+    // user chose, given `--continue` above is gated on "the newest transcript
+    // is demonstrably ours". If that gate passed, the newest *is* ours and the
+    // rungs above have already offered it by id and by `--continue`, so the
+    // scan can only reach past it to something older, which nothing has shown
+    // to be this task's. If the gate failed, the scan has to be refused for
+    // the reason the gate was: declining `--continue` because the newest
+    // conversation belongs to a stranger, and then opening that very file by
+    // id one rung later, would make the guard theatre. Either way it yields a
+    // conversation we never started or nothing at all — which is why TASK-43
+    // took the rung off rather than gating it, and why it stays off for a task
+    // running where the user pointed it.
     //
-    // Either way the scan yields a conversation we never started or nothing at
-    // all, so the rung is subsumed rather than lost — every conversation it
-    // could legitimately have recovered is already named by one above it.
+    // A worktree removes the stranger from both halves. `worktreePathFor`
+    // derives the directory from the task's id, we created it, and nothing
+    // else runs there — so every conversation in it, inside the task's
+    // lifetime, is this task's whether or not anything ever named it. Which
+    // makes both of the scan's outcomes worth having, where in a shared
+    // directory neither was: the newest conversation when nothing named it —
+    // §4.3's case, and the one TASK-43 could not keep, a degraded task (hooks
+    // never arrived, so no SessionStart set `transcript_path`) whose agent then
+    // ran `/clear` — and the one *behind* the newest when the newest will not
+    // open, which is what "transcript pruned, version skew" leaves to fall back
+    // on. An older conversation of this task's is a poor resume and a much
+    // better answer than a card saying nothing could be opened.
     //
-    // What that costs is §4.3's case for a pruned or skewed transcript: a
-    // degraded task (hooks never arrived, so no SessionStart set
-    // `transcript_path`) whose agent then ran `/clear`, leaving its real
-    // conversation under an id we were never told. It is unrecoverable here
-    // for the same reason it is unrecoverable by hand — in a shared directory
-    // that conversation is indistinguishable from a stranger's, and an mtime
-    // window is not a distinction. A worktree makes it one, which is why the
-    // rung comes back in m-4 (TASK-60) rather than being deleted now.
+    // Note this is strictly sharper than `--continue`, not a second helping of
+    // it: it resumes the found conversation *by id*, so it says which one it
+    // opened, and the rung above stays gated as it is rather than being
+    // loosened in a worktree.
+    if (runsInOwnWorktree(row)) {
+      const found = findResumableTranscript(row, {
+        // Every id the ladder can name, offered or not. An id with no
+        // transcript is skipped above and would find nothing here either, and
+        // one that *was* offered must not come back a second time — most of
+        // all through `--continue`, which opens the newest file in the
+        // directory, which is exactly what the scan would hand back next.
+        notThese: [row.agent_session_id, reported],
+      });
+      // No `canResumeSessionId` here: the scan found the file, so the rung it
+      // builds cannot be the doomed `--resume` that check exists to keep off.
+      if (found) ladder.push({ mode: "resume", sessionId: found.sessionId });
+    }
     return ladder;
   }
 

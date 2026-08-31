@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import type { WorktreeState } from "../db";
+import { worktreesRoot } from "../worktree/paths";
 
 /** Where Claude Code keeps a directory's conversations. Derived only as a last
  * resort: a task that has ever reported a SessionStart carries the real path
@@ -64,26 +66,25 @@ export function listTranscripts(dir: string): TranscriptCandidate[] {
 }
 
 /** The best candidate to resume for a task whose stored id is unusable
- * (§4.3, rung 3): the newest conversation in its directory that was touched
- * during the task's life. The window is what keeps this from grabbing a
- * conversation that belongs to something else entirely — someone else's
- * `claude` in the same directory, or the task that used it before this one.
+ * (§4.3, last rung): the newest conversation in its directory that was touched
+ * during the task's life.
  *
- * `notThis` is the id we already tried, so a scan cannot hand back the same
- * unusable conversation and send the caller round again.
+ * `notThese` are the ids the ladder can already name, so a scan cannot hand
+ * back a conversation that has just been offered — or refused — and send the
+ * caller round again.
  *
- * Not on the ladder at present, and kept rather than deleted: TASK-43 showed
- * the window alone cannot tell this task's conversation from a stranger's in a
- * shared directory, so `resumeLadder` stops one rung short of it and says why.
- * A worktree makes the directory the task's alone, which is the condition this
- * always needed; TASK-60 reinstates the rung there. */
+ * The window is a floor and never a licence. It cannot tell this task's
+ * conversation from a stranger's in a directory they share, which is what took
+ * this off the ladder in TASK-43; what puts it back is `runsInOwnWorktree`,
+ * asked by the caller, and this function assumes nothing about it. */
 export function findResumableTranscript(
   task: { cwd: string; transcript_path: string | null; created_at: number },
-  options: { notThis?: string | null } = {},
+  options: { notThese?: ReadonlyArray<string | null | undefined> } = {},
 ): TranscriptCandidate | undefined {
+  const excluded = new Set(options.notThese?.filter((id) => id != null));
   return listTranscripts(transcriptDirFor(task)).find(
     (candidate) =>
-      candidate.sessionId !== options.notThis &&
+      !excluded.has(candidate.sessionId) &&
       // Only a lower bound. An upper one reads as symmetry and is a trap:
       // `mtimeMs` carries sub-millisecond precision while `Date.now()` is
       // whole milliseconds, so a transcript written in the same millisecond as
@@ -92,6 +93,56 @@ export function findResumableTranscript(
       // refusing a file with a future timestamp anyway.
       candidate.modifiedAt >= task.created_at,
   );
+}
+
+/** Whether the task is running in a checkout **we** made for **it** — the
+ * condition §4.3 assumes throughout and the gate the scan rung hangs on
+ * (TASK-60).
+ *
+ * §4.3's fallbacks are written against "one directory, one task, one
+ * conversation", and a task running in a directory the user picked has no such
+ * guarantee: the same directory can hold this task's conversation, another
+ * task's, and the conversation of whoever is running an agent there by hand.
+ * A worktree is the guarantee, because `worktreePathFor` derives the path from
+ * the task's id and nothing else ever runs there.
+ *
+ * So the check is provenance and not shape. Three things have to hold, and
+ * each answers a different way of being wrong:
+ *
+ * - the checkout is one we are holding right now (`present`), because an
+ *   `evicted` or `missing` row names a directory whose contents we no longer
+ *   account for;
+ * - it sits under `worktreesRoot()`, which is what says we created it rather
+ *   than found it;
+ * - it is *named by this task's id*, which is what says it was created for
+ *   this task and not another — the one claim that has to survive a task being
+ *   reassigned to a different project, which leaves the path where it was.
+ *
+ * The cwd is then required to be inside it, rather than to equal it: the agent
+ * sits at the checkout's root today, but a project pointing at a subdirectory
+ * would put it below one (TASK-65), and the exclusivity being claimed is the
+ * whole checkout's either way. */
+export function runsInOwnWorktree(task: {
+  id: string;
+  cwd: string;
+  worktree_path: string | null;
+  worktree_state: WorktreeState;
+}): boolean {
+  if (task.worktree_state !== "present" || !task.worktree_path) return false;
+  const worktree = path.resolve(task.worktree_path);
+  if (path.basename(worktree) !== task.id) return false;
+  if (!isInside(worktreesRoot(), worktree)) return false;
+  const cwd = path.resolve(task.cwd);
+  return cwd === worktree || isInside(worktree, cwd);
+}
+
+/** Whether `child` is strictly below `parent`. `path.relative` rather than a
+ * prefix test, so `/a/bc` is not read as being inside `/a/b`; and the first
+ * segment compared whole rather than by prefix, so a directory honestly called
+ * `..stash` is not read as an escape. */
+function isInside(parent: string, child: string): boolean {
+  const rel = path.relative(path.resolve(parent), child);
+  return rel !== "" && !path.isAbsolute(rel) && rel.split(path.sep)[0] !== "..";
 }
 
 /** The conversation id a transcript path names. Transcripts are files called
@@ -107,9 +158,27 @@ export function sessionIdFromTranscript(transcriptPath: string | null): string |
 /** Whether `--continue` would open this task's conversation or somebody
  * else's. It takes "the most recent conversation in this directory", which
  * §4.3 calls unambiguous because worktree-per-task means one directory holds
- * exactly one conversation. Until worktrees land (m-4) that is simply not
- * true: a directory can hold the task's conversation, another task's, and the
- * conversation of whoever is running an agent there by hand.
+ * exactly one conversation. That is a promise about a checkout we made, not
+ * about every task: a worktree is opt-in, and a task running where the user
+ * pointed it shares a directory with another task's conversation, or with
+ * whoever is running an agent there by hand.
+ *
+ * Left gated the same way for both, even now that `runsInOwnWorktree` could
+ * tell them apart (TASK-60). In a worktree the scan rung below this one
+ * reaches the same conversation and resumes it *by id*, which says which one
+ * it opened, so loosening this would mostly add a vaguer way to reach it
+ * first.
+ *
+ * Mostly, and not always, because both rungs read the *same* directory and
+ * `projectsDirFor` only guesses at it. A worktree task whose hooks never
+ * arrived has no reported path to take a dirname of, so if that guess misses,
+ * this sees an empty listing and the scan searches the same empty place —
+ * while `--continue` opens what is really in the cwd. Narrower than it sounds:
+ * a missing directory makes `canResumeSessionId` answer `true`, so the minted
+ * id is still offered, and only a task whose minted conversation is *also*
+ * unusable loses anything. Recorded rather than fixed — loosening the gate
+ * under `runsInOwnWorktree` is a change to which conversations get opened, not
+ * to this task's rung.
  *
  * So it is offered only when the newest transcript in the directory is one we
  * can *name* as this task's. Two things can name one: the path the agent

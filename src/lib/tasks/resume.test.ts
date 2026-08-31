@@ -8,6 +8,7 @@ import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import { taskDir } from "../agent/spawn";
 import { projectsDirFor } from "../agent/transcripts";
+import { worktreePathFor } from "../worktree/paths";
 import { transitionFor, type HookPayload } from "../agent/hook-state";
 
 const opened: Array<{ manager: TaskManager; taskId: string }> = [];
@@ -153,6 +154,41 @@ function suspendedTask(
     initial_prompt: "the original prompt",
     repo_root: null,
     cwd,
+    agent_session_id: "stored-session-id",
+    lifecycle: "suspended",
+    agent_state: "unknown",
+    ...overrides,
+  });
+}
+
+/** The same task, in a checkout we made for it.
+ *
+ * The whole of what makes it one is on the row — `worktree_state`, a path under
+ * the worktrees root ending in the task's id — plus the directory being there,
+ * which `restoreTaskWorktree` checks before deciding it has nothing to rebuild.
+ * No git is involved and none is needed: the ladder's gate asks about
+ * provenance, not about what is checked out. */
+function worktreeTask(
+  manager: TaskManager,
+  store: TaskStore,
+  overrides: Partial<Parameters<TaskStore["create"]>[0]> = {},
+) {
+  const id = `test-${crypto.randomUUID()}`;
+  taskIds.push(id);
+  opened.push({ manager, taskId: id });
+  const worktree = worktreePathFor("general", id);
+  fs.mkdirSync(worktree, { recursive: true });
+  tempDirs.push(worktree);
+  return store.create({
+    id,
+    project_id: "general",
+    title: "resume me",
+    initial_prompt: "the original prompt",
+    repo_root: worktree,
+    cwd: worktree,
+    worktree_path: worktree,
+    worktree_state: "present",
+    branch: "ct/resume-me",
     agent_session_id: "stored-session-id",
     lifecycle: "suspended",
     agent_state: "unknown",
@@ -339,6 +375,77 @@ describe("resuming a suspended task", () => {
     const modes = (await agent.settled(2))
       .map((argv) => argv.find((a) => a === "--resume" || a === "--continue"));
     expect(modes).toEqual(["--resume", "--continue"]);
+  });
+
+  // TASK-60, and the pair that is the whole of it: the same degraded task, the
+  // same unnamed conversation, opposite answers on either side of the gate.
+  //
+  // The shape is §4.3's case for the scan. Hooks never arrived, so no
+  // SessionStart set `transcript_path`; the minted id was never written, so
+  // nothing on the ladder can name anything; and the conversation that is
+  // really there was opened under an id we were never given — what a `/clear`
+  // leaves behind.
+  test("a worktree task recovers a conversation nothing ever named", async () => {
+    const { manager, store, agent } = newManager();
+    const row = worktreeTask(manager, store, { created_at: Date.now() - 60_000 });
+    // Not the minted id, so rungs 1-3 all decline: there is no transcript for
+    // `stored-session-id`, none was reported, and the newest conversation is
+    // one we cannot name — which is exactly what `continueIsSafe` refuses on.
+    plantTranscripts(row.cwd, ["the-real-one"]);
+
+    const resumed = await manager.resumeTask(row.id);
+
+    expect(resumed!.lifecycle).toBe("live");
+    // By id, not by `--continue`: the rung says which conversation it opened.
+    const invocations = await agent.settled(1);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]![invocations[0]!.indexOf("--resume") + 1]).toBe("the-real-one");
+  });
+
+  // The other half. Nothing about the row differs except where it is running,
+  // and in a directory the user pointed at, that conversation is
+  // indistinguishable from the one belonging to whoever else has an agent open
+  // there — which is the reason TASK-43 took the rung off the ladder.
+  test("the same task in a directory it does not own guesses nothing", async () => {
+    const { manager, store, agent } = newManager();
+    const row = suspendedTask(manager, store, { created_at: Date.now() - 60_000 });
+    plantTranscripts(row.cwd, ["the-real-one"]);
+
+    const resumed = await manager.resumeTask(row.id);
+
+    expect(agent.invocations()).toHaveLength(0);
+    expect(resumed!.agent_state).toBe("could_not_resume");
+    expect(resumed!.lifecycle).toBe("suspended");
+  });
+
+  // Where the scan reaches, and where it must not. `--continue` opens the
+  // newest conversation in the directory, so a scan that did not exclude the
+  // ids above it would hand back that very file — two attempts at one
+  // conversation, the second able only to fail the way the first did.
+  //
+  // Past it, though, is the point. §4.3 wants this rung for a conversation the
+  // newest one has superseded and cannot open — pruned, or skewed by a version
+  // that has moved on — and in a checkout nothing else runs in, the one behind
+  // it is still this task's. That is a worse conversation than the current one
+  // and a far better outcome than a card saying nothing could be opened.
+  test("the scan reaches past what was already tried, never back to it", async () => {
+    // Matched against the whole argv and split on whitespace, so the failing
+    // rungs are named by the id and the flag rather than by a pair.
+    const { manager, store, agent } = newManager(["stored-session-id", "--continue"]);
+    const row = worktreeTask(manager, store, { created_at: Date.now() - 60_000 });
+    plantTranscripts(row.cwd, ["stored-session-id", "older-one"]);
+
+    const resumed = await manager.resumeTask(row.id);
+
+    expect(resumed!.lifecycle).toBe("live");
+    const invocations = await agent.settled(3);
+    expect(invocations.map((argv) => argv.find((a) => a === "--resume" || a === "--continue")))
+      .toEqual(["--resume", "--continue", "--resume"]);
+    // Not the id `--continue` had already opened, which is the half that would
+    // regress silently: a duplicated rung looks like a working ladder.
+    expect(invocations.filter((argv) => argv.includes("--resume"))
+      .map((argv) => argv[argv.indexOf("--resume") + 1]))
+      .toEqual(["stored-session-id", "older-one"]);
   });
 
   // The rung that recovers a row whose id has gone stale: transcript_path came
