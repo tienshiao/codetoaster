@@ -340,12 +340,13 @@ export class TaskManager {
       agent_session_id: crypto.randomUUID(),
       title,
       title_source: options.title ? "manual" : "derived",
-      // Trimmed, because `buildAgentCommand` judges this on truthiness: a
-      // prompt of nothing but whitespace is "nothing to say" to
-      // `titleFromPrompt` above, and has to be the same thing here — untrimmed
-      // it is truthy, and the agent is started with a blank turn already
-      // submitted instead of the plain interactive session the title fallback
-      // just decided this task was.
+      // Trimmed, because `buildAgentCommand` judges this on truthiness and
+      // `titleFromPrompt` above judges it on having a non-blank line: the two
+      // must agree, or a whitespace-only prompt gets the directory label as
+      // though it said nothing while still travelling in argv to submit a blank
+      // opening turn. `POST /api/tasks` refuses a blank prompt outright, so
+      // this is what keeps the invariant true for a caller reaching the manager
+      // directly rather than a second line of defence against the route.
       initial_prompt: options.prompt?.trim() ?? "",
       // Resolved once and stored, so the data routes never have to ask a
       // process where they are (§5.4). `undefined` (the lookup never ran) is

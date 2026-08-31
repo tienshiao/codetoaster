@@ -119,7 +119,27 @@ describe("POST /api/tasks", () => {
     expect(row.title_source).toBe("manual");
   });
 
-  test("a task with no prompt yet is allowed — the composer arrives later", async () => {
+  test("a prompt of nothing but whitespace is refused, not reinterpreted", async () => {
+    for (const prompt of ["", "   ", "  \n\t\n "]) {
+      const res = await post({ prompt });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe(`"prompt" cannot be blank`);
+    }
+    // Nothing was created on the way to saying so.
+    expect(taskManager.listTasks()).toHaveLength(0);
+  });
+
+  test("a prompt keeps its shape but loses its surrounding space", async () => {
+    const task = await (await post({ prompt: "  fix the parser\n\nand the tests  " })).json();
+    // Trimmed at the edges only: the blank line in the middle is the user's.
+    expect(taskManager.getTask(task.id)!.initial_prompt).toBe("fix the parser\n\nand the tests");
+    expect(task.title).toBe("fix the parser");
+  });
+
+  // Absent and blank are two different things: a task can be started with
+  // nothing to say — the sidebar's New task button — and that is not a mistake
+  // the way an empty prompt field is.
+  test("a task with no prompt at all is allowed", async () => {
     const task = await (await post({})).json();
     expect(taskManager.getTask(task.id)!.initial_prompt).toBe("");
   });

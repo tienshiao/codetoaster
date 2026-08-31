@@ -55,9 +55,9 @@ export const taskRoutes = {
 
       const fields = {
         projectId: optionalString(body.projectId),
-        // Optional until the composer exists (TASK-24). The row's
-        // initial_prompt is NOT NULL, so an absent one is recorded as empty
-        // rather than refused — a v1 "New Session" has nothing to say yet.
+        // Optional: a task can be started with nothing to say — the sidebar's
+        // New task button — and the row records that as empty. Present-but-
+        // blank is refused below; the two are not the same thing.
         prompt: optionalString(body.prompt),
         title: optionalString(body.title),
         model: optionalString(body.model),
@@ -76,6 +76,18 @@ export const taskRoutes = {
       if (typeof fields.title === "string") {
         if (!fields.title.trim()) return badRequest(`"title" cannot be blank`);
         fields.title = fields.title.trim();
+      }
+      // Same bar, and for a sharper reason than the title's. A prompt is what
+      // the agent is *asked*, and one that is nothing but whitespace asks
+      // nothing: the title derived from it would fall back to the directory
+      // label as though no prompt had been given, while the prompt itself,
+      // being truthy, would still travel in argv and submit a blank opening
+      // turn. Absent and blank have to be one thing or two, and they are two —
+      // so the blank one is a mistake worth naming rather than quietly
+      // reinterpreting as the other.
+      if (typeof fields.prompt === "string") {
+        if (!fields.prompt.trim()) return badRequest(`"prompt" cannot be blank`);
+        fields.prompt = fields.prompt.trim();
       }
       const cols = optionalSize(body.cols);
       const rows = optionalSize(body.rows);
