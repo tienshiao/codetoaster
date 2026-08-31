@@ -1,14 +1,15 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { FolderPlus, Pencil, Trash2, X } from "lucide-react";
+import { FolderPlus, Pencil, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { groupByProject, selectTasks } from "@/frontend/task-list";
 import { meaningfulTitle, sessionDisplayNames } from "@/lib/xtmux/naming";
-import type { TaskInfo } from "@/lib/xtmux/types";
+import type { ProjectInfo, ProjectSettings, TaskInfo } from "@/lib/xtmux/types";
 import type { AppShellProps, ShellTask } from "@/frontend/components/v2/AppShell";
 import { Dialog } from "@/frontend/components/v2/Dialog";
 import { IconButton } from "@/frontend/components/v2/IconButton";
 import { TextInput } from "@/frontend/components/v2/TextInput";
 import { DirectoryBrowser, PathField } from "@/frontend/components/PathField";
+import { ProjectSettingsDialog } from "@/frontend/components/ProjectSettingsDialog";
 
 /**
  * The chat-history / resume list (§7.5): the shell's left column, fed by
@@ -120,28 +121,50 @@ export function TaskRowActions({ taskId, label, busy, onRename, onClose }: TaskR
 }
 
 interface ProjectActionsProps {
-  projectId: string;
-  name: string;
+  project: ProjectInfo;
+  onSave: (name: string, initialPath: string, settings: Partial<ProjectSettings>) => void;
   onDelete: (id: string) => void;
+  /** General is the fallback every orphaned task moves to, so deleting it would
+   * leave them nowhere. The server refuses, and offering a button that opens a
+   * dialog that does nothing would be worse than not offering one. Its
+   * settings are still worth reaching: it has no repository, but it still
+   * decides a default model and permission mode. */
+  deletable: boolean;
 }
 
-function ProjectActions({ projectId, name, onDelete }: ProjectActionsProps) {
+function ProjectActions({ project, onSave, onDelete, deletable }: ProjectActionsProps) {
   const [confirming, setConfirming] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const name = project.name;
   return (
     <>
+      <IconButton
+        icon={SlidersHorizontal}
+        label={`${name} settings`}
+        size="sm"
+        onClick={() => setSettingsOpen(true)}
+      />
+      <ProjectSettingsDialog
+        project={project}
+        open={settingsOpen}
+        onSave={onSave}
+        onClose={() => setSettingsOpen(false)}
+      />
+      {deletable ? (
       <IconButton
         icon={Trash2}
         label={`Delete ${name}`}
         size="sm"
         onClick={() => setConfirming(true)}
       />
+      ) : null}
       <Dialog
         open={confirming}
         title="Delete this project?"
         description={`"${name}" will be deleted. Its tasks are not: they move to General.`}
         confirmLabel="Delete"
         confirmVariant="destructive"
-        onConfirm={() => onDelete(projectId)}
+        onConfirm={() => onDelete(project.id)}
         onClose={() => setConfirming(false)}
       />
     </>
@@ -269,7 +292,7 @@ export function useTaskSidebar({
   selectedTaskId,
   onSelectTask,
 }: TaskSidebarOptions): TaskSidebarProps {
-  const { tasks, projects, createTask, renameTask, closeTask, createProject, deleteProject } =
+  const { tasks, projects, createTask, renameTask, closeTask, createProject, updateProject, deleteProject } =
     useTasks();
   const [filter, setFilter] = useState("");
   const [grouped, setGrouped] = useState(false);
@@ -283,6 +306,18 @@ export function useTaskSidebar({
   );
   const handleClose = useCallback((id: string) => void closeTask(id), [closeTask]);
   const handleDeleteProject = useCallback((id: string) => deleteProject(id), [deleteProject]);
+
+  const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
+
+  /** One message for the whole dialog — the name, the path and the defaults
+   * (TASK-61). `updateProject` takes all three because renaming, moving and
+   * reconfiguring are the same write, and splitting them would give a failure
+   * a way to land half of it. */
+  const handleSaveProject = useCallback(
+    (id: string, name: string, initialPath: string, settings: Partial<ProjectSettings>) =>
+      updateProject(id, name, initialPath, settings),
+    [updateProject],
+  );
 
   // The label is projected, not stored: an explicit rename, else the live
   // terminal title when it carries real content *and is unique*, else the
@@ -368,19 +403,19 @@ export function useTaskSidebar({
       // Indented here and not in `rows`, because the same row is drawn both
       // ways and only one of them has a chevron to line up under.
       tasks: group.tasks.map((t) => ({ ...rowById.get(t.id)!, indent: true })),
-      // General is the fallback every orphaned task moves to, so deleting it
-      // would leave them nowhere; the server refuses, and offering the button
-      // anyway would just be a dialog that does nothing.
-      actions:
-        group.id === "general" ? undefined : (
-          <ProjectActions
-            projectId={group.id}
-            name={group.name}
-            onDelete={handleDeleteProject}
-          />
-        ),
+      // Only for a project that is really one. `groupByProject` also emits a
+      // group for tasks whose project has gone, and there is nothing behind
+      // that header to configure or delete.
+      actions: projectById.get(group.id) ? (
+        <ProjectActions
+          project={projectById.get(group.id)!}
+          onSave={(name, path, settings) => handleSaveProject(group.id, name, path, settings)}
+          onDelete={handleDeleteProject}
+          deletable={group.id !== "general"}
+        />
+      ) : undefined,
     }));
-  }, [rows, visible, projects, projectNames, closedGroups, filter, handleDeleteProject]);
+  }, [rows, visible, projects, projectNames, closedGroups, filter, projectById, handleSaveProject, handleDeleteProject]);
 
   const headerActions: ReactNode = <NewProjectButton onCreate={createProject} />;
 
