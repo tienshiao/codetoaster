@@ -652,7 +652,15 @@ export class TaskManager {
         branch: row.branch,
         dirty: status.dirty,
         unpushed: status.unpushed,
-        merged: status.merged,
+        // `atBase` is what keeps the 'archive?' nudge from firing on every
+        // task the moment it is made: `merge-base --is-ancestor` is reflexive,
+        // so a branch still standing on the commit it was cut from is
+        // "merged" to git from the second `worktree add -b` returns. The card
+        // is about work that has landed, and a branch nothing has happened on
+        // has not landed anything. Archive still reads `status.merged` — a
+        // branch with no commits of its own is precisely the one that is safe
+        // to delete.
+        merged: status.merged && !status.atBase,
       };
       const previous = this.worktreeStatus.get(taskId);
       this.worktreeStatus.set(taskId, next);
@@ -2548,6 +2556,10 @@ export class TaskManager {
     }
 
     await removeTaskDir(taskId);
+    // The stamp it dated went with that directory, and an archived task never
+    // spawns again — so the entry would sit in the map for the life of the
+    // daemon. `deleteTask` clears it for the same reason.
+    this.spawnedAt.delete(taskId);
 
     const outcome: ArchiveOutcome = {
       status,

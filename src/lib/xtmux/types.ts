@@ -150,8 +150,13 @@ export interface TaskWorktreeInfo {
   /** Commits the branch would take with it: on neither the base ref nor a
    * remote. */
   unpushed: number;
-  /** The branch tip is already contained in the base ref — the 'archive?'
-   * nudge (§5.6). */
+  /** The branch's work is already contained in the base ref — the 'archive?'
+   * nudge (§5.6).
+   *
+   * Narrower than git's own "is an ancestor of", which is reflexive and so is
+   * true of a branch that has never moved off the commit it was cut from. A
+   * task that has done nothing is not a task to archive, so a branch still
+   * standing on its base answers false here. */
   merged: boolean;
 }
 

@@ -75,6 +75,40 @@ describe("branchStatus", () => {
     expect(status.pushed).toBe(false);
     expect(status.unpushed).toBe(0);
     expect(branchIsExpendable(status)).toBe(true);
+    // Nothing has happened on it, which is what keeps the card's 'archive?'
+    // nudge off a task that has only just been created — `merged` alone cannot
+    // say, because `merge-base --is-ancestor` is reflexive.
+    expect(status.atBase).toBe(true);
+  });
+
+  test("a branch merged into a base that has moved on is not at its base", async () => {
+    const root = await tempRepo();
+    await branchWithCommits(root, "codetoaster/landed", 1);
+    // A merge commit, so `main` ends up ahead of the branch rather than on it —
+    // the ordinary shape of work that landed.
+    await git(root, "merge", "--no-ff", "-m", "merge", "codetoaster/landed");
+
+    const status = await branchStatus(root, {
+      branch: "codetoaster/landed",
+      baseRef: "main",
+      worktreePath: null,
+    });
+
+    expect(status.merged).toBe(true);
+    expect(status.atBase).toBe(false);
+  });
+
+  test("an unresolvable base ref leaves atBase false rather than guessing", async () => {
+    const root = await tempRepo();
+    await git(root, "branch", "codetoaster/orphan");
+
+    const status = await branchStatus(root, {
+      branch: "codetoaster/orphan",
+      baseRef: "refs/heads/gone",
+      worktreePath: null,
+    });
+
+    expect(status.atBase).toBe(false);
   });
 
   test("commits not in the base ref and not on a remote are counted and keep the branch", async () => {

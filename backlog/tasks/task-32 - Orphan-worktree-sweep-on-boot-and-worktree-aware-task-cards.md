@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-31 21:26'
+updated_date: '2026-08-31 21:52'
 labels:
   - server
   - frontend
@@ -76,6 +76,18 @@ Measured on the events that move it — a finished turn (the Stop hook, which is
 **A bug this introduced and the fix.** Measuring in the background collided with the WIP snapshot: plain `git status` takes `index.lock` to write back the index it refreshed, and `snapshotWip`'s `git add -A` needs it — two archive tests failed with `Unable to create '…/index.lock': File exists`. `dirtyCount` now passes `--no-optional-locks`, which is exactly what git provides for a tool that polls status, and costs only the cached-stat write.
 
 Validation: `bunx tsc --noEmit` clean; `bun run test` green (906 unit across 15 files, 111 render across 15). `~/.codetoaster/worktrees` verified untouched after full runs.
+
+**Post-review fix (the important one).** `merge-base --is-ancestor` is reflexive, and `createWorktree` cuts the branch at exactly `base_ref` — so every brand-new worktree task reported `merged: true` and wore the 'archive?' nudge before its agent had written a line. The nudge was noise on 100% of new tasks.
+
+`BranchStatus` gained `atBase` (branch tip is the commit the base ref names) rather than folding the condition into `merged`, and the card reads `merged && !atBase`. `branchIsExpendable` — what archive and hard delete use to decide whether a branch can go — deliberately still reads the raw `merged`: a branch with no commits of its own is precisely the one that is safest to delete. `baseCommit` now returns the peeled sha instead of a boolean, so `atBase` is a string compare rather than a sixth git startup.
+
+Known tradeoff: after a *fast-forward* merge the base has moved to the branch tip, which is indistinguishable by refs alone from a branch that never started, so that case loses the nudge. Telling them apart would mean recording the base sha at create time. Strictly better than the false positive it replaces, and worth revisiting if the nudge proves load-bearing.
+
+Also fixed in review: `create.ts`'s `discard()` was a verbatim copy of `discardCheckout` plus a branch delete (now composes it); `reconcile.ts` parsed a `branch` out of `worktree list --porcelain` that nothing read; `doArchive` never dropped its `spawnedAt` entry, leaking one per archived task for the life of the daemon.
+
+Left alone deliberately: `doArchive` writes `worktree_state: "evicted"` unconditionally where `doEvict` re-checks the directory first. Nothing reopens an archived task, and the state is self-correcting through the very sweep this task added — an archived row is not in `claimed`, so a directory its removal failed to take is found as an orphan and either removed or carded.
+
+Re-verified: `bunx tsc --noEmit` clean, `bun run test` green (908 unit, 111 render).
 <!-- SECTION:NOTES:END -->
 
 ## Comments

@@ -43,10 +43,16 @@ export interface ReconcileReport {
   unclaimed: UnclaimedWorktree[];
 }
 
-/** One record of `git worktree list --porcelain`. */
+/** One record of `git worktree list --porcelain`.
+ *
+ * The path and nothing else: the record also carries a `branch` line, and the
+ * only caller wants the *repository* a directory belongs to. An unclaimed
+ * card's branch is read from the checkout itself (`branchOf`), which is the
+ * only way to get one for a checkout no repository here has listed — so
+ * parsing it twice would leave a field that is authoritative on one path and
+ * absent on the other. */
 interface RegisteredWorktree {
   path: string;
-  branch: string | null;
 }
 
 /** The worktrees a repository has registered.
@@ -70,9 +76,7 @@ async function registeredWorktrees(repoRoot: string): Promise<RegisteredWorktree
     // Records are separated by a blank line, and `worktree` always opens one.
     if (line.startsWith("worktree ")) {
       if (current) found.push(current);
-      current = { path: line.slice("worktree ".length), branch: null };
-    } else if (line.startsWith("branch ") && current) {
-      current.branch = line.slice("branch ".length).replace(/^refs\/heads\//, "");
+      current = { path: line.slice("worktree ".length) };
     }
   }
   if (current) found.push(current);

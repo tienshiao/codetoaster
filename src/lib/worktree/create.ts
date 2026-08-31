@@ -5,6 +5,7 @@ import type { TaskRow } from "../db";
 import { allocateBranch } from "./branch";
 import { copyProjectFiles, type WorktreeProject } from "./copy";
 import { WorktreeError } from "./errors";
+import { discardCheckout } from "./evict";
 import { withRepoLock } from "./lock";
 import { worktreePathFor } from "./paths";
 import { assertPathFree, lockKeyFor, repoRootOf } from "./repo";
@@ -119,22 +120,19 @@ export function createWorktree(
 
 /** Take a checkout and its branch back off disk.
  *
- * `--force` because the tree may hold files git does not know about — the
- * `worktree_copy` entries, anything setup wrote — which is exactly what
- * `worktree remove` refuses to discard on its own.
+ * `discardCheckout` and then the branch, which is the entire difference from an
+ * eviction: there the branch and the WIP ref *are* the task and the directory
+ * is the disposable part, while here the branch was minted moments ago from the
+ * title and has to go with the create that failed — left behind, its name is
+ * burned and the next attempt at the same task gets a `-2` it did not earn.
  *
- * Checked rather than fired and forgotten, because "or it produces none" is a
- * promise and a `worktree remove` that fails breaks it twice over: the
- * checkout stays, and `branch -D` then fails too — the branch is still checked
- * out in it — so the name is burned and the next create for the same title
- * gets a `-2` it did not earn. Deleting the directory ourselves and pruning
- * the registration it leaves is the same end state by a blunter route. */
+ * The removal is checked rather than fired and forgotten inside
+ * `discardCheckout`, which matters twice over here: a `worktree remove` that
+ * fails leaves the checkout *and* makes `branch -D` fail too, since the branch
+ * is still checked out in it. Deleting the directory outright and pruning the
+ * registration it leaves is the same end state by a blunter route. */
 async function discard(repoRoot: string, worktreePath: string, branch: string): Promise<void> {
-  const removed = await gitSpawn(repoRoot, ["worktree", "remove", "--force", worktreePath]);
-  if (removed.exitCode !== 0) {
-    await fsp.rm(worktreePath, { recursive: true, force: true }).catch(() => {});
-    await gitSpawn(repoRoot, ["worktree", "prune"]);
-  }
+  await discardCheckout(repoRoot, worktreePath);
   await gitSpawn(repoRoot, ["branch", "-D", branch]);
 }
 

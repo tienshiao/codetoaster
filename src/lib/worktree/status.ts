@@ -24,6 +24,23 @@ export interface BranchStatus {
   merged: boolean;
   /** The branch tip is contained in some `refs/remotes/*` ref. */
   pushed: boolean;
+  /** The branch is sitting on exactly the commit the base ref names, so nothing
+   * has happened on it yet.
+   *
+   * `merged` cannot tell that apart on its own: `merge-base --is-ancestor` is
+   * reflexive, so a branch that has never moved off its base is "merged" from
+   * the moment `worktree add -b` creates it — which made every brand-new task
+   * wear the 'archive?' nudge before its agent had written a line.
+   *
+   * False when the base ref cannot be resolved, on the same fail-closed rule as
+   * the rest of this module: with no base there is nothing to be identical to,
+   * and claiming otherwise would suppress a nudge on evidence nobody gathered.
+   *
+   * Deliberately *not* folded into `merged`, which archive reads to decide
+   * whether a branch is expendable: a branch with no commits of its own is
+   * exactly the one that is safest to delete. This is the card's business
+   * alone. */
+  atBase: boolean;
 }
 
 /** How many files `git status --porcelain` reports in the checkout.
@@ -60,17 +77,24 @@ export async function dirtyCount(worktreePath: string | null): Promise<number | 
   return stdout.split("\n").filter((line) => line.trim() !== "").length;
 }
 
-/** Whether `baseRef` names something this repository can actually resolve.
+/** The commit `baseRef` names, or null if this repository cannot resolve it.
  *
- * Asked once and separately because two of the answers below take a different
+ * Asked once and separately because three of the answers below take a different
  * shape depending on it, and a base ref that has since been deleted — the
  * project's `main` renamed, a task branched from a branch that was itself
  * archived — is an ordinary state rather than a failure. `^{commit}` so a tag
- * or a symbolic ref resolves to the thing `merge-base` and `rev-list` need. */
-async function resolves(repoRoot: string, ref: string | null): Promise<boolean> {
-  if (ref === null) return false;
-  const { exitCode } = await gitSpawn(repoRoot, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
-  return exitCode === 0;
+ * or a symbolic ref resolves to the thing `merge-base` and `rev-list` need.
+ *
+ * The commit rather than a bare yes/no, because `atBase` needs it: the same
+ * call answers "is this ref usable?" and "is the branch standing on it?", and
+ * splitting them would put a sixth git startup on the latency of a dialog. */
+async function baseCommit(repoRoot: string, ref: string | null): Promise<string | null> {
+  if (ref === null) return null;
+  const { stdout, exitCode } = await gitSpawn(repoRoot, [
+    "rev-parse", "--verify", "--quiet", `${ref}^{commit}`,
+  ]);
+  const sha = stdout.trim();
+  return exitCode === 0 && sha ? sha : null;
 }
 
 /** Commits the branch would take with it if it were deleted.
@@ -160,25 +184,29 @@ export async function branchStatus(
   repoRoot: string,
   target: { branch: string; baseRef: string | null; worktreePath: string | null },
 ): Promise<BranchStatus> {
-  const [head, dirty, baseUsable] = await Promise.all([
+  const [head, dirty, baseSha] = await Promise.all([
     gitSpawn(repoRoot, ["rev-parse", "--verify", "--quiet", `refs/heads/${target.branch}`]),
     dirtyCount(target.worktreePath),
-    resolves(repoRoot, target.baseRef),
+    baseCommit(repoRoot, target.baseRef),
   ]);
   if (head.exitCode !== 0) {
-    return { exists: false, dirty, unpushed: 0, merged: false, pushed: false };
+    return { exists: false, dirty, unpushed: 0, merged: false, pushed: false, atBase: false };
   }
 
   // An unresolvable base is passed on as no base at all, so the two questions
   // that take one degrade in the documented way instead of asking git about a
   // ref it will reject.
-  const base = baseUsable ? target.baseRef : null;
+  const base = baseSha !== null ? target.baseRef : null;
   const [unpushed, merged, pushed] = await Promise.all([
     unpushedCount(repoRoot, target.branch, base),
     isMerged(repoRoot, target.branch, base),
     isPushed(repoRoot, target.branch),
   ]);
-  return { exists: true, dirty, unpushed, merged, pushed };
+  // Both sides are already commit ids — `refs/heads/*` points at one, and
+  // `baseCommit` peeled its ref — so this is a string compare rather than a
+  // sixth git.
+  const atBase = baseSha !== null && head.stdout.trim() === baseSha;
+  return { exists: true, dirty, unpushed, merged, pushed, atBase };
 }
 
 /** Whether deleting the branch would lose commits.
