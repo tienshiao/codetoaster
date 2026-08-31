@@ -89,19 +89,26 @@ export function Composer() {
     // Only what the user actually overrode goes on the wire: an absent field
     // means "whatever the project says", and `createTask` on the server is
     // where that is resolved — so the API and the CLI get the same answer.
-    const result = await createTask({
-      prompt: text,
-      projectId: project?.id,
-      model: model || undefined,
-      permissionMode: mode || undefined,
-      // The grid the agent is spawned at, before any client has attached and
-      // so the only size the server has to go on. Left off, the agent paints
-      // its opening banner at the 80×24 fallback and reflows the moment the
-      // tab attaches at the real width. Same pair the sidebar's "new task"
-      // sends, so the two doors produce the same task.
-      cols: 120,
-      rows: 30,
-    });
+    const result = await createTask(
+      {
+        prompt: text,
+        projectId: project?.id,
+        model: model || undefined,
+        permissionMode: mode || undefined,
+        // The grid the agent is spawned at, before any client has attached and
+        // so the only size the server has to go on. Left off, the agent paints
+        // its opening banner at the 80×24 fallback and reflows the moment the
+        // tab attaches at the real width. Same pair the sidebar's "new task"
+        // sends, so the two doors produce the same task.
+        cols: 120,
+        rows: 30,
+      },
+      // Inline, not a toast. This is a form: the message belongs under the
+      // control that failed, next to the prompt still sitting in the box.
+      // Toasting is what every other mutation wants, most of which are
+      // fire-and-forget and have nowhere to put a message.
+      { inline: true },
+    );
 
     if (!result.ok) {
       // The prompt stays exactly as typed. It is the only copy of it, and a

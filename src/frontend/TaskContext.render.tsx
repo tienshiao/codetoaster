@@ -20,6 +20,7 @@ const stubs = vi.hoisted(() => ({
   send: vi.fn(),
   playNotificationSound: vi.fn(),
   subscriber: null as SocketSubscriber | null,
+  toastError: vi.fn(),
 }));
 
 vi.mock("./PtyContext", () => ({
@@ -37,7 +38,7 @@ vi.mock("./PtyContext", () => ({
 vi.mock("./hooks/use-notification-sound", () => ({
   playNotificationSound: stubs.playNotificationSound,
 }));
-vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
+vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: stubs.toastError }) }));
 
 const { TaskProvider, useTasks } = await import("./TaskContext");
 
@@ -89,6 +90,7 @@ let hasFocus: boolean;
 beforeEach(() => {
   stubs.send.mockReset();
   stubs.playNotificationSound.mockReset();
+  stubs.toastError.mockReset();
   stubs.subscriber = null;
   hasFocus = true;
   vi.spyOn(document, "hasFocus").mockImplementation(() => hasFocus);
@@ -190,4 +192,40 @@ test("a user who has refused notifications is not asked again", () => {
   expect(notifications).toHaveLength(0);
   expect(Notification.requestPermission).not.toHaveBeenCalled();
   expect(stubs.playNotificationSound).toHaveBeenCalledTimes(1);
+});
+
+// TASK-57. Where a mutation's failure is reported is decided once, in
+// `request`: it toasts unless the caller says it is showing the message itself.
+// The alternative — every caller doing its own reporting — is how the composer
+// ended up saying the same thing twice.
+test("a failed mutation is toasted, unless the caller renders it inline", async () => {
+  let created: ReturnType<typeof useTasks>["createTask"];
+  function Capture() {
+    created = useTasks().createTask;
+    return null;
+  }
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ error: "spawn ENOENT" }), { status: 500 })),
+  );
+  render(
+    <TaskProvider>
+      <Capture />
+    </TaskProvider>,
+  );
+
+  await act(async () => {
+    await created!({ prompt: "no toast" }, { inline: true });
+  });
+  expect(stubs.toastError).not.toHaveBeenCalled();
+
+  // The sidebar's New task button is the same mutation with nowhere to put a
+  // message, and it must not fail in silence.
+  await act(async () => {
+    await created!({ prompt: "toast" });
+  });
+  expect(stubs.toastError).toHaveBeenCalledWith(
+    "Could not start the task",
+    expect.objectContaining({ description: "spawn ENOENT" }),
+  );
 });

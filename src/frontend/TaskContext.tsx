@@ -76,7 +76,12 @@ export interface TaskContextValue {
   /** Debounced liveness per task id, straight from the socket's `activity`. */
   activity: Record<string, boolean>;
   taskById: (id: string) => TaskInfo | undefined;
-  createTask: (options?: CreateTaskOptions) => Promise<TaskResult<TaskInfo>>;
+  /** `request` reports the failure as a toast unless the caller passes
+   * `{ inline: true }` to say it is showing the message itself. */
+  createTask: (
+    options?: CreateTaskOptions,
+    reporting?: RequestOptions,
+  ) => Promise<TaskResult<TaskInfo>>;
   renameTask: (id: string, title: string) => Promise<TaskResult<TaskInfo>>;
   closeTask: (id: string) => Promise<TaskResult<TaskInfo>>;
   resumeTask: (id: string, options?: ResumeTaskOptions) => Promise<TaskResult<TaskInfo>>;
@@ -189,11 +194,36 @@ function fireWebNotification(
   }
 }
 
+/**
+ * How a mutation's failure reaches the user.
+ *
+ * The rule, in one place so it is not re-decided at each call site: **every
+ * failure is toasted unless the caller says it is showing the message itself.**
+ * Toasting by default is what keeps a fire-and-forget mutation — `void
+ * renameTask(...)`, the sidebar's close — from failing in silence, and those
+ * are most of them; a component with nowhere to put an error has to be able to
+ * not think about this.
+ *
+ * `inline` is the opt-out, and it is a property of the *call*, not of the
+ * mutation: `createTask` is reached from the composer, which has a slot under
+ * its textarea, and from the sidebar's New task button, which has none. Only
+ * the component knows which it is.
+ */
+export interface RequestOptions {
+  /** The caller renders this failure itself, so the toast would be the second
+   * copy of it. */
+  inline?: boolean;
+}
+
 async function request<T>(
   input: string,
   init: RequestInit,
   failure: string,
+  { inline = false }: RequestOptions = {},
 ): Promise<TaskResult<T>> {
+  const report = (description: string) => {
+    if (!inline) toast.error(failure, { description });
+  };
   let response: Response;
   try {
     response = await fetch(input, init);
@@ -201,7 +231,7 @@ async function request<T>(
     // A fetch that never reached the daemon: it is down, or the browser is
     // offline. Worth saying plainly rather than as a status code.
     const error = { status: 0, message: cause instanceof Error ? cause.message : "Network error" };
-    toast.error(failure, { description: error.message });
+    report(error.message);
     return { ok: false, error };
   }
 
@@ -216,7 +246,7 @@ async function request<T>(
       // Keep the status line.
     }
     const error = { status: response.status, message };
-    toast.error(failure, { description: message });
+    report(message);
     return { ok: false, error };
   }
 
@@ -373,7 +403,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     retainLayouts(ids);
   }, [tasks, loaded]);
 
-  const createTask = useCallback(async (options: CreateTaskOptions = {}) => {
+  const createTask = useCallback(async (options: CreateTaskOptions = {}, reporting?: RequestOptions) => {
     const result = await request<TaskInfo>(
       "/api/tasks",
       {
@@ -382,6 +412,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(options),
       },
       "Could not start the task",
+      reporting,
     );
     // Seeded from the answer, the same upsert the socket's `task` delta does.
     // The two are separate transports racing each other, and a caller that

@@ -14,7 +14,7 @@ import type { ProjectInfo, TaskInfo } from "../../lib/xtmux/types";
  */
 
 const stubs = vi.hoisted(() => ({
-  createTask: vi.fn<(options?: unknown) => Promise<TaskResult<TaskInfo>>>(),
+  createTask: vi.fn<(options?: unknown, reporting?: unknown) => Promise<TaskResult<TaskInfo>>>(),
   openTask: vi.fn(),
   projects: [] as ProjectInfo[],
 }));
@@ -87,6 +87,9 @@ test("⌘⏎ starts the task and opens its agent tab", async () => {
     cols: 120,
     rows: 30,
   });
+  // The composer renders its own failures under the textarea, so it asks
+  // `request` not to toast them a second time (TASK-57).
+  expect(stubs.createTask.mock.calls[0]![1]).toEqual({ inline: true });
   await waitFor(() => expect(stubs.openTask).toHaveBeenCalledWith("task-1", { tab: "agent" }));
 });
 
