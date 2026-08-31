@@ -1719,6 +1719,15 @@ export class TaskManager {
    * refuse the same states — an evicted task's ref is how it is stored, not a
    * decision, and a checkout that is not on disk has nothing to apply into. */
   private pendingWip(taskId: string): { ref: string; worktreePath: string } | null {
+    // Not while an eviction is running. `doEvict` writes the ref through
+    // `snapshotTaskWip` and only *then* removes the checkout, so for the whole
+    // of `git worktree remove` the row reads exactly like a refused snapshot —
+    // `present`, with a `wip_ref` — and a discard landing in that window drops
+    // the one commit the eviction is relying on. The checkout and the snapshot
+    // would both be gone, which is the single way this design can lose work.
+    // Refused rather than queued: the eviction finishes in a moment and clears
+    // the state that made the question look outstanding.
+    if (this.evicting.has(taskId)) return null;
     const row = this.store.get(taskId);
     if (!row?.wip_ref || !row.worktree_path) return null;
     if (row.worktree_state !== "present") return null;
@@ -1759,9 +1768,21 @@ export class TaskManager {
    * and the third choice, keeping the ref and answering later, costs nothing
    * and is what a user who is unsure should take. */
   async discardTaskWip(taskId: string): Promise<boolean> {
-    const pending = this.pendingWip(taskId);
-    if (!pending) return false;
-    await dropWip(pending.worktreePath, taskId);
+    // Its own guard rather than `pendingWip`, and the difference is the
+    // checkout. Applying writes files into a directory and so needs one on
+    // disk; dropping a ref needs only the repository, which the row can name
+    // by itself now. Without this, a task whose checkout was removed by hand
+    // shows a notice neither button can clear — and its ref would go on
+    // keeping it from ever being evicted again.
+    //
+    // Still only for a *present* checkout: an evicted task's ref is how its
+    // work is stored rather than a decision, and discarding that destroys it.
+    if (this.evicting.has(taskId)) return false;
+    const row = this.store.get(taskId);
+    if (!row?.wip_ref || row.worktree_state !== "present") return false;
+    const repoRoot = await this.repoRootFor(row);
+    if (!repoRoot) return false;
+    await dropWip(repoRoot, taskId);
     if (!this.store.get(taskId)) return true;
     this.store.update(taskId, { wip_ref: null, wip_at: null });
     this.broadcastTask(taskId);
@@ -2000,7 +2021,15 @@ export class TaskManager {
       // The agent runs in its checkout, and a task restored after a `missing`
       // may have been left pointing at a path that no longer existed.
       cwd: restored.worktreePath,
-      ...(restored.wip === "applied" ? { wip_ref: null, wip_at: null } : {}),
+      // Only `stale` keeps them, because only `stale` is a decision anybody
+      // owes. `applied` consumed the snapshot; `none` means git had no such ref
+      // to begin with — a row still naming one there is a leftover, and leaving
+      // it is not harmless: `wip_ref` on a `present` checkout *is* how "owes a
+      // decision" is spelled, so the task would show the refused-snapshot
+      // notice for a snapshot that does not exist (Apply then failing on the
+      // missing ref), and `snapshotTaskWip` refuses a row that already has one
+      // — so it could never be evicted again either.
+      ...(restored.wip === "stale" ? {} : { wip_ref: null, wip_at: null }),
     });
     this.broadcastTask(taskId);
     return restored;
@@ -2189,7 +2218,15 @@ export class TaskManager {
       // The two columns are the state; there is no third thing to consult.
       // `worktree_state` alone would be true of an *evicted* task, whose ref is
       // the ordinary way it is stored rather than a decision anyone owes.
-      wipPending: row.worktree_state === "present" && row.wip_ref !== null,
+      //
+      // Except mid-eviction. `doEvict` writes the ref and broadcasts before it
+      // removes the checkout, so for the length of a `worktree remove` the row
+      // reads exactly like a refused snapshot — and every attached client would
+      // draw a notice for a question nobody is being asked, whose buttons
+      // `pendingWip` then refuses. Held back rather than answered, so the two
+      // agree about what is outstanding.
+      wipPending:
+        row.worktree_state === "present" && row.wip_ref !== null && !this.evicting.has(row.id),
       lastMessage: row.last_message,
       clientCount: pty?.getClientCount() ?? 0,
       // A suspended task remembers the grid it had, so resuming it does not

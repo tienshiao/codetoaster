@@ -1044,3 +1044,131 @@ describe("a task outliving its project", () => {
     expect(error.message).toContain(row.branch!);
   }, 30000);
 });
+
+// The three ways the refused-snapshot state can be wrong about itself. All
+// three are the same underlying hazard: `worktree_state = present` with a
+// `wip_ref` is a *decision*, and anything that produces that pair without one
+// being owed either asks the user a question about nothing or, worse, offers
+// them a button that destroys work.
+describe("the refused-snapshot state says only what is true", () => {
+  async function evictedTask(manager: TaskManager, projectId: string) {
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    fs.writeFileSync(path.join(row.worktree_path!, "README.md"), "the user's work\n");
+    await manager.closeTask(id);
+    return { id, row };
+  }
+
+  // A restore that found no snapshot used to leave the row still naming one:
+  // `applied` cleared the columns and everything else kept them. The task then
+  // showed the notice forever, Apply failed on the missing ref, and
+  // `snapshotTaskWip` refuses a row that already has one — so it could never be
+  // evicted again either.
+  test("a restore that found no snapshot clears the columns", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await evictedTask(manager, projectId);
+    await manager.evictTask(id);
+    // The ref disappearing out from under the row: a daemon killed between the
+    // snapshot and the removal, then a cleanup by hand.
+    await git(root, "update-ref", "-d", `refs/codetoaster/wip/${id}`);
+    expect(store.get(id)!.wip_ref).not.toBeNull();
+
+    manager.setStartTimeout(200);
+    await manager.resumeTask(id);
+
+    expect(store.get(id)!.wip_ref).toBeNull();
+    expect(manager.taskInfo(id)!.wipPending).toBe(false);
+    expect(fs.existsSync(row.worktree_path!)).toBe(true);
+  }, 30000);
+
+  // The one way this design can lose work. `doEvict` writes the ref and
+  // broadcasts before it removes the checkout, so for the whole of that removal
+  // the row reads like a refused snapshot — and a discard landing there would
+  // drop the very commit the eviction is relying on, leaving neither.
+  //
+  // The window is widened rather than raced. Calling `discardTaskWip` straight
+  // after starting the eviction proves nothing: the ref has not been written
+  // yet at that point, so the discard is refused for having nothing to drop
+  // rather than for the reason under test — which is exactly how the first
+  // version of this test passed with the guard removed. Delaying inside the
+  // snapshot puts a real, bounded gap between "the ref exists" and "the
+  // checkout is gone", which is the window itself, held open.
+  test("a discard cannot land in the middle of an eviction", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await evictedTask(manager, projectId);
+
+    const snapshot = manager.snapshotTaskWip.bind(manager);
+    (manager as any).snapshotTaskWip = async (taskId: string) => {
+      const result = await snapshot(taskId);
+      await Bun.sleep(300);
+      return result;
+    };
+
+    const evicting = manager.evictTask(id);
+    // Inside the window by construction: the ref is on the row and the checkout
+    // is still there.
+    expect(await waitFor(() => store.get(id)!.wip_ref !== null)).toBe(true);
+    expect(fs.existsSync(row.worktree_path!)).toBe(true);
+
+    expect(await manager.discardTaskWip(id)).toBe(false);
+    expect(await evicting).toBe(true);
+
+    // The snapshot survived, which is the whole point: the checkout is gone and
+    // the work is still recoverable.
+    expect(fs.existsSync(row.worktree_path!)).toBe(false);
+    expect(await readWip(root, id)).not.toBeNull();
+    expect(store.get(id)!.wip_ref).not.toBeNull();
+  }, 30000);
+
+  // And nothing asks the question while the eviction is running, rather than
+  // asking it and refusing every answer. Same widened window, for the same
+  // reason: before the ref is written there is nothing to report either way.
+  test("no decision is reported while an eviction is running", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id } = await evictedTask(manager, projectId);
+
+    const snapshot = manager.snapshotTaskWip.bind(manager);
+    (manager as any).snapshotTaskWip = async (taskId: string) => {
+      const result = await snapshot(taskId);
+      await Bun.sleep(300);
+      return result;
+    };
+
+    const evicting = manager.evictTask(id);
+    expect(await waitFor(() => store.get(id)!.wip_ref !== null)).toBe(true);
+    // The row says what a refused snapshot says, and the task still reports no
+    // decision outstanding.
+    expect(store.get(id)!.worktree_state).toBe("present");
+    expect(manager.taskInfo(id)!.wipPending).toBe(false);
+
+    await evicting;
+    expect(manager.taskInfo(id)!.wipPending).toBe(false);
+  }, 30000);
+
+  // Dropping a ref needs the repository, not the checkout — which the row can
+  // name for itself now. Without that, a task whose directory was removed by
+  // hand showed a notice neither button could clear.
+  test("a discard works even when the checkout is gone", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await evictedTask(manager, projectId);
+    await manager.evictTask(id);
+    await git(root, "checkout", "-q", row.branch!);
+    fs.writeFileSync(path.join(root, "README.md"), "committed elsewhere\n");
+    await git(root, "commit", "-qam", "work outside the task");
+    await git(root, "checkout", "-q", "main");
+    manager.setStartTimeout(200);
+    await manager.resumeTask(id);
+    expect(manager.taskInfo(id)!.wipPending).toBe(true);
+
+    // Someone removes the checkout behind our back while the question is open.
+    fs.rmSync(row.worktree_path!, { recursive: true, force: true });
+
+    expect(await manager.discardTaskWip(id)).toBe(true);
+    expect(store.get(id)!.wip_ref).toBeNull();
+    expect(await readWip(root, id)).toBeNull();
+  }, 30000);
+});

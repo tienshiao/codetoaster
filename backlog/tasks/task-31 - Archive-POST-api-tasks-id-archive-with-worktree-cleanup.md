@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-31 03:40'
+updated_date: '2026-08-31 09:02'
 labels:
   - server
   - api
@@ -45,3 +45,13 @@ From TASK-61 (project rename/move): archive resolves the repository from the *pr
 
 Resolve the repository from the worktree instead: `git -C <worktree> rev-parse --git-common-dir` names the repository that actually owns it, whatever the project now points at. The row already carries `worktree_path`, so nothing new has to be stored.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-31 09:02
+---
+From TASK-64's code review: `deleteTask` removes the row, the PTYs and the scrollback, and leaves the worktree entirely. `DELETE /api/tasks/:id` — the CLI's `kill` — on a task with a checkout strands the directory under `~/.codetoaster/worktrees/<project>/<task>`, its `codetoaster/<slug>` branch, and its `refs/codetoaster/wip/<id>`, none of which anything will ever reference again. This task already owns the destructive path, so the cleanup belongs with it; note that it needs `evictWorktree` (or the branch-aware removal this task is about) rather than `removeWorktree`, which deletes the branch because it exists to undo a failed create.
+---
+<!-- COMMENTS:END -->
