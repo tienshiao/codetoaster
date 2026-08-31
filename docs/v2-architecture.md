@@ -681,10 +681,22 @@ list underneath duplicating what is already on screen.
 
 Submit → `POST /api/tasks` → server creates the worktree, writes the per-task settings,
 spawns the agent with the prompt in argv → client navigates to `/t/<slug>` with the
-agent tab focused. The initial prompt becomes the title (first line, truncated); the
-live OSC terminal title becomes the *subtitle* on the task card, which is where
-`naming.ts`'s `meaningfulTitle`/`stripDecoration`/`sessionDisplayNames` logic gets
-reused — same projection, demoted from name to status line.
+agent tab focused.
+
+**The initial prompt becomes the title** — first line, whitespace collapsed, truncated
+(`titleFromPrompt`). It is recorded as `derived`, not `manual`: it is a guess from an
+opening line, so the live OSC terminal title is still projected over it by
+`sessionDisplayNames` exactly as it is over a `<dir> · <branch>` label. A rename is the
+only thing that outranks the agent's own account of what it is doing. A task started
+with no prompt — the sidebar's New task button — falls back to `<dir> · <branch>`.
+
+The card's second line is **`last_message`, not the terminal title.** The original plan
+here was to demote the OSC projection to a subtitle, but the two want the same row and
+`last_message` wins it: this list exists to answer "which of these want me?", and the
+last thing the agent *said* answers that where a title saying `Editing manager.ts` does
+not. The terminal title takes the line only when there is no `last_message` and it is
+not already serving as the label — repeating the label underneath itself says nothing
+(`previewOf`).
 
 ## 8. Reuse inventory
 

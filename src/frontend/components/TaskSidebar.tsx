@@ -44,7 +44,8 @@ function ago(timestamp: number, now: number): string {
  * once the projection has promoted a title to the row's name, repeating it
  * underneath says nothing. That happens when the title is ambiguous across
  * tasks — two agents both reporting "Fix the parser" — where the label falls
- * back to `<dir> · <branch>` and the title is the more specific of the two.
+ * back to the stored title (the task's opening prompt, or `<dir> · <branch>`)
+ * and the terminal title is the more specific of the two.
  */
 function previewOf(task: TaskInfo, label: string): string | undefined {
   if (task.lastMessage) return task.lastMessage;

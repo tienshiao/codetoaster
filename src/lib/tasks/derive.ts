@@ -47,7 +47,44 @@ export async function branchLabel(cwd: string): Promise<string | undefined> {
   }
 }
 
-/** The "<dir> · <branch>" label a task carries until something better is known. */
+/** How much of a prompt reads as a title. Long enough for a sentence that says
+ * what the task is, short enough for a sidebar row and for the slug the title
+ * is written into (§7.3). */
+const TITLE_MAX = 60;
+
+/**
+ * A task's title, taken from the prompt that started it (§7.5).
+ *
+ * The first line with anything on it, whitespace collapsed, cut to something a
+ * row can hold — the opening line of a prompt is nearly always the ask, and the
+ * paragraphs under it are the detail.
+ *
+ * Undefined for a prompt that says nothing, which is a real case rather than a
+ * defensive one: a task can be created with no prompt at all (the sidebar's New
+ * task button), and the caller falls back to the directory label for those.
+ *
+ * Deliberately *not* recorded as a manual title. A rename is a choice the user
+ * made and outranks the live terminal title for good (naming.ts); this is a
+ * guess from the opening line, and the agent's own account of what it is doing
+ * should still be allowed to speak over it.
+ */
+export function titleFromPrompt(prompt: string | undefined): string | undefined {
+  const line = (prompt ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!line) return undefined;
+  const collapsed = line.replace(/\s+/g, " ");
+  if (collapsed.length <= TITLE_MAX) return collapsed;
+  // Cut at the last word boundary inside the budget, so a title ends on a word
+  // rather than mid-syllable. A single word longer than the budget has no
+  // boundary to find, and is cut where it falls.
+  const cut = collapsed.slice(0, TITLE_MAX);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > TITLE_MAX / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+/** The "<dir> · <branch>" label a task carries when the prompt says nothing. */
 export async function deriveTitle(cwd: string): Promise<string> {
   return formatDerivedName(dirLabel(cwd), await branchLabel(cwd));
 }

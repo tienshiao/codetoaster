@@ -19,7 +19,7 @@ import {
 } from "../agent/transcripts";
 import { writeTaskSettings } from "../agent/settings";
 import { transitionFor, type HookPayload } from "../agent/hook-state";
-import { deriveTitle, resolveRepoRoot } from "./derive";
+import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
 
 function expandTilde(filepath: string): string {
@@ -297,14 +297,22 @@ export class TaskManager {
     // either way, but a derived title can only describe a cwd it knows.
     if (!cwd) cwd = process.cwd();
 
-    // A caller-supplied title is a deliberate choice and outranks the terminal
-    // title; otherwise the task gets the derived "<dir> · <branch>" label,
-    // which any terminal title with real content will display over.
+    // Three sources, in order of how much they know about what this task is
+    // *for* (§7.5). A caller-supplied title is a deliberate choice and outranks
+    // everything, including the terminal title, for good. Failing that the
+    // opening line of the prompt, which is nearly always the ask — and which is
+    // the whole reason a list of thirty tasks in one checkout is readable.
+    // Failing that the "<dir> · <branch>" label, which at least says where.
+    //
+    // Only the first is `manual`. The other two are guesses, and a live
+    // terminal title — the agent's own account of what it is doing — is
+    // allowed to display over either (naming.ts).
+    //
     // `||`, not `??`: an empty title is no title at all, and `title_source`
     // below judges it on truthiness — the two must not disagree, or a task
     // ends up labelled "" and recorded as having derived that.
-    const title = options.title
-      || uniqueName(await deriveTitle(cwd), this.taskTitles());
+    const derived = titleFromPrompt(options.prompt) || (await deriveTitle(cwd));
+    const title = options.title || uniqueName(derived, this.taskTitles());
 
     // Resolved once and reused below, rather than asked again after the
     // settings write and the spawn. `resolveProjectId` keys off `afterTaskId`

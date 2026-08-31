@@ -11,6 +11,7 @@ import type { ServerMessage, WebSocketData } from "../xtmux/types";
 import { taskDir, taskScrollbackPath, taskSettingsPath } from "../agent/spawn";
 import { writeTaskSettings } from "../agent/settings";
 import { readSnapshot, writeSnapshot } from "./snapshot";
+import { sessionDisplayNames } from "../xtmux/naming";
 
 // A client socket that records what the server sent it.
 function fakeClient(id = "c1") {
@@ -157,6 +158,96 @@ describe("degraded mode, when no hook ever arrives", () => {
     // Nothing to relabel, and nothing that throws trying.
     await Bun.sleep(150);
     expect(client.of("task").filter((m) => m.task?.id === "t1")).toHaveLength(0);
+  });
+});
+
+// §7.5. The prompt that started a task is what it is called, so a list of
+// thirty tasks in one checkout is readable — before this they were all
+// "<dir> · <branch>", distinguishable only by the number `uniqueName` hung off
+// the end.
+describe("titles", () => {
+  test("the opening line of the prompt becomes the title", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({
+      id: "t1",
+      command: shell(),
+      prompt: "fix the diff parser\n\nrenames and quoted paths especially",
+    });
+
+    expect(store.get("t1")!.title).toBe("fix the diff parser");
+    // A guess, not a choice — so the agent's own terminal title may still
+    // display over it, which is what `manual` would have prevented for good.
+    expect(store.get("t1")!.title_source).toBe("derived");
+  });
+
+  test("a prompt that says nothing falls back to the directory", async () => {
+    const { manager, store } = newManager();
+    // The sidebar's New task button: a task can be started with nothing to say.
+    await manager.createTask({ id: "t1", command: shell() });
+    await manager.createTask({ id: "t2", command: shell(), prompt: "   \n\t\n " });
+
+    for (const id of ["t1", "t2"]) {
+      expect(store.get(id)!.title).toContain(" · ");
+      expect(store.get(id)!.title_source).toBe("derived");
+    }
+  });
+
+  test("an explicit title outranks the prompt, and is recorded as chosen", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({
+      id: "t1",
+      command: shell(),
+      title: "Chosen",
+      prompt: "fix the diff parser",
+    });
+
+    expect(store.get("t1")!.title).toBe("Chosen");
+    expect(store.get("t1")!.title_source).toBe("manual");
+  });
+
+  test("two tasks from the same prompt do not collide", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({ id: "t1", command: shell(), prompt: "fix the diff parser" });
+    await manager.createTask({ id: "t2", command: shell(), prompt: "fix the diff parser" });
+
+    // The same reason two tasks in one checkout got a suffix: identical rows
+    // are exactly what a derived title exists to prevent.
+    expect(store.get("t1")!.title).toBe("fix the diff parser");
+    expect(store.get("t2")!.title).toBe("fix the diff parser 2");
+  });
+
+  test("a prompt-derived title still yields to a live terminal title", async () => {
+    const { manager } = newManager();
+    await manager.createTask({ id: "t1", command: shell(), prompt: "fix the diff parser" });
+    const pty = manager.primaryPty("t1")!;
+
+    // OSC 2, the agent saying what it is doing now.
+    pty.write("printf '\\033]2;Implementing the latch\\007'\n");
+    expect(await waitFor(() => pty.title === "Implementing the latch")).toBe(true);
+
+    // The projection is the client's (naming.ts), so what the server owes it is
+    // both halves: the stored title, and the live one to display over it.
+    const info = manager.taskInfo("t1")!;
+    expect(info.title).toBe("fix the diff parser");
+    expect(info.terminalTitle).toBe("Implementing the latch");
+    expect(sessionDisplayNames([
+      { id: info.id, name: info.title, nameSource: info.titleSource, title: info.terminalTitle },
+    ]).get("t1")).toBe("Implementing the latch");
+  });
+
+  test("a renamed task does not yield to a live terminal title", async () => {
+    const { manager } = newManager();
+    await manager.createTask({ id: "t1", command: shell(), prompt: "fix the diff parser" });
+    manager.renameTask("t1", "Chosen");
+    const pty = manager.primaryPty("t1")!;
+
+    pty.write("printf '\\033]2;Implementing the latch\\007'\n");
+    expect(await waitFor(() => pty.title === "Implementing the latch")).toBe(true);
+
+    const info = manager.taskInfo("t1")!;
+    expect(sessionDisplayNames([
+      { id: info.id, name: info.title, nameSource: info.titleSource, title: info.terminalTitle },
+    ]).get("t1")).toBe("Chosen");
   });
 });
 
