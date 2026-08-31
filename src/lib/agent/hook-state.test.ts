@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { transitionFor, isHookPayload } from "./hook-state";
+import { transitionFor, isHookPayload, compactTriggerOf, endsCompaction } from "./hook-state";
 
 // The payloads captured live in the Phase 0 spike (docs/v2-architecture.md
 // §4.2), kept verbatim so a future Claude Code that changes their shape shows
@@ -129,6 +129,54 @@ describe("transitionFor", () => {
     });
     expect(update).not.toHaveProperty("agent_state");
     expect(update).not.toHaveProperty("idle_since");
+  });
+
+  test("an auto-compaction hands the turn back as busy", () => {
+    const payload = { hook_event_name: "PreCompact", trigger: "auto" };
+    expect(compactTriggerOf(payload)).toBe("auto");
+    expect(transitionFor(payload, 1)!.agent_state).toBe("compacting");
+
+    // The agent was mid-turn when the context filled up, and it still is: the
+    // Stop that eventually lands is what ends the turn.
+    const back = { hook_event_name: "SessionStart", source: "compact" };
+    expect(endsCompaction(back)).toBe(true);
+    const update = transitionFor(back, 1000, "auto")!;
+    expect(update.agent_state).toBe("busy");
+    expect(update).not.toHaveProperty("idle_since");
+  });
+
+  test("a manual /compact comes back idle instead of staying compacting", () => {
+    const payload = { hook_event_name: "PreCompact", trigger: "manual" };
+    expect(compactTriggerOf(payload)).toBe("manual");
+
+    // Nothing was in flight, so nothing else will ever clear `compacting` —
+    // no Stop follows a /compact typed at the prompt. Left alone the task
+    // reads wrong on the card and is invisible to the harvester, which only
+    // collects `idle` tasks.
+    const update = transitionFor({ hook_event_name: "SessionStart", source: "compact" }, 1000, "manual")!;
+    expect(update.agent_state).toBe("idle");
+    expect(update.idle_since).toBe(1000);
+  });
+
+  // A daemon that restarted between the two halves, or a version that stops
+  // sending the field. Unknowable is not a licence to guess: the old behaviour
+  // — claim liveness, claim nothing about the agent — is the safe one.
+  test("a compaction whose trigger was never seen makes no claim about state", () => {
+    for (const trigger of [undefined, "sideways"]) {
+      expect(compactTriggerOf({ hook_event_name: "PreCompact", trigger })).toBeUndefined();
+    }
+    const update = transitionFor({ hook_event_name: "SessionStart", source: "compact" }, 1000)!;
+    expect(update).not.toHaveProperty("agent_state");
+    expect(update).not.toHaveProperty("idle_since");
+    expect(update.lifecycle).toBe("live");
+  });
+
+  test("only a compact SessionStart ends a compaction", () => {
+    expect(endsCompaction({ hook_event_name: "SessionStart", source: "resume" })).toBe(false);
+    expect(endsCompaction({ hook_event_name: "PreCompact", trigger: "manual" })).toBe(false);
+    // A held trigger does not leak into a session that came up some other way.
+    expect(transitionFor({ hook_event_name: "SessionStart", source: "startup" }, 7, "manual")!.agent_state)
+      .toBe("idle");
   });
 
   // Every other source really is a session that has just come up.

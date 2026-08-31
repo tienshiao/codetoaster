@@ -1,9 +1,11 @@
 ---
 id: TASK-44
 title: A manual /compact strands the task in agent_state=compacting
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-29 09:05'
+updated_date: '2026-08-31 01:05'
 labels:
   - server
   - agent
@@ -24,7 +26,19 @@ Telling the two apart needs PreCompact's trigger field ('manual' | 'auto'), whic
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 HookPayload models PreCompact's trigger field
-- [ ] #2 A manual /compact returns the task to idle rather than leaving it compacting
-- [ ] #3 Auto-compact mid-turn still preserves the turn's state
+- [x] #1 HookPayload models PreCompact's trigger field
+- [x] #2 A manual /compact returns the task to idle rather than leaving it compacting
+- [x] #3 Auto-compact mid-turn still preserves the turn's state
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+HookPayload now models PreCompact's `trigger`. A compaction is two hooks and only the first names the trigger, so hook-state exports `compactTriggerOf` / `endsCompaction` and TaskManager holds the trigger between them in `compactTriggers` (in memory: it is live only for the seconds between the two, and a daemon restarting across that gap has killed the agent that would send the second half; dropped wherever hookSeen is). The compact SessionStart then resolves: auto → back to `busy` (mid-turn, Stop still to come), manual → `idle` with idle_since stamped. An unknown trigger keeps the old behaviour — claim liveness, claim nothing about state — rather than guessing. Note the manual case was also immortal to the harvester, which only collects `idle` tasks. §4.2's mapping table updated.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+PreCompact's trigger is now modelled and held across the compaction, so the SessionStart that ends one can tell the two kinds apart: auto hands the turn back as busy, manual returns the task to idle instead of stranding it in compacting (where it also stayed invisible to the harvester). An unknown trigger keeps the old make-no-claim behaviour. Verified with five new tests across hook-state.test.ts and manager.test.ts, plus the full suite.
+<!-- SECTION:FINAL_SUMMARY:END -->

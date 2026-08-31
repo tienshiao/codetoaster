@@ -18,7 +18,13 @@ import {
   transcriptExists,
 } from "../agent/transcripts";
 import { writeTaskSettings } from "../agent/settings";
-import { transitionFor, type HookPayload } from "../agent/hook-state";
+import {
+  compactTriggerOf,
+  endsCompaction,
+  transitionFor,
+  type CompactTrigger,
+  type HookPayload,
+} from "../agent/hook-state";
 import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
 
@@ -80,6 +86,12 @@ export class TaskManager {
   // ptyToTask because everything a PTY reports — output, a title, a
   // notification — has to be readdressed to the task before it goes out.
   private ptyToTask: Map<string, string> = new Map();
+
+  // Set by a PreCompact, read and dropped by the SessionStart that ends the
+  // same compaction. In memory rather than on the row because it is only ever
+  // live for the seconds between the two, and a daemon that restarts across
+  // that gap has killed the agent that would have sent the second half.
+  private compactTriggers: Map<string, CompactTrigger> = new Map();
   private taskPtys: Map<string, Set<string>> = new Map();
   // Which of a task's terminals is the agent's (§3). Held apart from the set
   // above rather than inferred from it, because the set is unordered in every
@@ -595,6 +607,7 @@ export class TaskManager {
     // instantly for the *next* rung, declaring it a success however dead it is.
     const settingsPath = await writeTaskSettings(row.id);
     this.hookSeen.delete(row.id);
+    this.compactTriggers.delete(row.id);
     const pty = this.ptys.spawn(
       buildAgentCommand(row, { mode: options.mode, sessionId: options.sessionId, settingsPath }),
       {
@@ -649,6 +662,7 @@ export class TaskManager {
     // moment anything discards a shell through here.
     if (this.agentPtys.get(taskId) === pty.id) this.agentPtys.delete(taskId);
     this.hookSeen.delete(taskId);
+    this.compactTriggers.delete(taskId);
     this.disarmHookGrace(taskId);
   }
 
@@ -894,7 +908,19 @@ export class TaskManager {
     // just as well as one we do. From here the heuristic stays out of the way.
     this.hookSeen.add(taskId);
     this.disarmHookGrace(taskId);
-    const update = transitionFor(payload);
+    // A compaction is two hooks: PreCompact names the trigger, and the
+    // SessionStart that ends it is the one that has to decide what the agent
+    // comes back as. Nothing in the second payload says which kind it was, so
+    // the trigger is held here between them and spent on arrival.
+    const trigger = compactTriggerOf(payload);
+    if (trigger) this.compactTriggers.set(taskId, trigger);
+    const ending = endsCompaction(payload);
+    const update = transitionFor(
+      payload,
+      Date.now(),
+      ending ? this.compactTriggers.get(taskId) : undefined,
+    );
+    if (ending) this.compactTriggers.delete(taskId);
     if (!update) return false;
     // `SessionStart` claims the task is live, and for a task with a terminal it
     // is. But `codetoaster hook` outlives the agent that spawned it — killing
@@ -1238,6 +1264,7 @@ export class TaskManager {
     // otherwise suppress the first check after the task is resumed.
     this.disarmHookGrace(taskId);
     this.hookSeen.delete(taskId);
+    this.compactTriggers.delete(taskId);
     this.cwdCheckedAt.delete(taskId);
     // Only the lifecycle. `agent_state` stays `idle`: that is what was true of
     // the agent when it was harvested and what the card should go on saying.
@@ -1290,6 +1317,7 @@ export class TaskManager {
     // relabel something that is no longer there.
     this.disarmHookGrace(taskId);
     this.hookSeen.delete(taskId);
+    this.compactTriggers.delete(taskId);
     this.cwdCheckedAt.delete(taskId);
     for (const ptyId of [...(this.taskPtys.get(taskId) ?? [])]) {
       this.ptys.kill(ptyId);
@@ -1347,13 +1375,29 @@ export class TaskManager {
     // to notice is not a reason to refuse the attach.
     if (taskId) void this.refreshCwdIfStale(taskId).catch(() => {});
 
-    return this.ptys.attach(ptyId, clientId, ws, cols, rows);
+    const pty = this.ptys.attach(ptyId, clientId, ws, cols, rows);
+    // Who else is looking at this task, and at what size, both ride on
+    // TaskInfo and both change here — but nothing else about the task does, so
+    // without this the count only reaches other clients when an unrelated
+    // delta happens to come along. Multi-client is the point of the product
+    // (§5.4); a stale audience is worse than none shown.
+    if (pty && taskId) this.broadcastTask(taskId);
+    return pty;
   }
 
   /** Detach one terminal, or every one the client holds when omitted (the
    * socket closed). */
   detachClient(clientId: string, ptyId?: string): void {
-    this.ptys.detach(clientId, ptyId);
+    // Same reasoning as attachClient, over however many terminals went at
+    // once. Deduped by task: a client holding a task's agent tab and two of
+    // its shells is one row's worth of change, not three.
+    const detached = this.ptys.detach(clientId, ptyId);
+    const taskIds = new Set<string>();
+    for (const id of detached) {
+      const taskId = this.ptyToTask.get(id);
+      if (taskId) taskIds.add(taskId);
+    }
+    for (const taskId of taskIds) this.broadcastTask(taskId);
   }
 
   /** False when the client is not attached to the terminal it named —

@@ -1,9 +1,11 @@
 ---
 id: TASK-53
 title: 'clientCount never updates, so the shell''s viewer count is stale'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-30 05:43'
+updated_date: '2026-08-31 01:05'
 labels:
   - server
   - bug
@@ -27,7 +29,19 @@ Worth checking whether the same staleness affects `size`, which is negotiated pe
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 attachClient broadcasts a task delta so other clients see the viewer count rise
-- [ ] #2 detachClient does the same on the way out, including the socket-closed path that detaches every PTY
-- [ ] #3 A test covers the count reaching a second client without any other change provoking a broadcast
+- [x] #1 attachClient broadcasts a task delta so other clients see the viewer count rise
+- [x] #2 detachClient does the same on the way out, including the socket-closed path that detaches every PTY
+- [x] #3 A test covers the count reaching a second client without any other change provoking a broadcast
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+PtyManager.detach now returns the PTY ids it actually detached, so the caller can name the tasks whose audience changed. attachClient broadcasts the task after a successful attach; detachClient broadcasts each distinct task behind the detached PTYs, which covers the socket-closed path (no ptyId, several terminals at once) in one place. Also swapped server.ts's close handler to unregister before detaching, so the shrunken count is not sent to the socket that just went. size is fixed by the same broadcast — it is negotiated per attached client and rides on the same TaskInfo. Two tests in manager.test.ts: a second client's attach/detach moving the first client's count with nothing else provoking a broadcast, and a closing socket updating every task it held.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+attachClient and detachClient now broadcast a task delta, so clientCount (and the size negotiated alongside it) reach the other clients when they change rather than waiting for an unrelated delta. PtyManager.detach returns the PTYs it detached so the socket-closed path can name every task at once. Verified with two new tests in manager.test.ts and the full suite (734 unit / 79 render, green).
+<!-- SECTION:FINAL_SUMMARY:END -->

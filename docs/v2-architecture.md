@@ -117,7 +117,8 @@ Mapping to task state:
 | `Stop` | state → `idle`, store `last_assistant_message` as the card preview, stamp `idle_since` |
 | `Notification` | state → `needs_attention` (permission prompt / idle nag) |
 | `SessionEnd` | state → `exited` with reason |
-| `PreCompact` | state → `compacting` (cosmetic) |
+| `PreCompact` | state → `compacting` (cosmetic); its `trigger` is held for the SessionStart below |
+| `SessionStart` (`source: compact`) | end of a compaction: `auto` → back to `busy` (mid-turn, `Stop` still to come), `manual` → `idle` (typed at the prompt, nothing else follows) |
 
 Two things fall out of this that v1 cannot do:
 

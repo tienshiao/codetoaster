@@ -302,8 +302,11 @@ export function startServer(options?: ServerOptions) {
       },
 
       close(ws) {
-        taskManager.detachClient(ws.data.clientId);
+        // Unregister first: detaching now broadcasts the shrunken viewer count
+        // for every task this client held, and the client it is about is the
+        // one whose socket has just gone.
         taskManager.unregisterClient(ws.data.clientId);
+        taskManager.detachClient(ws.data.clientId);
       },
     },
 

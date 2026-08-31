@@ -76,16 +76,19 @@ export class PtyManager {
   }
 
   /** Detach one PTY, or every PTY the client holds when omitted (the socket
-   * closed). */
-  detach(clientId: string, ptyId?: string): void {
+   * closed). Returns the PTYs actually detached — a caller that has to tell
+   * anyone the audience shrank needs to know which ones, and naming a PTY the
+   * client never held detaches nothing. */
+  detach(clientId: string, ptyId?: string): string[] {
     const held = this.clientPtys.get(clientId);
-    if (!held) return;
+    if (!held) return [];
     const targets = ptyId === undefined ? [...held] : held.has(ptyId) ? [ptyId] : [];
     for (const id of targets) {
       this.ptys.get(id)?.removeClient(clientId);
       held.delete(id);
     }
     if (held.size === 0) this.clientPtys.delete(clientId);
+    return targets;
   }
 
   /** The PTY only if this client is attached to it. Attachment is the

@@ -14,7 +14,15 @@ export interface HookPayload {
    *  SessionEnd: clear | resume | logout | prompt_input_exit | other. */
   source?: string;
   reason?: string;
+  /** PreCompact: manual | auto. The one field that says whether the agent was
+   * mid-turn when compaction started, and so what it goes back to when the
+   * compaction ends — see `compactTriggerOf`. */
+  trigger?: string;
 }
+
+/** Why compaction started. `auto` means the context filled up in the middle of
+ * a turn; `manual` means someone typed `/compact` at the prompt. */
+export type CompactTrigger = "manual" | "auto";
 
 // SessionEnd is not the end of the task. `/clear` fires it on the old
 // conversation and then a SessionStart with a new id (verified, §4.4), and a
@@ -36,13 +44,40 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
+/** PreCompact's trigger, when the payload is a PreCompact that names one.
+ *
+ * Read separately because the two ends of a compaction are two hooks: only
+ * PreCompact carries the trigger, and only the `SessionStart` that follows can
+ * decide what state the agent comes back in. Something has to hold it across
+ * the gap, and that something is the caller — this function and
+ * `endsCompaction` are the pair it brackets with. */
+export function compactTriggerOf(payload: HookPayload): CompactTrigger | undefined {
+  if (text(payload.hook_event_name) !== "PreCompact") return undefined;
+  const trigger = text(payload.trigger);
+  return trigger === "manual" || trigger === "auto" ? trigger : undefined;
+}
+
+/** Whether this payload is the `SessionStart` that ends a compaction — the
+ * point at which a held trigger is spent. */
+export function endsCompaction(payload: HookPayload): boolean {
+  return text(payload.hook_event_name) === "SessionStart" && text(payload.source) === "compact";
+}
+
 /** The row change one payload implies, or undefined for anything that does not
  * move the task: an event we do not map, a SessionEnd that is not an ending,
  * a payload we cannot make sense of.
  *
  * Pure on purpose — the mapping in §4.2 is the part worth asserting against
  * the captured payloads, and it should be assertable without a database. */
-export function transitionFor(payload: HookPayload, now: number = Date.now()): TaskUpdate | undefined {
+export function transitionFor(
+  payload: HookPayload,
+  now: number = Date.now(),
+  /** The trigger of the compaction this payload ends, when it ends one and the
+   * caller held it from the PreCompact. Absent means unknowable — a daemon that
+   * restarted between the two — and is treated as it was before there was a
+   * trigger at all: the SessionStart makes no claim about the agent's state. */
+  compactTrigger?: CompactTrigger,
+): TaskUpdate | undefined {
   const state = (agentState: AgentState): TaskUpdate => ({ agent_state: agentState, last_active_at: now });
 
   const sessionId = text(payload.session_id);
@@ -50,17 +85,30 @@ export function transitionFor(payload: HookPayload, now: number = Date.now()): T
 
   switch (text(payload.hook_event_name)) {
     case "SessionStart": {
-      // Auto-compaction happens in the middle of a turn, not between them:
-      // PreCompact marks the task `compacting`, compaction runs, and the
-      // SessionStart that announces the rebuilt context arrives while the agent
-      // is still generating. Claiming `idle` there makes the card read "done,
-      // waiting for you" for the rest of the turn, until Stop finally lands —
-      // and worse, it stamps `idle_since` early, which is exactly the miscount
-      // the /clear restamp below exists to prevent, except here it is the
-      // harvester (TASK-15) suspending a task that never stopped working. So a
-      // compact SessionStart reports liveness and nothing else: whatever state
-      // the turn was in survives the compaction.
-      const resumesTurn = text(payload.source) === "compact";
+      // A compact SessionStart is the far end of a compaction, and what the
+      // agent comes back as depends entirely on which kind it was — which only
+      // PreCompact said, hence `compactTrigger`.
+      //
+      // `auto` fires in the middle of a turn: the agent is still generating
+      // when the rebuilt context arrives, so it goes back to `busy` and the
+      // `Stop` that eventually lands ends the turn normally. Claiming `idle`
+      // here would make the card read "done, waiting for you" for the rest of
+      // the turn, and stamping `idle_since` early is exactly the miscount the
+      // /clear restamp below exists to prevent — except here it would be the
+      // harvester (TASK-15) suspending a task that never stopped working.
+      //
+      // `manual` is someone typing `/compact` at the prompt: nothing was in
+      // flight, so the agent comes back idle and waiting, and nothing else
+      // ever will say so. Leaving the `compacting` PreCompact set would strand
+      // the task there for the rest of the session — wrong on the card, and
+      // immortal to the harvester, which only ever collects `idle` tasks.
+      const compacted = text(payload.source) === "compact";
+      const afterCompaction: TaskUpdate =
+        compactTrigger === "auto"
+          ? { agent_state: "busy" }
+          : compactTrigger === "manual"
+            ? { agent_state: "idle", idle_since: now }
+            : {};
       return {
         // Overwritten rather than merged: `/clear` starts a new conversation
         // inside the same process, and the task's identity is ours — the
@@ -82,7 +130,7 @@ export function transitionFor(payload: HookPayload, now: number = Date.now()): T
         // `harvest_after`, and be suspended out from under the user the moment
         // nobody is watching it. Neither applies to a compaction, which is why
         // both are conditional.
-        ...(resumesTurn ? {} : { agent_state: "idle" as AgentState, idle_since: now }),
+        ...(compacted ? afterCompaction : { agent_state: "idle" as AgentState, idle_since: now }),
       };
     }
 

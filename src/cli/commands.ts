@@ -4,6 +4,8 @@ import {
   removePidFile,
   isProcessRunning,
   spawnDaemon,
+  findPidFileByPid,
+  originOf,
   getLogFile,
   listAllInstances,
   daemonBaseUrl,
@@ -35,8 +37,12 @@ function getBaseUrl(port: number): string {
 }
 
 async function isDaemonReachable(port: number): Promise<boolean> {
+  return isOriginReachable(getBaseUrl(port));
+}
+
+async function isOriginReachable(origin: string): Promise<boolean> {
   try {
-    const res = await fetch(`${getBaseUrl(port)}/api/ping`);
+    const res = await fetch(`${origin}/api/ping`);
     return res.ok;
   } catch {
     return false;
@@ -57,19 +63,37 @@ export async function cmdStart(port: number, dbPath?: string, hostname?: string,
     removePidFile(port);
   }
 
-  spawnDaemon(port, dbPath, hostname, allowedHosts);
+  const daemonPid = spawnDaemon(port, dbPath, hostname, allowedHosts);
 
-  // Wait for daemon to become reachable (first attempt after longer delay for HTML bundling)
+  // Found by pid, not by the port that was asked for. `--port 0` means "you
+  // decide", and the kernel decides inside the child: it binds, then writes its
+  // pid file at the port it actually got. Polling `http://localhost:0` and a
+  // `codetoaster.0.pid` that will never exist is how a daemon that was running
+  // and listening got reported as dead — and then left running, since nothing
+  // had a handle on it either.
   const maxAttempts = 15;
   for (let i = 0; i < maxAttempts; i++) {
     await Bun.sleep(i === 0 ? 1000 : 300);
-    if (await isDaemonReachable(port)) {
-      const info = readPidFile(port);
-      console.log(`Started (pid ${info?.pid ?? "?"}, port ${port})`);
-      console.log(`Web UI: ${getBaseUrl(port)}`);
+    const info = findPidFileByPid(daemonPid);
+    if (info && (await isOriginReachable(originOf(info)))) {
+      console.log(`Started (pid ${info.pid}, port ${info.port})`);
+      console.log(`Web UI: ${originOf(info)}`);
       return;
     }
+    // It exited on its own — a port already in use, a bad --db path. The
+    // remaining attempts have nothing left to wait for.
+    if (!isProcessRunning(daemonPid)) break;
   }
+
+  // We started it, so it is ours to take down. Announcing a daemon as dead and
+  // leaving it listening is the worse half of this bug: the user retries, the
+  // second daemon collides with the first, and the first is unreachable by
+  // every command here because none of them know its port.
+  const orphan = findPidFileByPid(daemonPid);
+  if (isProcessRunning(daemonPid)) {
+    try { process.kill(daemonPid); } catch {}
+  }
+  if (orphan) removePidFile(orphan.port);
 
   console.error("Daemon started but not responding. Check logs:");
   console.error(`  ${getLogFile()}`);

@@ -137,6 +137,53 @@ describe("degraded mode, when no hook ever arrives", () => {
     expect(store.get("t1")!.last_message).toBe("done");
   });
 
+  test("a manual /compact does not strand the task in compacting", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({ id: "t1", command: ["cat"] });
+
+    manager.applyHook("t1", { hook_event_name: "PreCompact", trigger: "manual" });
+    expect(store.get("t1")!.agent_state).toBe("compacting");
+
+    // The trigger arrived on the first hook and is needed by the second — the
+    // manager is what holds it across the gap. Nothing else follows a
+    // /compact typed at the prompt, so if this SessionStart does not end it,
+    // nothing does.
+    manager.applyHook("t1", { hook_event_name: "SessionStart", source: "compact" });
+    expect(store.get("t1")!.agent_state).toBe("idle");
+    expect(store.get("t1")!.idle_since).not.toBeNull();
+  });
+
+  test("an auto-compaction gives the turn back, and Stop still ends it", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({ id: "t1", command: ["cat"] });
+
+    manager.applyHook("t1", { hook_event_name: "UserPromptSubmit" });
+    manager.applyHook("t1", { hook_event_name: "PreCompact", trigger: "auto" });
+    expect(store.get("t1")!.agent_state).toBe("compacting");
+
+    manager.applyHook("t1", { hook_event_name: "SessionStart", source: "compact" });
+    expect(store.get("t1")!.agent_state).toBe("busy");
+
+    manager.applyHook("t1", { hook_event_name: "Stop", last_assistant_message: "done" });
+    expect(store.get("t1")!.agent_state).toBe("idle");
+  });
+
+  test("a spent trigger does not colour the next compaction", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({ id: "t1", command: ["cat"] });
+
+    manager.applyHook("t1", { hook_event_name: "PreCompact", trigger: "manual" });
+    manager.applyHook("t1", { hook_event_name: "SessionStart", source: "compact" });
+    expect(store.get("t1")!.agent_state).toBe("idle");
+
+    // A second compaction whose PreCompact named no trigger: unknowable, so
+    // the SessionStart claims nothing rather than reusing the last answer.
+    manager.applyHook("t1", { hook_event_name: "UserPromptSubmit" });
+    manager.applyHook("t1", { hook_event_name: "PreCompact" });
+    manager.applyHook("t1", { hook_event_name: "SessionStart", source: "compact" });
+    expect(store.get("t1")!.agent_state).toBe("compacting");
+  });
+
   test("the first hook cancels the clock, so a live task is never called unknown", async () => {
     const { manager, store } = newManager();
     manager.setHookGrace(60);
@@ -506,6 +553,49 @@ describe("the ptyId ↔ taskId association", () => {
     // Before the restore, so a client knows whose screen is arriving.
     expect(client.received.findIndex((m) => m.type === "attached"))
       .toBeLessThan(client.received.findIndex((m) => m.type === "restore"));
+  });
+
+  test("the viewer count reaches the clients already watching", async () => {
+    const { manager } = newManager();
+    await taskWithDistinctPty(manager);
+    const first = fakeClient("c1");
+    const second = fakeClient("c2");
+    manager.registerClient(first.id, first.ws);
+    manager.registerClient(second.id, second.ws);
+
+    manager.attachClient("pty-9", first.id, first.ws, 80, 24);
+    expect(first.last("task").task.clientCount).toBe(1);
+
+    // Nothing about the task itself changes when a second browser opens it —
+    // no output, no state transition — so if the attach does not broadcast,
+    // the first client goes on saying "1 viewing" indefinitely.
+    manager.attachClient("pty-9", second.id, second.ws, 80, 24);
+    expect(first.last("task").task.clientCount).toBe(2);
+
+    manager.detachClient(second.id, "pty-9");
+    expect(first.last("task").task.clientCount).toBe(1);
+  });
+
+  test("a closing socket takes its count with it, across every terminal it held", async () => {
+    const { manager } = newManager();
+    await taskWithDistinctPty(manager);
+    await manager.createTask({ id: "task-2", command: shell() });
+    const other = manager.primaryPty("task-2")!;
+    const watcher = fakeClient("c1");
+    const leaving = fakeClient("c2");
+    manager.registerClient(watcher.id, watcher.ws);
+    manager.registerClient(leaving.id, leaving.ws);
+
+    manager.attachClient("pty-9", watcher.id, watcher.ws, 80, 24);
+    manager.attachClient("pty-9", leaving.id, leaving.ws, 80, 24);
+    manager.attachClient(other.id, leaving.id, leaving.ws, 80, 24);
+
+    // The socket-closed path: one detach, no PTY named, every task the client
+    // held has to be told.
+    manager.detachClient(leaving.id);
+    const counts = new Map(watcher.of("task").map((m) => [m.task.id, m.task.clientCount]));
+    expect(counts.get("task-1")).toBe(1);
+    expect(counts.get("task-2")).toBe(0);
   });
 
   test("activity is readdressed to the task", async () => {
