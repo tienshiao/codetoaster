@@ -114,8 +114,24 @@ async function repoOfCheckout(dir: string): Promise<string | null> {
  * Two levels exactly — `<root>/<projectId>/<taskId>` — because that is the
  * shape `worktreePathFor` writes and anything else under the root is not ours
  * to reason about. Deliberately not recursive: a walk that went deeper would
- * start reporting the *contents* of a checkout as checkouts. */
-function checkoutsOnDisk(): string[] {
+ * start reporting the *contents* of a checkout as checkouts.
+ *
+ * **Restricted to the project ids the caller can name**, and that restriction
+ * is the difference between sweeping our own checkouts and sweeping somebody
+ * else's. The worktrees root is a property of the *machine* — `worktreesRoot()`
+ * is under the user's home and knows nothing about databases — while the rows
+ * that claim a directory live in whichever database the daemon was started
+ * with. A second daemon on a different `--db` therefore finds every checkout
+ * the first one made, cannot see the rows claiming them, and would delete the
+ * clean ones. Project ids are minted per database, so a directory under an id
+ * this one has never heard of is exactly the case to leave alone.
+ *
+ * What it costs is a doubly-orphaned checkout: one whose project *and* whose
+ * task row are both gone, so nothing here can name its id. That is left on
+ * disk forever, which is the right way round — it takes two failures to reach
+ * (deleting a task already removes its checkout), and the alternative is a
+ * sweep that reaches into another daemon's work. */
+function checkoutsOnDisk(projectIds: ReadonlySet<string>): string[] {
   const root = worktreesRoot();
   const found: string[] = [];
   let projects: fs.Dirent[];
@@ -127,7 +143,7 @@ function checkoutsOnDisk(): string[] {
     return found;
   }
   for (const project of projects) {
-    if (!project.isDirectory()) continue;
+    if (!project.isDirectory() || !projectIds.has(project.name)) continue;
     let tasks: fs.Dirent[];
     try {
       tasks = fs.readdirSync(path.join(root, project.name), { withFileTypes: true });
@@ -149,6 +165,10 @@ function checkoutsOnDisk(): string[] {
  * is the residue of a removal that failed, and removing it now is finishing the
  * job rather than second-guessing it.
  *
+ * `projectIds` is every project this database can name, and it bounds the walk:
+ * see `checkoutsOnDisk`. A directory under an id that is not in it is somebody
+ * else's daemon's, and is not touched, reported or counted.
+ *
  * `repoRoots` is where to look first — the repositories the daemon already
  * knows about, from projects and from tasks' `worktree_repo`. It is an
  * optimisation and not the source of truth: git's own list gives us a
@@ -162,6 +182,7 @@ function checkoutsOnDisk(): string[] {
 export async function reconcileWorktrees(input: {
   repoRoots: readonly string[];
   claimed: ReadonlySet<string>;
+  projectIds: ReadonlySet<string>;
 }): Promise<ReconcileReport> {
   const root = worktreesRoot();
   // Path → the repository it belongs to, where something already knows. Filled
@@ -178,7 +199,7 @@ export async function reconcileWorktrees(input: {
   // The union of the two views, minus everything a task claims. A registered
   // worktree whose directory is gone is *not* an orphan to act on — that is
   // what `worktree prune` is for, at the end.
-  const orphans = checkoutsOnDisk()
+  const orphans = checkoutsOnDisk(input.projectIds)
     .map((dir) => path.resolve(dir))
     .filter((dir) => !input.claimed.has(dir));
 

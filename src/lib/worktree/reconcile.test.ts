@@ -5,6 +5,7 @@ import {
   cleanupRepos,
   foreignCheckouts,
   git,
+  ourProjectIds,
   tempProject,
   tempRepo,
   tempTask,
@@ -57,10 +58,21 @@ const task = tempTask;
  * checkouts are added underneath every time, for the reason `foreignCheckouts`
  * spells out. Wrapping it here rather than repeating it per test is the point:
  * a test that forgot would not fail, it would delete somebody's work. */
-async function sweep(repoRoots: string[], claimed: readonly string[] = []) {
+async function sweep(
+  repoRoots: string[],
+  claimed: readonly string[] = [],
+  // Which project ids the sweep is told about. Defaults to every id this suite
+  // has invented, which is what a daemon holding all of them would pass; the
+  // scoping test narrows it to model a daemon that holds only some.
+  projectIds: readonly string[] = ourProjectIds(),
+) {
   return reconcileWorktrees({
     repoRoots,
     claimed: new Set([...foreignCheckouts(), ...claimed.map((p) => path.resolve(p))]),
+    // Belt and braces. Scoping already excludes every project id this suite did
+    // not invent, so `foreignCheckouts` above is now the second line rather
+    // than the first — and it stays, because a gap here costs somebody's work.
+    projectIds: new Set(projectIds),
   });
 }
 
@@ -269,5 +281,36 @@ describe("reconcileWorktrees", () => {
       dirty: 1,
     }]);
     expect(fs.existsSync(created.worktreePath)).toBe(true);
+  });
+  // Found by driving two daemons at one machine. The worktrees root belongs to
+  // the *machine* — it is under the user's home and knows nothing about
+  // databases — while the rows that claim a directory live in whichever
+  // database the daemon was started with. So a second daemon on a different
+  // `--db` sees every checkout the first one made, cannot see the rows claiming
+  // them, and used to delete the clean ones.
+  //
+  // Project ids are minted per database, so the id is the distinction: a
+  // directory under one this daemon has never heard of is not its business.
+  // The checkout below is clean, unclaimed and under the root — everything the
+  // sweep removes — and survives on the strength of its id alone.
+  test("leaves a checkout under a project id it was not told about", async () => {
+    const { root } = await tempRepo();
+    const ours = project(root);
+    const theirs = project(root);
+    const mine = await createWorktree(ours, task("Ours"), "main");
+    const other = await createWorktree(theirs, task("Another daemon's"), "main");
+
+    // Told about one project and not the other, which is exactly what two
+    // databases on one machine look like from in here.
+    const report = await sweep([root], [], [ours.id]);
+
+    expect(report.removed).toEqual([mine.worktreePath]);
+    expect(fs.existsSync(mine.worktreePath)).toBe(false);
+    // Not merely spared — unreported too. It is not an orphan we are declining
+    // to remove, it is a directory that is none of our business, and a card
+    // asking the user about another daemon's live checkout would be its own
+    // kind of wrong.
+    expect(report.unclaimed).toEqual([]);
+    expect(fs.existsSync(other.worktreePath)).toBe(true);
   });
 });

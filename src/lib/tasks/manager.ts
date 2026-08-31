@@ -568,9 +568,21 @@ export class TaskManager {
     // answer there too.
     if (this.store.list().length === 0) return { removed: [], unclaimed: [] };
 
+    // Every project id this database can name, which is what bounds the sweep
+    // to our own checkouts. Two sources, because a task can outlive the project
+    // that made it (TASK-64): the projects we hold, and the id embedded in each
+    // task's own worktree path — `<root>/<projectId>/<taskId>`, so the parent
+    // directory's name. Without the second, a task reassigned to General when
+    // its project was deleted would have its live checkout read as a stranger's
+    // and never reconciled.
+    const projectIds = new Set(this.projects.map((p) => p.id));
+    for (const row of this.store.list()) {
+      if (row.worktree_path) projectIds.add(path.basename(path.dirname(row.worktree_path)));
+    }
+
     let report: ReconcileReport;
     try {
-      report = await reconcileWorktrees({ repoRoots: [...repoRoots], claimed });
+      report = await reconcileWorktrees({ repoRoots: [...repoRoots], claimed, projectIds });
     } catch (e) {
       console.warn("Could not reconcile worktrees:", e);
       return { removed: [], unclaimed: [] };

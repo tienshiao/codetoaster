@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-31 21:52'
+updated_date: '2026-08-31 22:42'
 labels:
   - server
   - frontend
@@ -88,6 +88,20 @@ Also fixed in review: `create.ts`'s `discard()` was a verbatim copy of `discardC
 Left alone deliberately: `doArchive` writes `worktree_state: "evicted"` unconditionally where `doEvict` re-checks the directory first. Nothing reopens an archived task, and the state is self-correcting through the very sweep this task added — an archived row is not in `claimed`, so a directory its removal failed to take is found as an orphan and either removed or carded.
 
 Re-verified: `bunx tsc --noEmit` clean, `bun run test` green (908 unit, 111 render).
+
+**Runtime verification (/verify) and the gap it found.**
+
+Driven against a live daemon on `--port 4599 --db /tmp/verify.db`. Confirmed: the card arrives `null` at create and fills in ~3s later (AC #5's 'without blocking render', end to end) with `merged: false` on a fresh task; a clean orphan removed and logged **with its branch left standing**; a dirty orphan untouched, its uncommitted file intact, carded on the wire and in the sidebar; a vanished directory flipped to `missing` with its card facts purged, then rebuilt to `present` on reopen; registrations pruned; the delete route refusing both a path it is not offering and a `..` escape (404 each) while deleting the real card (200); and the confirm dialog showing the *full* path and saying the work cannot be recovered.
+
+**The gap: a second daemon on a different `--db` swept the first's checkouts.** The worktrees root belongs to the machine — it is under the user's home and knows nothing about databases — while the rows that claim a directory live in whichever database the daemon was started with. So daemon B saw every checkout daemon A had made, could not see the rows claiming them, and removed the clean ones. The empty-database guard did not cover it: B had a task of its own, so it swept.
+
+Reproduced in the act — an orphan survived a fresh database and was removed the moment the daemon restarted on one that had a task.
+
+**Fix.** `checkoutsOnDisk` is now scoped to project ids the caller can name, and `reconcileWorktrees` takes them. The manager supplies its projects' ids plus the id embedded in each task's own worktree path — `<root>/<projectId>/<taskId>`, so the parent directory's name — because a task can outlive the project that made it (TASK-64) and would otherwise have its live checkout read as a stranger's.
+
+Project ids are minted per database, so the id is the distinction. The cost, documented at `checkoutsOnDisk`: a doubly-orphaned checkout — project *and* task row both gone — can no longer be named and stays on disk. That takes two failures to reach, since deleting a task already removes its checkout, and it is the right way round to be wrong.
+
+Re-verified at runtime with two databases on one machine: daemon B left both of A's checkouts alone while still removing its own orphan. `bun run test` green (909 unit, 111 render).
 <!-- SECTION:NOTES:END -->
 
 ## Comments

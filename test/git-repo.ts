@@ -128,6 +128,17 @@ export function foreignCheckouts(ours: Iterable<string> = projectIds): string[] 
   return found;
 }
 
+/** The project ids this suite has invented, which is what the sweep is now
+ * scoped to: it only walks `<root>/<projectId>` for ids the caller can name, so
+ * a test must hand it these or it will find nothing of its own.
+ *
+ * The scoping is itself most of the protection `foreignCheckouts` was written
+ * for — a real project's id is not one of these — but both stay, because the
+ * cost of a gap here is somebody's work rather than a red test. */
+export function ourProjectIds(): string[] {
+  return [...projectIds];
+}
+
 /** Remove every repository and worktree this module handed out.
  *
  * Called from each test file's own `afterEach` rather than registered here:
