@@ -79,6 +79,18 @@ export function startServer(options?: ServerOptions) {
   if (suspended > 0) {
     console.log(`Suspended ${suspended} task${suspended === 1 ? "" : "s"} left live by the previous run`);
   }
+  // §5.6's retention sweep, and the only thing that ever expires a WIP ref.
+  // Once at boot rather than on the harvester's tick: the window is thirty
+  // days, so a daemon that stays up for one has nothing to find, and a sweep
+  // that walks archived rows on a thirty-second timer would be pure noise.
+  // Fired rather than awaited — it runs git against every archived task's
+  // repository, and the daemon must be answering requests long before that
+  // finishes — and it never rejects.
+  void taskManager.expireArchivedWip().then((expired) => {
+    if (expired > 0) {
+      console.log(`Expired ${expired} archived snapshot${expired === 1 ? "" : "s"} past retention`);
+    }
+  });
   // After the reconciliation, so the first tick walks what is actually running
   // rather than the rows the previous daemon left behind — every one of which
   // is live, idle-looking and long past any timeout. On its own default of

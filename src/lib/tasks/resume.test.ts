@@ -15,9 +15,11 @@ const tempDirs: string[] = [];
 const taskIds: string[] = [];
 const hookRelays: Timer[] = [];
 
-afterEach(() => {
-  // PTYs are real processes; a leaked one outlives the test run.
-  for (const { manager, taskId } of opened.splice(0)) manager.deleteTask(taskId);
+afterEach(async () => {
+  // PTYs are real processes; a leaked one outlives the test run. Awaited
+  // because delete also cleans up on disk now (TASK-31), and that half runs
+  // after the row is gone.
+  for (const { manager, taskId } of opened.splice(0)) await manager.deleteTask(taskId);
   for (const timer of hookRelays.splice(0)) clearInterval(timer);
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
   for (const id of taskIds.splice(0)) fs.rmSync(taskDir(id), { recursive: true, force: true });
@@ -429,7 +431,7 @@ describe("resuming a suspended task", () => {
 
     // A first life, which reports in the way a working agent does.
     manager.applyHook(row.id, { hook_event_name: "SessionStart", session_id: "stored-session-id" });
-    manager.deleteTask(row.id);
+    await manager.deleteTask(row.id);
     store.create({ ...row, pinned: false, lifecycle: "suspended", agent_session_id: "stored-session-id" });
 
     await manager.resumeTask(row.id);

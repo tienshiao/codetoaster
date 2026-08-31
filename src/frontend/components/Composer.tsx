@@ -110,7 +110,12 @@ export function Composer() {
             : undefined,
         // Blank is not a ref, and the server refuses one. It is how this field
         // says "no override", which is exactly what leaving it out means.
-        baseRef: worktree && baseRef.trim() ? baseRef.trim() : undefined,
+        // `canWorktree` as well, and for the same reason the field above takes
+        // it: a project whose `worktree_default` is on but has nowhere to
+        // branch seeds the toggle to true while the control shows it off, and
+        // a base ref sent alongside `worktree: false` describes a checkout this
+        // request is not asking for.
+        baseRef: worktree && canWorktree && baseRef.trim() ? baseRef.trim() : undefined,
         // The grid the agent is spawned at, before any client has attached and
         // so the only size the server has to go on. Left off, the agent paints
         // its opening banner at the 80×24 fallback and reflows the moment the

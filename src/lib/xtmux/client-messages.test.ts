@@ -18,13 +18,13 @@ function newManager(): TaskManager {
   return manager;
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const m of managers) {
     for (const task of m.listTasks()) {
-      m.deleteTask(task.id);
-      // `deleteTask` leaves `~/.codetoaster/tasks/<id>/` standing on purpose —
-      // that is archive's to clean up — but a test that made a real task should
-      // not leave one under the user's home either.
+      await m.deleteTask(task.id);
+      // Delete takes `~/.codetoaster/tasks/<id>/` with it now (TASK-31), so
+      // this is a belt to that brace: a test whose task never reached the store
+      // still must not leave one under the user's home.
       fs.rmSync(taskDir(task.id), { recursive: true, force: true });
     }
   }

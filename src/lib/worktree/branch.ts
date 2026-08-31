@@ -92,3 +92,31 @@ export async function allocateBranch(
     if (!taken.has(candidate)) return candidate;
   }
 }
+
+/** Delete a local branch, having already decided that is safe.
+ *
+ * `-D` and not `-d`, because git's own safety check answers a different
+ * question than ours. `-d` refuses unless the branch is merged into HEAD or
+ * into its upstream; §5.6's criterion is merged into the task's *base ref* or
+ * contained in any `refs/remotes/*` ref, which `branchStatus` establishes
+ * before this is called. The two sets overlap without containing each other:
+ * `-d` would refuse a branch pushed to a remote it has no upstream
+ * configuration for — the ordinary case here — while accepting one merged into
+ * whatever HEAD happens to be, which is not a promise anybody asked for. Making
+ * the decision twice by two different rules gets a delete that is refused for
+ * reasons the dialog cannot explain.
+ *
+ * Local only. The remote is never touched (§5.6), so a branch on a remote stays
+ * there and is precisely why deleting the local one was safe.
+ *
+ * Answers the state, not the command: a branch that was already absent is the
+ * state this asks for, so it is `true`. The re-check is what makes that true
+ * without parsing git's refusal message. */
+export async function deleteBranch(repoRoot: string, branch: string): Promise<boolean> {
+  const { exitCode } = await gitSpawn(repoRoot, ["branch", "-D", branch]);
+  if (exitCode === 0) return true;
+  const still = await gitSpawn(repoRoot, [
+    "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`,
+  ]);
+  return still.exitCode !== 0;
+}

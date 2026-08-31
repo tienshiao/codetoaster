@@ -15,7 +15,7 @@ import { uniqueName } from "../xtmux/naming";
 import * as db from "../db";
 import type { ProjectRow, TaskRow } from "../db";
 import { TaskStore } from "./store";
-import { buildAgentCommand, taskDir, taskEnv, type AgentMode } from "../agent/spawn";
+import { buildAgentCommand, removeTaskDir, taskDir, taskEnv, type AgentMode } from "../agent/spawn";
 import {
   canResumeSessionId,
   continueIsSafe,
@@ -35,7 +35,10 @@ import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
 import {
   applyWip,
+  branchIsExpendable,
+  branchStatus,
   createWorktree,
+  deleteBranch,
   dropWip,
   evictWorktree,
   readSetupOutcome,
@@ -47,6 +50,7 @@ import {
   worktreePathFor,
   wrapWithSetup,
   WorktreeError,
+  type BranchStatus,
   type CreatedWorktree,
   type RestoredWorktree,
   type WipSnapshot,
@@ -152,6 +156,71 @@ function settingsColumns(patch: Partial<ProjectSettings>): Partial<ProjectRow> {
   if ("worktreeCopy" in patch) columns.worktree_copy = patch.worktreeCopy;
   if ("worktreeDefault" in patch) columns.worktree_default = patch.worktreeDefault ? 1 : 0;
   return columns;
+}
+
+/** Why a branch outlived the task it belonged to, for the dialog to print.
+ *
+ * Reached only when the branch was *not* expendable, so both halves are always
+ * false and the sentence is about what is still on it. The count is the point:
+ * "kept" on its own reads as an apology for not cleaning up, while "kept — 3
+ * commits are on it and nowhere else" reads as the reason it was kept, and
+ * tells the user what to do next. */
+function keptReason(branch: string, baseRef: string | null, status: BranchStatus): string {
+  const base = baseRef ? ` into ${baseRef}` : "";
+  const kept = `${branch} was kept: it is not merged${base} and not on any remote`;
+  // The count is dropped rather than printed as zero. `branchStatus` answers 0
+  // when the count itself failed, and "0 commits would have gone with it" reads
+  // as a reason the branch should have been deleted — the opposite of the
+  // sentence it is in. The two facts that decided this both fail closed and are
+  // already stated above; the number is the detail, not the argument.
+  if (status.unpushed === 0) return kept;
+  const commits = status.unpushed === 1 ? "1 commit" : `${status.unpushed} commits`;
+  return `${kept}, so ${commits} would have gone with it`;
+}
+
+/** §5.6's retention: how long an archived task keeps the snapshot that makes
+ * archiving recoverable. Long, because the whole promise of the confirmation
+ * dialog is that the user is choosing something they can come back from — and
+ * a ref costs a commit object, which is the cheapest thing in the design. */
+export const WIP_RETENTION_MS = 30 * 24 * 60 * 60_000;
+
+/** What an archive found, and what it did about it (§5.6).
+ *
+ * Read *before* anything was destroyed, which is the point: the confirmation
+ * quotes these numbers from a preview taken moments earlier, and a user who
+ * came back to their laptop an hour later deserves to be told what was actually
+ * true when the button took effect rather than when it was drawn. */
+export interface ArchiveOutcome {
+  /** Null for a task that never had a checkout of its own — it ran in the
+   * project's directory, where nothing is ours to describe or to delete. */
+  status: BranchStatus | null;
+  branch: string | null;
+  branchDeleted: boolean;
+  /** Why the branch is still there, in a sentence the dialog can print. Null
+   * when there was no branch, or when it was deleted. */
+  branchKept: string | null;
+  /** Where the work went, kept for `WIP_RETENTION_MS`. */
+  wipRef: string | null;
+}
+
+/** What a hard delete did about the branch. The rest of a delete has nothing to
+ * report — the row, the checkout and the files are simply gone — but a branch
+ * kept back is a thing left on the user's disk that they did not ask for and
+ * would not otherwise hear about, and `codetoaster kill` is a command whose
+ * whole output is one line. */
+export interface DeleteOutcome {
+  branch: string | null;
+  branchDeleted: boolean;
+  branchKept: string | null;
+}
+
+/** The same questions, asked without answering them: what archiving this task
+ * would cost, for the confirmation to state before it is confirmed. */
+export interface ArchivePreview {
+  status: BranchStatus | null;
+  branch: string | null;
+  /** Whether the branch would be deleted, on what is true right now. */
+  branchWouldBeDeleted: boolean;
 }
 
 export interface CreateTaskOptions {
@@ -268,6 +337,16 @@ export class TaskManager {
   // first await on the evict side and waited on before the ladder starts on
   // the resume side, so whichever gets there first is the one that runs.
   private evicting: Map<string, Promise<boolean>> = new Map();
+  // The fourth of the family, and the one the task does not come back from
+  // (§5.6). Archive is every other operation in sequence — it suspends, it
+  // snapshots, it removes the checkout, it may delete the branch — so it needs
+  // an entry of its own rather than borrowing one: two archives of a task would
+  // both read `branchStatus` before either had destroyed anything, and the
+  // second would then be describing, and acting on, a repository the first had
+  // already emptied. Evict and resume wait on this for the reason they wait on
+  // each other, and archive waits on an eviction in flight before registering,
+  // so the two can never be waiting on one another.
+  private archiving: Map<string, Promise<ArchiveOutcome | null>> = new Map();
   // What `codetoaster hook` has to POST back to (§4.2), handed over by
   // startServer. Undefined until then: a manager with no server in front of it
   // — a test — has no port to name, and an agent spawned from one simply
@@ -965,6 +1044,22 @@ export class TaskManager {
   ): Promise<TaskRow | undefined> {
     const row = this.store.get(taskId);
     if (!row) return undefined;
+    // An archived task is not resumable, and this is the guard that says so.
+    // Nothing routes here — `listTasks` leaves archived rows out, so no client
+    // can name one — but the row is still in the database with a `branch` and a
+    // `worktree_path` on it, and `restoreTaskWorktree` would happily rebuild a
+    // checkout from a branch archive may have deleted. The one operation with
+    // no way back needs the guard that makes it stay that way.
+    if (row.lifecycle === "archived") return undefined;
+    // An archive already in flight settles first, and then this starts over
+    // against the row it left — which will be archived, and refused above. It
+    // is removing the checkout the ladder would restore and spawn into, and it
+    // does not wait for resumes: it suspends the task, which waits for them.
+    const archiveInFlight = this.archiving.get(taskId);
+    if (archiveInFlight) {
+      await archiveInFlight.catch(() => undefined);
+      return this.resumeTask(taskId, options);
+    }
     // A close already in flight settles first, and then this starts over
     // against the row it left. Suspend awaits a snapshot write before it kills
     // anything, so without this the checks below inspect a task whose PTYs are
@@ -1701,14 +1796,26 @@ export class TaskManager {
    * and that is the one case with no recovery — the path it was branched from
    * was never recorded and the project that knew it is gone. */
   private async repoRootFor(row: TaskRow): Promise<string | null> {
-    if (row.worktree_repo) return row.worktree_repo;
+    const root = await this.resolveRepoRoot(row);
+    if (root && !row.worktree_repo && this.store.get(row.id)) {
+      this.store.update(row.id, { worktree_repo: root });
+    }
+    return root;
+  }
 
+  /** The same answer, without healing the row with it.
+   *
+   * Hard delete needs this: it removes the row first, deliberately and
+   * synchronously, and only then goes looking for the checkout and the branch
+   * to clean up — so by the time it asks, the write-back above would either
+   * silently do nothing or, worse, resurrect a task that has just been deleted.
+   * Splitting the two makes "which repository is this?" a question that can be
+   * asked about a row nobody holds any more. */
+  private async resolveRepoRoot(row: TaskRow): Promise<string | null> {
+    if (row.worktree_repo) return row.worktree_repo;
     const project = this.projects.find((p) => p.id === row.project_id);
     if (!project?.initialPath) return null;
-    const root = await repoRootOf(expandTilde(project.initialPath)).catch(() => null);
-    if (!root) return null;
-    if (this.store.get(row.id)) this.store.update(row.id, { worktree_repo: root });
-    return root;
+    return await repoRootOf(expandTilde(project.initialPath)).catch(() => null);
   }
 
   /** What a task's outstanding snapshot decision is, or null when it owes none.
@@ -1728,6 +1835,13 @@ export class TaskManager {
     // Refused rather than queued: the eviction finishes in a moment and clears
     // the state that made the question look outstanding.
     if (this.evicting.has(taskId)) return null;
+    // Nor while an archive is running, which is the same window seen from the
+    // other end: `doArchive` snapshots through `snapshotTaskWip` and only then
+    // removes the checkout, so for the whole of that removal the row reads
+    // `present` with a `wip_ref` too — and a discard landing there drops the
+    // commit the archive's whole recoverability rests on, moments before the
+    // directory holding the other copy goes.
+    if (this.archiving.has(taskId)) return null;
     const row = this.store.get(taskId);
     if (!row?.wip_ref || !row.worktree_path) return null;
     if (row.worktree_state !== "present") return null;
@@ -1778,6 +1892,14 @@ export class TaskManager {
     // Still only for a *present* checkout: an evicted task's ref is how its
     // work is stored rather than a decision, and discarding that destroys it.
     if (this.evicting.has(taskId)) return false;
+    // Nor mid-archive, and this is the arm that pair of guards exists for.
+    // `pendingWip` withholding the question stops the *notice* being drawn, but
+    // a discard is a POST that can already be in flight when the archive
+    // starts — and unlike apply it does not go through `pendingWip`, because
+    // dropping a ref needs only the repository. So without this it lands on the
+    // one commit the archive's recoverability rests on, moments before the
+    // checkout holding the other copy goes, and there is no third copy.
+    if (this.archiving.has(taskId)) return false;
     const row = this.store.get(taskId);
     if (!row?.wip_ref || row.worktree_state !== "present") return false;
     const repoRoot = await this.repoRootFor(row);
@@ -1826,6 +1948,13 @@ export class TaskManager {
    * same way `suspendTask` knows nothing about idle timeouts. */
   evictTask(taskId: string): Promise<boolean> {
     if (this.resuming.has(taskId)) return Promise.resolve(false);
+    // And not against an archive either, for a sharper version of the same
+    // reason: archive is already removing this checkout and is between reading
+    // the branch status and acting on it. A second remover would either lose
+    // the race harmlessly or win it and leave archive's `branchStatus` — taken
+    // moments ago, and about to decide whether a branch is deleted — describing
+    // a repository that has changed underneath it.
+    if (this.archiving.has(taskId)) return Promise.resolve(false);
     // A second caller joins the first rather than snapshotting and removing the
     // same checkout twice — the manual route and the evict tier can easily
     // arrive together.
@@ -1855,6 +1984,16 @@ export class TaskManager {
     if (!snapshot) return false;
 
     await evictWorktree(repoRoot, row.worktree_path);
+    // `discardCheckout` is best-effort by design — it falls back to an `rm` git
+    // refused and swallows that too — so a removal can resolve having removed
+    // nothing. The row must not then say `evicted`: the restore stops at
+    // `assertPathFree` *before* it prunes, and the path is fixed by the task's
+    // id and cannot be moved away from, so a directory that survived would make
+    // the task unreopenable for good. Left `present`, which is what is true.
+    if (fs.existsSync(row.worktree_path)) {
+      console.warn(`Could not remove the checkout of task ${taskId}; it stays present`);
+      return false;
+    }
     // Re-read rather than trusted: the snapshot and the removal are two awaits,
     // and a task deleted across them must not be written back as a row holding
     // one column.
@@ -1885,6 +2024,281 @@ export class TaskManager {
       }
     }
     return evicted;
+  }
+
+  /** What archiving this task would cost, before it is confirmed (§5.6).
+   *
+   * The read half of `archiveTask`, run on the same row by the same code, so
+   * the dialog cannot state one thing and the button do another for any reason
+   * except time passing between them. Null for a task that is not there.
+   *
+   * Cheap enough to call on a click: four gits against refs, one `status` in
+   * the checkout. It is deliberately not cached — a preview that is a minute
+   * old is exactly the preview that misleads.
+   */
+  async archivePreview(taskId: string): Promise<ArchivePreview | null> {
+    const row = this.store.get(taskId);
+    if (!row) return null;
+    // The repository is only asked for when there is a branch to ask about:
+    // `repoRootFor` writes its answer back onto the row, and `worktree_repo` is
+    // documented as null for a task with no checkout of its own — a preview
+    // should not be what changes that.
+    const repoRoot = row.branch ? await this.repoRootFor(row) : null;
+    const status = await this.branchStatusOf(row, repoRoot);
+    return {
+      status,
+      branch: row.branch,
+      branchWouldBeDeleted: status !== null && status.exists && branchIsExpendable(status),
+    };
+  }
+
+  /** The git facts about a task's own branch, or null when it has none.
+   *
+   * `worktreePath` is passed only for a checkout that is genuinely on disk, so
+   * an evicted task answers `dirty: null` — "there is no working tree to be
+   * dirty" — rather than the `0` a missing directory would otherwise read as.
+   * The two are not the same claim, and this is the number a confirmation
+   * dialog prints. */
+  private async branchStatusOf(row: TaskRow, repoRoot: string | null): Promise<BranchStatus | null> {
+    if (!row.branch || !repoRoot) return null;
+    const onDisk = row.worktree_state === "present"
+      && !!row.worktree_path
+      && fs.existsSync(row.worktree_path);
+    return await branchStatus(repoRoot, {
+      branch: row.branch,
+      baseRef: row.base_ref,
+      worktreePath: onDisk ? row.worktree_path : null,
+    });
+  }
+
+  /** Archive a task: the only way one truly leaves (§5.6, §6).
+   *
+   * Everything below the snapshot is destruction, and the snapshot is the whole
+   * of what makes it recoverable — so the order is the design, not a
+   * convenience:
+   *
+   * 1. **Suspend first**, and through the ordinary door. A live task has an
+   *    agent in the directory about to be removed, and `suspendTask` is what
+   *    knows how to put one down — writing the screen, killing every terminal
+   *    the task holds, disarming the clocks. Reimplementing that here would be
+   *    a second harvester free to drift from the one §5.5 describes.
+   * 2. **Read the status while there is still something to read.** `dirty` is a
+   *    `git status` in a checkout that step 4 deletes, so the outcome has to be
+   *    taken now or not at all — and it is what tells the user what they spent.
+   * 3. **Snapshot unconditionally**, clean tree or not. A ref written only for a
+   *    dirty tree would collapse "there was nothing to save" and "we never got
+   *    to it" into one answer, and the confirmation promises a recoverable
+   *    action rather than a bet. A snapshot that fails aborts the archive: the
+   *    checkout is still there, and nothing has been lost by stopping.
+   * 4. Remove the checkout, keeping the branch — `evictWorktree`, not
+   *    `removeWorktree`, which exists to undo a failed create and takes the
+   *    branch with it.
+   * 5. **Delete the branch only if its commits survive it** — merged into
+   *    `base_ref`, or contained in some remote. The default leans towards
+   *    keeping, because a ref costs nothing next to losing commits, and the
+   *    outcome says in words why one was kept so the user is not left guessing
+   *    at a branch they did not expect to still have.
+   * 6. Take `~/.codetoaster/tasks/<id>/` with it. `closeTask` leaves that
+   *    standing on purpose — the settings are what the resumed agent starts
+   *    with and the scrollback is what the user sees while it comes back — and
+   *    an archived task is resumed by nothing.
+   *
+   * The row is kept, behind `lifecycle = archived`: `listTasks` shows live and
+   * suspended, so the task leaves the sidebar without leaving the database, and
+   * §7.5's archived toggle has something to show. Null for a task that is not
+   * there or has already been archived — asking twice is what two browsers
+   * showing the same dialog do.
+   */
+  async archiveTask(taskId: string): Promise<ArchiveOutcome | null> {
+    // A resume in flight settles first, for the reason `evictTask` refuses
+    // against one: the ladder leaves the row `suspended` for its entire run and
+    // only writes `live` on the rung that works, so "is this task live?" — the
+    // question step 1 asks to decide whether to suspend — answers *no* for a
+    // task somebody is in the middle of reopening. Without this wait the
+    // archive skips the suspend entirely and removes the directory the restore
+    // has just rebuilt, with the agent already spawned into it; and the ladder,
+    // still running, then writes `lifecycle: live` back over the `archived`
+    // this wrote, putting a task with no checkout and no settings directory
+    // back in the sidebar. Waited on *before* registering below, so the resume
+    // side's wait on `archiving` and this one can never be waiting on each
+    // other. Started over rather than fallen through, because settling that
+    // resume is not the same as there being no resume — a `fresh` caller
+    // registers a new ladder the instant the first settles.
+    const resumeInFlight = this.resuming.get(taskId);
+    if (resumeInFlight) {
+      await resumeInFlight.catch(() => undefined);
+      return this.archiveTask(taskId);
+    }
+    // An eviction in flight settles first, and then this starts over against
+    // the row it left. It is about to remove the very checkout step 3 wants to
+    // snapshot, and `snapshotTaskWip` refuses mid-eviction anyway — so racing
+    // it would abort the archive for a reason that resolves itself in a moment.
+    // Waited on *before* registering below, so the eviction side's refusal and
+    // this wait can never be waiting on each other.
+    const evictInFlight = this.evicting.get(taskId);
+    if (evictInFlight) {
+      await evictInFlight.catch(() => undefined);
+      return this.archiveTask(taskId);
+    }
+    const already = this.archiving.get(taskId);
+    if (already) return already;
+    const attempt = this.doArchive(taskId).finally(() => {
+      this.archiving.delete(taskId);
+    });
+    this.archiving.set(taskId, attempt);
+    return attempt;
+  }
+
+  private async doArchive(taskId: string): Promise<ArchiveOutcome | null> {
+    const opening = this.store.get(taskId);
+    if (!opening) return null;
+    if (opening.lifecycle === "archived") return null;
+    if (opening.lifecycle === "live") await this.suspendTask(taskId);
+
+    // Re-read on the far side of the suspend, which writes the row and can take
+    // as long as a multi-hundred-KB screen takes to reach the disk.
+    const row = this.store.get(taskId);
+    if (!row) return null;
+
+    // Resolved once and handed down, rather than asked for by each step: a task
+    // whose `worktree_repo` was never written resolves it by running git
+    // against the project, and doing that three times over one archive is three
+    // chances for the answer to change mid-operation.
+    const repoRoot = row.worktree_state === "none" ? null : await this.repoRootFor(row);
+    const status = await this.branchStatusOf(row, repoRoot);
+
+    let wipRef = row.wip_ref;
+    const onDisk = row.worktree_state === "present"
+      && !!row.worktree_path
+      && fs.existsSync(row.worktree_path);
+    // A ref already on the row is a snapshot the restore refused to apply, and
+    // it is the user's outstanding apply/keep/discard — but it is also, and
+    // more importantly here, a commit holding work. Taking a fresh one would
+    // move the ref off it and answer their question by destroying the thing
+    // they were being asked about, so the refused snapshot *is* the archive's
+    // snapshot and the decision travels with it into the retention window.
+    if (onDisk && !row.wip_ref) {
+      const taken = await this.snapshotTaskWip(taskId);
+      if (!taken) {
+        throw new WorktreeError(
+          "snapshot-failed",
+          `Could not snapshot "${row.title}" before archiving it, so nothing was removed`,
+        );
+      }
+      wipRef = taken.ref;
+    }
+
+    if (repoRoot && row.worktree_path) {
+      // For a `missing` checkout too, not only a present one: the directory is
+      // gone but git's registration of it under `.git/worktrees` is not, and
+      // `discardCheckout` prunes on its way past. Leaving that behind is what
+      // makes a repository accumulate worktrees nothing will ever name again.
+      await evictWorktree(repoRoot, row.worktree_path);
+    }
+
+    // After the checkout is gone, and that order is not stylistic: git refuses
+    // to delete a branch that is checked out in one of its worktrees, so a
+    // branch deletion attempted first would fail on exactly the tasks this is
+    // for.
+    let branchDeleted = false;
+    let branchKept: string | null = null;
+    if (row.branch && repoRoot && status?.exists) {
+      if (branchIsExpendable(status)) {
+        branchDeleted = await deleteBranch(repoRoot, row.branch);
+        // Git refused after we had established it was safe — a worktree that
+        // would not go, most likely. Reported rather than thrown: the archive
+        // has already done everything else, and a branch that is still there is
+        // the harmless half of the two ways this can end.
+        if (!branchDeleted) branchKept = `git would not delete ${row.branch}`;
+      } else {
+        branchKept = keptReason(row.branch, row.base_ref, status);
+      }
+    }
+
+    await removeTaskDir(taskId);
+
+    const outcome: ArchiveOutcome = {
+      status,
+      branch: row.branch,
+      branchDeleted,
+      branchKept,
+      wipRef,
+    };
+    // Deleted while git was working: nothing to write back, and the ref is left
+    // for the retention sweep rather than resurrected as a row holding one
+    // column — the same rule every other write here follows.
+    if (!this.store.get(taskId)) return outcome;
+    this.store.update(taskId, {
+      lifecycle: "archived",
+      // The directory is gone and the path is remembered, which is exactly what
+      // `evicted` says. Not `none`: that means a task that runs in the
+      // project's own directory and never had a checkout, and an archived task
+      // reading that way would be indistinguishable from one there was never
+      // anything to clean up for.
+      ...(row.worktree_state === "none" ? {} : { worktree_state: "evicted" }),
+      // Restamped, even for a ref that was already there. Retention is measured
+      // from the archive, because that is when the user was told they had N
+      // days — a refused snapshot taken three weeks ago would otherwise expire
+      // in the week after they archived it.
+      ...(wipRef ? { wip_at: Date.now() } : {}),
+    });
+    // The whole list, not the row: an archived task leaves `listTasks`, and a
+    // `task` delta for a row that is no longer in the snapshot would leave every
+    // attached client holding it.
+    this.broadcastTasks();
+    return outcome;
+  }
+
+  /** Drop the snapshots of archived tasks whose retention has run out (§5.6).
+   * Run once at boot, which is the sweep §5.6 asks for: the window is measured
+   * in weeks, so a daemon that is up for one has nothing to do in the meantime.
+   *
+   * **Archived tasks only.** A suspended task's `wip_ref` is not a grace
+   * period, it is where its work is *stored* — expiring one would delete a
+   * user's uncommitted changes on a timer, which is the one thing this design
+   * exists never to do.
+   *
+   * `retentionMs` at or below zero keeps every ref forever, matching the way
+   * the harvester's two tiers are turned off.
+   *
+   * Never throws: it runs on the boot path with nothing to hand a rejection to,
+   * and a repository that has moved out from under one archived task is no
+   * reason to leave the other twenty holding refs. */
+  async expireArchivedWip(
+    retentionMs = WIP_RETENTION_MS,
+    now = Date.now(),
+  ): Promise<number> {
+    if (retentionMs <= 0) return 0;
+    let archived: TaskRow[];
+    try {
+      archived = this.store.list({ lifecycle: "archived" });
+    } catch (e) {
+      // The listing itself, outside the per-task guard below, because the
+      // caller fires this and never looks at the promise — the same shape the
+      // harvester's sweeps use, and for the same reason.
+      console.warn("Could not list archived tasks to expire their snapshots:", e);
+      return 0;
+    }
+    let expired = 0;
+    for (const row of archived) {
+      if (!row.wip_ref || row.wip_at === null) continue;
+      if (now - row.wip_at <= retentionMs) continue;
+      try {
+        const repoRoot = await this.repoRootFor(row);
+        // Without a repository there is no ref store to delete from. The row
+        // keeps saying what it says, which is the honest state: the snapshot
+        // may well still exist somewhere nothing can name.
+        if (!repoRoot) continue;
+        await dropWip(repoRoot, row.id);
+        if (this.store.get(row.id)) {
+          this.store.update(row.id, { wip_ref: null, wip_at: null });
+        }
+        expired++;
+      } catch (e) {
+        console.warn(`Could not expire the WIP snapshot of archived task ${row.id}:`, e);
+      }
+    }
+    return expired;
   }
 
   /** The rows the evict tier walks (§5.6). Suspended rather than live, which is
@@ -2035,29 +2449,41 @@ export class TaskManager {
     return restored;
   }
 
-  /** The destructive door, and for now the only one: the row, the terminals and
-   * the snapshot go away for good, and the id can never be reissued.
+  /** Hard delete: the row, the terminals, the checkout, the snapshot and the
+   * task's directory go for good, and the id can never be reissued. The one
+   * irreversible operation in the design (§5.6).
    *
-   * This is what archive becomes (TASK-31) once it also has a worktree to clean
-   * up and a decision to make about keeping the row. Until then it is reachable
-   * only over `DELETE /api/tasks/:id` — the CLI's `codetoaster kill` — because
-   * every path a browser can take now leads to `closeTask` instead.
+   * The difference from archive is what is *not* kept. Archive keeps the row
+   * behind `lifecycle = archived` and keeps the WIP ref for its retention
+   * window, so the work is recoverable; this drops both. It is reached from
+   * `DELETE /api/tasks/:id` — the CLI's `codetoaster kill`, which meant delete
+   * in v1 and has no other route to mean it by — and from the browser only
+   * through a confirmation of its own.
    *
-   * It deliberately leaves `~/.codetoaster/tasks/<id>/` behind, settings.json
-   * and all, which is a few KB of JSON for a row nothing will ever read again.
-   * Removing the directory is archive's job along with the worktree, and doing
-   * it here would put a recursive rm under the user's home on a path this task
-   * has no reason to touch yet.
+   * The branch is the exception, and follows archive's rule rather than this
+   * one's: it is deleted only when its commits survive the deletion — merged
+   * into `base_ref`, or on a remote. "The user asked to forget this task" is
+   * not the same statement as "the user asked to lose these commits", and a ref
+   * left behind under `codetoaster/` costs nothing and is one refspec to
+   * remove.
    *
-   * The scrollback snapshot is the exception, and only because of its size: a
-   * multi-hundred-KB screen per deleted task is a different order of leak, and
-   * unlike a suspended task's snapshot — which is exactly what reopening it
-   * reads back (§5.5, phase 1) — this one has no row left to be read for. */
-  deleteTask(taskId: string): boolean {
-    if (!this.store.get(taskId)) return false;
-    // Fired rather than awaited: delete is synchronous, and an unlink that fails
-    // — a directory already removed by hand, a read-only home — must not be
-    // allowed to fail the removal of a task that is otherwise gone.
+   * The row goes **synchronously**, before any of the git. Several writes
+   * elsewhere re-read the store on the far side of an await specifically to
+   * notice a task deleted underneath them, and doing the cleanup first would
+   * widen that window from nothing to however long `git worktree remove` takes.
+   * The promise this answers with covers the cleanup, so a caller that cares —
+   * a test tearing down a real checkout — can wait for it, and one that does
+   * not can drop it: nothing below the row removal is allowed to throw.
+   *
+   * Null means there was no such task. An outcome means it is gone, and says
+   * what became of its branch. */
+  async deleteTask(taskId: string): Promise<DeleteOutcome | null> {
+    const row = this.store.get(taskId);
+    if (!row) return null;
+    // Fired rather than awaited: an unlink that fails — a directory already
+    // removed by hand, a read-only home — must not be allowed to fail the
+    // removal of a task that is otherwise gone. `purge` takes the whole
+    // directory below, and this is the one file worth not waiting for.
     void removeSnapshot(taskId).catch(() => {});
     // Before the row goes: a timer that outlived its task would wake up to
     // relabel something that is no longer there.
@@ -2083,7 +2509,58 @@ export class TaskManager {
         break;
       }
     }
-    return true;
+    return await this.purge(row);
+  }
+
+  /** Everything a deleted task leaves on disk, taken with it (TASK-64): the
+   * checkout under `~/.codetoaster/worktrees/`, git's registration of it, the
+   * `codetoaster/<slug>` branch when its commits survive elsewhere, the WIP ref,
+   * and `~/.codetoaster/tasks/<id>/`. Without this, `codetoaster kill` on a task
+   * with a worktree stranded all five, and nothing would ever name them again.
+   *
+   * Takes the row it was handed rather than reading one, because the row is
+   * already gone by the time this runs — which is also why it resolves the
+   * repository through `resolveRepoRoot`, the variant that does not write its
+   * answer back.
+   *
+   * Never throws. It runs after the task has been removed from every list a
+   * caller can see, so there is nobody left to report a failure to and nothing
+   * a failure could be retried against; what is left is a warning and some
+   * files. */
+  private async purge(row: TaskRow): Promise<DeleteOutcome> {
+    const outcome: DeleteOutcome = { branch: row.branch, branchDeleted: false, branchKept: null };
+    try {
+      const repoRoot = row.worktree_state === "none" ? null : await this.resolveRepoRoot(row);
+      if (repoRoot) {
+        if (row.worktree_path) await evictWorktree(repoRoot, row.worktree_path);
+        if (row.branch) {
+          const status = await branchStatus(repoRoot, {
+            branch: row.branch,
+            baseRef: row.base_ref,
+            // The checkout is gone by now, and `dirty` is not a question this
+            // path asks: nothing here is shown to a user, and the only thing
+            // being decided is whether the branch's commits exist elsewhere.
+            worktreePath: null,
+          });
+          if (!status.exists) {
+            outcome.branch = null;
+          } else if (branchIsExpendable(status)) {
+            outcome.branchDeleted = await deleteBranch(repoRoot, row.branch);
+            if (!outcome.branchDeleted) outcome.branchKept = `git would not delete ${row.branch}`;
+          } else {
+            outcome.branchKept = keptReason(row.branch, row.base_ref, status);
+          }
+        }
+        // After the branch, not before: the ref is the last thing keeping the
+        // snapshot's objects reachable, and a delete that failed part-way is
+        // better off having kept it.
+        if (row.wip_ref) await dropWip(repoRoot, row.id);
+      }
+    } catch (e) {
+      console.warn(`Could not clean up after deleting task ${row.id}:`, e);
+    }
+    await removeTaskDir(row.id);
+    return outcome;
   }
 
   acknowledgeTask(taskId: string): void {
@@ -2219,14 +2696,17 @@ export class TaskManager {
       // `worktree_state` alone would be true of an *evicted* task, whose ref is
       // the ordinary way it is stored rather than a decision anyone owes.
       //
-      // Except mid-eviction. `doEvict` writes the ref and broadcasts before it
-      // removes the checkout, so for the length of a `worktree remove` the row
-      // reads exactly like a refused snapshot — and every attached client would
-      // draw a notice for a question nobody is being asked, whose buttons
-      // `pendingWip` then refuses. Held back rather than answered, so the two
-      // agree about what is outstanding.
+      // Except mid-eviction, and mid-archive. `doEvict` and `doArchive` both
+      // write the ref and broadcast before they remove the checkout, so for the
+      // length of a `worktree remove` the row reads exactly like a refused
+      // snapshot — and every attached client would draw a notice for a question
+      // nobody is being asked, whose buttons `pendingWip` then refuses. Held
+      // back rather than answered, so the two agree about what is outstanding.
       wipPending:
-        row.worktree_state === "present" && row.wip_ref !== null && !this.evicting.has(row.id),
+        row.worktree_state === "present"
+        && row.wip_ref !== null
+        && !this.evicting.has(row.id)
+        && !this.archiving.has(row.id),
       lastMessage: row.last_message,
       clientCount: pty?.getClientCount() ?? 0,
       // A suspended task remembers the grid it had, so resuming it does not

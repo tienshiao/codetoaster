@@ -33,11 +33,14 @@ afterEach(async () => {
   // `deleteTask`, not `closeTask`: close is a suspend now, and a suspended row
   // stays in `listTasks` — cleaning up with it would leave every task of every
   // test in the next test's list.
-  for (const task of taskManager.listTasks()) taskManager.deleteTask(task.id);
-  // Deleting a task deliberately leaves its settings directory alone — that is
-  // archive's to remove (TASK-31) — and a test that deleted its own task is
-  // already gone from listTasks. So cleanup runs off what was created, not off
-  // what is still live.
+  // Awaited now that delete also removes the checkout and the task's directory
+  // (TASK-31): the git in it runs after the row is gone, so a test that did not
+  // wait would hand the next one a repository still being changed.
+  for (const task of taskManager.listTasks()) await taskManager.deleteTask(task.id);
+  // Delete takes `~/.codetoaster/tasks/<id>/` with it now, but this still has
+  // to run: a test that archived or deleted its own task is already out of
+  // `listTasks`, and one whose route 500'd never got as far as either. Cleanup
+  // runs off what was created, not off what is still live.
   for (const id of created.splice(0)) {
     fs.rmSync(taskDir(id), { recursive: true, force: true });
   }
@@ -344,6 +347,86 @@ describe("DELETE /api/tasks/:id", () => {
     expect(taskManager.getTask(created.id)).toBeUndefined();
     expect(taskManager.getPty(created.ptyId)).toBeUndefined();
     expect((await fetch(`${base}/api/tasks/${created.id}`, { method: "DELETE" })).status).toBe(404);
+  });
+});
+
+describe("POST /api/tasks/:id/delete", () => {
+  // The browser's door onto the same removal, and the flag is the whole reason
+  // it is a second door: `DELETE` is a verb somebody typed at a shell, while a
+  // fetch can be replayed, mis-routed or fired by a shortcut nobody meant to
+  // press — and this is the operation with no way back.
+  test("refuses to delete without an explicit confirmation", async () => {
+    const task = await (await post({})).json();
+
+    expect((await post({}, `/api/tasks/${task.id}/delete`)).status).toBe(400);
+    expect((await post({ confirm: "yes" }, `/api/tasks/${task.id}/delete`)).status).toBe(400);
+    // And the task is still there, which is the point of refusing.
+    expect(taskManager.getTask(task.id)).toBeDefined();
+  });
+
+  test("deletes the task when the request says so", async () => {
+    const task = await (await post({})).json();
+
+    const res = await post({ confirm: true }, `/api/tasks/${task.id}/delete`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ deleted: true });
+    expect(taskManager.getTask(task.id)).toBeUndefined();
+    expect(taskManager.getPty(task.ptyId)).toBeUndefined();
+  });
+
+  test("404s for a task that isn't there", async () => {
+    expect((await post({ confirm: true }, "/api/tasks/nope/delete")).status).toBe(404);
+  });
+});
+
+describe("/api/tasks/:id/archive", () => {
+  // A task with no checkout of its own is the case where archive has nothing to
+  // destroy but itself — no branch to weigh, no worktree to remove — and it is
+  // the one every task in this file is, since none of them asks for a worktree.
+  // What it proves is the lifecycle half: the row is kept and the task leaves.
+  test("archives the task, keeps the row, and takes it out of the list", async () => {
+    const task = await (await post({})).json();
+
+    const res = await post({}, `/api/tasks/${task.id}/archive`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.archived).toBe(true);
+    // Null rather than an invented zero: there is no branch of ours to describe.
+    expect(body.status).toBeNull();
+    expect(body.branch).toBeNull();
+
+    expect(taskManager.getTask(task.id)?.lifecycle).toBe("archived");
+    expect(taskManager.listTasks().map((t) => t.id)).not.toContain(task.id);
+    expect(taskManager.getPty(task.ptyId)).toBeUndefined();
+  });
+
+  // Not an error: two browsers can be showing the same confirmation, and the
+  // row is in the state that was asked for either way. `archived: false` is the
+  // honest answer — this request did not do it.
+  test("archiving twice reports that the second one did nothing", async () => {
+    const task = await (await post({})).json();
+    await post({}, `/api/tasks/${task.id}/archive`);
+
+    const res = await post({}, `/api/tasks/${task.id}/archive`);
+    expect(res.status).toBe(200);
+    expect((await res.json()).archived).toBe(false);
+  });
+
+  test("the preview answers without archiving anything", async () => {
+    const task = await (await post({})).json();
+
+    const res = await fetch(`${base}/api/tasks/${task.id}/archive`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      status: null, branch: null, branchWouldBeDeleted: false,
+    });
+    // Still live: reading what an archive would cost must not cost it.
+    expect(taskManager.getTask(task.id)?.lifecycle).toBe("live");
+  });
+
+  test("404s for a task that isn't there, either way round", async () => {
+    expect((await fetch(`${base}/api/tasks/nope/archive`)).status).toBe(404);
+    expect((await post({}, "/api/tasks/nope/archive")).status).toBe(404);
   });
 });
 

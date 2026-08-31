@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { TaskRow } from "../db";
@@ -7,6 +8,28 @@ import type { TaskRow } from "../db";
  * (TASK-14) (docs/v2-architecture.md §4.2, §5.1). */
 export function taskDir(taskId: string): string {
   return path.join(os.homedir(), ".codetoaster", "tasks", taskId);
+}
+
+/** Everything a task kept, gone: the settings, the scrollback and its staging
+ * file, the setup stamp, a scratch index a snapshot died holding. What archive
+ * and hard delete finish with (TASK-31), and the reason it lives beside
+ * `taskDir` rather than in the caller — this is a recursive removal under the
+ * user's home, so the guard belongs with the function that composes the path.
+ *
+ * The guard is that the path is a *direct child* of the tasks root. A task id
+ * reaches here off a row and is a uuid we minted, so nothing should ever fail
+ * it; that is exactly why it is cheap to insist. An id of `..`, or an empty
+ * one, would otherwise resolve to the tasks root itself and take every task's
+ * files with it.
+ *
+ * Best-effort, like `removeSnapshot`: a directory that is already not there is
+ * the state being asked for, and a home that has gone read-only must not be
+ * able to fail an archive that has already removed the checkout. */
+export async function removeTaskDir(taskId: string): Promise<void> {
+  const dir = path.resolve(taskDir(taskId));
+  const root = path.resolve(taskDir(""));
+  if (path.dirname(dir) !== root || dir === root) return;
+  await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
 }
 
 export function taskSettingsPath(taskId: string): string {

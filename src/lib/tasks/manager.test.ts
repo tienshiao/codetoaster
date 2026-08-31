@@ -47,13 +47,13 @@ function newManager(): { manager: TaskManager; store: TaskStore; db: Database } 
   return { manager, store: new TaskStore(db), db };
 }
 
-afterEach(() => {
+afterEach(async () => {
   // PTYs are real processes; a leaked one outlives the test run. `deleteTask`
   // rather than `closeTask`, which is a suspend now and would leave every row
   // behind — and in a `:memory:` database that nobody else reads, a row with
   // no process is nothing worth keeping.
   for (const m of managers) {
-    for (const task of m.listTasks()) m.deleteTask(task.id);
+    for (const task of m.listTasks()) await m.deleteTask(task.id);
   }
   managers.length = 0;
 });
@@ -218,7 +218,7 @@ describe("degraded mode, when no hook ever arrives", () => {
     const client = fakeClient();
     manager.registerClient(client.id, client.ws);
     await manager.createTask({ id: "t1", command: ["cat"] });
-    manager.deleteTask("t1");
+    await manager.deleteTask("t1");
 
     // Nothing to relabel, and nothing that throws trying.
     await Bun.sleep(150);
@@ -633,11 +633,13 @@ describe("the ptyId ↔ taskId association", () => {
     const { manager, store } = newManager();
     await taskWithDistinctPty(manager);
 
-    expect(manager.deleteTask("task-1")).toBe(true);
+    expect(await manager.deleteTask("task-1")).not.toBeNull();
     expect(manager.getPty("pty-9")).toBeUndefined();
     expect(manager.taskIdForPty("pty-9")).toBeUndefined();
     expect(store.get("task-1")).toBeUndefined();
-    expect(manager.deleteTask("task-1")).toBe(false);
+    // Null the second time: the outcome describes a deletion that happened, and
+    // there is no task left to have one.
+    expect(await manager.deleteTask("task-1")).toBeNull();
   });
 });
 
@@ -691,7 +693,7 @@ describe("task info", () => {
   test("a suspended task reports no terminal and its remembered size", async () => {
     const { manager, store } = newManager();
     await manager.createTask({ id: "t1", command: shell() });
-    manager.deleteTask("t1");
+    await manager.deleteTask("t1");
 
     store.create({
       id: "gone", project_id: "general", title: "Suspended", initial_prompt: "",
@@ -981,17 +983,26 @@ describe("snapshotting a task", () => {
   // Deleting, not closing: a closed task's snapshot is exactly what reopening
   // it reads back (§5.5, phase 1), and only a delete leaves no row to read it
   // for.
-  test("deleting a task takes its snapshot with it", async () => {
+  test("deleting a task takes its whole directory with it", async () => {
     const { manager } = newManager();
     const id = newTaskId();
     await paintedTask(manager, id);
     expect(await manager.snapshot(id)).toBe(true);
     expect(fs.existsSync(taskScrollbackPath(id))).toBe(true);
 
-    manager.deleteTask(id);
+    // Awaited, and the promise is the point: the row goes synchronously, and
+    // what this returns covers the disk (TASK-31). Dropping it leaves the
+    // removal running into the teardown below, which then removes the same tree
+    // a second time — two recursive `rm`s over one directory, and on macOS the
+    // loser of that race gets an EFAULT rather than the "already gone" it
+    // asked for.
+    await manager.deleteTask(id);
 
-    // Fired rather than awaited, since delete is synchronous.
-    expect(await waitFor(() => !fs.existsSync(taskScrollbackPath(id)))).toBe(true);
+    // Not only the screen. `closeTask` leaves the settings and the scrollback
+    // standing because a resume reads both; a deleted task is resumed by
+    // nothing, so the whole of `~/.codetoaster/tasks/<id>/` goes.
+    expect(fs.existsSync(taskScrollbackPath(id))).toBe(false);
+    expect(fs.existsSync(taskDir(id))).toBe(false);
   });
 });
 

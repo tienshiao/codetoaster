@@ -63,12 +63,12 @@ function newTaskId(): string {
   return id;
 }
 
-afterEach(() => {
+afterEach(async () => {
   // PTYs are real processes; a leaked one outlives the test run. `deleteTask`
   // rather than `closeTask`, which is a suspend now and would leave the row and
   // its directory behind for the next test to trip over.
   for (const manager of managers) {
-    for (const id of taskIds) manager.deleteTask(id);
+    for (const id of taskIds) await manager.deleteTask(id);
   }
   managers.length = 0;
   for (const id of taskIds.splice(0)) fs.rmSync(taskDir(id), { recursive: true, force: true });

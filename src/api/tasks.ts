@@ -293,6 +293,77 @@ export const taskRoutes = {
     },
   },
 
+  "/api/tasks/:id/archive": {
+    // What archiving would cost, so the confirmation can state it rather than
+    // hedge (§5.6). Its own request rather than a field on the task list: it
+    // runs git against a working tree, and paying for that on every task in the
+    // sidebar to answer a question about the one the user is hovering over is
+    // the sort of thing TASK-32 gets to decide how to cache.
+    async GET(req: Request & { params: { id: string } }) {
+      const preview = await taskManager.archivePreview(req.params.id);
+      if (!preview) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      return Response.json(preview);
+    },
+
+    // The only way a task leaves (§6). The confirmation belongs to the caller —
+    // the server cannot know whether the user has read what they are about to
+    // lose, and `GET` above is what they are meant to have read — but there is
+    // no confirmation *flag* here as there is on `/delete`. Archive is
+    // recoverable: the row stays, the snapshot is kept for its retention
+    // window, and a branch holding commits is not touched. The irreversible
+    // door is the one that needs the second lock.
+    async POST(req: Request & { params: { id: string } }) {
+      if (!taskManager.getTask(req.params.id)) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      try {
+        const outcome = await taskManager.archiveTask(req.params.id);
+        // Null for a task that was already archived, which is what a second
+        // click on a dialog two browsers were both showing looks like. The row
+        // is in the state that was asked for, so it is not a failure — but the
+        // outcome describes work that was done, and inventing one would report
+        // a branch deletion that this request did not make.
+        if (!outcome) {
+          return Response.json({ archived: false, task: taskManager.taskInfo(req.params.id) });
+        }
+        return Response.json({ archived: true, ...outcome, task: taskManager.taskInfo(req.params.id) });
+      } catch (e: any) {
+        if (e instanceof WorktreeError) {
+          return Response.json({ error: e.message, kind: e.kind }, { status: 409 });
+        }
+        return Response.json(
+          { error: e?.message ?? "Could not archive the task" },
+          { status: 500 },
+        );
+      }
+    },
+  },
+
+  "/api/tasks/:id/delete": {
+    // Hard delete: the row, the checkout, the snapshot and the task's files,
+    // for good (§5.6). The browser's door onto what `DELETE /api/tasks/:id`
+    // already is, and the reason it is a separate one is the flag below.
+    async POST(req: Request & { params: { id: string } }) {
+      const body = (await readJsonBody(req)) ?? {};
+      // An explicit confirmation in the request, not merely a dialog in front
+      // of it. This is the one operation with no way back, and a client that
+      // reached it by a mis-routed fetch, a replayed request or a keyboard
+      // shortcut nobody meant to press should not be able to spend a user's
+      // work — so the request itself has to say it knows what it is asking for.
+      if (body.confirm !== true) {
+        return badRequest(`Deleting a task for good needs "confirm": true`);
+      }
+      const outcome = await taskManager.deleteTask(req.params.id);
+      if (!outcome) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      taskManager.broadcastTasks();
+      return Response.json({ deleted: true, ...outcome });
+    },
+  },
+
   "/api/tasks/:id/wip": {
     // Answering for a snapshot the restore would not apply (§5.6).
     //
@@ -496,15 +567,21 @@ export const taskRoutes = {
       return Response.json(info);
     },
 
-    // The interim archive (§6): the row, the terminals and the scrollback go
-    // for good. It is the destructive door, kept off the browser's paths on
-    // purpose — the only caller is `codetoaster kill`, which meant "delete" in
-    // v1 and has no other route to mean it by. TASK-31 gives this worktree
-    // cleanup and the confirmation an archive deserves.
-    DELETE(req: Request & { params: { id: string } }) {
-      if (taskManager.deleteTask(req.params.id)) {
+    // Hard delete, over the verb v1 gave it. The only caller is `codetoaster
+    // kill`, which meant "delete" in v1 and has no other route to mean it by —
+    // and typing that at a shell is the confirmation the browser's door asks
+    // for in a flag. Awaited now that it also cleans up the checkout, the
+    // branch and the task's files (TASK-31): the CLI prints what happened to
+    // the branch, and a response that arrived before the git had run would be
+    // describing a repository that was still being changed.
+    async DELETE(req: Request & { params: { id: string } }) {
+      const outcome = await taskManager.deleteTask(req.params.id);
+      if (outcome) {
         taskManager.broadcastTasks();
-        return Response.json({ success: true });
+        // `success` kept as it was — v1's CLI reads it — with the branch
+        // decision alongside, which is the one thing a kill now does that the
+        // user would not otherwise hear about.
+        return Response.json({ success: true, ...outcome });
       }
       return Response.json({ error: "Task not found" }, { status: 404 });
     },

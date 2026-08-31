@@ -223,12 +223,18 @@ export async function cmdKill(target: string, port: number): Promise<void> {
     method: "DELETE",
   });
 
-  if (killRes.ok) {
-    console.log(`Killed session "${match.title}" (${formatSessionId(match.id)})`);
-  } else {
+  if (!killRes.ok) {
     console.error("Failed to kill session.");
     process.exit(1);
   }
+  console.log(`Killed session "${match.title}" (${formatSessionId(match.id)})`);
+  // A kill now takes the task's checkout with it (TASK-31), and the one thing
+  // it deliberately does *not* take is a branch whose commits are nowhere else.
+  // Said out loud, because a branch left behind is a file on the user's disk
+  // they did not ask for and would otherwise find months later — and because
+  // "kept" is the good news: it is where the work went.
+  const outcome = await killRes.json().catch(() => null) as { branchKept?: string | null } | null;
+  if (outcome?.branchKept) console.log(outcome.branchKept);
 }
 
 export async function cmdConnections(port: number): Promise<void> {

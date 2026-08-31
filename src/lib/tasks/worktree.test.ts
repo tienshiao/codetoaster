@@ -29,9 +29,12 @@ const tempDirs: string[] = [];
 const projectIds: string[] = [];
 const taskIds: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  // Awaited: these tasks have real checkouts, and delete now removes them
+  // (TASK-31) — a removal still running while the lines below rm the worktrees
+  // root is two things clearing up after each other.
   for (const m of managers) {
-    for (const task of m.listTasks()) m.deleteTask(task.id);
+    for (const task of m.listTasks()) await m.deleteTask(task.id);
   }
   managers.length = 0;
   // The worktrees land under the real `~/.codetoaster`, as they will at run

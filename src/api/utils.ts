@@ -153,9 +153,16 @@ export async function diffUntrackedFile(dir: string, file: string): Promise<stri
   return stdout;
 }
 
+// Both sides are resolved, and the base is resolved for a reason that bites:
+// the comparison is a string prefix, so a `dir` carrying a trailing slash —
+// `projects.initial_path` is stored as the user typed it, and reaches here as a
+// task's cwd — never matches `dir + "/"` and every path under it is refused.
+// The containment check is unchanged; it just no longer depends on how the
+// caller spelled the directory.
 export function safePath(dir: string, filePath: string): string | null {
-  const resolved = path.resolve(dir, filePath);
-  if (!resolved.startsWith(dir + "/")) return null;
+  const base = path.resolve(dir);
+  const resolved = path.resolve(base, filePath);
+  if (!resolved.startsWith(base + path.sep)) return null;
   return resolved;
 }
 

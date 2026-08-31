@@ -21,7 +21,7 @@ beforeAll(() => {
 });
 
 afterEach(async () => {
-  for (const task of taskManager.listTasks()) taskManager.deleteTask(task.id);
+  for (const task of taskManager.listTasks()) await taskManager.deleteTask(task.id);
   await Bun.sleep(50);
 });
 
