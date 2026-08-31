@@ -79,6 +79,17 @@ export interface GitSpawnOptions {
   // "fatal: invalid reference: nosuchref" is a message the user can do nothing
   // with (TASK-29).
   captureStderr?: boolean;
+  // Extra environment for the child, merged over the daemon's own.
+  //
+  // Two callers need it and both are the WIP snapshot (§5.6). `GIT_INDEX_FILE`
+  // is the whole reason the snapshot can be taken without touching the live
+  // tree: it points `read-tree`/`add`/`write-tree` at a throwaway index, and it
+  // cannot be passed as a flag because git only reads it from the environment.
+  // `GIT_AUTHOR_*`/`GIT_COMMITTER_*` are the second: `commit-tree` refuses to
+  // build a commit with no identity — `user.useConfigOnly = true` is a real
+  // configuration and it fails there — and a snapshot of someone's scratch
+  // work is ours rather than theirs, so it should not carry their name.
+  env?: Record<string, string>;
 }
 
 export async function gitSpawn(
@@ -90,6 +101,10 @@ export async function gitSpawn(
   const proc = Bun.spawn(["git", "-C", dir, ...args], {
     stdout: "pipe",
     stderr: capture ? "pipe" : "ignore",
+    // Merged rather than replaced: Bun takes `env` as the child's whole
+    // environment, and a git that lost PATH, HOME and the ssh-agent socket
+    // would fail in ways that have nothing to do with what was asked of it.
+    ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
   });
   const timer =
     options?.timeoutMs === undefined ? null : setTimeout(() => proc.kill(), options.timeoutMs);

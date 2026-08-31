@@ -12,13 +12,27 @@
  *                      checkout is removed again before this is thrown, so a
  *                      create either produces a set-up worktree or none.
  * `not-a-repo`       — the project's directory is not inside a git repository,
- *                      so there is nothing to add a worktree to. */
+ *                      so there is nothing to add a worktree to.
+ * `branch-missing`   — the branch a restore was going to check out is gone.
+ *                      Told apart from `worktree-add-failed` deliberately: the
+ *                      work is not lost — the WIP ref still holds it — but no
+ *                      checkout can be made until someone decides what branch
+ *                      it belongs on, and that is a card with buttons rather
+ *                      than an error string (§5.6).
+ * `snapshot-failed`  — a step of the WIP snapshot failed, so the checkout is
+ *                      not safe to evict. The live tree is untouched either
+ *                      way: the snapshot works through a throwaway index.
+ * `wip-apply-failed` — the snapshot could not be read back into a restored
+ *                      checkout. The ref is kept, so the work still exists. */
 export type WorktreeErrorKind =
   | "bad-base-ref"
   | "path-occupied"
   | "worktree-add-failed"
   | "copy-failed"
-  | "not-a-repo";
+  | "not-a-repo"
+  | "branch-missing"
+  | "snapshot-failed"
+  | "wip-apply-failed";
 
 /** A worktree operation that failed, carrying git's own account of it.
  *

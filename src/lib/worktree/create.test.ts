@@ -1,62 +1,16 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
-import { gitSpawn } from "../../api/utils";
+import { cleanupRepos, git, tempDir, tempProject, tempRepo, tempTask } from "../../../test/git-repo";
 import { allocateBranch } from "./branch";
 import { createWorktree } from "./create";
 import { WorktreeError } from "./errors";
-import { worktreePathFor, worktreesRoot } from "./paths";
+import { worktreePathFor } from "./paths";
 
-const tempDirs: string[] = [];
-const projectIds: string[] = [];
+afterEach(cleanupRepos);
 
-afterEach(() => {
-  // The worktrees live under the real `~/.codetoaster`, the way they will at
-  // run time — so every project this file invents has to take its tree with
-  // it, or the suite leaves checkouts in the user's home directory.
-  for (const id of projectIds.splice(0)) {
-    fs.rmSync(path.join(worktreesRoot(), id), { recursive: true, force: true });
-  }
-  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-});
-
-async function git(dir: string, ...args: string[]): Promise<string> {
-  const { stdout, stderr, exitCode } = await gitSpawn(dir, args, { captureStderr: true });
-  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
-  return stdout.trim();
-}
-
-/** A repository with one commit on `main`, and a second commit on a branch, so
- * a test can tell "branched from the ref I asked for" from "branched from
- * whatever HEAD was". */
-async function tempRepo(): Promise<{ root: string; mainSha: string; otherSha: string }> {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-repo-"));
-  tempDirs.push(root);
-  await git(root, "init", "-b", "main");
-  await git(root, "config", "user.email", "test@example.com");
-  await git(root, "config", "user.name", "Test");
-  fs.writeFileSync(path.join(root, "README.md"), "on main\n");
-  await git(root, "add", "-A");
-  await git(root, "commit", "-m", "first");
-  const mainSha = await git(root, "rev-parse", "HEAD");
-
-  await git(root, "checkout", "-q", "-b", "other");
-  fs.writeFileSync(path.join(root, "README.md"), "on other\n");
-  await git(root, "commit", "-qam", "second");
-  const otherSha = await git(root, "rev-parse", "HEAD");
-  await git(root, "checkout", "-q", "main");
-
-  return { root, mainSha, otherSha };
-}
-
-function project(root: string, overrides: { worktree_copy?: string | null } = {}) {
-  const id = `proj-${crypto.randomUUID()}`;
-  projectIds.push(id);
-  return { id, initial_path: root, worktree_copy: overrides.worktree_copy ?? null };
-}
-
-const task = (title: string) => ({ id: `task-${crypto.randomUUID()}`, title });
+const project = tempProject;
+const task = tempTask;
 
 describe("createWorktree", () => {
   test("puts a checkout of the base ref at the task's id-derived path", async () => {
@@ -183,9 +137,9 @@ describe("createWorktree", () => {
   // store, so both creates read the branch list and allocate the same name.
   test("serializes two projects that are different checkouts of one repository", async () => {
     const { root } = await tempRepo();
-    const linked = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-linked-"));
+    const linked = tempDir("codetoaster-linked-");
+    // git insists on creating the worktree directory itself.
     fs.rmSync(linked, { recursive: true, force: true });
-    tempDirs.push(linked);
     await git(root, "worktree", "add", "-b", "a-linked-checkout", linked, "main");
 
     const fromMain = project(root);
@@ -258,8 +212,7 @@ describe("createWorktree", () => {
     });
 
     test("a directory that is not a repository at all", async () => {
-      const plain = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-plain-"));
-      tempDirs.push(plain);
+      const plain = tempDir("codetoaster-plain-");
 
       const error = await createWorktree(project(plain), task("No repo"), "main").catch((e) => e);
 

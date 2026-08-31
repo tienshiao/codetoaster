@@ -4,7 +4,7 @@ title: Two-way boot reconciliation and worktree-aware task cards
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-29 00:17'
+updated_date: '2026-08-31 06:56'
 labels:
   - server
   - frontend
@@ -33,3 +33,13 @@ Risk 5 (§9) / §5.6. On boot, per project, compare `git worktree list --porcela
 - [ ] #5 Task cards show worktree state, branch, dirty count, unpushed count, and merged status without blocking render
 - [ ] #6 Tests cover both reconciliation directions against a temporary directory and repository
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-31 06:56
+---
+From TASK-38's code review: `TaskManager.restoreTaskWorktree` returns early when the task was deleted while git was working, which leaves a checkout on disk for a row that no longer exists — `deleteTask` removes no worktrees. Cleaning up in place was rejected there because the obvious call (`removeWorktree`) also deletes the branch, which is more destructive than the delete path itself. It is the 'directory on disk, no row' case this task already owns: remove if clean, surface an unclaimed-worktree card if dirty.
+---
+<!-- COMMENTS:END -->

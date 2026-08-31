@@ -8,12 +8,13 @@ import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import { gitSpawn } from "../../api/utils";
 import { taskDir } from "../agent/spawn";
-import { setupStampPath, worktreesRoot } from "../worktree";
+import { readWip, setupStampPath, worktreesRoot } from "../worktree";
 
-// Giving a task a checkout of its own (docs/v2-architecture.md §5.6, TASK-30).
+// A task's checkout, from the manager's side (docs/v2-architecture.md §5.6).
 // `lib/worktree` is tested on its own against temporary repositories; this is
-// about the wiring — what `createTask` decides, what reaches the row, and what
-// the agent is actually spawned as.
+// about the wiring — what `createTask` decides, what reaches the row, what the
+// agent is actually spawned as, and what a snapshot and a restore leave the
+// row saying.
 //
 // Nothing here stands in an agent, and it does not have to: `test/preload.ts`
 // points `CODETOASTER_AGENT_BIN` at a harmless one before every test. These
@@ -343,5 +344,149 @@ describe("project settings", () => {
     expect(project.defaultModel).toBeNull();
     expect(project.setupCommand).toBeNull();
     expect(project.worktreeDefault).toBe(false);
+  }, 20000);
+});
+
+// Evicting and restoring, from the row's side (§5.6, TASK-38). The git of it —
+// what a snapshot captures and what a restore refuses — is `wip.test.ts`; what
+// is left here is the part the UI reads: which columns say the checkout is
+// back, and which say it owes the user a decision.
+describe("snapshot and restore", () => {
+  /** A task with a checkout, suspended, dirty, snapshotted and evicted — the
+   * state the evict tier leaves behind (TASK-39), assembled by hand because
+   * the tier itself does not exist yet. */
+  async function evicted(manager: TaskManager, store: TaskStore, projectId: string, root: string) {
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing", worktree: true });
+    fs.writeFileSync(path.join(row.worktree_path!, "README.md"), "dirty\n");
+    fs.writeFileSync(path.join(row.worktree_path!, "new.txt"), "untracked\n");
+    await manager.closeTask(id);
+
+    const snapshot = await manager.snapshotTaskWip(id);
+    await git(root, "worktree", "remove", "--force", row.worktree_path!);
+    store.update(id, { worktree_state: "evicted" });
+    return { id, row, snapshot };
+  }
+
+  test("a snapshot lands on the row", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    fs.writeFileSync(path.join(row.worktree_path!, "README.md"), "dirty\n");
+
+    const snapshot = await manager.snapshotTaskWip(id);
+
+    expect(snapshot).not.toBeNull();
+    expect(store.get(id)?.wip_ref).toBe(`refs/codetoaster/wip/${id}`);
+    expect(store.get(id)?.wip_at).toBe(snapshot!.at);
+    expect(await git(root, "rev-parse", snapshot!.ref)).toBe(snapshot!.commit);
+  }, 20000);
+
+  // Not a failure: a task without a checkout of its own is running in the
+  // project's directory, where the working state is the user's and not ours to
+  // commit — and neither is a task whose checkout is already gone.
+  test("a task with no checkout of its own has nothing to snapshot", async () => {
+    const root = await tempRepo();
+    const { manager, projectId } = await newManager(root);
+    const id = taskId();
+    await manager.createTask({ id, projectId, prompt: "no worktree", command: ["cat"] });
+
+    expect(await manager.snapshotTaskWip(id)).toBeNull();
+    expect(await manager.restoreTaskWorktree(id)).toBeNull();
+  }, 20000);
+
+  test("restoring brings the checkout and the dirt back, and clears the ref", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await evicted(manager, store, projectId, root);
+
+    const restored = await manager.restoreTaskWorktree(id);
+
+    expect(restored?.wip).toBe("applied");
+    expect(fs.readFileSync(path.join(row.worktree_path!, "README.md"), "utf8")).toBe("dirty\n");
+    expect(fs.existsSync(path.join(row.worktree_path!, "new.txt"))).toBe(true);
+    const after = store.get(id)!;
+    expect(after.worktree_state).toBe("present");
+    expect(after.cwd).toBe(row.worktree_path!);
+    // Cleared, and that is what makes the column below mean something: with the
+    // work on disk there is no decision outstanding.
+    expect(after.wip_ref).toBeNull();
+    expect(after.wip_at).toBeNull();
+    // And cleared in git too, not only on the row. `restoreWorktree` reads the
+    // ref rather than the columns, so a ref left behind would be applied again
+    // by the next restore of this task — work the row says was already handed
+    // back, put on top of whatever the user did with it since.
+    expect(await readWip(root, id)).toBeNull();
+  }, 20000);
+
+  // The needs-decision state, spelled without a column of its own: a checkout
+  // that is present while a WIP ref is still set is a task whose snapshot was
+  // refused, and it reads the same way after a daemon restart.
+  test("a snapshot the branch outran is kept, not applied", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await evicted(manager, store, projectId, root);
+
+    // The user commits to the task's branch from their own checkout while the
+    // task is evicted.
+    await git(root, "checkout", "-q", row.branch!);
+    fs.writeFileSync(path.join(root, "README.md"), "committed elsewhere\n");
+    await git(root, "commit", "-qam", "work outside the task");
+    await git(root, "checkout", "-q", "main");
+
+    const restored = await manager.restoreTaskWorktree(id);
+
+    expect(restored?.wip).toBe("stale");
+    // The newer commit survived, which is the only thing that matters.
+    expect(fs.readFileSync(path.join(row.worktree_path!, "README.md"), "utf8"))
+      .toBe("committed elsewhere\n");
+    const after = store.get(id)!;
+    expect(after.worktree_state).toBe("present");
+    expect(after.wip_ref).toBe(`refs/codetoaster/wip/${id}`);
+    expect(after.wip_at).not.toBeNull();
+  }, 20000);
+
+  // A task owing a decision must not have it answered by the next eviction: a
+  // task has one WIP ref, so a second snapshot would move it off the commit the
+  // user was being offered and leave that commit unreachable.
+  test("a task still owing a decision is not snapshotted over", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row, snapshot } = await evicted(manager, store, projectId, root);
+
+    await git(root, "checkout", "-q", row.branch!);
+    fs.writeFileSync(path.join(root, "README.md"), "committed elsewhere\n");
+    await git(root, "commit", "-qam", "work outside the task");
+    await git(root, "checkout", "-q", "main");
+    expect((await manager.restoreTaskWorktree(id))?.wip).toBe("stale");
+
+    // The task is dirty again and the evict tier comes back around.
+    fs.writeFileSync(path.join(row.worktree_path!, "README.md"), "dirty again\n");
+
+    expect(await manager.snapshotTaskWip(id)).toBeNull();
+    expect(store.get(id)?.wip_ref).toBe(`refs/codetoaster/wip/${id}`);
+    expect(await git(root, "rev-parse", `refs/codetoaster/wip/${id}`)).toBe(snapshot!.commit);
+  }, 20000);
+
+  // `worktree_state` is a claim about a directory, and a directory can be
+  // removed by someone who never told us. Trusting the column would answer
+  // "nothing to do" for exactly the task about to open on a path that is gone.
+  test("restores a checkout removed behind our back, and not one that is there", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    await manager.closeTask(id);
+
+    // Still on disk, so there is nothing to do.
+    expect(await manager.restoreTaskWorktree(id)).toBeNull();
+
+    fs.rmSync(row.worktree_path!, { recursive: true, force: true });
+    const restored = await manager.restoreTaskWorktree(id);
+
+    expect(restored?.wip).toBe("none");
+    expect(fs.existsSync(path.join(row.worktree_path!, "README.md"))).toBe(true);
+    expect(store.get(id)?.worktree_state).toBe("present");
   }, 20000);
 });

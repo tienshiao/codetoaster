@@ -35,12 +35,17 @@ import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
 import {
   createWorktree,
+  dropWip,
   readSetupOutcome,
   removeWorktree,
+  restoreWorktree,
   setupStampPath,
+  snapshotWip,
   wrapWithSetup,
   WorktreeError,
   type CreatedWorktree,
+  type RestoredWorktree,
+  type WipSnapshot,
 } from "../worktree";
 
 function expandTilde(filepath: string): string {
@@ -1569,6 +1574,120 @@ export class TaskManager {
    * harvested?" with §5.5, and a click answers it by being a click. */
   closeTask(taskId: string): Promise<boolean> {
     return this.suspendTask(taskId);
+  }
+
+  /** Commit a task's working state to its WIP ref, and record it on the row
+   * (§5.6).
+   *
+   * The half of eviction that has to be safe. Removing the checkout is trivial
+   * and reversible; what makes it reversible is that this ran first and
+   * succeeded, so the evict tier calls it and only proceeds on a snapshot it
+   * got back. Nothing here decides *whether* to evict — the grace period, the
+   * pin, the manual trigger are all the caller's (TASK-39).
+   *
+   * Answers `null` when there is nothing to snapshot, or nothing that may
+   * safely be overwritten: a task with no checkout of its own runs in the
+   * project's directory, where the working state is the user's and not ours to
+   * commit; a task whose checkout is already gone has only what a previous
+   * snapshot saved; and a task still holding a refused snapshot owes the user a
+   * decision that a second snapshot would answer for them. None is a failure,
+   * and all are states the caller would otherwise have to test for itself.
+   *
+   * A git failure throws. The live tree is untouched either way — the snapshot
+   * works through a throwaway index — so a caller that treats a throw as "do
+   * not evict this one" loses nothing but a turn. */
+  async snapshotTaskWip(taskId: string): Promise<WipSnapshot | null> {
+    const row = this.store.get(taskId);
+    if (!row?.worktree_path || row.worktree_state !== "present") return null;
+    // `present` is a claim about a directory, and the directory can be gone —
+    // the same distrust `restoreTaskWorktree` reads the column with. Without
+    // this the snapshot throws `snapshot-failed` on a task there is nothing to
+    // snapshot for, and a caller that reads a throw as "do not evict this one"
+    // would keep retrying a checkout that is already off the disk.
+    if (!fs.existsSync(row.worktree_path)) return null;
+    // A ref already on the row of a *present* checkout is the needs-decision
+    // state and nothing else: a snapshot `restoreWorktree` refused to apply,
+    // still waiting on apply / keep / discard. A task has one WIP ref, and
+    // `snapshotWip` moves it — so snapshotting now would leave the refused
+    // commit unreachable and take the user's choice away on their behalf, in
+    // the middle of an eviction they never asked for. Null keeps the checkout,
+    // since the caller only evicts on a snapshot it got back.
+    if (row.wip_ref) return null;
+
+    const snapshot = await snapshotWip({ id: taskId, worktreePath: row.worktree_path });
+    // Checked on the far side of the await, like every other write here: a task
+    // deleted while git was working would otherwise be resurrected as a row
+    // holding two columns. The ref outlives it, which archive's retention sweep
+    // is the right place to notice — not a write that recreates the task.
+    if (!this.store.get(taskId)) return snapshot;
+    this.store.update(taskId, { wip_ref: snapshot.ref, wip_at: snapshot.at });
+    this.broadcastTask(taskId);
+    return snapshot;
+  }
+
+  /** Rebuild a checkout that was evicted or removed behind our back, and put
+   * the task's work back in it (§5.6).
+   *
+   * What opening an evicted task runs before the agent is resumed. Answers
+   * `null` when there is nothing to restore — a task that never had a checkout,
+   * or one whose checkout is still on disk — so the open path can call it
+   * unconditionally rather than reading `worktree_state` itself.
+   *
+   * **`wip_ref` surviving a restore is what "needs a decision" is spelled as.**
+   * On a clean round trip the snapshot is applied and the columns are cleared:
+   * the work is on disk, and the next eviction will write a fresh ref anyway.
+   * When the branch moved while the task was evicted, `restoreWorktree` refuses
+   * to apply it and the columns stay — so `worktree_state = present` with a
+   * `wip_ref` still set is, durably and without a new column, the task whose
+   * card owes the user an apply / keep / discard. It survives a daemon restart
+   * for the same reason, which a flag held in memory would not. */
+  async restoreTaskWorktree(taskId: string): Promise<RestoredWorktree | null> {
+    const row = this.store.get(taskId);
+    if (!row?.branch || row.worktree_state === "none") return null;
+    // `present` is a claim about a directory, and a directory can be removed by
+    // someone who never told us. Trusting the column would answer "nothing to
+    // do" for exactly the task whose terminal is about to open on a path that
+    // is not there.
+    if (row.worktree_state === "present" && row.worktree_path
+        && fs.existsSync(row.worktree_path)) {
+      return null;
+    }
+
+    const project = this.projects.find((p) => p.id === row.project_id);
+    if (!project?.initialPath) {
+      // The project's directory is where the repository is found, and a task
+      // cannot have been given a worktree without one — so this is a project
+      // edited out from under a task, not an ordinary state.
+      throw new WorktreeError(
+        "not-a-repo",
+        `Project "${project?.name ?? row.project_id}" no longer has a directory to restore into`,
+      );
+    }
+
+    const restored = await restoreWorktree(expandTilde(project.initialPath), row.project_id, {
+      id: taskId,
+      branch: row.branch,
+    });
+    // Dropped along with the columns that record it, and not left as a spare
+    // copy. The work is on disk now, so the ref holds nothing the checkout does
+    // not — but it outlives the row's account of it, and `restoreWorktree`
+    // reads git rather than the row: the *next* restore of this task, after a
+    // directory removed by hand or a daemon that died mid-restore, would find
+    // the old ref and apply work the row says was consumed. That undoes, among
+    // other things, a `git restore .` the user ran deliberately once the last
+    // restore handed it back to them.
+    if (restored.wip === "applied") await dropWip(restored.worktreePath, taskId);
+    if (!this.store.get(taskId)) return restored;
+    this.store.update(taskId, {
+      worktree_state: "present",
+      worktree_path: restored.worktreePath,
+      // The agent runs in its checkout, and a task restored after a `missing`
+      // may have been left pointing at a path that no longer existed.
+      cwd: restored.worktreePath,
+      ...(restored.wip === "applied" ? { wip_ref: null, wip_at: null } : {}),
+    });
+    this.broadcastTask(taskId);
+    return restored;
   }
 
   /** The destructive door, and for now the only one: the row, the terminals and

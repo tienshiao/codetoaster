@@ -4,6 +4,7 @@ title: 'Evict tier: remove suspended checkouts, restore on open'
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:17'
+updated_date: '2026-08-31 06:56'
 labels:
   - server
   - tasks
@@ -33,3 +34,15 @@ ordinal: 39000
 - [ ] #5 Restore failure (branch gone, WIP parent mismatch) lands on an actionable card, never a dead terminal
 - [ ] #6 Tests cover eviction guards and the restore path
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-31 06:56
+---
+From TASK-38's code review: restore currently does NOT re-run `setup_command` or re-copy `worktree_copy`. `lib/worktree/restore.ts` rebuilds the checkout and reads the WIP back, and stops there — `wrapWithSetup` is only wired into `createTask`, so the setup half has to be added on the open/resume spawn path, which is where AC #4 already puts it.
+
+The consequence to keep in mind while building that: `git add -A` honours `.gitignore`, so the snapshot cannot carry ignored files. A project with `worktree_copy = .env` and `setup_command = bun install` gets a checkout back with neither until this lands — `worktree_copy` needs re-copying as well as setup re-running, and AC #4 only names setup. `copyProjectFiles` is private to `create.ts` and will need exporting or lifting.
+---
+<!-- COMMENTS:END -->
