@@ -21,6 +21,7 @@ import { writeTaskSettings } from "../agent/settings";
 import {
   compactTriggerOf,
   endsCompaction,
+  startsCompaction,
   transitionFor,
   type CompactTrigger,
   type HookPayload,
@@ -912,8 +913,17 @@ export class TaskManager {
     // SessionStart that ends it is the one that has to decide what the agent
     // comes back as. Nothing in the second payload says which kind it was, so
     // the trigger is held here between them and spent on arrival.
+    // Held per compaction, not per task: every PreCompact replaces what was
+    // there, including one that names no trigger. A compaction whose first half
+    // said nothing is unknowable, and the previous compaction's answer — from
+    // one that was cancelled, or whose SessionStart never arrived — is a guess
+    // dressed as a fact, which is the one thing the `undefined` road exists to
+    // avoid.
     const trigger = compactTriggerOf(payload);
-    if (trigger) this.compactTriggers.set(taskId, trigger);
+    if (startsCompaction(payload)) {
+      if (trigger) this.compactTriggers.set(taskId, trigger);
+      else this.compactTriggers.delete(taskId);
+    }
     const ending = endsCompaction(payload);
     const update = transitionFor(
       payload,
@@ -1412,7 +1422,29 @@ export class TaskManager {
    * on its next attach — but the answer is the layer below's to give, not this
    * one's to swallow. */
   resizePty(clientId: string, ptyId: string, cols: number | null, rows: number | null): boolean {
-    return this.ptys.resize(clientId, ptyId, cols, rows);
+    const before = this.ptys.get(ptyId)?.getSize();
+    if (!this.ptys.resize(clientId, ptyId, cols, rows)) return false;
+    // The other half of what attachClient broadcasts. Smallest-wins means one
+    // client's window is every client's grid, and the grid rides on TaskInfo —
+    // so without this the status bar of every *other* viewer goes on naming a
+    // size their terminal has already stopped being.
+    //
+    // Narrow on purpose: only the terminal TaskInfo actually reports (a shell
+    // tab's grid is not the task's), and only when the negotiated size moved.
+    // A drag is a burst of resize messages and almost none of them renegotiate
+    // anything.
+    const after = this.ptys.get(ptyId)?.getSize();
+    const taskId = this.ptyToTask.get(ptyId);
+    if (
+      taskId &&
+      before &&
+      after &&
+      (before.cols !== after.cols || before.rows !== after.rows) &&
+      this.primaryPty(taskId)?.id === ptyId
+    ) {
+      this.broadcastTask(taskId);
+    }
+    return true;
   }
 
   getClientPtyIds(clientId: string): string[] {

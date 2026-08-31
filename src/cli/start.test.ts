@@ -15,6 +15,18 @@ interface Run {
 const started: number[] = [];
 const homes: string[] = [];
 afterEach(() => {
+  // Swept from the pid files as well as from what a test remembered to record:
+  // a failing expectation aborts the test body where it stands, and one that
+  // lands before the pid is noted would otherwise leave a real daemon
+  // listening on this machine for the rest of the day.
+  for (const home of homes) {
+    for (const file of pidFiles(home)) {
+      try {
+        const info = JSON.parse(fs.readFileSync(path.join(home, ".codetoaster", file), "utf-8"));
+        if (typeof info?.pid === "number") started.push(info.pid);
+      } catch {}
+    }
+  }
   for (const pid of started.splice(0)) {
     try { process.kill(pid); } catch {}
   }

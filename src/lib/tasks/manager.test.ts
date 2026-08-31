@@ -184,6 +184,24 @@ describe("degraded mode, when no hook ever arrives", () => {
     expect(store.get("t1")!.agent_state).toBe("compacting");
   });
 
+  test("a trigger from a compaction that never came back does not colour the next one", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({ id: "t1", command: ["cat"] });
+
+    // A compaction that starts and never reports back — cancelled, or its
+    // SessionStart dropped — so nothing ever spends the trigger it named.
+    manager.applyHook("t1", { hook_event_name: "PreCompact", trigger: "manual" });
+    manager.applyHook("t1", { hook_event_name: "UserPromptSubmit" });
+
+    // The next compaction names nothing. That is unknowable, and the answer to
+    // unknowable is to claim nothing — not to reach for the answer the last
+    // compaction happened to give, which would hand a mid-turn agent back as
+    // idle and let the harvester suspend it out from under the user.
+    manager.applyHook("t1", { hook_event_name: "PreCompact" });
+    manager.applyHook("t1", { hook_event_name: "SessionStart", source: "compact" });
+    expect(store.get("t1")!.agent_state).toBe("compacting");
+  });
+
   test("the first hook cancels the clock, so a live task is never called unknown", async () => {
     const { manager, store } = newManager();
     manager.setHookGrace(60);

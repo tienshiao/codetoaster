@@ -57,6 +57,18 @@ export function compactTriggerOf(payload: HookPayload): CompactTrigger | undefin
   return trigger === "manual" || trigger === "auto" ? trigger : undefined;
 }
 
+/** Whether this payload is the `PreCompact` that *starts* a compaction,
+ * whatever it says about why.
+ *
+ * The pair to `compactTriggerOf`, which cannot tell "not a PreCompact" from "a
+ * PreCompact naming no trigger we know" — and the caller has to, because the
+ * second one invalidates a trigger it is still holding. A compaction nobody
+ * could characterise must come back unknowable, not wearing the last one's
+ * answer. */
+export function startsCompaction(payload: HookPayload): boolean {
+  return text(payload.hook_event_name) === "PreCompact";
+}
+
 /** Whether this payload is the `SessionStart` that ends a compaction — the
  * point at which a held trigger is spent. */
 export function endsCompaction(payload: HookPayload): boolean {

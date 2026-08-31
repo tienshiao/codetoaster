@@ -71,7 +71,11 @@ export async function cmdStart(port: number, dbPath?: string, hostname?: string,
   // `codetoaster.0.pid` that will never exist is how a daemon that was running
   // and listening got reported as dead — and then left running, since nothing
   // had a handle on it either.
-  const maxAttempts = 15;
+  // Ten seconds, not five. The loop breaks the instant the child dies, so a
+  // real failure never waits this out — the budget is only ever spent on a
+  // daemon that is still coming up, and running thirty agents on one machine
+  // is this product's own use case rather than an edge of it.
+  const maxAttempts = 30;
   for (let i = 0; i < maxAttempts; i++) {
     await Bun.sleep(i === 0 ? 1000 : 300);
     const info = findPidFileByPid(daemonPid);
@@ -85,15 +89,31 @@ export async function cmdStart(port: number, dbPath?: string, hostname?: string,
     if (!isProcessRunning(daemonPid)) break;
   }
 
-  // We started it, so it is ours to take down. Announcing a daemon as dead and
-  // leaving it listening is the worse half of this bug: the user retries, the
-  // second daemon collides with the first, and the first is unreachable by
-  // every command here because none of them know its port.
-  const orphan = findPidFileByPid(daemonPid);
+  // A daemon that got as far as writing a pid file is bound and listening — the
+  // file is written after serve() — and it named the port it got. That is not
+  // the orphan this block is for: it is findable, `stop` can reach it, and it
+  // may simply have been slower than the budget. Killing it would take down a
+  // healthy daemon on exactly the loaded machine that made it slow. So say
+  // where it is and leave it alone.
+  const bound = findPidFileByPid(daemonPid);
+  if (bound) {
+    console.error(`Daemon is listening on port ${bound.port} but did not answer ${originOf(bound)}/api/ping.`);
+    console.error(`  Stop it with: codetoaster stop --port ${bound.port}`);
+    console.error(`  Logs: ${getLogFile()}`);
+    process.exit(1);
+  }
+
+  // Never bound, and still alive: a process that will go on starting up and
+  // bind a port after we have told the user it failed. Nothing would know that
+  // port — that is the orphan, and we started it, so it is ours to take down.
   if (isProcessRunning(daemonPid)) {
     try { process.kill(daemonPid); } catch {}
   }
-  if (orphan) removePidFile(orphan.port);
+  // Looked for again after the signal: one that finished binding in the window
+  // between the check above and the kill writes its file late, and a file
+  // naming a process we have just killed is the same orphan by other means.
+  const late = findPidFileByPid(daemonPid);
+  if (late) removePidFile(late.port);
 
   console.error("Daemon started but not responding. Check logs:");
   console.error(`  ${getLogFile()}`);
