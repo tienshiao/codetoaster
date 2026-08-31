@@ -282,7 +282,14 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                 // all read the same tree. Shown once for the same reason: a
                 // split renders two agent panes and this is one question.
                 <div className="flex h-full min-h-0 flex-col">
-                  {selected?.wipPending && <WipNotice taskId={selected.id} />}
+                  {/* Keyed by task, because the notice holds the "Later"
+                      dismissal in its own state and the shell does not remount
+                      when the route moves between tasks. Unkeyed, React would
+                      reconcile the two into one component and a dismissal on
+                      one task would silently swallow the next task's notice —
+                      the one case where the user is never told their work
+                      could not be restored. */}
+                  {selected?.wipPending && <WipNotice key={selected.id} taskId={selected.id} />}
                   <TabArea
                   layout={layout}
                   onLayoutChange={applyLayout}

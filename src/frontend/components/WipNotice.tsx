@@ -33,12 +33,15 @@ export function WipNotice({ taskId }: { taskId: string }) {
   const act = useCallback(
     async (action: "apply" | "discard") => {
       setBusy(true);
-      // Not cleared on success: the task delta that follows drops `wipPending`
-      // and unmounts this outright, so clearing would set state on a component
-      // that is going away. On failure the error has already been reported and
-      // the buttons have to come back.
+      // Not cleared when the server actually did something: the task delta
+      // that follows drops `wipPending` and unmounts this outright. It is
+      // cleared for the other two answers — a failure, where the error has
+      // already been reported and the buttons have to come back, and a
+      // `done: false`, which is another client having answered first. That one
+      // sends no delta, so leaving `busy` set would strand a notice with three
+      // disabled buttons and no way out.
       const result = await resolveWip(taskId, action);
-      if (!result.ok) setBusy(false);
+      if (!result.ok || !result.value.done) setBusy(false);
       setConfirming(false);
     },
     [resolveWip, taskId],

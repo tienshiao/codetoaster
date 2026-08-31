@@ -27,6 +27,7 @@ const stubs = vi.hoisted(() => ({
   closeShell: vi.fn<(id: string, ptyId: string) => Promise<unknown>>(),
   toast: vi.fn(),
   setViewedTask: vi.fn(),
+  resolveWip: vi.fn(),
 }));
 
 vi.mock("@/frontend/TaskContext", () => ({
@@ -36,6 +37,7 @@ vi.mock("@/frontend/TaskContext", () => ({
     openShell: stubs.openShell,
     closeShell: stubs.closeShell,
     setViewedTask: stubs.setViewedTask,
+    resolveWip: stubs.resolveWip,
   }),
   taskStateOf: () => "idle",
   // The real projection over the real shape; it is pure, and stubbing it would
@@ -286,4 +288,35 @@ test("a shell answered after the user left the task is killed, not abandoned", a
 
   expect(stubs.closeShell).toHaveBeenCalledWith(TASK_ID, "pty-orphan");
   expect(storedShells()).toEqual([]);
+});
+
+// The shell is rendered once for every task: `TaskRoute` changes the slug prop
+// rather than remounting, so anything at a stable position in this tree is
+// reconciled from one task straight into the next. `WipNotice` holds a local
+// "decide later" flag, which makes it exactly the kind of component that must
+// not be — and the consequence is not a cosmetic one: a user who dismissed the
+// notice on one task would never be told that a *different* task's saved work
+// could not be restored, and its ref would wait forever with nothing pointing
+// at it.
+test("a dismissed WIP notice does not follow the user to the next task", () => {
+  stubs.tasks = [
+    task({ id: TASK_ID, wipPending: true }),
+    task({ id: "task-2", title: "another task", wipPending: true }),
+  ];
+
+  const { rerender } = renderShell();
+  expect(screen.queryByRole("status")).not.toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "Later" }));
+  expect(screen.queryByRole("status")).toBeNull();
+
+  rerender(
+    <TerminalThemeProvider>
+      <TaskShell taskId="task-2" />
+    </TerminalThemeProvider>,
+  );
+
+  // The second task has said nothing about its own snapshot, so it still asks.
+  expect(screen.queryByRole("status")).not.toBeNull();
+  expect(stubs.resolveWip).not.toHaveBeenCalled();
 });

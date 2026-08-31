@@ -1,7 +1,6 @@
-import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
-import { gitSpawn, safePath } from "../../api/utils";
+import { gitSpawn } from "../../api/utils";
 import type { TaskRow } from "../db";
 import { allocateBranch } from "./branch";
 import { copyProjectFiles, type WorktreeProject } from "./copy";

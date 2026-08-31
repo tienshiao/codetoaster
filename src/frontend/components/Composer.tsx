@@ -98,8 +98,16 @@ export function Composer() {
         // its own, so "I did not touch this" and "I chose the same thing"
         // stay the same request — and a project whose default later changes
         // moves the tasks that never overrode it.
-        worktree:
-          canWorktree && worktree !== (project?.worktreeDefault ?? false) ? worktree : undefined,
+        // A project with nowhere to branch is the exception: leaving the field
+        // off there hands the decision back to a `worktree_default` the toggle
+        // is showing as off and cannot honour, and the create fails with a 400
+        // about a directory the user was never asked about. Said explicitly so
+        // the request matches the control.
+        worktree: !canWorktree
+          ? (project?.worktreeDefault ? false : undefined)
+          : worktree !== (project?.worktreeDefault ?? false)
+            ? worktree
+            : undefined,
         // Blank is not a ref, and the server refuses one. It is how this field
         // says "no override", which is exactly what leaving it out means.
         baseRef: worktree && baseRef.trim() ? baseRef.trim() : undefined,
