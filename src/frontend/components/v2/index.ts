@@ -40,7 +40,7 @@ export { Dialog } from "./Dialog";
 export type { DialogProps } from "./Dialog";
 
 export { TaskRow } from "./TaskRow";
-export type { TaskRowProps } from "./TaskRow";
+export type { TaskRowProps, TaskRowWorktreeFacts } from "./TaskRow";
 
 export { ProjectGroup } from "./ProjectGroup";
 export type { ProjectGroupProps } from "./ProjectGroup";
@@ -76,4 +76,5 @@ export type {
   ShellTab,
   ShellTask,
   ShellTaskGroup,
+  ShellUnclaimedWorktree,
 } from "./AppShell";

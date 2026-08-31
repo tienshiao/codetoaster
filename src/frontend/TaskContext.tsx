@@ -16,7 +16,7 @@ import { retainLayouts } from "./layout-store";
 import { retainTaskViewStates } from "./view-state-store";
 import { generateUUID } from "./utils/uuid";
 import type { TaskState } from "./components/v2/StatusDot";
-import type { ProjectInfo, ProjectSettings, TaskInfo } from "../lib/xtmux/types";
+import type { ProjectInfo, ProjectSettings, TaskInfo, UnclaimedInfo } from "../lib/xtmux/types";
 
 /**
  * The task store (§7.4): the list, the projects, and per-task liveness, fed by
@@ -74,6 +74,12 @@ export interface ResumeTaskOptions {
 export interface TaskContextValue {
   tasks: TaskInfo[];
   projects: ProjectInfo[];
+  /** Checkouts on disk that no task accounts for (§5.6), from the boot sweep.
+   *
+   * Empty until the server has said otherwise, and it says nothing until the
+   * sweep has finished — so "we have not looked yet" and "there are none" are
+   * one value here on purpose. They render identically: an absent section. */
+  unclaimed: UnclaimedInfo[];
   /** False before the first snapshot and again after a drop, so the UI can
    * tell "no tasks" from "not told yet" — they look identical and mean
    * opposite things. */
@@ -104,6 +110,12 @@ export interface TaskContextValue {
     id: string,
     action: "apply" | "discard",
   ) => Promise<TaskResult<{ done: boolean; task: TaskInfo }>>;
+  /** Remove one unclaimed checkout from disk, by the user's own decision — the
+   * only thing that can be done with one, and the one deletion the boot sweep
+   * refuses to make on its own because the work in there is unrecoverable
+   * (§5.6). The path identifies it; the server takes it only if it is a path
+   * the server itself is currently offering. */
+  deleteUnclaimedWorktree: (path: string) => Promise<TaskResult<{ deleted: boolean }>>;
   /** Open a plain shell inside a task, as a sibling of its agent (§3). Answers
    * with the new PTY's id and the task it now belongs to — the task because it
    * carries `shellPtyIds`, so the caller has the tab and the proof that its PTY
@@ -283,6 +295,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   const { subscribe, send, isConnected } = usePty();
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [unclaimed, setUnclaimed] = useState<UnclaimedInfo[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [activity, setActivity] = useState<Record<string, boolean>>({});
   const tasksRef = useRef<TaskInfo[]>([]);
@@ -312,6 +325,12 @@ export function TaskProvider({ children }: { children: ReactNode }) {
           if (message.type === "tasks") {
             setTasks(message.list);
             setProjects(message.projects ?? []);
+            // Absent is not empty. The field rides the snapshot, so a snapshot
+            // sent before the boot sweep finished carries none — and answering
+            // that by clearing a list we have already been given would blank
+            // the section every time anything else about the tasks changed.
+            // The server states the list when it has one; until then, keep.
+            if (message.unclaimed) setUnclaimed(message.unclaimed);
             setLoaded(true);
             return;
           }
@@ -503,6 +522,29 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // DELETE with a body, matching the route: the thing being deleted is defined
+  // by having no task, so there is no id to put in the path, and a filesystem
+  // path in a URL is the encoding mistake this must not make.
+  //
+  // Nothing is seeded from the answer the way `createTask` seeds a row. The
+  // server re-broadcasts the whole list once the directory is gone, and a
+  // section that vanished optimistically would come back if the removal failed
+  // — which, for the one control in the app that destroys uncommitted work, is
+  // the wrong direction to be wrong in.
+  const deleteUnclaimedWorktree = useCallback(
+    (path: string) =>
+      request<{ deleted: boolean }>(
+        "/api/worktrees/unclaimed",
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        },
+        "Could not remove the worktree",
+      ),
+    [],
+  );
+
   const openShell = useCallback(
     (id: string) =>
       request<{ ptyId: string; task: TaskInfo }>(
@@ -558,6 +600,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     () => ({
       tasks,
       projects,
+      unclaimed,
       loaded,
       isConnected,
       activity,
@@ -567,6 +610,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       closeTask,
       resumeTask,
       resolveWip,
+      deleteUnclaimedWorktree,
       openShell,
       closeShell,
       setViewedTask,
@@ -577,6 +621,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     [
       tasks,
       projects,
+      unclaimed,
       loaded,
       isConnected,
       activity,
@@ -586,6 +631,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       closeTask,
       resumeTask,
       resolveWip,
+      deleteUnclaimedWorktree,
       openShell,
       closeShell,
       setViewedTask,

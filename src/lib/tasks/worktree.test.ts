@@ -8,6 +8,7 @@ import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import { Harvester, SEVEN_DAYS_MS } from "./harvester";
 import { gitSpawn } from "../../api/utils";
+import { foreignCheckouts } from "../../../test/git-repo";
 import { taskDir } from "../agent/spawn";
 import { WorktreeError, readWip, setupStampPath, worktreesRoot } from "../worktree";
 
@@ -1173,5 +1174,210 @@ describe("the refused-snapshot state says only what is true", () => {
     expect(await manager.discardTaskWip(id)).toBe(true);
     expect(store.get(id)!.wip_ref).toBeNull();
     expect(await readWip(root, id)).toBeNull();
+  }, 30000);
+});
+
+// The boot reconciliation, from the manager's side (§5.6, Risk 5, TASK-32).
+// The sweep itself is `reconcile.test.ts`, against temporary repositories; what
+// is left here is the wiring — which rows count as claiming a checkout, which
+// column a vanished directory writes, and what the user is then offered.
+describe("reconciling worktrees on boot", () => {
+  /** Run `fn` with every foreign checkout under the real worktrees root held by
+   * a row of its own, so the sweep leaves it alone.
+   *
+   * `reconcileWorktreesOnBoot` builds its `claimed` set out of this manager's
+   * database and then walks `~/.codetoaster/worktrees`, which is the user's
+   * actual one — there is no other. Against an in-memory database, *every*
+   * checkout a developer has is unclaimed, and a clean one is what the sweep
+   * removes without asking. So the foreign directories are given rows here for
+   * the duration of the call, which is the only lever a caller has: the set is
+   * derived, not injected.
+   *
+   * Torn down in a `finally` and not in `afterEach`, and that is the whole
+   * safety of it: the file's `afterEach` deletes every task the manager lists,
+   * and `deleteTask` removes a task's checkout (TASK-31) — so a claim row that
+   * outlived the test body would hand the cleanup somebody's real work to
+   * delete. `finally` runs on the failure path too, which is the path that
+   * matters. */
+  async function sparingForeignCheckouts<T>(
+    store: TaskStore,
+    projectId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const claims = foreignCheckouts(projectIds).map((dir) => {
+      const id = `claim-${crypto.randomUUID()}`;
+      store.create({
+        id,
+        project_id: projectId,
+        title: "not this suite's",
+        initial_prompt: "",
+        repo_root: null,
+        cwd: dir,
+        worktree_path: dir,
+        worktree_state: "present",
+        lifecycle: "suspended",
+      });
+      return id;
+    });
+    try {
+      return await fn();
+    } finally {
+      for (const id of claims) store.delete(id);
+    }
+  }
+
+  /** A task with a checkout of its own, suspended so nothing is running in it. */
+  async function withCheckout(manager: TaskManager, projectId: string) {
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    await manager.closeTask(id);
+    return { id, row };
+  }
+
+  // Direction (b). `worktree_state` is a claim about a directory, and the
+  // directory can be removed by someone who never told us — a `rm -rf` between
+  // two daemon runs. `missing` is what makes the next open rebuild it, where a
+  // stale `present` would have the restore decide there was nothing to do and
+  // then spawn an agent into a path that is not there.
+  test("flips a row to missing when its checkout has gone", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await withCheckout(manager, projectId);
+    expect(store.get(id)!.worktree_state).toBe("present");
+
+    fs.rmSync(row.worktree_path!, { recursive: true, force: true });
+    await sparingForeignCheckouts(store, projectId, () => manager.reconcileWorktreesOnBoot());
+
+    expect(store.get(id)!.worktree_state).toBe("missing");
+    // Everything that makes it rebuildable is still on the row — the sweep
+    // corrects what we believe about the disk and takes nothing else with it.
+    expect(store.get(id)!.worktree_path).toBe(row.worktree_path);
+    expect(store.get(id)!.branch).toBe(row.branch);
+    // And git's registration of the directory was pruned on the way past,
+    // which is what lets that rebuild reuse the path at all.
+    expect(await git(root, "worktree", "list", "--porcelain")).not.toContain(row.worktree_path!);
+  }, 30000);
+
+  // Direction (a) reaching a row that exists. Archived rows are deliberately
+  // left out of `claimed`: archive removes the checkout and keeps the branch
+  // and the snapshot (TASK-31), so a directory still standing for one is the
+  // residue of a removal that did not finish, and removing it now is finishing
+  // the job rather than second-guessing it.
+  test("treats an archived task's leftover checkout as an orphan", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await withCheckout(manager, projectId);
+    // What a half-finished archive leaves: the lifecycle written, the directory
+    // still there.
+    store.update(id, { lifecycle: "archived" });
+
+    const report = await sparingForeignCheckouts(
+      store, projectId, () => manager.reconcileWorktreesOnBoot(),
+    );
+
+    expect(report.removed).toEqual([row.worktree_path!]);
+    expect(fs.existsSync(row.worktree_path!)).toBe(false);
+    // The branch and the snapshot are what an archived task *is*, and neither
+    // is on the disk the sweep is reclaiming.
+    expect(await git(root, "branch", "--list", row.branch!)).toContain(row.branch!);
+    expect(store.get(id)!.lifecycle).toBe("archived");
+  }, 30000);
+
+  // AC #2 all the way through to the client. The checkouts the sweep refused to
+  // delete belong to no task, so there is nowhere for them to live but the
+  // manager — and the only thing that can decide their fate is the user.
+  test("holds the checkouts it would not delete, until the user says", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await withCheckout(manager, projectId);
+    fs.writeFileSync(path.join(row.worktree_path!, "an-hours-work.txt"), "unsaved\n");
+    store.update(id, { lifecycle: "archived" });
+
+    // Empty before the sweep, and that is the honest answer rather than a
+    // placeholder: the boot path fires the sweep and moves on, so "we have not
+    // looked yet" and "there are none" read the same to a client either way.
+    expect(manager.getUnclaimedWorktrees()).toEqual([]);
+
+    await sparingForeignCheckouts(store, projectId, () => manager.reconcileWorktreesOnBoot());
+
+    expect(manager.getUnclaimedWorktrees()).toEqual([{
+      path: row.worktree_path!,
+      repoRoot: expect.any(String),
+      branch: row.branch,
+      dirty: 1,
+    }]);
+    expect(fs.existsSync(row.worktree_path!)).toBe(true);
+
+    expect(await manager.deleteUnclaimedWorktree(row.worktree_path!)).toBe(true);
+
+    expect(fs.existsSync(row.worktree_path!)).toBe(false);
+    // Dropped from the list as well as from the disk, or the card would come
+    // back on the next broadcast pointing at nothing.
+    expect(manager.getUnclaimedWorktrees()).toEqual([]);
+    // And the registration went with it, the same as an eviction's.
+    expect(await git(root, "worktree", "list", "--porcelain")).not.toContain(row.worktree_path!);
+  }, 30000);
+
+  // The guard that matters, because this path arrives from a client: the list
+  // is ours, but the request is a string on the wire, and nothing about a path
+  // having been reported once makes an arbitrary path safe to recursively
+  // delete now.
+  test("refuses to delete a path the sweep never named", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await withCheckout(manager, projectId);
+    const orphan = await withCheckout(manager, projectId);
+    fs.writeFileSync(path.join(orphan.row.worktree_path!, "unsaved.txt"), "work\n");
+    store.update(orphan.id, { lifecycle: "archived" });
+
+    await sparingForeignCheckouts(store, projectId, () => manager.reconcileWorktreesOnBoot());
+    expect(manager.getUnclaimedWorktrees().map((w) => w.path)).toEqual([orphan.row.worktree_path!]);
+
+    // A live task's checkout: under the worktrees root, shaped exactly like the
+    // one that *is* on the list, and belonging to someone.
+    expect(await manager.deleteUnclaimedWorktree(row.worktree_path!)).toBe(false);
+    expect(fs.existsSync(row.worktree_path!)).toBe(true);
+    expect(store.get(id)!.worktree_state).toBe("present");
+
+    // A path outside the root entirely — the user's own repository.
+    expect(await manager.deleteUnclaimedWorktree(root)).toBe(false);
+    expect(fs.existsSync(path.join(root, "README.md"))).toBe(true);
+
+    // And one that spells its way back out of the root through a directory the
+    // list *does* hold, which is what a prefix check rather than a resolved one
+    // would have let through.
+    const escape = path.join(orphan.row.worktree_path!, "..", "..", "..", "tasks");
+    expect(await manager.deleteUnclaimedWorktree(escape)).toBe(false);
+    expect(fs.existsSync(taskDir(id))).toBe(true);
+
+    // Nothing was refused *instead of* the real answer: the card is still
+    // there, and still deletable.
+    expect(manager.getUnclaimedWorktrees().map((w) => w.path)).toEqual([orphan.row.worktree_path!]);
+  }, 30000);
+
+  // The blast radius if this method ever reads the wrong database. Every real
+  // checkout is unclaimed by an empty one, and "no rows" is far likelier to
+  // mean a daemon pointed at the wrong `--db` than it is to mean the user has
+  // no tasks and a root full of orphans — so the sweep must decline rather than
+  // act on the reading that deletes the most.
+  //
+  // Written against a directory that would otherwise be removed: it is clean,
+  // it is under the root, and nothing claims it. The only thing standing
+  // between it and deletion is the guard.
+  test("a database with no tasks at all sweeps nothing", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const stranded = path.join(worktreesRoot(), projectId, `task-${crypto.randomUUID()}`);
+    fs.mkdirSync(path.dirname(stranded), { recursive: true });
+    await git(root, "worktree", "add", "-b", "ct/stranded", stranded, "main");
+
+    expect(store.list()).toHaveLength(0);
+    const report = await manager.reconcileWorktreesOnBoot();
+
+    expect(report).toEqual({ removed: [], unclaimed: [] });
+    // Not merely unreported — still there. A guard that only kept it out of the
+    // log would be worse than none.
+    expect(fs.existsSync(stranded)).toBe(true);
+    expect(manager.getUnclaimedWorktrees()).toEqual([]);
   }, 30000);
 });

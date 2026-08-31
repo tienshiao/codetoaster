@@ -91,6 +91,22 @@ export function startServer(options?: ServerOptions) {
       console.log(`Expired ${expired} archived snapshot${expired === 1 ? "" : "s"} past retention`);
     }
   });
+  // §5.6's two-way reconciliation (TASK-32): the checkouts on disk against the
+  // rows that claim them. Fired rather than awaited for the same reason as the
+  // sweep above — it runs git once per repository — and it never rejects.
+  //
+  // What it removes is logged because it is the one thing here that deletes
+  // something the user did not ask it to. A clean checkout with no task holds
+  // nothing, which is why removing it is safe; the log is what makes it
+  // accountable rather than silent.
+  void taskManager.reconcileWorktreesOnBoot().then(({ removed, unclaimed }) => {
+    for (const dir of removed) console.log(`Removed orphaned worktree ${dir}`);
+    if (unclaimed.length > 0) {
+      console.log(
+        `Left ${unclaimed.length} unclaimed worktree${unclaimed.length === 1 ? "" : "s"} in place`,
+      );
+    }
+  });
   // After the reconciliation, so the first tick walks what is actually running
   // rather than the rows the previous daemon left behind — every one of which
   // is live, idle-looking and long past any timeout. On its own default of

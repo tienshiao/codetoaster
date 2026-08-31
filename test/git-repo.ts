@@ -85,6 +85,49 @@ export function tempTask(title: string): { id: string; title: string } {
   return { id, title };
 }
 
+/** Every checkout under the real worktrees root that this suite did not make.
+ *
+ * The boot sweep takes no root to work in: there is one, `~/.codetoaster/
+ * worktrees`, and it walks it. So a test that ran the sweep with an empty
+ * `claimed` set would be asking it to delete whatever the developer running the
+ * suite happens to have checked out — the sweep cannot tell a genuine orphan
+ * from one belonging to a database it was never handed, and a *clean* orphan is
+ * precisely what it removes without asking. Feeding every foreign directory
+ * back in as claimed makes the sweep a no-op on all of them, and leaves each
+ * test reasoning only about the checkouts it made itself.
+ *
+ * Two levels, matching the `<projectId>/<taskId>` shape the sweep enumerates:
+ * anything shallower is a project directory and anything deeper is the inside
+ * of a checkout. Read at the moment it is asked for rather than cached, because
+ * the tests create their own directories as they go and the answer has to be
+ * about the disk as the sweep will find it. */
+export function foreignCheckouts(ours: Iterable<string> = projectIds): string[] {
+  const mine = new Set(ours);
+  const root = worktreesRoot();
+  const found: string[] = [];
+  let projects: fs.Dirent[];
+  try {
+    projects = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    // No root at all: an install that has never made a worktree, which is the
+    // state a fresh checkout of this repository is in.
+    return found;
+  }
+  for (const project of projects) {
+    if (!project.isDirectory() || mine.has(project.name)) continue;
+    let tasks: fs.Dirent[];
+    try {
+      tasks = fs.readdirSync(path.join(root, project.name), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const task of tasks) {
+      if (task.isDirectory()) found.push(path.join(root, project.name, task.name));
+    }
+  }
+  return found;
+}
+
 /** Remove every repository and worktree this module handed out.
  *
  * Called from each test file's own `afterEach` rather than registered here:

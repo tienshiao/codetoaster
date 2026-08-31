@@ -103,12 +103,57 @@ export type ServerMessage =
   // project that does not exist).
   | { type: "error"; message: string; ptyId?: string }
   // The whole list, sent on connect and whenever the shape of it changes.
-  | { type: "tasks"; list: TaskInfo[]; projects: ProjectInfo[] }
+  //
+  // `unclaimed` rides the snapshot rather than a message of its own because it
+  // changes for the same reasons the list does — the boot sweep runs, or the
+  // user deletes one — and it is never large.
+  //
+  // Always sent, and empty means "none found so far" rather than "not looked
+  // yet". The two are worth conflating here and nowhere else: before the sweep
+  // has run we have no evidence of an unclaimed checkout, and a band warning
+  // about work we have not found would be worse than the moment of silence.
+  // Optional only so an older client is not a parse error.
+  | { type: "tasks"; list: TaskInfo[]; projects: ProjectInfo[]; unclaimed?: UnclaimedInfo[] }
   // One row changed. A delta rather than a fresh snapshot, so a busy agent
   // does not re-send every task on every state transition.
   | { type: "task"; task: TaskInfo }
   | { type: "activity"; taskId: string; active: boolean }
   | { type: "notification"; taskId: string; title: string; body: string };
+
+/** A checkout on disk that no task accounts for (§5.6, TASK-32).
+ *
+ * Not a task and deliberately not shaped like one: it has no id, no lifecycle
+ * and nothing to open — the only thing that can be done with one is delete it,
+ * and the path is what identifies it. Sent so the sidebar can offer that,
+ * because a dirty orphan is the one thing the boot sweep will not clear up on
+ * its own. */
+export interface UnclaimedInfo {
+  path: string;
+  branch: string | null;
+  /** Files `git status --porcelain` reports. `null` means the sweep could not
+   * establish it — a directory git did not recognise — which is *why* it was
+   * left alone, and the card has to say that rather than show "0". */
+  dirty: number | null;
+}
+
+/** The git facts a task's card shows about its checkout (§5.6, TASK-32).
+ *
+ * Optional on the wire and null until computed, which is the whole of AC #5's
+ * "without blocking render": these cost a handful of git processes per task, so
+ * a row draws with whatever it has and fills in when the answer arrives. A
+ * client must therefore treat absent and "nothing to report" as different —
+ * absent is "not measured yet". */
+export interface TaskWorktreeInfo {
+  branch: string | null;
+  /** Uncommitted files in the checkout, `null` when not established. */
+  dirty: number | null;
+  /** Commits the branch would take with it: on neither the base ref nor a
+   * remote. */
+  unpushed: number;
+  /** The branch tip is already contained in the base ref — the 'archive?'
+   * nudge (§5.6). */
+  merged: boolean;
+}
 
 export interface TaskInfo {
   id: string;
@@ -156,6 +201,10 @@ export interface TaskInfo {
    * An applied snapshot clears both, so the pair is the whole state — no flag
    * in memory, and it reads the same after a daemon restart. */
   wipPending: boolean;
+  /** The checkout's git facts, or null until they have been measured. Only ever
+   * set for a task that has a checkout of its own — a task running in the
+   * project's directory has no branch of ours to report on. */
+  worktree: TaskWorktreeInfo | null;
   /** The last thing the agent said, from the Stop hook. The task list shows it
    * under the title, which is how a list of thirty answers "which of these
    * want me?" without opening any of them (§7.5). Null until the agent has

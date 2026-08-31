@@ -27,6 +27,22 @@ export function worktreePathFor(projectId: string, taskId: string): string {
   return path.join(worktreesRoot(), projectId, taskId);
 }
 
+/** Whether a path is at or below the worktrees root.
+ *
+ * The one guard standing between the boot sweep and the rest of the disk
+ * (TASK-32 AC #4), so it lives beside the function that composes the root
+ * rather than in the caller — the same reasoning as `removeTaskDir`, which
+ * checks the tasks root beside `taskDir`.
+ *
+ * `path.relative` and not a prefix test: `~/.codetoaster/worktrees-backup`
+ * shares every character of the root's name and is not inside it. The root
+ * itself answers `true`, so callers about to delete something exclude it
+ * explicitly rather than reading a `false` here as protection. */
+export function isWithinWorktreesRoot(candidate: string): boolean {
+  const rel = path.relative(worktreesRoot(), path.resolve(candidate));
+  return !path.isAbsolute(rel) && rel.split(path.sep)[0] !== "..";
+}
+
 /** Where the setup wrapper records what happened (see `setup.ts`). Beside the
  * task's settings.json and scrollback rather than inside the checkout: it is a
  * fact about the task, and putting it in the worktree would both pollute the

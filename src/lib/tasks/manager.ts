@@ -1,7 +1,9 @@
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
 import * as fs from "fs";
+import * as fsp from "fs/promises";
 import * as os from "os";
+import * as path from "path";
 import type { Pty } from "../xtmux/pty";
 import { PtyManager } from "../xtmux/pty-manager";
 import type {
@@ -9,6 +11,7 @@ import type {
   ProjectSettings,
   ServerMessage,
   TaskInfo,
+  TaskWorktreeInfo,
   WebSocketData,
 } from "../xtmux/types";
 import { uniqueName } from "../xtmux/naming";
@@ -43,7 +46,9 @@ import {
   deleteBranch,
   dropWip,
   evictWorktree,
+  isWithinWorktreesRoot,
   readSetupOutcome,
+  reconcileWorktrees,
   removeWorktree,
   repoRootOf,
   restoreWorktree,
@@ -54,9 +59,19 @@ import {
   WorktreeError,
   type BranchStatus,
   type CreatedWorktree,
+  type ReconcileReport,
   type RestoredWorktree,
+  type UnclaimedWorktree,
   type WipSnapshot,
 } from "../worktree";
+
+/** Whether two measurements say the same thing. Field by field rather than by
+ * serialising: this is asked once per Stop hook per task, and the point of it
+ * is to avoid a broadcast, not to be clever. */
+function sameWorktreeStatus(a: TaskWorktreeInfo, b: TaskWorktreeInfo): boolean {
+  return a.branch === b.branch && a.dirty === b.dirty
+    && a.unpushed === b.unpushed && a.merged === b.merged;
+}
 
 function expandTilde(filepath: string): string {
   if (filepath.startsWith("~/") || filepath === "~") {
@@ -301,6 +316,34 @@ export class TaskManager {
    * a daemon that restarted in between killed that process anyway. */
   private spawnedAt: Map<string, number> = new Map();
   private hookGraceTimers: Map<string, Timer> = new Map();
+  /** The checkouts the boot sweep found and refused to delete (§5.6, TASK-32).
+   *
+   * In memory and not in the database, because they belong to no task and a row
+   * is the one thing they are defined by not having. They are also only as true
+   * as the last sweep — the user can delete one by hand at any moment — so
+   * persisting them would mean carrying a claim about the disk across restarts
+   * that nothing re-checks. A boot re-runs the sweep and re-derives this. */
+  private unclaimedWorktrees: UnclaimedWorktree[] = [];
+  /** What git last said about each task's checkout, for its card (§5.6, AC #5).
+   *
+   * A cache and not a column, because every one of these facts is about the
+   * working tree and the ref store rather than about the task: a commit made in
+   * a shell tab, a push from another terminal, a `git restore` — none of them
+   * come past us, so a persisted copy would be a claim about the disk that
+   * nothing re-checks and that survives a restart looking authoritative. In
+   * memory it is at worst missing, which is the one state the wire can express
+   * honestly. */
+  private worktreeStatus: Map<string, TaskWorktreeInfo> = new Map();
+  /** When each entry above was measured, so a refresh can be skipped rather
+   * than deduplicated after the fact. Separate from the map because an entry
+   * being *absent* and being *stale* want different answers: absent is
+   * measured-never and always worth doing. */
+  private worktreeStatusAt: Map<string, number> = new Map();
+  /** Tasks with a measurement in flight. `branchStatus` is five git processes
+   * and the triggers overlap freely — a Stop hook can land while the restore
+   * that provoked the last one is still running — so without this a busy agent
+   * would have several identical sweeps of its own repository outstanding. */
+  private measuring: Set<string> = new Set();
   // When each task's directory was last checked against its live terminal.
   // The data routes ask on every request; this is what keeps that from being a
   // process spawn every time (TASK-41).
@@ -457,6 +500,243 @@ export class TaskManager {
     return stale.length;
   }
 
+  /** The other half of the boot reconciliation (§5.6, Risk 5): the checkouts on
+   * disk against the rows that claim them, in both directions.
+   *
+   * Separate from `reconcileOnBoot` and asynchronous, because the two are
+   * different kinds of work with different urgency. That one is four SQLite
+   * writes and the daemon cannot serve a correct task list until it has run;
+   * this one shells out to git once per repository and can take as long as it
+   * likes, so the boot path fires it and moves on.
+   *
+   * Direction (b) is here rather than in `reconcile.ts` because it is a row
+   * update with no git in it: a task that says `present` while its directory is
+   * gone is one somebody removed by hand between two runs, and `missing` is the
+   * state that makes the next open rebuild it — `restoreTaskWorktree` already
+   * treats anything but "present and on disk" as something to restore, and
+   * already throws `branch-missing` when the branch went with the directory,
+   * which the route turns into a card with buttons.
+   *
+   * Direction (a) is `reconcileWorktrees`, and what comes back from it is not
+   * only a log: the checkouts it refused to delete are the unclaimed cards
+   * (AC #2), held here because they belong to no task and so have nowhere else
+   * to live.
+   *
+   * Never throws, like everything else on the boot path. */
+  async reconcileWorktreesOnBoot(): Promise<ReconcileReport> {
+    // Direction (b), first, so a row whose directory has gone is already
+    // `missing` before the sweep decides what the directories mean.
+    const rows = this.store.list({ lifecycle: ["live", "suspended"] });
+    for (const row of rows) {
+      if (row.worktree_state !== "present" || !row.worktree_path) continue;
+      if (fs.existsSync(row.worktree_path)) continue;
+      this.store.update(row.id, { worktree_state: "missing" });
+      this.broadcastTask(row.id);
+    }
+
+    // What a checkout has to be named by to be spared. Archived rows are left
+    // out on purpose: archive removes the checkout and keeps the branch and the
+    // snapshot (TASK-31), so a directory still standing for one is a removal
+    // that did not finish.
+    const claimed = new Set(
+      rows.filter((row) => row.worktree_path).map((row) => path.resolve(row.worktree_path!)),
+    );
+
+    // Every repository anything here knows about. Tasks first — a task carries
+    // its own repository precisely so it can outlive the project (TASK-64) —
+    // and the projects' own roots after, for a project whose tasks all went.
+    const repoRoots = new Set<string>();
+    for (const row of this.store.list()) {
+      if (row.worktree_repo) repoRoots.add(row.worktree_repo);
+    }
+    for (const project of this.projects) {
+      if (!project.initialPath) continue;
+      const root = await repoRootOf(expandTilde(project.initialPath)).catch(() => null);
+      if (root) repoRoots.add(root);
+    }
+
+    // A database with no tasks at all is not evidence that every checkout on
+    // disk is an orphan — it is far likelier to be a daemon pointed at the
+    // wrong `--db`, or a fresh one, and in both cases the rows that would have
+    // claimed those directories exist somewhere else. Deleting on that reading
+    // is the worst thing this method could do, and refusing costs only a sweep
+    // that had, by its own account, nothing to reconcile against.
+    //
+    // Deleting a task already removes its checkout (TASK-31), so a genuinely
+    // empty install with directories left under the root is a state something
+    // else went wrong to produce, and handing it to the user is the right
+    // answer there too.
+    if (this.store.list().length === 0) return { removed: [], unclaimed: [] };
+
+    let report: ReconcileReport;
+    try {
+      report = await reconcileWorktrees({ repoRoots: [...repoRoots], claimed });
+    } catch (e) {
+      console.warn("Could not reconcile worktrees:", e);
+      return { removed: [], unclaimed: [] };
+    }
+    this.unclaimedWorktrees = report.unclaimed;
+    if (report.unclaimed.length > 0) this.broadcastTasks();
+    // After the sweep and not before it, so nothing is measured against a
+    // `worktree_state` the pass above is about to correct. Awaited here because
+    // the whole method is already fired-and-forgotten from the boot path — the
+    // cards fill in as it goes.
+    await this.refreshStaleWorktreeStatuses();
+    return report;
+  }
+
+  /** How long a measurement stands before a backstop sweep will redo it.
+   *
+   * Long, because the events below are the real freshness mechanism and this
+   * only catches what happens outside them — a commit made in a shell tab, a
+   * push from the user's own terminal. Short enough that a card is never wrong
+   * for a whole sitting. */
+  private worktreeStatusTtlMs = 5 * 60_000;
+
+  /** Exposed for the tests, which are about *when* a measurement is retaken
+   * rather than about any one duration. */
+  setWorktreeStatusTtl(ms: number): void {
+    this.worktreeStatusTtlMs = ms;
+  }
+
+  /** Re-measure a task's checkout, if it has one and the answer has gone stale.
+   *
+   * `branchStatus` already computes precisely what the card wants, and its
+   * failure semantics are the ones a card needs: every question fails closed,
+   * so a git that could not answer reads as "not established" rather than as
+   * good news. The two fields the card does not use — `exists` and `pushed` —
+   * are archive's, and asking for them costs nothing extra beyond what is
+   * already being spawned.
+   *
+   * Only a `present` checkout is ever measured. An evicted one has no working
+   * tree to count dirt in, and a task with no checkout of its own has no branch
+   * of ours to report on — for both, `null` on the wire is the true answer and
+   * not a missing one.
+   *
+   * Never throws: every caller is a side effect of something else — a hook
+   * arriving, a restore finishing — and none of them is a worse operation for
+   * failing to update a count. */
+  async refreshWorktreeStatus(taskId: string, options: { force?: boolean } = {}): Promise<void> {
+    const row = this.store.get(taskId);
+    if (!row || row.worktree_state !== "present" || !row.branch || !row.worktree_path) {
+      // Anything that used to have one and no longer does must lose its entry,
+      // or an evicted task keeps showing the dirt count of a directory that is
+      // not there any more.
+      if (this.worktreeStatus.delete(taskId)) {
+        this.worktreeStatusAt.delete(taskId);
+        this.broadcastTask(taskId);
+      }
+      return;
+    }
+    if (this.measuring.has(taskId)) return;
+    const measuredAt = this.worktreeStatusAt.get(taskId);
+    if (!options.force && measuredAt !== undefined
+        && Date.now() - measuredAt < this.worktreeStatusTtlMs) {
+      return;
+    }
+
+    this.measuring.add(taskId);
+    try {
+      const repoRoot = await this.repoRootFor(row);
+      if (!repoRoot) return;
+      const status = await branchStatus(repoRoot, {
+        branch: row.branch,
+        baseRef: row.base_ref,
+        worktreePath: row.worktree_path,
+      });
+      // Re-read rather than trusting `row`: five git processes is long enough
+      // for the task to have been archived or deleted, and writing an entry for
+      // a row that is gone leaves a card's worth of state nothing ever clears.
+      if (!this.store.get(taskId)) return;
+      const next: TaskWorktreeInfo = {
+        branch: row.branch,
+        dirty: status.dirty,
+        unpushed: status.unpushed,
+        merged: status.merged,
+      };
+      const previous = this.worktreeStatus.get(taskId);
+      this.worktreeStatus.set(taskId, next);
+      this.worktreeStatusAt.set(taskId, Date.now());
+      // Only when something moved. This runs on every Stop hook, and a task
+      // whose agent is answering questions without touching the tree would
+      // otherwise push an identical row to every client once a turn.
+      if (!previous || !sameWorktreeStatus(previous, next)) this.broadcastTask(taskId);
+    } catch (e) {
+      console.warn(`Could not read the checkout status of task ${taskId}:`, e);
+    } finally {
+      this.measuring.delete(taskId);
+    }
+  }
+
+  /** The backstop (§5.6): re-measure whatever the events below have not.
+   *
+   * Called from the harvester's tick, which is the only thing already running
+   * on a timer. It is not the mechanism — a checkout is measured when something
+   * happened to it, and this only catches what happened outside the daemon —
+   * so it does no work at all for a task measured inside its TTL.
+   *
+   * Sequential rather than `Promise.all`: this is five git processes per task
+   * and there is nothing waiting on the answer, so a burst is all cost and no
+   * benefit. */
+  async refreshStaleWorktreeStatuses(): Promise<void> {
+    const eligible = new Set<string>();
+    for (const row of this.store.list({ lifecycle: ["live", "suspended"] })) {
+      if (row.worktree_state !== "present") continue;
+      eligible.add(row.id);
+      await this.refreshWorktreeStatus(row.id);
+    }
+    // Everything that used to qualify and no longer does — archived, evicted,
+    // hard-deleted. Purged here rather than at each of those call sites because
+    // it is the same question in every one of them ("does this row still have a
+    // checkout?"), and a site that forgot to ask would leave a card reporting
+    // the dirt of a directory that is gone. `taskInfo` reads this map, so an
+    // entry outliving its row is not merely stale, it is wrong.
+    for (const taskId of [...this.worktreeStatus.keys()]) {
+      if (eligible.has(taskId)) continue;
+      this.worktreeStatus.delete(taskId);
+      this.worktreeStatusAt.delete(taskId);
+      if (this.store.get(taskId)) this.broadcastTask(taskId);
+    }
+  }
+
+  /** The checkouts the sweep found and would not delete. Empty until the boot
+   * sweep has run, which is the honest answer: "we have not looked yet" and
+   * "there are none" are the same thing to a client, and the sweep is fired
+   * rather than awaited. */
+  getUnclaimedWorktrees(): UnclaimedWorktree[] {
+    return this.unclaimedWorktrees;
+  }
+
+  /** Delete one of them, by the user's own decision.
+   *
+   * The path is re-checked against the worktrees root here and not only in
+   * `reconcileWorktrees`, because this one arrives from a client: the list it
+   * came from is ours, but the request is a string on the wire and nothing
+   * about being answered earlier makes it safe now. Refusing a path that is not
+   * in the current list is the actual guard — it is a closed set we produced —
+   * and the root check backs it up.
+   *
+   * Answers false rather than throwing when the path is not one of ours, so a
+   * stale client clicking a card the sweep has since forgotten gets a plain
+   * "not there" instead of a 500. */
+  async deleteUnclaimedWorktree(worktreePath: string): Promise<boolean> {
+    const resolved = path.resolve(worktreePath);
+    const found = this.unclaimedWorktrees.find((w) => w.path === resolved);
+    if (!found) return false;
+    if (!isWithinWorktreesRoot(resolved)) return false;
+    if (found.repoRoot) {
+      await evictWorktree(found.repoRoot, resolved);
+    } else {
+      // No repository to ask, so there is no registration to clean up either —
+      // this is the directory git did not recognise. The user has looked at the
+      // card and asked for it gone.
+      await fsp.rm(resolved, { recursive: true, force: true });
+    }
+    this.unclaimedWorktrees = this.unclaimedWorktrees.filter((w) => w.path !== resolved);
+    this.broadcastTasks();
+    return true;
+  }
+
   // ----------------------------------------------------------------- clients
 
   registerClient(clientId: string, ws: ServerWebSocket<WebSocketData>): void {
@@ -477,7 +757,17 @@ export class TaskManager {
   /** The whole list, as one message. Shared with the `list` request so a
    * client that asks for the snapshot and one that is pushed it cannot drift. */
   tasksSnapshot(): ServerMessage {
-    return { type: "tasks", list: this.listTasks(), projects: this.getProjects() };
+    return {
+      type: "tasks",
+      list: this.listTasks(),
+      projects: this.getProjects(),
+      // Rides the snapshot because it changes for the snapshot's reasons: the
+      // boot sweep finishes, or the user deletes one. Both of those already
+      // call `broadcastTasks`.
+      unclaimed: this.unclaimedWorktrees.map(({ path, branch, dirty }) => ({
+        path, branch, dirty,
+      })),
+    };
   }
 
   /** The whole list — for a connect, or any change to which tasks exist. */
@@ -723,6 +1013,12 @@ export class TaskManager {
     this.adopt(pty, id);
     this.armHookGrace(id);
     this.placeInProject(id, projectId, options);
+    // A new checkout is clean and its branch is at the base ref, so this
+    // measures almost nothing — except the branch name, which is the one fact
+    // the card can show before the agent has done anything at all. Not awaited:
+    // the caller is a create that has already spawned an agent, and it must not
+    // wait on git to answer.
+    if (worktree) void this.refreshWorktreeStatus(id, { force: true });
     return row;
   }
 
@@ -1167,6 +1463,10 @@ export class TaskManager {
     const restored = await this.restoreTaskWorktree(taskId);
     let setupCommand: string | null = null;
     if (restored) {
+      // The checkout is new on disk, so whatever the card was showing is about
+      // a directory that no longer exists in that form — and a restore that
+      // applied a WIP snapshot has just changed the dirt count outright.
+      void this.refreshWorktreeStatus(taskId, { force: true });
       // The row moved underneath us: `restoreTaskWorktree` writes `cwd`, and
       // `spawnAgent` reads it off the row it is handed. Without this the agent
       // is spawned in the directory the task had before the restore, which for
@@ -1450,6 +1750,16 @@ export class TaskManager {
     }
     if (!this.store.update(taskId, update)) return false;
     this.broadcastTask(taskId);
+    // A finished turn is the moment the working tree can have moved: the agent
+    // has stopped editing, and what it did is exactly what the card is
+    // reporting. This is the primary freshness mechanism and the reason the
+    // backstop's TTL can be minutes — measuring on a timer would be both later
+    // and more often than measuring here.
+    //
+    // Not awaited. The hook route answers a running agent, and five git
+    // processes must not sit on that reply; `refreshWorktreeStatus` broadcasts
+    // for itself when the answer differs from the last one.
+    if (update.agent_state === "idle") void this.refreshWorktreeStatus(taskId, { force: true });
     return true;
   }
 
@@ -2714,6 +3024,11 @@ export class TaskManager {
       agentState: row.agent_state,
       lifecycle: row.lifecycle,
       worktreeState: row.worktree_state,
+      // Null until measured, which a client must not read as "nothing to
+      // report" — see `TaskWorktreeInfo`. The map is only ever written for a
+      // task that has a checkout, so a task running in the project's own
+      // directory answers null forever, correctly.
+      worktree: this.worktreeStatus.get(taskId) ?? null,
       // The two columns are the state; there is no third thing to consult.
       // `worktree_state` alone would be true of an *evicted* task, whose ref is
       // the ordinary way it is stored rather than a decision anyone owes.

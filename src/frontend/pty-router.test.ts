@@ -111,6 +111,7 @@ const task = (id: string): TaskInfo => ({
   hasNotification: false,
   worktreeState: "none",
   wipPending: false,
+  worktree: null,
 });
 
 // ── stream isolation (AC #1) ────────────────────────────────────────────────

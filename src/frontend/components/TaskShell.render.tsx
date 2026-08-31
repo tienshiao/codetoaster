@@ -120,6 +120,7 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     hasNotification: false,
     worktreeState: "none",
     wipPending: false,
+    worktree: null,
     ...overrides,
   };
 }

@@ -451,6 +451,45 @@ export const taskRoutes = {
     },
   },
 
+  "/api/worktrees/unclaimed": {
+    // The manual delete on an unclaimed-worktree card (§5.6, TASK-32 AC #2).
+    //
+    // Not under `/api/tasks`, because the thing being deleted is defined by
+    // having no task: there is no id to put in the path, and the checkout's own
+    // path is what identifies it. A body rather than a query string for the
+    // same reason — it is a filesystem path, and putting one in a URL invites
+    // exactly the encoding mistakes this must not make.
+    //
+    // DELETE and not POST: it removes a directory and nothing else, and a
+    // repeat of it is the state already reached.
+    async DELETE(req: Request) {
+      const body = await readJsonBody(req);
+      if (!body) return badRequest("Body must be a JSON object");
+      const worktreePath = optionalString(body.path);
+      if (typeof worktreePath !== "string" || worktreePath === "") {
+        return badRequest("path must be a non-empty string");
+      }
+      try {
+        // The manager answers false for a path that is not one it is currently
+        // offering, which is the actual guard: the set of deletable paths is
+        // one the daemon produced, and nothing a client sends can add to it.
+        // 404 rather than 403, because from the caller's side a card the sweep
+        // has since forgotten and a path that was never ours are the same
+        // thing — there is nothing there to delete.
+        const deleted = await taskManager.deleteUnclaimedWorktree(worktreePath);
+        if (!deleted) {
+          return Response.json({ error: "No such unclaimed worktree" }, { status: 404 });
+        }
+        return Response.json({ deleted: true, unclaimed: taskManager.getUnclaimedWorktrees() });
+      } catch (e: any) {
+        return Response.json(
+          { error: e?.message ?? "Could not remove the worktree" },
+          { status: 500 },
+        );
+      }
+    },
+  },
+
   "/api/projects/:id/evict": {
     // The same, over every suspended task of one project — the useful shape
     // when a project has thirty finished tasks each holding a node_modules.

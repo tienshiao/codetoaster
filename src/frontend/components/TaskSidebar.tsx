@@ -120,6 +120,50 @@ export function TaskRowActions({ taskId, label, busy, onRename, onClose }: TaskR
   );
 }
 
+/**
+ * The delete on an unclaimed-worktree card.
+ *
+ * It always confirms, where `TaskRowActions` only confirms for a busy task:
+ * closing a task keeps its row and can be undone by resuming, while this
+ * removes a directory and every uncommitted change in it, and the checkout is
+ * unclaimed precisely because nothing else in the app knows what that work was.
+ * There is no version of this that is cheap enough to fire on one click.
+ */
+export function UnclaimedActions({
+  path,
+  branch,
+  onDelete,
+}: {
+  path: string;
+  branch: string | null;
+  onDelete: (path: string) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  // The branch names it to a human; the path is what actually identifies it,
+  // and two checkouts of the same branch are exactly the situation this list
+  // exists to sort out. Both, then.
+  const label = branch ?? path;
+  return (
+    <>
+      <IconButton
+        icon={Trash2}
+        label={`Delete ${label}`}
+        size="sm"
+        onClick={() => setConfirming(true)}
+      />
+      <Dialog
+        open={confirming}
+        title="Delete this worktree?"
+        description={`${path} will be removed from disk, along with any uncommitted work in it. Nothing else has a copy, and this cannot be undone.`}
+        confirmLabel="Delete worktree"
+        confirmVariant="destructive"
+        onConfirm={() => onDelete(path)}
+        onClose={() => setConfirming(false)}
+      />
+    </>
+  );
+}
+
 interface ProjectActionsProps {
   project: ProjectInfo;
   onSave: (name: string, initialPath: string, settings: Partial<ProjectSettings>) => void;
@@ -286,14 +330,25 @@ export type TaskSidebarProps = Pick<
   | "onToggleArchived"
   | "onNewTask"
   | "headerActions"
+  | "unclaimed"
 >;
 
 export function useTaskSidebar({
   selectedTaskId,
   onSelectTask,
 }: TaskSidebarOptions): TaskSidebarProps {
-  const { tasks, projects, createTask, renameTask, closeTask, createProject, updateProject, deleteProject } =
-    useTasks();
+  const {
+    tasks,
+    projects,
+    unclaimed,
+    createTask,
+    renameTask,
+    closeTask,
+    deleteUnclaimedWorktree,
+    createProject,
+    updateProject,
+    deleteProject,
+  } = useTasks();
   const [filter, setFilter] = useState("");
   const [grouped, setGrouped] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -305,6 +360,10 @@ export function useTaskSidebar({
     [renameTask],
   );
   const handleClose = useCallback((id: string) => void closeTask(id), [closeTask]);
+  const handleDeleteUnclaimed = useCallback(
+    (path: string) => void deleteUnclaimedWorktree(path),
+    [deleteUnclaimedWorktree],
+  );
   const handleDeleteProject = useCallback((id: string) => deleteProject(id), [deleteProject]);
 
   const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
@@ -368,6 +427,13 @@ export function useTaskSidebar({
         meta: ago(task.lastActiveAt, now),
         selected: task.id === selectedTaskId,
         indent: false,
+        // Two separate statements, and they answer different questions. The
+        // flag is "this task has a checkout of its own", which the row knows
+        // the moment the task exists; the facts are what git says about it,
+        // which arrive later and may never arrive at all. Collapsing them would
+        // make an unmeasured checkout indistinguishable from no checkout.
+        worktree: task.worktreeState !== "none",
+        worktreeFacts: task.worktree,
         // Selecting is all the sidebar does, including for a suspended task:
         // `AgentPane` resumes one when it mounts, and a second resume path
         // here would race it (§7.5, AC #4).
@@ -419,8 +485,27 @@ export function useTaskSidebar({
 
   const headerActions: ReactNode = <NewProjectButton onCreate={createProject} />;
 
+  // Straight through: the shell draws the band and decides that an empty list
+  // is no band at all, so there is nothing to filter or sort here. Each entry
+  // brings its own delete, the same way a task row brings its own actions.
+  const unclaimedCards = useMemo(
+    () =>
+      unclaimed.map((worktree) => ({
+        ...worktree,
+        actions: (
+          <UnclaimedActions
+            path={worktree.path}
+            branch={worktree.branch}
+            onDelete={handleDeleteUnclaimed}
+          />
+        ),
+      })),
+    [unclaimed, handleDeleteUnclaimed],
+  );
+
   return {
     tasks: rows,
+    unclaimed: unclaimedCards,
     groups,
     grouped,
     taskFilter: filter,

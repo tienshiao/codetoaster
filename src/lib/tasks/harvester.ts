@@ -165,6 +165,31 @@ export class Harvester {
     const now = Date.now();
     await this.sweepIdle(now);
     await this.sweepEvict(now);
+    await this.sweepWorktreeStatus();
+  }
+
+  /** The backstop behind the card facts (§5.6, TASK-32).
+   *
+   * Not a harvest, and here only because this is the one thing already running
+   * on a timer. A checkout is measured when something happens to it — a turn
+   * finishing, a restore — and this catches the changes that happen outside the
+   * daemon: a commit made in a shell tab, a push from the user's own terminal.
+   * `refreshStaleWorktreeStatuses` does nothing at all for a task measured
+   * inside its window, so an idle daemon spawns no git for this.
+   *
+   * Last, so a task this tick suspended or evicted is measured — or purged — in
+   * the state the tick left it in rather than the one it started in.
+   *
+   * Guarded like the tiers above and for a different reason: they are switched
+   * off by a user who does not want them, while this is skipped only because
+   * `tick` returns early when both are off, and a sweep that ran anyway would
+   * make "harvesting off" mean "except for the git". */
+  private async sweepWorktreeStatus(): Promise<void> {
+    try {
+      await this.manager.refreshStaleWorktreeStatuses();
+    } catch (e) {
+      console.warn("Could not refresh checkout status:", e);
+    }
   }
 
   /** §5.5: give back the processes of tasks nobody is using. */

@@ -32,14 +32,30 @@ export interface BranchStatus {
  * The number is shown in a dialog describing what is about to be destroyed, so
  * a git that failed — a half-removed worktree, a repository on a mount that has
  * gone away — must not read there as "clean, nothing to lose". An evicted task
- * reaches the same answer through the same door: no directory, no count. */
-async function dirtyCount(worktreePath: string | null): Promise<number | null> {
+ * reaches the same answer through the same door: no directory, no count.
+ *
+ * Exported for the boot sweep (TASK-32), which asks the same question for the
+ * same reason and must answer it the same way: it deletes orphaned checkouts,
+ * and `null` folded into 0 there would delete somebody's uncommitted work. */
+export async function dirtyCount(worktreePath: string | null): Promise<number | null> {
   // The existence check is not redundant with the exit code: `git -C` on a
   // missing directory fails the same way a broken repository does, and this
   // module is the only place that can tell the ordinary case (the checkout was
   // evicted, exactly as designed) from the alarming one.
   if (worktreePath === null || !fs.existsSync(worktreePath)) return null;
-  const { stdout, exitCode } = await gitSpawn(worktreePath, ["status", "--porcelain"]);
+  // `--no-optional-locks` because this is now asked in the background, on a
+  // timer and on every finished agent turn (TASK-32), and a plain `git status`
+  // takes `index.lock` to write back the index it refreshed. That is a lock the
+  // WIP snapshot needs: `snapshotWip` runs `git add -A` against the same
+  // checkout, and the two collided as `Unable to create '…/index.lock': File
+  // exists` — an archive failing because a card wanted a number.
+  //
+  // The flag is exactly what git provides for a tool that polls status, and it
+  // costs only the cached-stat write, never accuracy: the count is computed
+  // from the same comparison either way.
+  const { stdout, exitCode } = await gitSpawn(worktreePath, [
+    "--no-optional-locks", "status", "--porcelain",
+  ]);
   if (exitCode !== 0) return null;
   return stdout.split("\n").filter((line) => line.trim() !== "").length;
 }

@@ -2,7 +2,7 @@ import { test, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppShell } from "./v2/AppShell";
-import { NewProjectButton, TaskRowActions } from "./TaskSidebar";
+import { NewProjectButton, TaskRowActions, UnclaimedActions } from "./TaskSidebar";
 
 /** The project dialog's path field asks the server for directories, so it needs
  * a client even here, where nothing types enough to make it fetch. What the
@@ -174,6 +174,73 @@ test("the shell draws the flat list by default and the groups when told to", () 
   view.rerender(<AppShell tasks={tasks} groups={groups} grouped />);
   expect(screen.queryByRole("option", { name: /Flat row/ })).toBeNull();
   screen.getByRole("option", { name: /Grouped row/ });
+});
+
+/**
+ * The unclaimed band (§5.6, TASK-32 AC #2).
+ *
+ * Its whole reason for existing is that the boot sweep *would not* delete these
+ * — a dirty orphan, or a directory git could not account for — so the only way
+ * they go is by someone deciding. Two things follow, and both are tested here:
+ * the band is not there at all when there is nothing to decide, and the delete
+ * asks first.
+ */
+const worktreePath = "/Users/x/.codetoaster/worktrees/p1/t1";
+
+test("the unclaimed band is absent when there is nothing unclaimed", () => {
+  const view = render(<AppShell tasks={[{ id: "t1", title: "Fix the parser" }]} />);
+  expect(screen.queryByText("Unclaimed worktrees")).toBeNull();
+
+  // An empty list and no list are the same absence — the sweep having run and
+  // found none looks exactly like it not having run, and neither is a section
+  // header over nothing.
+  view.rerender(<AppShell tasks={[{ id: "t1", title: "Fix the parser" }]} unclaimed={[]} />);
+  expect(screen.queryByText("Unclaimed worktrees")).toBeNull();
+});
+
+test("an unclaimed checkout shows its branch, its path and its dirty count", () => {
+  render(
+    <AppShell
+      unclaimed={[{ path: worktreePath, branch: "fix/parser", dirty: 3, actions: null }]}
+    />,
+  );
+
+  screen.getByText("Unclaimed worktrees");
+  screen.getByText("fix/parser");
+  screen.getByText(worktreePath);
+  screen.getByText("3 uncommitted");
+});
+
+test("a checkout git could not read says so rather than showing none", () => {
+  render(<AppShell unclaimed={[{ path: worktreePath, branch: null, dirty: null }]} />);
+
+  // Both nulls are real answers and neither is zero: a detached head is a state
+  // a checkout can be in, and an unreadable one is *why* the sweep left this
+  // directory standing.
+  screen.getByText("detached");
+  screen.getByText("changes unreadable");
+  expect(screen.queryByText(/uncommitted/)).toBeNull();
+});
+
+test("deleting an unclaimed worktree confirms first, and cancelling leaves it", () => {
+  const onDelete = vi.fn();
+  render(<UnclaimedActions path={worktreePath} branch="fix/parser" onDelete={onDelete} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Delete fix/parser" }));
+  expect(onDelete).not.toHaveBeenCalled();
+
+  screen.getByRole("dialog", { name: "Delete this worktree?" });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onDelete).not.toHaveBeenCalled();
+});
+
+test("confirming the delete reports the path, which is what identifies it", () => {
+  const onDelete = vi.fn();
+  render(<UnclaimedActions path={worktreePath} branch="fix/parser" onDelete={onDelete} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Delete fix/parser" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete worktree" }));
+  expect(onDelete).toHaveBeenCalledWith(worktreePath);
 });
 
 test("creating a project reports name and path, and only once submitted", () => {

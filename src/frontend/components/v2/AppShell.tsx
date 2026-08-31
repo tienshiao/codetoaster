@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent, type ReactNode } from "react";
-import { Archive, ListFilter, PanelLeft, Plus, Settings } from "lucide-react";
+import { Archive, FilePen, GitBranch, ListFilter, PanelLeft, Plus, Settings } from "lucide-react";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { Badge } from "./Badge";
 import { ExplorerRail, type ExplorerRailItem } from "./ExplorerRail";
@@ -39,6 +39,26 @@ export interface ShellTaskGroup {
   actions?: ReactNode;
 }
 
+/**
+ * A checkout on disk that no task accounts for (§5.6).
+ *
+ * Deliberately not a `ShellTask`: it has no id, no state and nothing to open —
+ * its path is what identifies it and deleting it is the only thing that can be
+ * done with one. `actions` carries that control, for the same reason a task
+ * row's does: what the button asks before it fires is the caller's business,
+ * and it brings a dialog with it.
+ */
+export interface ShellUnclaimedWorktree {
+  path: string;
+  /** Null for a detached head — a real answer, not a missing one. */
+  branch: string | null;
+  /** Files git reports as uncommitted, or null when it could not be asked at
+   * all. That null is *why* the checkout was left standing, so the row says so
+   * rather than drawing a zero nobody established. */
+  dirty: number | null;
+  actions?: ReactNode;
+}
+
 export type ShellTab = TabProps & { id: string };
 
 /** @see TaskHeader — the band under the tabs. */
@@ -63,6 +83,11 @@ export interface AppShellProps {
   showArchived?: boolean;
   onToggleArchived?: () => void;
   onNewTask?: () => void;
+  /** Checkouts the boot sweep found and would not delete (§5.6). A band at the
+   * foot of the list rather than rows in it, because these are not tasks and
+   * must not be scanned as though they were — and nothing at all when there are
+   * none, which is nearly always. */
+  unclaimed?: ShellUnclaimedWorktree[];
   /** Extra controls at the leading edge of the header's button cluster, for
    * affordances the shell has no opinion about — creating a project, say,
    * which brings its own dialog with it. */
@@ -158,6 +183,76 @@ function TaskRows({ tasks }: { tasks: ShellTask[] }) {
   );
 }
 
+/**
+ * The unclaimed band: everything the sweep found on disk and could not account
+ * for.
+ *
+ * A `div` and not a `TaskRow`, because none of a row's affordances apply — it
+ * cannot be selected, opened or renamed, and giving it `role="option"` would
+ * put it in the same listbox as the tasks, where an arrow key would land on
+ * something that does nothing.
+ *
+ * Its delete sits in the row rather than in the hover cluster the task rows
+ * use. Nothing here is a button, so there is no nesting to avoid, and a
+ * destructive control on a card that appears once a month should not also have
+ * to be discovered.
+ */
+function UnclaimedSection({ items }: { items: ShellUnclaimedWorktree[] }) {
+  return (
+    <div className="flex max-h-[35%] flex-none flex-col border-t border-sidebar-border px-1 pb-1">
+      <SectionLabel className="pt-1">Unclaimed worktrees</SectionLabel>
+      <div className="flex min-h-0 flex-col gap-px overflow-y-auto">
+        {items.map((item) => (
+          <div key={item.path} className="flex items-start gap-[9px] rounded-md px-2 py-[5px]">
+            <GitBranch size={11} className="mt-[3px] flex-none text-subtle-foreground" />
+            <span className="flex min-w-0 flex-1 flex-col gap-px">
+              <span className="flex items-baseline gap-1.5">
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-xs",
+                    // A detached head is a fact about the checkout, not a
+                    // missing value, so it is stated in words — and in the muted
+                    // tone, so it does not read as a branch called "detached".
+                    item.branch ? "text-sidebar-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {item.branch ?? "detached"}
+                </span>
+                {item.dirty == null ? (
+                  <span
+                    className="flex-none text-micro text-subtle-foreground"
+                    title="git could not read this checkout, which is why the sweep left it alone"
+                  >
+                    changes unreadable
+                  </span>
+                ) : (
+                  <span
+                    className="flex flex-none items-center gap-px font-mono text-micro tracking-mono text-subtle-foreground"
+                    title={`${item.dirty} uncommitted file${item.dirty === 1 ? "" : "s"}`}
+                  >
+                    <FilePen size={10} aria-hidden="true" />
+                    {item.dirty} uncommitted
+                  </span>
+                )}
+              </span>
+              {/* The full path in the tooltip: what is on screen is a tail of a
+                  path ending in two ids, and the part that identifies it to a
+                  human is the part that gets truncated away. */}
+              <span
+                className="truncate font-mono text-micro tracking-mono text-subtle-foreground"
+                title={item.path}
+              >
+                {item.path}
+              </span>
+            </span>
+            {item.actions ? <span className="flex flex-none items-center">{item.actions}</span> : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** The 11px uppercase section label — the one piece of tracked-out type in the
  * system. Used for path headers inside the Explorer body. */
 export function SectionLabel({ children, className }: { children: ReactNode; className?: string }) {
@@ -193,6 +288,7 @@ export function AppShell({
   showArchived = false,
   onToggleArchived,
   onNewTask,
+  unclaimed = [],
   headerActions,
   onOpenSettings,
   endpoint,
@@ -359,6 +455,8 @@ export function AppShell({
               <TaskRows tasks={tasks ?? []} />
             )}
           </div>
+
+          {unclaimed.length > 0 && <UnclaimedSection items={unclaimed} />}
 
           <div className="flex h-titlebar flex-none items-center gap-2 border-t border-sidebar-border pr-2 pl-2.5 text-xs text-muted-foreground">
             <IconButton icon={Settings} label="Settings" size="sm" onClick={onOpenSettings} />
