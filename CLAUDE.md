@@ -131,6 +131,30 @@ identity. Scoping by runner means the server tests never see a DOM at all.
 to, because a test resolving a module differently from the app is the one real
 hazard of two bundlers over one tree.
 
+**No test spawns the real agent.** `buildAgentCommand` falls back to `claude`,
+so a test that creates a task and stands nothing in starts a real Claude Code
+session — a transcript on disk and tokens spent, per test — and fails outright
+on a machine that has no `claude`. `test/preload.ts` (wired through `bunfig.toml`'s
+`[test] preload`, and from `test/setup-rendering.ts` for the other runner) points
+`CODETOASTER_AGENT_BIN` at `test/fake-agent.sh` **before every test**, so no file
+has to remember and a new one inherits it.
+
+Before every test, not once, and unconditionally — both of which took a bug to
+get right. Files move that variable around: one `delete`s it in an `afterEach`
+so its own stand-in does not leak, another sets one and never puts it back.
+Either leaves the *next* file with something that is not the default, which is
+how a suite that looks protected starts spawning real agents halfway through a
+run. A file that needs a different agent — one recording its argv, one that
+fails, one that is not there — sets the variable from its own `beforeEach` or
+its test body, which run after the global hook. Setting it in a `beforeAll` no
+longer works, and `spawn.test.ts` is the worked example: it asserts the bare
+`claude` fallback, so it clears the variable per test.
+
+`agent-bin.test.ts` guards the guard. The protection is a line in `bunfig.toml`,
+and bunfig's test options are exactly the ones that go quiet under `bun run`
+(see the runner note above), so a lapse would otherwise be silent. That file
+fails with `Received: "claude"` instead.
+
 Reach for a rendering test when the behaviour is a *lifecycle* one — when a
 subscription binds, when a ref is written, what survives a remount. Pure logic
 belongs in a `.test.ts` against the function that holds it, which is why

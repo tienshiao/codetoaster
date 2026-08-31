@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeAll, afterAll } from "bun:test";
+import { test, expect, describe, beforeEach } from "bun:test";
 import * as os from "os";
 import * as path from "path";
 import { buildAgentCommand, taskEnv, taskDir, taskSettingsPath, type AgentTask } from "./spawn";
@@ -14,15 +14,17 @@ function agentTask(overrides: Partial<AgentTask> = {}): AgentTask {
 }
 
 describe("buildAgentCommand", () => {
-  // Another test file points this at a harmless stand-in for the whole run, so
-  // the tests that assert the default have to start from it being unset.
-  let previousBin: string | undefined;
-  beforeAll(() => {
-    previousBin = process.env.CODETOASTER_AGENT_BIN;
+  // `test/preload.ts` points this at a harmless stand-in before *every* test,
+  // so that no file can spawn a real agent by forgetting — which means the
+  // tests below, the only ones that assert the bare `claude` default, have to
+  // clear it per test rather than once. A `beforeAll` would be undone by the
+  // global hook before the first assertion, since Bun runs the outer one last
+  // on the way in.
+  //
+  // Nothing is saved and restored: the global hook re-establishes the default
+  // ahead of the next test wherever it lives, which is the whole point of it.
+  beforeEach(() => {
     delete process.env.CODETOASTER_AGENT_BIN;
-  });
-  afterAll(() => {
-    if (previousBin !== undefined) process.env.CODETOASTER_AGENT_BIN = previousBin;
   });
 
   test("passes the session id we allocated", () => {
