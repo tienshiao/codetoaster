@@ -21,6 +21,13 @@ export type WorktreeTask = Pick<TaskRow, "id" | "title">;
 export interface CreatedWorktree {
   worktreePath: string;
   branch: string;
+  /** The repository the checkout was added to.
+   *
+   * Returned rather than left for the caller to resolve again, because the
+   * caller cannot: it holds the *project's* directory, and a task has to be
+   * able to find its repository after the project is gone (TASK-64). This is
+   * the value already computed here, on the way to taking the lock. */
+  repoRoot: string;
   /** The `worktree_copy` entries that were actually copied, for a caller that
    * wants to report what the checkout did and did not get. Absent sources are
    * left out rather than failing the create — a fresh clone with no `.env` is
@@ -99,7 +106,7 @@ export function createWorktree(
 
       try {
         const copied = await copyProjectFiles(project, repoRoot, worktreePath);
-        return { worktreePath, branch, copied };
+        return { worktreePath, branch, repoRoot, copied };
       } catch (e) {
         // Back out to nothing rather than leaving a checkout the project's
         // setup would run against a half-copied tree.

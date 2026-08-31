@@ -23,7 +23,14 @@
  *                      not safe to evict. The live tree is untouched either
  *                      way: the snapshot works through a throwaway index.
  * `wip-apply-failed` — the snapshot could not be read back into a restored
- *                      checkout. The ref is kept, so the work still exists. */
+ *                      checkout. The ref is kept, so the work still exists.
+ * `repo-unknown`     — the task has no record of which repository it was
+ *                      branched from, and the project that knew is gone. Told
+ *                      apart from `not-a-repo` because they ask for different
+ *                      things: that one means "this directory is not a
+ *                      repository", which pointing at one fixes, while this
+ *                      means "we have lost track of yours" — and the work is
+ *                      still on its branch either way (TASK-64). */
 export type WorktreeErrorKind =
   | "bad-base-ref"
   | "path-occupied"
@@ -32,7 +39,8 @@ export type WorktreeErrorKind =
   | "not-a-repo"
   | "branch-missing"
   | "snapshot-failed"
-  | "wip-apply-failed";
+  | "wip-apply-failed"
+  | "repo-unknown";
 
 /** A worktree operation that failed, carrying git's own account of it.
  *

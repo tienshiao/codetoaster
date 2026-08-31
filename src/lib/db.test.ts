@@ -63,7 +63,8 @@ afterEach(() => {
 
 const TASK_COLUMNS = [
   "id", "project_id", "title", "title_source", "initial_prompt", "repo_root", "cwd",
-  "worktree_path", "branch", "base_ref", "worktree_state", "wip_ref", "wip_at",
+  "worktree_path", "worktree_repo", "branch", "base_ref", "worktree_state",
+  "wip_ref", "wip_at",
   "setup_duration_ms", "pinned", "agent_session_id", "transcript_path", "agent_state",
   "lifecycle", "last_message", "last_size_cols", "last_size_rows", "model",
   "permission_mode", "created_at", "last_active_at", "idle_since", "exit_code",
@@ -291,6 +292,7 @@ describe("initDatabase", () => {
       "003_v2_tasks",
       "004_project_task_defaults",
       "005_tasks_repo_root_nullable",
+      "006_tasks_worktree_repo",
     ]);
     db.close();
   });

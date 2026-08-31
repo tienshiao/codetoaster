@@ -7,6 +7,7 @@ export { discardCheckout, evictWorktree } from "./evict";
 export type { WorktreeErrorKind } from "./errors";
 export { allocateBranch, branchSlug, BRANCH_PREFIX } from "./branch";
 export { withRepoLock } from "./lock";
+export { lockKeyFor, repoRootOf } from "./repo";
 export { restoreWorktree } from "./restore";
 export type { RestoredWorktree, WipDisposition } from "./restore";
 export { setupStampPath, worktreePathFor, worktreesRoot } from "./paths";

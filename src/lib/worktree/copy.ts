@@ -35,7 +35,10 @@ export function parseCopyList(worktreeCopy: string | null): string[] {
  * `../../.ssh/id_rsa` reads out of the project and writes into somewhere that
  * is not the worktree — a containment check costs a `path.resolve`. */
 export async function copyProjectFiles(
-  project: WorktreeProject,
+  // Only the list, not the whole project row: restore reads it off the project
+  // it is handed while create reads it off its own, and neither has any use for
+  // the other fields here.
+  project: Pick<WorktreeProject, "worktree_copy">,
   projectRoot: string,
   worktreePath: string,
 ): Promise<string[]> {

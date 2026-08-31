@@ -36,6 +36,32 @@ export interface TaskRow {
   repo_root: string | null;
   cwd: string;
   worktree_path: string | null;
+  /** A directory inside the repository the checkout was added to — the one fact
+   * a task needs to survive its project (TASK-64).
+   *
+   * *A* directory, not the toplevel exactly, and that is deliberate: every
+   * consumer runs `git -C <this>`, which resolves the repository from anywhere
+   * inside it. Requiring the toplevel would force a `rev-parse` before the
+   * value could be written, which would make `deleteProject` — the operation
+   * that most needs to stamp one — asynchronous for no gain.
+   *
+   * Not `repo_root`, which is `--show-toplevel` resolved from `cwd`: for a
+   * worktree task that names the *checkout's* own root, so it dies with the
+   * directory the moment the task is evicted. Every worktree operation used to
+   * find the repository through the project instead, and a project deleted from
+   * under a task reassigns it to General — whose path is empty — leaving a task
+   * that could neither be reopened nor evicted, with its branch and its
+   * snapshot sitting in a repository nothing could name.
+   *
+   * A working directory and not the git common dir, though: `worktree add`,
+   * `worktree list` and `update-ref` all work from a `.git` directory, but
+   * `rev-parse --show-toplevel` does not, so a `.git` here would break anything
+   * that re-derives the root.
+   *
+   * NULL for a task with no checkout of its own, and for one created before
+   * this column existed — those resolve from the project once and write the
+   * answer back. */
+  worktree_repo: string | null;
   branch: string | null;
   base_ref: string | null;
   worktree_state: WorktreeState;
@@ -238,6 +264,27 @@ const migrations: Migration[] = [
       db.run(`ALTER TABLE tasks_new RENAME TO tasks`);
       // The index went with the old table.
       db.run(`CREATE INDEX IF NOT EXISTS tasks_by_recency ON tasks(last_active_at DESC)`);
+    },
+  },
+  {
+    // A task's own handle on its repository (TASK-64). Everything worktree
+    // resolved the repository through the *project*, so deleting one — which
+    // reassigns its tasks to General, whose path is empty — left a task that
+    // could neither be reopened nor evicted.
+    //
+    // No backfill here. `projects.initial_path` is stored as the user typed it
+    // and may begin with `~`, while every value written from now on is a
+    // resolved absolute root, and two shapes in one column is worse than a
+    // null: the readers heal a null on first touch, and `deleteProject` stamps
+    // one on the way out, which is the event that actually strands a task.
+    //
+    // After 005 and not before it, which took a failing suite to notice: 005
+    // rebuilds `tasks` from an explicit column list, so a column added ahead of
+    // it exists only until that rebuild fires — which it does on any database
+    // young enough to still have `repo_root NOT NULL`.
+    name: "006_tasks_worktree_repo",
+    up(db) {
+      addColumn(db, "tasks", "worktree_repo", "TEXT");
     },
   },
 ];

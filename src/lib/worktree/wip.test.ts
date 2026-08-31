@@ -145,7 +145,10 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     await git(root, "worktree", "prune");
 
-    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    );
 
     expect(restored.wip).toBe("applied");
     expect(restored.worktreePath).toBe(created.worktreePath);
@@ -166,7 +169,10 @@ describe("restoreWorktree", () => {
 
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     await git(root, "worktree", "remove", "--force", created.worktreePath);
-    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    );
 
     expect(await status(restored.worktreePath)).toContain("?? untracked.txt");
     expect(fs.existsSync(path.join(restored.worktreePath, "ignored/build.out"))).toBe(false);
@@ -180,7 +186,10 @@ describe("restoreWorktree", () => {
     const created = await createWorktree(project, task, "main");
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
-    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    );
 
     expect(restored.wip).toBe("none");
     expect(restored.staleRef).toBeUndefined();
@@ -209,7 +218,10 @@ describe("restoreWorktree", () => {
     const newTip = await git(root, "rev-parse", "HEAD");
     await git(root, "checkout", "-q", "main");
 
-    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    );
 
     expect(restored.wip).toBe("stale");
     // Kept, not discarded: the choice is the user's, and nothing is lost while
@@ -236,7 +248,10 @@ describe("restoreWorktree", () => {
     await git(root, "commit", "-qm", "work done outside the task");
     await git(root, "checkout", "-q", "main");
 
-    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    );
     expect(restored.wip).toBe("stale");
     await applyWip(restored.worktreePath, restored.staleRef!);
 
@@ -253,10 +268,10 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     await git(root, "branch", "-D", created.branch);
 
-    const error = await restoreWorktree(project, {
-      id: task.id,
-      branch: created.branch,
-    }).catch((e) => e);
+    const error = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    ).catch((e) => e);
 
     expect(error).toBeInstanceOf(WorktreeError);
     expect(error.kind).toBe("branch-missing");
@@ -280,10 +295,10 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     await git(root, "checkout", "-q", created.branch);
 
-    const error = await restoreWorktree(project, {
-      id: task.id,
-      branch: created.branch,
-    }).catch((e) => e);
+    const error = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    ).catch((e) => e);
 
     expect(error).toBeInstanceOf(WorktreeError);
     expect(error.kind).toBe("worktree-add-failed");
@@ -304,7 +319,10 @@ describe("restoreWorktree", () => {
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     fs.rmSync(created.worktreePath, { recursive: true, force: true });
 
-    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    );
 
     expect(restored.wip).toBe("applied");
     expect(fs.readFileSync(path.join(restored.worktreePath, "README.md"), "utf8")).toBe("dirty\n");
@@ -329,7 +347,10 @@ describe("restoreWorktree and the project's files", () => {
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
-    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    );
 
     expect(restored.copied).toEqual([".env"]);
     expect(fs.readFileSync(path.join(restored.worktreePath, ".env"), "utf8")).toBe("SECRET=1\n");
@@ -348,7 +369,10 @@ describe("restoreWorktree and the project's files", () => {
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
-    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy },
+      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+    );
 
     expect(restored.wip).toBe("applied");
     expect(fs.readFileSync(path.join(restored.worktreePath, "README.md"), "utf8"))

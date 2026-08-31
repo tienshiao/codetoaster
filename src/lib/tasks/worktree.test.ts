@@ -915,3 +915,132 @@ describe("a snapshot the branch outran", () => {
     expect(await readWip(root, id)).not.toBeNull();
   }, 30000);
 });
+
+// A task has to be able to find its own repository (§5.6, TASK-64). Everything
+// worktree used to resolve one through the *project*, and deleting a project
+// reassigns its tasks to General — whose path is empty — so a task with a
+// checkout was left able to be neither reopened nor evicted, its branch and its
+// snapshot sitting in a repository nothing could name.
+describe("a task outliving its project", () => {
+  /** Whether two paths name the same repository.
+   *
+   * String equality is the wrong question, and macOS makes that unmissable: a
+   * temp directory is `/var/...` while `rev-parse --show-toplevel` answers
+   * `/private/var/...` through the symlink. The two writers here honestly
+   * differ — a create stores the toplevel git resolved, while `deleteProject`
+   * stamps the project's own directory to stay synchronous — and the column is
+   * documented as *a directory inside the repository* precisely because that is
+   * all any consumer needs. So the assertion asks git, the way the consumers
+   * do. */
+  async function sameRepo(a: string, b: string): Promise<boolean> {
+    return (await git(a, "rev-parse", "--show-toplevel"))
+      === (await git(b, "rev-parse", "--show-toplevel"));
+  }
+
+  test("records the repository it was branched from", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    await manager.createTask({ id, projectId, prompt: "do a thing" });
+
+    // The repository, not the checkout: `repo_root` is resolved from the task's
+    // cwd, so for a worktree task it names the worktree and dies with it.
+    expect(await sameRepo(store.get(id)!.worktree_repo!, root)).toBe(true);
+    expect(store.get(id)!.repo_root).toBe(store.get(id)!.worktree_path);
+  }, 20000);
+
+  // The headline case. Before the column, this resume failed with a 409 for
+  // good — through every door, forever.
+  test("can still be reopened after its project is deleted", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    fs.writeFileSync(path.join(row.worktree_path!, "README.md"), "dirty\n");
+    await manager.closeTask(id);
+    await manager.evictTask(id);
+
+    expect(manager.deleteProject(projectId)).toBe(true);
+    expect(store.get(id)!.project_id).toBe("general");
+
+    manager.setStartTimeout(200);
+    await manager.resumeTask(id);
+
+    expect(store.get(id)!.worktree_state).toBe("present");
+    // Rebuilt where it was evicted from, not at a path recomputed from the
+    // project it now belongs to — which would be a different directory, so the
+    // restore would land beside the work rather than onto it.
+    expect(store.get(id)!.worktree_path).toBe(row.worktree_path!);
+    expect(fs.readFileSync(path.join(row.worktree_path!, "README.md"), "utf8")).toBe("dirty\n");
+  }, 30000);
+
+  test("can still be evicted after its project is deleted", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    await manager.closeTask(id);
+
+    manager.deleteProject(projectId);
+
+    expect(await manager.evictTask(id)).toBe(true);
+    expect(store.get(id)!.worktree_state).toBe("evicted");
+    expect(fs.existsSync(row.worktree_path!)).toBe(false);
+  }, 30000);
+
+  // A task created before the column existed has a null and a project that can
+  // still answer, so the answer is resolved once and written back.
+  test("a row with no record of its repository heals from the project", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    await manager.createTask({ id, projectId, prompt: "do a thing" });
+    await manager.closeTask(id);
+    // What an older row looks like.
+    store.update(id, { worktree_repo: null });
+
+    expect(await manager.evictTask(id)).toBe(true);
+
+    expect(store.get(id)!.worktree_repo).not.toBeNull();
+    expect(await sameRepo(store.get(id)!.worktree_repo!, root)).toBe(true);
+  }, 30000);
+
+  // Deleting a project is the moment a task is stranded, so the stamp happens
+  // there — which is what makes this fix reach the tasks that already exist
+  // rather than only the ones made after it.
+  test("deleting a project stamps the repository on the way out", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    await manager.createTask({ id, projectId, prompt: "do a thing" });
+    await manager.closeTask(id);
+    store.update(id, { worktree_repo: null });
+
+    manager.deleteProject(projectId);
+
+    expect(store.get(id)!.worktree_repo).not.toBeNull();
+    expect(await sameRepo(store.get(id)!.worktree_repo!, root)).toBe(true);
+  }, 30000);
+
+  // Only a row stranded *before* any of this shipped can get here: no record of
+  // its own, and no project left to ask. It is the one unrecoverable case, so
+  // it says what happened and where the work still is rather than answering
+  // with a generic "not a repository".
+  test("says so plainly when nothing can name the repository", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    await manager.closeTask(id);
+    await manager.evictTask(id);
+    manager.deleteProject(projectId);
+    store.update(id, { worktree_repo: null });
+
+    const error = await manager.resumeTask(id).catch((e) => e);
+
+    expect(error).toBeInstanceOf(WorktreeError);
+    expect(error.kind).toBe("repo-unknown");
+    // The work is not lost, and the message has to say where it is.
+    expect(error.message).toContain(row.branch!);
+  }, 30000);
+});

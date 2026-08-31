@@ -1,7 +1,7 @@
 import * as fsp from "fs/promises";
 import { gitSpawn } from "../../api/utils";
 import { withRepoLock } from "./lock";
-import { lockKeyFor, repoRootOf } from "./repo";
+import { lockKeyFor } from "./repo";
 
 // Taking a checkout off disk while keeping everything that matters about it
 // (docs/v2-architecture.md §5.6).
@@ -36,9 +36,10 @@ export async function discardCheckout(repoRoot: string, worktreePath: string): P
 
 /** Evict a task's checkout, from outside the worktree module.
  *
- * Takes the project's directory rather than a repository root for the same
- * reason create and restore do: the caller has the project, and the task's own
- * directory is the thing about to stop existing.
+ * Takes the repository root rather than the project's directory, because a task
+ * has to be evictable after its project is gone (TASK-64): the row carries the
+ * repository it was branched from, and resolving one from a project that may
+ * have been deleted is the bug this replaced.
  *
  * Under the repository's lock, because removing a worktree mutates the list
  * that branch allocation reads — an eviction racing a create in the same
@@ -46,7 +47,6 @@ export async function discardCheckout(repoRoot: string, worktreePath: string): P
  *
  * Says nothing about whether evicting was a good idea. The snapshot has to have
  * been taken first, and the caller is what knows that. */
-export async function evictWorktree(projectPath: string, worktreePath: string): Promise<void> {
-  const repoRoot = await repoRootOf(projectPath);
+export async function evictWorktree(repoRoot: string, worktreePath: string): Promise<void> {
   await withRepoLock(await lockKeyFor(repoRoot), () => discardCheckout(repoRoot, worktreePath));
 }

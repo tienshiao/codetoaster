@@ -2,11 +2,10 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { gitSpawn } from "../../api/utils";
 import { WorktreeError } from "./errors";
-import { copyProjectFiles, type WorktreeProject } from "./copy";
+import { copyProjectFiles } from "./copy";
 import { discardCheckout } from "./evict";
 import { withRepoLock } from "./lock";
-import { worktreePathFor } from "./paths";
-import { assertPathFree, lockKeyFor, repoRootOf } from "./repo";
+import { assertPathFree, lockKeyFor } from "./repo";
 import { applyWip, readWip, wipRefFor } from "./wip";
 
 // Rebuilding a checkout that was evicted or went missing
@@ -81,12 +80,29 @@ async function assertBranch(repoRoot: string, branch: string): Promise<void> {
  * add` writes `.git/worktrees` and takes the same locks a concurrent create
  * would. */
 export function restoreWorktree(
-  project: WorktreeProject,
-  task: { id: string; branch: string },
+  repo: {
+    /** The repository to add the checkout back to — off the task's row, not
+     * looked up from a project the task may have outlived (TASK-64). */
+    root: string;
+    /** The project's `worktree_copy` list, read now rather than remembered, so
+     * a restore produces the checkout the project asks for today. */
+    worktreeCopy: string | null;
+  },
+  task: {
+    id: string;
+    branch: string;
+    /** Where the checkout goes, from the row. Not recomputed from the project
+     * and the task id: a task reassigned to another project — which is what
+     * deleting one does — would have that expression answer with a *different*
+     * directory from the one it was evicted from, so the restore would rebuild
+     * beside the work rather than onto it. */
+    worktreePath: string;
+  },
 ): Promise<RestoredWorktree> {
-  return repoRootOf(project.initial_path).then(async (repoRoot) =>
+  const repoRoot = repo.root;
+  return Promise.resolve().then(async () =>
     withRepoLock(await lockKeyFor(repoRoot), async () => {
-      const worktreePath = worktreePathFor(project.id, task.id);
+      const worktreePath = task.worktreePath;
       await assertBranch(repoRoot, task.branch);
       assertPathFree(worktreePath);
       await fsp.mkdir(path.dirname(worktreePath), { recursive: true });
@@ -128,7 +144,8 @@ export function restoreWorktree(
         // opinion about it. The snapshot is what the user was working on; the
         // copy is a template the project holds. Copying first lets
         // `read-tree --reset` overwrite it, so the user's work wins.
-        const copied = await copyProjectFiles(project, repoRoot, worktreePath);
+        const copied = await copyProjectFiles(
+          { worktree_copy: repo.worktreeCopy }, repoRoot, worktreePath);
 
         const wip = await readWip(repoRoot, task.id);
         if (!wip) return { worktreePath, branch: task.branch, wip: "none" as const, copied };

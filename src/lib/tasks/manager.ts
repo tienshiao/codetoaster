@@ -40,9 +40,11 @@ import {
   evictWorktree,
   readSetupOutcome,
   removeWorktree,
+  repoRootOf,
   restoreWorktree,
   setupStampPath,
   snapshotWip,
+  worktreePathFor,
   wrapWithSetup,
   WorktreeError,
   type CreatedWorktree,
@@ -562,6 +564,10 @@ export class TaskManager {
         ...(worktree
           ? {
               worktree_path: worktree.worktreePath,
+              // The task's own handle on its repository, so nothing downstream
+              // has to ask the project where the checkout lives — a project the
+              // task may outlive (TASK-64).
+              worktree_repo: worktree.repoRoot,
               branch: worktree.branch,
               base_ref: baseRef,
               worktree_state: "present" as const,
@@ -1681,6 +1687,30 @@ export class TaskManager {
     return this.suspendTask(taskId);
   }
 
+  /** The repository a task's checkout belongs to.
+   *
+   * Off the row, and the row is the point (TASK-64): every worktree operation
+   * used to find the repository through the *project*, and deleting a project
+   * reassigns its tasks to General — whose path is empty — leaving a task that
+   * could neither be reopened nor evicted, its branch and its snapshot sitting
+   * in a repository nothing could name.
+   *
+   * A null heals rather than failing: a task created before the column existed
+   * still has a project to ask, so the answer is resolved once and written
+   * back. Only a task that has *already* lost its project can end with nothing,
+   * and that is the one case with no recovery — the path it was branched from
+   * was never recorded and the project that knew it is gone. */
+  private async repoRootFor(row: TaskRow): Promise<string | null> {
+    if (row.worktree_repo) return row.worktree_repo;
+
+    const project = this.projects.find((p) => p.id === row.project_id);
+    if (!project?.initialPath) return null;
+    const root = await repoRootOf(expandTilde(project.initialPath)).catch(() => null);
+    if (!root) return null;
+    if (this.store.get(row.id)) this.store.update(row.id, { worktree_repo: root });
+    return root;
+  }
+
   /** What a task's outstanding snapshot decision is, or null when it owes none.
    *
    * The pair of columns, resolved once: a *present* checkout that still has a
@@ -1794,13 +1824,16 @@ export class TaskManager {
     if (!row?.worktree_path || row.worktree_state !== "present") return false;
     if (row.lifecycle !== "suspended") return false;
 
-    const project = this.projects.find((p) => p.id === row.project_id);
-    if (!project?.initialPath) return false;
+    const repoRoot = await this.repoRootFor(row);
+    // Nothing to evict *into* a repository we cannot name. Refusing keeps the
+    // directory, which is the safe half — the task is broken either way, and
+    // TASK-64's failure message on the reopen path is where it gets explained.
+    if (!repoRoot) return false;
 
     const snapshot = await this.snapshotTaskWip(taskId);
     if (!snapshot) return false;
 
-    await evictWorktree(expandTilde(project.initialPath), row.worktree_path);
+    await evictWorktree(repoRoot, row.worktree_path);
     // Re-read rather than trusted: the snapshot and the removal are two awaits,
     // and a task deleted across them must not be written back as a row holding
     // one column.
@@ -1918,27 +1951,38 @@ export class TaskManager {
       return null;
     }
 
-    const project = this.projects.find((p) => p.id === row.project_id);
-    if (!project?.initialPath) {
-      // The project's directory is where the repository is found, and a task
-      // cannot have been given a worktree without one — so this is a project
-      // edited out from under a task, not an ordinary state.
+    const repoRoot = await this.repoRootFor(row);
+    if (!repoRoot) {
+      // The task was branched from a repository nobody recorded, and the
+      // project that knew which one is gone. Its own kind rather than
+      // `not-a-repo`, because the two ask for different things: `not-a-repo`
+      // means "that directory is not a repository", which the user can fix by
+      // pointing at one, while this means "we have lost track of yours" — and
+      // the message has to say that the work is not lost with it.
       throw new WorktreeError(
-        "not-a-repo",
-        `Project "${project?.name ?? row.project_id}" no longer has a directory to restore into`,
+        "repo-unknown",
+        `Task "${row.title}" was branched from a repository this task can no longer name — `
+          + `its project was removed. Its work is still on branch ${row.branch}.`,
       );
     }
-
+    const project = this.projects.find((p) => p.id === row.project_id);
     const restored = await restoreWorktree(
       {
-        id: row.project_id,
-        initial_path: expandTilde(project.initialPath),
+        root: repoRoot,
         // Read now rather than remembered from the create: a project's copy
         // list is editable, and a restore should produce the checkout the
-        // project asks for today.
-        worktree_copy: project.worktreeCopy,
+        // project asks for today. Null once the project is gone, which is
+        // right — there is no list to honour.
+        worktreeCopy: project?.worktreeCopy ?? null,
       },
-      { id: taskId, branch: row.branch },
+      {
+        id: taskId,
+        branch: row.branch,
+        // From the row. A task reassigned to another project would have the
+        // id-derived path answer with a different directory from the one it was
+        // evicted from, and the restore would rebuild beside the work.
+        worktreePath: row.worktree_path ?? worktreePathFor(row.project_id, taskId),
+      },
     );
     // Dropped along with the columns that record it, and not left as a spare
     // copy. The work is on disk now, so the ref holds nothing the checkout does
@@ -2293,6 +2337,26 @@ export class TaskManager {
     if (index === -1) return false;
     const project = this.projects[index]!;
     const general = this.projects.find((p) => p.id === "general")!;
+    // Every checkout of this project gets told where its repository is, before
+    // the project that knows stops existing (TASK-64). This is the moment a
+    // task is stranded: the reassignment below moves it to General, whose path
+    // is empty, and from then on nothing can name the repository its branch and
+    // its snapshot live in — so it can neither be reopened nor evicted, and the
+    // directory is pinned on disk forever.
+    //
+    // The project's own directory rather than a resolved toplevel, which is
+    // what lets this stay synchronous: the column is documented as *a*
+    // directory inside the repository, and `git -C` asks for no more than that.
+    // Only rows that have none are touched, so a task that recorded its own at
+    // create keeps it — that one is the truth about where the worktree was
+    // actually added, and this is a fallback.
+    const projectPath = project.initialPath ? expandTilde(project.initialPath) : null;
+    if (projectPath) {
+      for (const task of this.store.list()) {
+        if (task.project_id !== id || task.worktree_repo || task.worktree_state === "none") continue;
+        this.store.update(task.id, { worktree_repo: projectPath });
+      }
+    }
     // The tasks outlive the grouping: they move to General rather than being
     // destroyed with it. By column, not by `project.taskIds` — that list only
     // holds the tasks this run started, so a task suspended by a previous
