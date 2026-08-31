@@ -1,11 +1,11 @@
 ---
 id: TASK-39
 title: 'Evict tier: remove suspended checkouts, restore on open'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 00:17'
-updated_date: '2026-08-31 07:44'
+updated_date: '2026-08-31 07:55'
 labels:
   - server
   - tasks
@@ -31,8 +31,8 @@ ordinal: 39000
 - [x] #1 A suspended, unpinned task past its grace is evicted: WIP ref written, directory removed, worktree_state=evicted, task delta broadcast
 - [x] #2 Grace scales with setup_duration_ms; a pinned task is never evicted; base grace 0 disables the tier
 - [x] #3 Manual evict works on a single task and on every suspended task of a project
-- [ ] #4 Opening an evicted or missing task restores the checkout, runs setup with visible output, then resumes the agent; the UI shows 'restoring workspace…' meanwhile
-- [ ] #5 Restore failure (branch gone, WIP parent mismatch) lands on an actionable card, never a dead terminal
+- [x] #4 Opening an evicted or missing task restores the checkout, runs setup with visible output, then resumes the agent; the UI shows 'restoring workspace…' meanwhile
+- [x] #5 Restore failure (branch gone, WIP parent mismatch) lands on an actionable card, never a dead terminal
 - [x] #6 Tests cover eviction guards and the restore path
 <!-- AC:END -->
 
@@ -108,3 +108,9 @@ From TASK-38's code review: restore currently does NOT re-run `setup_command` or
 The consequence to keep in mind while building that: `git add -A` honours `.gitignore`, so the snapshot cannot carry ignored files. A project with `worktree_copy = .env` and `setup_command = bun install` gets a checkout back with neither until this lands — `worktree_copy` needs re-copying as well as setup re-running, and AC #4 only names setup. `copyProjectFiles` is private to `create.ts` and will need exporting or lifting.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The second harvest tier. A suspended task past its grace has its working state snapshotted and its checkout removed, keeping the branch, the ref and the row; opening it rebuilds the checkout, re-copies the project's files, re-runs setup in the agent's own terminal and then resumes the agent. Grace is priced in restore cost — base x min(1 + setup_duration_ms / 30s, 4), capped so one pathological install cannot pin a task forever — and measured from `last_active_at`, because the question is how long since the user cared rather than since the agent stopped. Both tiers share one timer and are switched separately. Eviction runs only on suspended tasks and never without a snapshot, and an `evicting` map beside `resuming` keeps a harvester tick from removing the directory an agent was just spawned into: eviction refuses while a resume is in flight, a resume waits for an eviction, so the two can never wait on each other. A branch deleted while a task was evicted is a 409 with its kind rather than a 500. Landed in two commits — server (9a4f605) and the surface, with TASK-63. Verified: 831 unit + 99 render, 0 fail; `tsc --noEmit` clean.
+<!-- SECTION:FINAL_SUMMARY:END -->

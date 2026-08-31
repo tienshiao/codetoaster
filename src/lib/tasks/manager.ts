@@ -34,6 +34,7 @@ import {
 import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
 import {
+  applyWip,
   createWorktree,
   dropWip,
   evictWorktree,
@@ -1680,6 +1681,63 @@ export class TaskManager {
     return this.suspendTask(taskId);
   }
 
+  /** What a task's outstanding snapshot decision is, or null when it owes none.
+   *
+   * The pair of columns, resolved once: a *present* checkout that still has a
+   * WIP ref is a snapshot `restoreWorktree` refused to apply because the branch
+   * had moved under it. Both actions below need exactly this, and both have to
+   * refuse the same states — an evicted task's ref is how it is stored, not a
+   * decision, and a checkout that is not on disk has nothing to apply into. */
+  private pendingWip(taskId: string): { ref: string; worktreePath: string } | null {
+    const row = this.store.get(taskId);
+    if (!row?.wip_ref || !row.worktree_path) return null;
+    if (row.worktree_state !== "present") return null;
+    if (!fs.existsSync(row.worktree_path)) return null;
+    return { ref: row.wip_ref, worktreePath: row.worktree_path };
+  }
+
+  /** Take the user up on a snapshot the restore refused (§5.6).
+   *
+   * This is the destructive arm of the three, and deliberately so: the checkout
+   * has been sitting there since the restore, possibly worked in, and applying
+   * writes the snapshot's version of every file it holds over what is there
+   * now. The confirmation belongs to the caller — the server cannot know
+   * whether the user has read what they are about to lose — but the *decision*
+   * is theirs to make, so nothing here second-guesses it once it has been made.
+   *
+   * The ref is dropped afterwards rather than kept as a spare copy, for the
+   * reason an applied restore drops it: `wip_ref` on a present checkout is what
+   * "owes a decision" is spelled as, and one that survived the decision would
+   * ask the question again forever. */
+  async applyTaskWip(taskId: string): Promise<boolean> {
+    const pending = this.pendingWip(taskId);
+    if (!pending) return false;
+    await applyWip(pending.worktreePath, pending.ref);
+    await dropWip(pending.worktreePath, taskId);
+    if (!this.store.get(taskId)) return true;
+    this.store.update(taskId, { wip_ref: null, wip_at: null });
+    this.broadcastTask(taskId);
+    return true;
+  }
+
+  /** Throw the snapshot away, and stop asking.
+   *
+   * The one genuinely irreversible thing in the worktree module: nothing else
+   * points at the commit, and `refs/codetoaster/*` gets no reflog, so the
+   * objects are collectable the moment the ref is gone. It is still the right
+   * default to offer — the alternative is a card that cannot be dismissed —
+   * and the third choice, keeping the ref and answering later, costs nothing
+   * and is what a user who is unsure should take. */
+  async discardTaskWip(taskId: string): Promise<boolean> {
+    const pending = this.pendingWip(taskId);
+    if (!pending) return false;
+    await dropWip(pending.worktreePath, taskId);
+    if (!this.store.get(taskId)) return true;
+    this.store.update(taskId, { wip_ref: null, wip_at: null });
+    this.broadcastTask(taskId);
+    return true;
+  }
+
   /** Take a suspended task's checkout off disk, keeping everything that makes
    * it rebuildable (§5.6).
    *
@@ -2083,6 +2141,11 @@ export class TaskManager {
       terminalTitle: pty?.title ?? "",
       agentState: row.agent_state,
       lifecycle: row.lifecycle,
+      worktreeState: row.worktree_state,
+      // The two columns are the state; there is no third thing to consult.
+      // `worktree_state` alone would be true of an *evicted* task, whose ref is
+      // the ordinary way it is stored rather than a decision anyone owes.
+      wipPending: row.worktree_state === "present" && row.wip_ref !== null,
       lastMessage: row.last_message,
       clientCount: pty?.getClientCount() ?? 0,
       // A suspended task remembers the grid it had, so resuming it does not

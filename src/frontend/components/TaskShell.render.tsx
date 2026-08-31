@@ -116,6 +116,8 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     lastActiveAt: 0,
     exited: false,
     hasNotification: false,
+    worktreeState: "none",
+    wipPending: false,
     ...overrides,
   };
 }

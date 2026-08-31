@@ -807,3 +807,111 @@ describe("evicting and reopening cannot collide", () => {
     expect(fs.existsSync(row.worktree_path!)).toBe(false);
   }, 30000);
 });
+
+// The decision a refused snapshot leaves behind (§5.6, TASK-63). The state is
+// two columns and no third thing: a *present* checkout that still has a WIP ref
+// is a snapshot the restore would not apply, and it reads the same after a
+// daemon restart because nothing about it lives in memory.
+describe("a snapshot the branch outran", () => {
+  /** A task whose restore refused its snapshot: evicted dirty, then committed
+   * to from the user's own checkout while it was away. */
+  async function owingADecision(manager: TaskManager, projectId: string, root: string) {
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    fs.writeFileSync(path.join(row.worktree_path!, "README.md"), "the user's work\n");
+    await manager.closeTask(id);
+    await manager.evictTask(id);
+
+    await git(root, "checkout", "-q", row.branch!);
+    fs.writeFileSync(path.join(root, "README.md"), "committed elsewhere\n");
+    await git(root, "commit", "-qam", "work done outside the task");
+    await git(root, "checkout", "-q", "main");
+
+    manager.setStartTimeout(200);
+    await manager.resumeTask(id);
+    return { id, row };
+  }
+
+  // AC #1.
+  test("is what wipPending reports, and only that", async () => {
+    const root = await tempRepo();
+    const { manager, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id } = await owingADecision(manager, projectId, root);
+
+    expect(manager.taskInfo(id)!.wipPending).toBe(true);
+    expect(manager.taskInfo(id)!.worktreeState).toBe("present");
+
+    // A task whose restore applied cleanly owes nothing, and neither does one
+    // that was never evicted at all.
+    const clean = taskId();
+    const cleanRow = await manager.createTask({ id: clean, projectId, prompt: "clean" });
+    fs.writeFileSync(path.join(cleanRow.worktree_path!, "README.md"), "dirty\n");
+    await manager.closeTask(clean);
+    await manager.evictTask(clean);
+    // An *evicted* task has a ref too — that is simply how it is stored — and
+    // it is not a decision anybody owes.
+    expect(manager.taskInfo(clean)!.wipPending).toBe(false);
+    await manager.resumeTask(clean);
+    expect(manager.taskInfo(clean)!.wipPending).toBe(false);
+  }, 30000);
+
+  // AC #3.
+  test("apply writes it into the live checkout and stops asking", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await owingADecision(manager, projectId, root);
+    // The restore left the newer commit standing, which is what made this a
+    // decision rather than a silent overwrite.
+    expect(fs.readFileSync(path.join(row.worktree_path!, "README.md"), "utf8"))
+      .toBe("committed elsewhere\n");
+
+    expect(await manager.applyTaskWip(id)).toBe(true);
+
+    expect(fs.readFileSync(path.join(row.worktree_path!, "README.md"), "utf8"))
+      .toBe("the user's work\n");
+    expect(store.get(id)!.wip_ref).toBeNull();
+    expect(store.get(id)!.wip_at).toBeNull();
+    expect(manager.taskInfo(id)!.wipPending).toBe(false);
+    // The ref goes with the columns: one that survived the decision would ask
+    // the same question forever.
+    expect(await readWip(root, id)).toBeNull();
+  }, 30000);
+
+  // AC #5.
+  test("discard drops the ref and does not come back", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await owingADecision(manager, projectId, root);
+
+    expect(await manager.discardTaskWip(id)).toBe(true);
+
+    // The checkout is untouched — discarding is about the snapshot, not about
+    // the tree the user is looking at.
+    expect(fs.readFileSync(path.join(row.worktree_path!, "README.md"), "utf8"))
+      .toBe("committed elsewhere\n");
+    expect(store.get(id)!.wip_ref).toBeNull();
+    expect(await readWip(root, id)).toBeNull();
+    expect(manager.taskInfo(id)!.wipPending).toBe(false);
+    // And a second answer is a no-op rather than an error: two browsers can
+    // both be showing the banner.
+    expect(await manager.discardTaskWip(id)).toBe(false);
+    expect(await manager.applyTaskWip(id)).toBe(false);
+  }, 30000);
+
+  // AC #4. "Keep" is the absence of a request, which is the whole reason it
+  // needs no endpoint and no fourth column: nothing is written, so the next
+  // client to load the task is told the same thing.
+  test("keeping means the row still says so", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id } = await owingADecision(manager, projectId, root);
+
+    const ref = store.get(id)!.wip_ref;
+    expect(ref).not.toBeNull();
+    // Whatever the client does with its banner, the server has been asked
+    // nothing — so a fresh reader sees the decision still outstanding.
+    expect(manager.taskInfo(id)!.wipPending).toBe(true);
+    expect(store.get(id)!.wip_ref).toBe(ref!);
+    expect(await readWip(root, id)).not.toBeNull();
+  }, 30000);
+});

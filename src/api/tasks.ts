@@ -293,6 +293,48 @@ export const taskRoutes = {
     },
   },
 
+  "/api/tasks/:id/wip": {
+    // Answering for a snapshot the restore would not apply (§5.6).
+    //
+    // Two actions, not three. "Keep" — decide later — is the absence of a
+    // request: the ref and the columns stay exactly as they are, and the banner
+    // comes back on the next load because the row still says so. Giving it an
+    // endpoint would mean inventing a fourth state to record "asked and
+    // deferred", and the whole point of this encoding is that there is no state
+    // beyond the two columns.
+    async POST(req: Request & { params: { id: string } }) {
+      const body = (await readJsonBody(req)) ?? {};
+      const action = body.action;
+      if (action !== "apply" && action !== "discard") {
+        return badRequest(`"action" must be "apply" or "discard"`);
+      }
+      if (!taskManager.getTask(req.params.id)) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      try {
+        const done = action === "apply"
+          ? await taskManager.applyTaskWip(req.params.id)
+          : await taskManager.discardTaskWip(req.params.id);
+        const info = taskManager.taskInfo(req.params.id);
+        if (!info) {
+          return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+        }
+        // `done: false` rather than a 409, because "there was nothing to
+        // decide" is what a second click on a banner two browsers were both
+        // showing looks like, and the row in the answer already says so.
+        return Response.json({ done, task: info });
+      } catch (e: any) {
+        if (e instanceof WorktreeError) {
+          return Response.json({ error: e.message, kind: e.kind }, { status: 409 });
+        }
+        return Response.json(
+          { error: e?.message ?? "Could not act on the snapshot" },
+          { status: 500 },
+        );
+      }
+    },
+  },
+
   "/api/tasks/:id/evict": {
     // Reclaiming a task's checkout by hand (§5.6). The manual door onto the
     // same operation the evict tier performs on a timer, for a user who wants

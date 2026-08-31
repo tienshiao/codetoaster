@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from "bun";
-import type { AgentState, Lifecycle, TitleSource } from "../db";
+import type { AgentState, Lifecycle, TitleSource, WorktreeState } from "../db";
 
 /** What a project decides on behalf of the tasks started in it.
  *
@@ -139,6 +139,23 @@ export interface TaskInfo {
   terminalTitle: string;
   agentState: AgentState;
   lifecycle: Lifecycle;
+  /** Where the task's checkout stands (§5.6). `none` for a task running in the
+   * project's own directory; the other three are about a worktree we made.
+   *
+   * On the wire because a reopen looks different depending on it: an `evicted`
+   * task has a directory to rebuild before its agent can start, which is
+   * seconds of work the user should be told is happening rather than left
+   * wondering at. */
+  worktreeState: WorktreeState;
+  /** Whether this task's checkout owes the user a decision about a snapshot
+   * (§5.6).
+   *
+   * True only for a *present* checkout that still has a WIP ref: the two
+   * together mean a restore refused to apply the snapshot because the branch
+   * had moved under it, and kept it rather than overwriting the newer commit.
+   * An applied snapshot clears both, so the pair is the whole state — no flag
+   * in memory, and it reads the same after a daemon restart. */
+  wipPending: boolean;
   /** The last thing the agent said, from the Stop hook. The task list shows it
    * under the title, which is how a list of thirty answers "which of these
    * want me?" without opening any of them (§7.5). Null until the agent has

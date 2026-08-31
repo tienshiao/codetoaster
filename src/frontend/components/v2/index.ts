@@ -9,6 +9,9 @@ export type { ButtonProps, ButtonSize, ButtonVariant } from "./Button";
 export { IconButton } from "./IconButton";
 export type { IconButtonProps, IconButtonSize } from "./IconButton";
 
+export { Notice } from "./Notice";
+export type { NoticeProps, NoticeTone } from "./Notice";
+
 export { Badge } from "./Badge";
 export type { BadgeProps, BadgeTone } from "./Badge";
 

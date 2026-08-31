@@ -6,6 +6,7 @@ import { AppShell } from "@/frontend/components/v2/AppShell";
 import { useTaskSidebar } from "@/frontend/components/TaskSidebar";
 import { Button } from "@/frontend/components/v2/Button";
 import { TaskHeader } from "@/frontend/components/v2/TaskHeader";
+import { WipNotice } from "@/frontend/components/WipNotice";
 import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
@@ -275,7 +276,14 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         tabArea={
           layout
             ? ({ leading }) => (
-                <TabArea
+                // The notice sits above the whole tab area rather than inside a
+                // pane, because the decision is about the *checkout* and every
+                // tab is looking at it — the diff, the file tree and the history
+                // all read the same tree. Shown once for the same reason: a
+                // split renders two agent panes and this is one question.
+                <div className="flex h-full min-h-0 flex-col">
+                  {selected?.wipPending && <WipNotice taskId={selected.id} />}
+                  <TabArea
                   layout={layout}
                   onLayoutChange={applyLayout}
                   onNewShell={taskId ? handleNewShell : undefined}
@@ -311,7 +319,8 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                       visible={visible}
                     />
                   )}
-                />
+                  />
+                </div>
               )
             : undefined
         }

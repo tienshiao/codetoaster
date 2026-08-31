@@ -97,6 +97,13 @@ export interface TaskContextValue {
     options?: ResumeTaskOptions,
     reporting?: RequestOptions,
   ) => Promise<TaskResult<TaskInfo>>;
+  /** Answer for a snapshot the restore refused (§5.6). `apply` writes it into
+   * the live checkout, `discard` throws it away; deciding later is not a call
+   * at all, since the row goes on saying so. */
+  resolveWip: (
+    id: string,
+    action: "apply" | "discard",
+  ) => Promise<TaskResult<{ done: boolean; task: TaskInfo }>>;
   /** Open a plain shell inside a task, as a sibling of its agent (§3). Answers
    * with the new PTY's id and the task it now belongs to — the task because it
    * carries `shellPtyIds`, so the caller has the tab and the proof that its PTY
@@ -482,6 +489,20 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const resolveWip = useCallback(
+    (id: string, action: "apply" | "discard") =>
+      request<{ done: boolean; task: TaskInfo }>(
+        `/api/tasks/${id}/wip`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        },
+        "Could not act on the snapshot",
+      ),
+    [],
+  );
+
   const openShell = useCallback(
     (id: string) =>
       request<{ ptyId: string; task: TaskInfo }>(
@@ -545,6 +566,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       renameTask,
       closeTask,
       resumeTask,
+      resolveWip,
       openShell,
       closeShell,
       setViewedTask,
@@ -563,6 +585,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       renameTask,
       closeTask,
       resumeTask,
+      resolveWip,
       openShell,
       closeShell,
       setViewedTask,

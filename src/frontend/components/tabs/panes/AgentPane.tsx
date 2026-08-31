@@ -49,6 +49,12 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
   const task = tasks.find((t) => t.id === taskId);
   const ptyId = task?.ptyId ?? null;
   const suspended = task?.lifecycle === "suspended";
+  // A task whose checkout was evicted has a directory to rebuild before its
+  // agent can start — a `worktree add`, the project's setup command, a cold
+  // install — which is seconds of work the user is otherwise left guessing at.
+  // The wait is the same wait either way; only the sentence differs (§5.6).
+  const restoringWorkspace =
+    task?.worktreeState === "evicted" || task?.worktreeState === "missing";
   const hasNotification = task?.hasNotification ?? false;
 
   const terminalRef = useRef<TerminalHandle>(null);
@@ -243,6 +249,7 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
       <Overlay
         phase={phase}
         failure={failure}
+        restoringWorkspace={restoringWorkspace}
         // A suspended task with the phase already settled: it was suspended out
         // from under the view, or a reopen failed and was dismissed. Either way
         // the way back is a click, not something that happens on its own.
@@ -266,12 +273,15 @@ function Overlay({
   phase,
   failure,
   resting,
+  restoringWorkspace,
   onReopen,
 }: {
   phase: ReopenPhase;
   /** What went wrong, when the server said. */
   failure: string | null;
   resting: boolean;
+  /** Whether this reopen has a checkout to rebuild before the agent starts. */
+  restoringWorkspace: boolean;
   onReopen: () => void;
 }) {
   if (phase === "live" && !resting) return null;
@@ -282,7 +292,9 @@ function Overlay({
         {phase === "restoring" ? (
           <>
             <span className="size-2 animate-pulse rounded-full bg-state-busy" />
-            <span className="pr-2.5">Suspended — resuming…</span>
+            <span className="pr-2.5">
+              {restoringWorkspace ? "Restoring workspace…" : "Suspended — resuming…"}
+            </span>
           </>
         ) : (
           <>
