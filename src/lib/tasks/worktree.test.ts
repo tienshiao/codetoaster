@@ -6,9 +6,10 @@ import * as path from "path";
 import { applyMigrations } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
+import { Harvester, SEVEN_DAYS_MS } from "./harvester";
 import { gitSpawn } from "../../api/utils";
 import { taskDir } from "../agent/spawn";
-import { readWip, setupStampPath, worktreesRoot } from "../worktree";
+import { WorktreeError, readWip, setupStampPath, worktreesRoot } from "../worktree";
 
 // A task's checkout, from the manager's side (docs/v2-architecture.md §5.6).
 // `lib/worktree` is tested on its own against temporary repositories; this is
@@ -489,4 +490,320 @@ describe("snapshot and restore", () => {
     expect(fs.existsSync(path.join(row.worktree_path!, "README.md"))).toBe(true);
     expect(store.get(id)?.worktree_state).toBe("present");
   }, 20000);
+});
+
+// The evict tier and the reopen that undoes it (§5.6, TASK-39). The arithmetic
+// of the grace period is `harvester.test.ts`; this is the round trip, against a
+// real repository, through the doors a user actually goes through.
+describe("the evict tier", () => {
+  /** A suspended task with a checkout, dirty, and last touched `agoMs` ago —
+   * the only three facts the tier's guards read. */
+  async function resting(
+    manager: TaskManager,
+    store: TaskStore,
+    projectId: string,
+    agoMs: number,
+  ) {
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    fs.writeFileSync(path.join(row.worktree_path!, "README.md"), "dirty\n");
+    await manager.closeTask(id);
+    store.update(id, { last_active_at: Date.now() - agoMs });
+    return { id, row };
+  }
+
+  function harvesterFor(manager: TaskManager): Harvester {
+    const harvester = new Harvester(manager);
+    // Idle harvesting off, so nothing this file asserts can be the other tier's
+    // doing — and, incidentally, the shipped proof that turning one off leaves
+    // the other running.
+    harvester.setHarvestAfter(0);
+    return harvester;
+  }
+
+  // AC #1.
+  test("evicts a suspended task past its grace, keeping the branch and the work", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await resting(manager, store, projectId, 8 * 24 * 60 * 60_000);
+
+    await harvesterFor(manager).tick();
+
+    const after = store.get(id)!;
+    expect(after.worktree_state).toBe("evicted");
+    expect(fs.existsSync(row.worktree_path!)).toBe(false);
+    // Everything that makes it restorable is still there: the branch, the WIP
+    // ref, and the path the rebuild will land on.
+    expect(after.worktree_path).toBe(row.worktree_path);
+    expect(after.wip_ref).toBe(`refs/codetoaster/wip/${id}`);
+    expect(await git(root, "rev-parse", "--verify", row.branch!)).toBeTruthy();
+  }, 20000);
+
+  test("leaves a task whose grace has not elapsed", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await resting(manager, store, projectId, 60_000);
+
+    await harvesterFor(manager).tick();
+
+    expect(store.get(id)!.worktree_state).toBe("present");
+    expect(fs.existsSync(row.worktree_path!)).toBe(true);
+  }, 20000);
+
+  // AC #2.
+  test("never evicts a pinned task, however long it has rested", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await resting(manager, store, projectId, 365 * 24 * 60 * 60_000);
+    store.update(id, { pinned: 1 });
+
+    await harvesterFor(manager).tick();
+
+    expect(store.get(id)!.worktree_state).toBe("present");
+    expect(fs.existsSync(row.worktree_path!)).toBe(true);
+  }, 20000);
+
+  test("a base grace of zero turns the tier off", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id } = await resting(manager, store, projectId, 365 * 24 * 60 * 60_000);
+    const harvester = harvesterFor(manager);
+    harvester.setEvictAfter(0);
+
+    await harvester.tick();
+
+    expect(store.get(id)!.worktree_state).toBe("present");
+  }, 20000);
+
+  // The tier is priced in restore cost, not in age: an expensive checkout is
+  // worth keeping longer, because what the user pays for its eviction is the
+  // wait when they come back.
+  test("scales the grace by what the task's last restore cost", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    // Eight days each: past a plain seven-day grace, and short of the fourteen
+    // a thirty-second install earns.
+    const eightDays = 8 * 24 * 60 * 60_000;
+    const cheap = await resting(manager, store, projectId, eightDays);
+    const expensive = await resting(manager, store, projectId, eightDays);
+    store.update(expensive.id, { setup_duration_ms: 30_000 });
+
+    await harvesterFor(manager).tick();
+
+    // Same age, same project, same tick: the only difference is what each one
+    // costs to rebuild.
+    expect(store.get(cheap.id)!.worktree_state).toBe("evicted");
+    expect(store.get(expensive.id)!.worktree_state).toBe("present");
+    expect(SEVEN_DAYS_MS).toBe(7 * 24 * 60 * 60_000);
+  }, 30000);
+
+  // A live task has processes in that directory. It is not in the list the tier
+  // walks at all, and that is the guard: everything §5.5 asks about running
+  // processes was already discharged on the way to `suspended`.
+  test("never evicts a task that is still live", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "still working" });
+    store.update(id, { last_active_at: Date.now() - 365 * 24 * 60 * 60_000 });
+
+    await harvesterFor(manager).tick();
+
+    expect(store.get(id)!.worktree_state).toBe("present");
+    expect(fs.existsSync(row.worktree_path!)).toBe(true);
+    // And the manual door refuses it too, rather than closing it on the
+    // caller's behalf.
+    expect(await manager.evictTask(id)).toBe(false);
+  }, 20000);
+
+  // AC #3.
+  test("a manual evict works on one task and on a whole project", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const one = await resting(manager, store, projectId, 0);
+    const two = await resting(manager, store, projectId, 0);
+    const three = await resting(manager, store, projectId, 0);
+
+    expect(await manager.evictTask(one.id)).toBe(true);
+    expect(store.get(one.id)!.worktree_state).toBe("evicted");
+    // Untouched: nothing about one task's eviction reaches its neighbours.
+    expect(store.get(two.id)!.worktree_state).toBe("present");
+
+    // Two left, and the one already evicted is not counted again.
+    expect(await manager.evictProject(projectId)).toBe(2);
+    expect(store.get(two.id)!.worktree_state).toBe("evicted");
+    expect(store.get(three.id)!.worktree_state).toBe("evicted");
+    expect(fs.existsSync(three.row.worktree_path!)).toBe(false);
+  }, 30000);
+});
+
+describe("reopening an evicted task", () => {
+  // AC #4, the round trip the tier is only safe because of.
+  test("restores the checkout and its dirt before the agent comes back", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    fs.writeFileSync(path.join(row.worktree_path!, "README.md"), "dirty\n");
+    fs.writeFileSync(path.join(row.worktree_path!, "new.txt"), "untracked\n");
+    await manager.closeTask(id);
+    expect(await manager.evictTask(id)).toBe(true);
+    expect(fs.existsSync(row.worktree_path!)).toBe(false);
+
+    manager.setStartTimeout(200);
+    await manager.resumeTask(id);
+
+    const after = store.get(id)!;
+    expect(after.worktree_state).toBe("present");
+    expect(after.lifecycle).toBe("live");
+    // The work is back, as work rather than as a commit.
+    expect(fs.readFileSync(path.join(row.worktree_path!, "README.md"), "utf8")).toBe("dirty\n");
+    expect(fs.existsSync(path.join(row.worktree_path!, "new.txt"))).toBe(true);
+    // And the agent is running *in* it — the row's cwd moved with the restore,
+    // which is what a resume that read a stale row would have got wrong.
+    expect(after.cwd).toBe(row.worktree_path!);
+    expect(await manager.primaryPty(id)?.getCwd()).toBe(row.worktree_path!);
+  }, 30000);
+
+  // The other half of AC #4, and the gap TASK-38 left open: `git add -A`
+  // honours `.gitignore`, so nothing ignored survives a snapshot. Setup and
+  // `worktree_copy` are the only things that put it back.
+  test("re-runs setup and re-copies the project's files", async () => {
+    const root = await tempRepo();
+    // Both markers are *ignored*, and that is what makes this a test rather
+    // than a tautology. `git add -A` honours `.gitignore`, so neither can reach
+    // the snapshot — an untracked-but-visible file would come back through the
+    // WIP and prove nothing about setup having run at all.
+    fs.writeFileSync(path.join(root, ".gitignore"), ".env\ninstalled.txt\n");
+    fs.writeFileSync(path.join(root, ".env"), "SECRET=1\n");
+    await git(root, "add", ".gitignore");
+    await git(root, "commit", "-qm", "ignore the generated files");
+    const { manager, store, projectId } = await newManager(root, {
+      worktreeDefault: true,
+      worktreeCopy: ".env",
+      setupCommand: "echo installed > installed.txt",
+    });
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    const installed = path.join(row.worktree_path!, "installed.txt");
+    expect(await waitFor(() => fs.existsSync(installed))).toBe(true);
+    await manager.closeTask(id);
+    await manager.evictTask(id);
+    expect(fs.existsSync(installed)).toBe(false);
+
+    manager.setStartTimeout(200);
+    await manager.resumeTask(id);
+
+    // Neither could have come out of git.
+    expect(await waitFor(() => fs.existsSync(installed))).toBe(true);
+    expect(fs.readFileSync(path.join(row.worktree_path!, ".env"), "utf8")).toBe("SECRET=1\n");
+
+    // And the restore times *itself*: the grace the next eviction uses is
+    // scaled by what this restore cost, not by a number measured when the task
+    // was new. Recorded on the first hook, because the wrapper only execs the
+    // agent once setup has exited — so an agent that has reported anything is
+    // proof the stamp is already on disk.
+    expect(await waitFor(() => fs.existsSync(setupStampPath(id)))).toBe(true);
+    manager.applyHook(id, { hook_event_name: "SessionStart", session_id: "s1" } as any);
+    expect(await waitFor(() => store.get(id)!.setup_duration_ms !== null)).toBe(true);
+  }, 30000);
+
+  // AC #5's first half. Not a resume that failed — the work is safe in the WIP
+  // ref — but a workspace with nowhere to go, which the caller has to be told
+  // about rather than handed a dead terminal.
+  test("a branch deleted while the task was evicted is its own failure", async () => {
+    const root = await tempRepo();
+    const { manager, projectId } = await newManager(root, { worktreeDefault: true });
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    await manager.closeTask(id);
+    await manager.evictTask(id);
+    await git(root, "branch", "-D", row.branch!);
+
+    const error = await manager.resumeTask(id).catch((e) => e);
+
+    expect(error).toBeInstanceOf(WorktreeError);
+    expect(error.kind).toBe("branch-missing");
+    // Nothing was spawned into a directory that does not exist.
+    expect(manager.primaryPty(id)).toBeUndefined();
+  }, 30000);
+});
+
+// The evict tier and the reopen path both act on one directory, and the row
+// says `suspended` throughout a resume — the ladder only writes `live` on the
+// rung that works. So "is it suspended?" is not enough to tell a resting task
+// from one being reopened this instant, which is the collision these two guard.
+//
+// Deterministic without any hooks into the implementation: both `evictTask` and
+// `resumeTask` register themselves before their first await, so the call that
+// starts second always sees the first.
+describe("evicting and reopening cannot collide", () => {
+  async function evictable(manager: TaskManager, projectId: string) {
+    const id = taskId();
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+    fs.writeFileSync(path.join(row.worktree_path!, "README.md"), "dirty\n");
+    await manager.closeTask(id);
+    manager.setStartTimeout(200);
+    return { id, row };
+  }
+
+  // The damaging order. Without the wait, the ladder restores the checkout and
+  // spawns an agent into it while the eviction — which read the row before any
+  // of that — goes on to `git worktree remove --force` the directory out from
+  // under the running agent.
+  test("a resume waits for an eviction already in flight, then rebuilds", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await evictable(manager, projectId);
+
+    const evicting = manager.evictTask(id);
+    const resuming = manager.resumeTask(id);
+    expect(await evicting).toBe(true);
+    await resuming;
+
+    const after = store.get(id)!;
+    expect(after.lifecycle).toBe("live");
+    // The end state is the resume's, not the eviction's: the checkout is back,
+    // with the work in it, and the agent has a directory to be running in.
+    expect(after.worktree_state).toBe("present");
+    expect(fs.existsSync(row.worktree_path!)).toBe(true);
+    expect(fs.readFileSync(path.join(row.worktree_path!, "README.md"), "utf8")).toBe("dirty\n");
+  }, 30000);
+
+  // The other direction refuses rather than waiting, and that asymmetry is what
+  // keeps the two from waiting on each other. Nothing is lost by refusing: the
+  // tier is a sweep on a timer, and the next tick judges the task the resume
+  // produced — a live one, which it will not touch.
+  test("an eviction refuses while a resume is in flight", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await evictable(manager, projectId);
+
+    const resuming = manager.resumeTask(id);
+    expect(await manager.evictTask(id)).toBe(false);
+    await resuming;
+
+    expect(store.get(id)!.worktree_state).toBe("present");
+    expect(fs.existsSync(row.worktree_path!)).toBe(true);
+    // And no snapshot was stamped on the way: a `wip_ref` on a present checkout
+    // is the encoding for "this task owes the user a decision", and one written
+    // by a refused eviction would be a decision about nothing — and would block
+    // the task from ever being evicted again.
+    expect(store.get(id)!.wip_ref).toBeNull();
+  }, 30000);
+
+  // Two callers, one checkout. The manual route and the tier can easily arrive
+  // together, and snapshotting and removing the same directory twice is at best
+  // wasted work and at worst a second `worktree remove` racing the first.
+  test("a second eviction joins the first rather than repeating it", async () => {
+    const root = await tempRepo();
+    const { manager, store, projectId } = await newManager(root, { worktreeDefault: true });
+    const { id, row } = await evictable(manager, projectId);
+
+    const [first, second] = await Promise.all([manager.evictTask(id), manager.evictTask(id)]);
+
+    expect([first, second]).toEqual([true, true]);
+    expect(store.get(id)!.worktree_state).toBe("evicted");
+    expect(fs.existsSync(row.worktree_path!)).toBe(false);
+  }, 30000);
 });

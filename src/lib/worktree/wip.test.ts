@@ -145,7 +145,7 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     await git(root, "worktree", "prune");
 
-    const restored = await restoreWorktree(root, project.id, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
 
     expect(restored.wip).toBe("applied");
     expect(restored.worktreePath).toBe(created.worktreePath);
@@ -166,7 +166,7 @@ describe("restoreWorktree", () => {
 
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     await git(root, "worktree", "remove", "--force", created.worktreePath);
-    const restored = await restoreWorktree(root, project.id, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
 
     expect(await status(restored.worktreePath)).toContain("?? untracked.txt");
     expect(fs.existsSync(path.join(restored.worktreePath, "ignored/build.out"))).toBe(false);
@@ -180,7 +180,7 @@ describe("restoreWorktree", () => {
     const created = await createWorktree(project, task, "main");
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
-    const restored = await restoreWorktree(root, project.id, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
 
     expect(restored.wip).toBe("none");
     expect(restored.staleRef).toBeUndefined();
@@ -209,7 +209,7 @@ describe("restoreWorktree", () => {
     const newTip = await git(root, "rev-parse", "HEAD");
     await git(root, "checkout", "-q", "main");
 
-    const restored = await restoreWorktree(root, project.id, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
 
     expect(restored.wip).toBe("stale");
     // Kept, not discarded: the choice is the user's, and nothing is lost while
@@ -236,7 +236,7 @@ describe("restoreWorktree", () => {
     await git(root, "commit", "-qm", "work done outside the task");
     await git(root, "checkout", "-q", "main");
 
-    const restored = await restoreWorktree(root, project.id, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
     expect(restored.wip).toBe("stale");
     await applyWip(restored.worktreePath, restored.staleRef!);
 
@@ -253,7 +253,7 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     await git(root, "branch", "-D", created.branch);
 
-    const error = await restoreWorktree(root, project.id, {
+    const error = await restoreWorktree(project, {
       id: task.id,
       branch: created.branch,
     }).catch((e) => e);
@@ -280,7 +280,7 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     await git(root, "checkout", "-q", created.branch);
 
-    const error = await restoreWorktree(root, project.id, {
+    const error = await restoreWorktree(project, {
       id: task.id,
       branch: created.branch,
     }).catch((e) => e);
@@ -304,9 +304,54 @@ describe("restoreWorktree", () => {
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     fs.rmSync(created.worktreePath, { recursive: true, force: true });
 
-    const restored = await restoreWorktree(root, project.id, { id: task.id, branch: created.branch });
+    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
 
     expect(restored.wip).toBe("applied");
     expect(fs.readFileSync(path.join(restored.worktreePath, "README.md"), "utf8")).toBe("dirty\n");
+  });
+});
+
+describe("restoreWorktree and the project's files", () => {
+  // §5.6's load-bearing pair. `git add -A` honours `.gitignore`, so an ignored
+  // file cannot reach the snapshot — which makes `worktree_copy` the only thing
+  // that puts it back, and makes this the test that it is actually run.
+  test("re-copies worktree_copy entries a snapshot could not carry", async () => {
+    const { root } = await tempRepo();
+    fs.writeFileSync(path.join(root, ".gitignore"), ".env\n");
+    fs.writeFileSync(path.join(root, ".env"), "SECRET=1\n");
+    await git(root, "add", ".gitignore");
+    await git(root, "commit", "-qm", "ignore .env");
+    const project = { ...tempProject(root), worktree_copy: ".env" };
+    const task = tempTask("Needs its dotenv");
+    const created = await createWorktree(project, task, "main");
+    expect(fs.existsSync(path.join(created.worktreePath, ".env"))).toBe(true);
+
+    await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
+    await git(root, "worktree", "remove", "--force", created.worktreePath);
+
+    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+
+    expect(restored.copied).toEqual([".env"]);
+    expect(fs.readFileSync(path.join(restored.worktreePath, ".env"), "utf8")).toBe("SECRET=1\n");
+  });
+
+  // The ordering decision: a copy list may name a tracked path, and then the
+  // template and the snapshot both have an opinion about it. The snapshot is
+  // the user's work, so the copy goes first and `read-tree --reset` wins.
+  test("lets the snapshot win over a copy of a tracked file", async () => {
+    const { root } = await tempRepo();
+    const project = { ...tempProject(root), worktree_copy: "README.md" };
+    const task = tempTask("Overlapping copy");
+    const created = await createWorktree(project, task, "main");
+    fs.writeFileSync(path.join(created.worktreePath, "README.md"), "the user's work\n");
+
+    await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
+    await git(root, "worktree", "remove", "--force", created.worktreePath);
+
+    const restored = await restoreWorktree(project, { id: task.id, branch: created.branch });
+
+    expect(restored.wip).toBe("applied");
+    expect(fs.readFileSync(path.join(restored.worktreePath, "README.md"), "utf8"))
+      .toBe("the user's work\n");
   });
 });

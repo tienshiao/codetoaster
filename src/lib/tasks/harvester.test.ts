@@ -5,7 +5,7 @@ import type { ServerWebSocket } from "bun";
 import { applyMigrations } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
-import { Harvester, THIRTY_MINUTES_MS } from "./harvester";
+import { Harvester, SEVEN_DAYS_MS, THIRTY_MINUTES_MS, graceFor } from "./harvester";
 import type { ServerMessage, WebSocketData } from "../xtmux/types";
 import { taskDir, taskScrollbackPath } from "../agent/spawn";
 
@@ -510,5 +510,89 @@ describe("robustness", () => {
     // The sweep ran to its end rather than being abandoned where it stood.
     expect(store.get(id)!.lifecycle).toBe("suspended");
     await ticking;
+  });
+});
+
+// The evict tier's policy (§5.6, TASK-39). What eviction *does* is tested
+// against real repositories in `worktree.test.ts`; this is the arithmetic and
+// the two switches, which are the parts that have no git in them.
+describe("eviction grace", () => {
+  // Priced in restore cost, not in age or disk. What the user pays for an
+  // eviction is the wait when they come back, so the curve is the whole policy.
+  test("scales with what the last restore cost", () => {
+    // Nothing measured — no setup command, or setup that never finished — is
+    // the base grace, not a penalty: a checkout with no setup really is nearly
+    // free to rebuild.
+    expect(graceFor(SEVEN_DAYS_MS, null)).toBe(SEVEN_DAYS_MS);
+    expect(graceFor(SEVEN_DAYS_MS, 0)).toBe(SEVEN_DAYS_MS);
+    // A restore that is over before the user notices is worth about as much as
+    // no restore at all.
+    expect(graceFor(SEVEN_DAYS_MS, 200)).toBeCloseTo(SEVEN_DAYS_MS, -7);
+    // §5.6's own example: a 90-second install waits far longer than a 200ms one.
+    expect(graceFor(SEVEN_DAYS_MS, 30_000)).toBe(2 * SEVEN_DAYS_MS);
+    expect(graceFor(SEVEN_DAYS_MS, 90_000)).toBe(4 * SEVEN_DAYS_MS);
+  });
+
+  // Unbounded, one pathological setup — a container build, a dependency graph
+  // fetched over a bad link — would pin its task on disk effectively forever,
+  // which is the sprawl the tier exists to stop.
+  test("is capped, however slow the setup was", () => {
+    expect(graceFor(SEVEN_DAYS_MS, 60 * 60_000)).toBe(4 * SEVEN_DAYS_MS);
+    expect(graceFor(SEVEN_DAYS_MS, Number.MAX_SAFE_INTEGER)).toBe(4 * SEVEN_DAYS_MS);
+  });
+
+  test("zero base disables the tier by arithmetic as well as by the guard", () => {
+    expect(graceFor(0, 90_000)).toBe(0);
+  });
+});
+
+describe("the two tiers are switched separately", () => {
+  /** Which task lists a sweep actually consults. The tiers are disabled by not
+   * doing the work, not by doing it and discarding the answer, so what is
+   * observable is whether they looked. */
+  function watchLists(manager: TaskManager) {
+    const consulted = { live: false, suspended: false };
+    const liveTasks = manager.liveTasks.bind(manager);
+    const suspendedTasks = manager.suspendedTasks.bind(manager);
+    (manager as any).liveTasks = () => { consulted.live = true; return liveTasks(); };
+    (manager as any).suspendedTasks = () => { consulted.suspended = true; return suspendedTasks(); };
+    return consulted;
+  }
+
+  // The regression this exists for. While there was one tier, `tick` returned
+  // early on `harvestAfterMs <= 0` — and left in place that would let a user who
+  // turned off idle harvesting silently turn off eviction with it. The two
+  // settings answer different questions: one is about memory, the other disk.
+  test("turning off idle harvesting leaves eviction running", async () => {
+    const { manager, harvester } = newManager();
+    const consulted = watchLists(manager);
+    harvester.setHarvestAfter(0);
+
+    await harvester.tick();
+
+    expect(consulted.live).toBe(false);
+    expect(consulted.suspended).toBe(true);
+  });
+
+  test("turning off eviction leaves idle harvesting running", async () => {
+    const { manager, harvester } = newManager();
+    const consulted = watchLists(manager);
+    harvester.setEvictAfter(0);
+
+    await harvester.tick();
+
+    expect(consulted.live).toBe(true);
+    expect(consulted.suspended).toBe(false);
+  });
+
+  test("both off is the only thing that skips the sweep entirely", async () => {
+    const { manager, harvester } = newManager();
+    const consulted = watchLists(manager);
+    harvester.setHarvestAfter(0);
+    harvester.setEvictAfter(0);
+
+    await harvester.tick();
+
+    expect(consulted).toEqual({ live: false, suspended: false });
   });
 });

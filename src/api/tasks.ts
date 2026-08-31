@@ -201,6 +201,16 @@ export const taskRoutes = {
           rows: rows ?? undefined,
         });
       } catch (e: any) {
+        // A workspace that could not be rebuilt is the caller's problem to act
+        // on, not a server fault: the branch was deleted while the task was
+        // evicted, or git refused the checkout. 409 with the kind, so the
+        // client can say which of those it was — and so it renders the failure
+        // card it already has for a resume that did not work, rather than an
+        // "internal error" for a situation the user can actually fix. The work
+        // itself is untouched: the WIP ref still holds it.
+        if (e instanceof WorktreeError) {
+          return Response.json({ error: e.message, kind: e.kind }, { status: 409 });
+        }
         return Response.json(
           { error: e?.message ?? "Could not resume the task" },
           { status: 500 },
@@ -280,6 +290,79 @@ export const taskRoutes = {
         return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
       }
       return Response.json(info);
+    },
+  },
+
+  "/api/tasks/:id/evict": {
+    // Reclaiming a task's checkout by hand (§5.6). The manual door onto the
+    // same operation the evict tier performs on a timer, for a user who wants
+    // the disk back now rather than in a week.
+    //
+    // HTTP for the reason close and resume are: it snapshots a working tree and
+    // runs git, either of which can fail in a way the caller has to hear about.
+    async POST(req: Request & { params: { id: string } }) {
+      const task = taskManager.getTask(req.params.id);
+      if (!task) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      // Refused rather than closed on the caller's behalf. A live task has
+      // processes in that directory — the agent, a build in a shell tab — and
+      // removing the checkout under them is the one thing eviction is otherwise
+      // careful never to be: unrecoverable. Closing first is a click, and it
+      // takes its own snapshot on the way.
+      if (task.lifecycle !== "suspended") {
+        return Response.json(
+          { error: "Close the task before evicting its checkout" },
+          { status: 409 },
+        );
+      }
+      try {
+        const evicted = await taskManager.evictTask(req.params.id);
+        const info = taskManager.taskInfo(req.params.id);
+        if (!info) {
+          return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+        }
+        // `evicted` rather than a status code, because "there was nothing to
+        // evict" is a true answer and not a failure: a task with no checkout of
+        // its own, or one already evicted, is already in the state asked for.
+        return Response.json({ evicted, task: info });
+      } catch (e: any) {
+        if (e instanceof WorktreeError) {
+          return Response.json({ error: e.message, kind: e.kind }, { status: 409 });
+        }
+        return Response.json(
+          { error: e?.message ?? "Could not evict the task" },
+          { status: 500 },
+        );
+      }
+    },
+  },
+
+  "/api/projects/:id/evict": {
+    // The same, over every suspended task of one project — the useful shape
+    // when a project has thirty finished tasks each holding a node_modules.
+    //
+    // Answers with a count rather than with the tasks: the deltas go out over
+    // the socket as each one lands, so a client that cared about the details
+    // already has them, and a project with thirty checkouts would otherwise
+    // send them all twice.
+    async POST(req: Request & { params: { id: string } }) {
+      // Named rather than counted, because `evicted: 0` is a true answer for a
+      // project whose tasks are all live and an equally true-looking one for a
+      // project id that was mistyped — and the caller can act on exactly one of
+      // those. The task-level door already tells them apart.
+      if (!taskManager.getProjects().some((p) => p.id === req.params.id)) {
+        return Response.json({ error: `Unknown project "${req.params.id}"` }, { status: 404 });
+      }
+      try {
+        const evicted = await taskManager.evictProject(req.params.id);
+        return Response.json({ evicted });
+      } catch (e: any) {
+        return Response.json(
+          { error: e?.message ?? "Could not evict the project" },
+          { status: 500 },
+        );
+      }
     },
   },
 

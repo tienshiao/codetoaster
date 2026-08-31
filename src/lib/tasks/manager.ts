@@ -36,6 +36,7 @@ import { removeSnapshot, writeSnapshot } from "./snapshot";
 import {
   createWorktree,
   dropWip,
+  evictWorktree,
   readSetupOutcome,
   removeWorktree,
   restoreWorktree,
@@ -254,6 +255,16 @@ export class TaskManager {
   // done rather than carrying on, since the promise it waited on may have
   // handed straight to another one of the other kind.
   private suspending: Map<string, Promise<boolean>> = new Map();
+  // The third of the same family, and it exists because `suspended` is not a
+  // quiet state. An eviction takes a snapshot and then runs `git worktree
+  // remove --force`, and a resume leaves the row `suspended` for its *whole*
+  // run — the ladder only writes `live` on the rung that works — so a
+  // lifecycle check alone lets the evict tier take the checkout out from under
+  // a task somebody is in the middle of reopening: the directory the restore
+  // just rebuilt and the agent was just spawned into. Registered before the
+  // first await on the evict side and waited on before the ladder starts on
+  // the resume side, so whichever gets there first is the one that runs.
+  private evicting: Map<string, Promise<boolean>> = new Map();
   // What `codetoaster hook` has to POST back to (§4.2), handed over by
   // startServer. Undefined until then: a manager with no server in front of it
   // — a test — has no port to name, and an agent spawned from one simply
@@ -841,7 +852,22 @@ export class TaskManager {
    * environment and the same task-id plumbing as a fresh one. */
   private async spawnAgent(
     row: TaskRow,
-    options: { mode: AgentMode; sessionId?: string; cols?: number; rows?: number },
+    options: {
+      mode: AgentMode;
+      sessionId?: string;
+      cols?: number;
+      rows?: number;
+      /** The project's setup command, when this spawn is following a restore
+       * (§5.6). Null every other time, and that distinction is the point: a
+       * resume that changed no directory is running in a checkout that was
+       * already set up, and re-running `bun install` over it on every reopen
+       * would make suspending a task expensive.
+       *
+       * Wrapped around the agent rather than awaited before it, exactly as
+       * `createTask` does, so a cold `bun install` is visible output in the
+       * agent tab instead of a blank pane for forty seconds. */
+      setupCommand?: string | null;
+    },
   ): Promise<Pty> {
     // The question both users of this flag ask is "has the agent that is
     // running now reported?", not "has anything ever reported for this task".
@@ -860,7 +886,11 @@ export class TaskManager {
     this.hookSeen.delete(row.id);
     this.compactTriggers.delete(row.id);
     const pty = this.ptys.spawn(
-      buildAgentCommand(row, { mode: options.mode, sessionId: options.sessionId, settingsPath }),
+      wrapWithSetup(
+        buildAgentCommand(row, { mode: options.mode, sessionId: options.sessionId, settingsPath }),
+        options.setupCommand,
+        setupStampPath(row.id),
+      ),
       {
         cols: options.cols,
         rows: options.rows,
@@ -941,6 +971,18 @@ export class TaskManager {
       await suspendInFlight.catch(() => undefined);
       return this.resumeTask(taskId, options);
     }
+    // An eviction already in flight settles first, for the same reason and with
+    // more at stake: it is about to run `git worktree remove --force` on the
+    // very directory the ladder would restore and spawn into. Waiting means the
+    // resume is judged against the task the eviction produced — an evicted one,
+    // which `restoreTaskWorktree` then rebuilds — rather than racing it for the
+    // checkout. `evictTask` refuses in the other direction, so the two can
+    // never wait on each other.
+    const evictInFlight = this.evicting.get(taskId);
+    if (evictInFlight) {
+      await evictInFlight.catch(() => undefined);
+      return this.resumeTask(taskId, options);
+    }
     // Joined to a resume already in flight *before* anything is inspected. The
     // ladder adopts each rung's PTY before awaiting `awaitAgentStart`, so for
     // most of its run there is a live terminal on this task that belongs to a
@@ -1000,6 +1042,40 @@ export class TaskManager {
     options: { fresh?: boolean; cols?: number; rows?: number },
   ): Promise<TaskRow | undefined> {
     let row = initial;
+
+    // The checkout comes back before the conversation does (§5.6). Eviction is
+    // not a lifecycle state of its own — it is `worktree_state` on a suspended
+    // task — so opening one is an ordinary resume that happens to have a
+    // directory to rebuild first, and putting it here rather than behind an
+    // endpoint of its own means every door that reopens a task restores
+    // without having to know it should: the pane, the CLI, the API.
+    //
+    // Inside the promise `resuming` holds, so it inherits the serialization
+    // `resumeTask` already does against in-flight suspends and resumes. Two
+    // concurrent restores of one task would be two `worktree add`s racing for
+    // one path.
+    //
+    // A throw travels out to the route, which turns it into a status code the
+    // client can act on. That is the point: a branch deleted while the task was
+    // evicted is not a resume that failed, it is a workspace that needs a
+    // decision, and walking the ladder against a directory that does not exist
+    // would spawn agents in the daemon's own cwd.
+    const restored = await this.restoreTaskWorktree(taskId);
+    let setupCommand: string | null = null;
+    if (restored) {
+      // The row moved underneath us: `restoreTaskWorktree` writes `cwd`, and
+      // `spawnAgent` reads it off the row it is handed. Without this the agent
+      // is spawned in the directory the task had before the restore, which for
+      // an evicted task is one that does not exist.
+      row = this.store.get(taskId) ?? row;
+      setupCommand = this.projects.find((p) => p.id === row.project_id)?.setupCommand ?? null;
+      // What `recordSetupOutcome` dates the stamp against, so a restore
+      // measures its own cost rather than inheriting the create's. That is what
+      // makes the eviction grace self-correcting: the number it scales by is
+      // the last restore's, not a guess made when the task was new.
+      this.spawnedAt.set(taskId, Date.now());
+    }
+
     const size = {
       // The grid the task had when it was suspended, so its output does not
       // reflow on the way back (§5.3).
@@ -1040,11 +1116,16 @@ export class TaskManager {
 
       let pty: Pty;
       try {
-        pty = await this.spawnAgent(row, { ...attempt, ...size });
+        pty = await this.spawnAgent(row, { ...attempt, ...size, setupCommand });
       } catch {
         // The binary is missing or unrunnable: no rung will do better.
         break;
       }
+      // Spent on the first rung. Setup is idempotent in principle and slow in
+      // practice — a cold `bun install` is tens of seconds — and a ladder that
+      // re-ran it per rung would turn one failed resume into four installs.
+      const ranSetup = setupCommand !== null;
+      setupCommand = null;
 
       const started = await this.awaitAgentStart(taskId, pty);
       // Checked again on the far side of the wait, which is where the window
@@ -1068,6 +1149,18 @@ export class TaskManager {
         return this.store.get(taskId);
       }
       this.discardPty(pty, taskId);
+      // A rung that failed with setup wrapped around it is usually setup's
+      // failure, not the conversation's — the wrapper `exit`s rather than
+      // `exec`ing the agent — and no other rung will do better against a
+      // checkout that is not set up. Walking on would spawn a bare agent into
+      // a half-built workspace and report it as a success.
+      //
+      // Only when the stamp says so. A setup still running is the common case
+      // and not a failure at all: `awaitAgentStart` caps its wait at a few
+      // seconds and answers on whether the process is still up, so a long
+      // install is a *successful* rung whose output the user watches in the
+      // tab. `readSetupOutcome` answers nothing while it is still going.
+      if (ranSetup && (await this.setupFailed(taskId))) break;
     }
 
     // Nothing worked. The task is not a dead terminal and not a lie about
@@ -1086,6 +1179,17 @@ export class TaskManager {
     this.store.update(taskId, { lifecycle: "suspended", agent_state: "could_not_resume" });
     this.broadcastTask(taskId);
     return this.store.get(taskId);
+  }
+
+  /** Whether the setup wrapper has recorded a failure for this task.
+   *
+   * Distinct from "setup did not finish", which is what a task still
+   * installing looks like and is not a reason to stop trying. */
+  private async setupFailed(taskId: string): Promise<boolean> {
+    const spawnedAt = this.spawnedAt.get(taskId);
+    if (spawnedAt === undefined) return false;
+    const outcome = await readSetupOutcome(setupStampPath(taskId), spawnedAt);
+    return outcome !== undefined && outcome.exitCode !== 0;
   }
 
   /** The rungs to try, in order (§4.3). A fresh start is not a rung — it is
@@ -1576,6 +1680,109 @@ export class TaskManager {
     return this.suspendTask(taskId);
   }
 
+  /** Take a suspended task's checkout off disk, keeping everything that makes
+   * it rebuildable (§5.6).
+   *
+   * The second tier of harvesting. Suspending gives back the processes; this
+   * gives back the disk, and it is safe to do to a dirty tree because the
+   * snapshot goes first and the branch is never touched. What is left is a row,
+   * a branch and a WIP ref — enough for `restoreTaskWorktree` to put the task
+   * back exactly as it was.
+   *
+   * **Only on a suspended task**, and that is the guard that discharges every
+   * other one. A live task has processes in that directory: an agent mid-turn,
+   * a build in a shell tab, an editor with unsaved work. Removing the checkout
+   * under them is not recoverable in the way this otherwise is, and the
+   * harvester's own is-anything-running guards have already been passed by
+   * anything that reached `suspended`. A manual evict is refused for the same
+   * reason rather than being allowed to override it: the caller should close
+   * the task first, which is one click and has its own snapshot.
+   *
+   * **Never without a snapshot.** `snapshotTaskWip` answering null is always a
+   * reason to keep the directory — there is nothing recorded to restore from,
+   * or there is a snapshot already waiting on the user's decision that a new
+   * one would overwrite. Eviction is only ever as safe as the snapshot that
+   * preceded it, so no snapshot means no eviction.
+   *
+   * **Never against a resume in flight.** `suspended` is not a quiet state: the
+   * ladder leaves the row saying it for its entire run and only writes `live`
+   * on the rung that works, so the lifecycle guard above passes for a task
+   * somebody is in the middle of reopening — and what would then be removed is
+   * the directory the restore just rebuilt, with the agent already spawned into
+   * it. Refused rather than queued behind it: the next sweep is thirty seconds
+   * away, and by then the resume has either landed (live, so not evictable) or
+   * failed (suspended again, and evictable on its own merits).
+   *
+   * Whether a task *should* be evicted — grace, pins — is the harvester's, the
+   * same way `suspendTask` knows nothing about idle timeouts. */
+  evictTask(taskId: string): Promise<boolean> {
+    if (this.resuming.has(taskId)) return Promise.resolve(false);
+    // A second caller joins the first rather than snapshotting and removing the
+    // same checkout twice — the manual route and the evict tier can easily
+    // arrive together.
+    const already = this.evicting.get(taskId);
+    if (already) return already;
+    // Registered before the first await, so a resume that checks this map
+    // cannot slip past between the guard above and the work below.
+    const attempt = this.doEvict(taskId).finally(() => {
+      this.evicting.delete(taskId);
+    });
+    this.evicting.set(taskId, attempt);
+    return attempt;
+  }
+
+  private async doEvict(taskId: string): Promise<boolean> {
+    const row = this.store.get(taskId);
+    if (!row?.worktree_path || row.worktree_state !== "present") return false;
+    if (row.lifecycle !== "suspended") return false;
+
+    const project = this.projects.find((p) => p.id === row.project_id);
+    if (!project?.initialPath) return false;
+
+    const snapshot = await this.snapshotTaskWip(taskId);
+    if (!snapshot) return false;
+
+    await evictWorktree(expandTilde(project.initialPath), row.worktree_path);
+    // Re-read rather than trusted: the snapshot and the removal are two awaits,
+    // and a task deleted across them must not be written back as a row holding
+    // one column.
+    if (!this.store.get(taskId)) return true;
+    // `worktree_path` is deliberately kept. It is derived from the task's id
+    // and is where the restore will rebuild — forgetting it would make an
+    // evicted task indistinguishable from one that never had a checkout.
+    this.store.update(taskId, { worktree_state: "evicted" });
+    this.broadcastTask(taskId);
+    return true;
+  }
+
+  /** Evict every suspended task of a project, and answer how many went.
+   *
+   * Sequential rather than parallel: every eviction in one repository takes the
+   * same per-repo lock, so a `Promise.all` would queue on it anyway while
+   * making a single failure harder to attribute. One that throws does not stop
+   * the rest — a project reclaimed except for the one checkout git refused is
+   * the useful outcome. */
+  async evictProject(projectId: string): Promise<number> {
+    let evicted = 0;
+    for (const row of this.store.list({ lifecycle: "suspended" })) {
+      if (row.project_id !== projectId) continue;
+      try {
+        if (await this.evictTask(row.id)) evicted++;
+      } catch (e) {
+        console.warn(`Could not evict task ${row.id}:`, e);
+      }
+    }
+    return evicted;
+  }
+
+  /** The rows the evict tier walks (§5.6). Suspended rather than live, which is
+   * the whole difference between the two tiers: one reclaims processes from
+   * tasks nobody is using, the other reclaims disk from tasks that already have
+   * no processes. */
+  suspendedTasks(): TaskRow[] {
+    return this.store.list({ lifecycle: "suspended" });
+  }
+
   /** Commit a task's working state to its WIP ref, and record it on the row
    * (§5.6).
    *
@@ -1664,10 +1871,17 @@ export class TaskManager {
       );
     }
 
-    const restored = await restoreWorktree(expandTilde(project.initialPath), row.project_id, {
-      id: taskId,
-      branch: row.branch,
-    });
+    const restored = await restoreWorktree(
+      {
+        id: row.project_id,
+        initial_path: expandTilde(project.initialPath),
+        // Read now rather than remembered from the create: a project's copy
+        // list is editable, and a restore should produce the checkout the
+        // project asks for today.
+        worktree_copy: project.worktreeCopy,
+      },
+      { id: taskId, branch: row.branch },
+    );
     // Dropped along with the columns that record it, and not left as a spare
     // copy. The work is on disk now, so the ref holds nothing the checkout does
     // not — but it outlives the row's account of it, and `restoreWorktree`

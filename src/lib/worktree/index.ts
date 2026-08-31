@@ -1,6 +1,9 @@
-export { createWorktree, parseCopyList, removeWorktree } from "./create";
-export type { CreatedWorktree, WorktreeProject, WorktreeTask } from "./create";
+export { createWorktree, removeWorktree } from "./create";
+export type { CreatedWorktree, WorktreeTask } from "./create";
+export { parseCopyList } from "./copy";
+export type { WorktreeProject } from "./copy";
 export { WorktreeError } from "./errors";
+export { discardCheckout, evictWorktree } from "./evict";
 export type { WorktreeErrorKind } from "./errors";
 export { allocateBranch, branchSlug, BRANCH_PREFIX } from "./branch";
 export { withRepoLock } from "./lock";
