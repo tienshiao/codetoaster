@@ -13,7 +13,6 @@ import { buildAgentCommand, taskDir, taskEnv, type AgentMode } from "../agent/sp
 import {
   canResumeSessionId,
   continueIsSafe,
-  findResumableTranscript,
   sessionIdFromTranscript,
   transcriptExists,
 } from "../agent/transcripts";
@@ -873,28 +872,41 @@ export class TaskManager {
     // hard way — a resume in this repo picked up the conversation of the
     // session doing the work. Opening someone else's conversation is worse
     // than not resuming at all.
-    const continueSafe = continueIsSafe(row);
-    if (continueSafe) ladder.push({ mode: "continue" });
-    // Last: a conversation we have never been told about, found by looking.
-    // Whatever opens reports its own SessionStart, and the row picks the id up
-    // from the hook — so a successful rung here heals what sent us down it.
     //
-    // Gated on the same judgement as `--continue`, and for the same reason:
-    // without it the guard above is theatre. Refusing `--continue` because the
-    // newest conversation in the directory is a stranger's, and then resuming
-    // that very file by id one rung later, is worse than not checking at all.
+    // "Demonstrably" is the whole of it, and it excludes the row that can
+    // demonstrate nothing (TASK-43). Reaching here means the rungs above
+    // declined or failed the minted id — so a row that never reported a
+    // transcript has no conversation of its own in that directory, and the
+    // most recent one there is by elimination somebody else's. The guard used
+    // to wave that case through on the grounds that it could not tell.
+    if (continueIsSafe(row)) ladder.push({ mode: "continue" });
+    // §4.3 has one more rung here — scan the directory for a conversation
+    // nobody told us about — and it is deliberately not built, because with
+    // the guard above corrected there is no longer anything for it to find.
     //
-    // What this costs is the rung §4.3 wanted for a pruned or skewed
-    // transcript — but only in a directory we can see is shared, which is
-    // exactly where guessing picks up somebody else's conversation. In a
-    // worktree (m-4) the directory holds one conversation, the guard passes,
-    // and the rung comes back.
-    const found = continueSafe
-      ? findResumableTranscript(row, { notThis: row.agent_session_id })
-      : undefined;
-    if (found && !ladder.some((rung) => rung.sessionId === found.sessionId)) {
-      ladder.push({ mode: "resume", sessionId: found.sessionId });
-    }
+    // The scan is `findResumableTranscript`: the newest transcript in the
+    // directory, inside the task's lifetime, that is not the id we already
+    // tried. Follow what that can return once `--continue` is gated on "the
+    // newest transcript is demonstrably ours". If the gate passed, the newest
+    // *is* ours — and rungs 1-3 have already offered it by id and by
+    // `--continue`, so the scan can only reach past it to something older,
+    // which nothing has shown to be this task's. If the gate failed, the scan
+    // has to be refused for the reason the gate was: declining `--continue`
+    // because the newest conversation belongs to a stranger and then opening
+    // that very file by id one rung later would make the guard theatre.
+    //
+    // Either way the scan yields a conversation we never started or nothing at
+    // all, so the rung is subsumed rather than lost — every conversation it
+    // could legitimately have recovered is already named by one above it.
+    //
+    // What that costs is §4.3's case for a pruned or skewed transcript: a
+    // degraded task (hooks never arrived, so no SessionStart set
+    // `transcript_path`) whose agent then ran `/clear`, leaving its real
+    // conversation under an id we were never told. It is unrecoverable here
+    // for the same reason it is unrecoverable by hand — in a shared directory
+    // that conversation is indistinguishable from a stranger's, and an mtime
+    // window is not a distinction. A worktree makes it one, which is why the
+    // rung comes back in m-4 (TASK-60) rather than being deleted now.
     return ladder;
   }
 

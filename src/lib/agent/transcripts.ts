@@ -70,7 +70,13 @@ export function listTranscripts(dir: string): TranscriptCandidate[] {
  * `claude` in the same directory, or the task that used it before this one.
  *
  * `notThis` is the id we already tried, so a scan cannot hand back the same
- * unusable conversation and send the caller round again. */
+ * unusable conversation and send the caller round again.
+ *
+ * Not on the ladder at present, and kept rather than deleted: TASK-43 showed
+ * the window alone cannot tell this task's conversation from a stranger's in a
+ * shared directory, so `resumeLadder` stops one rung short of it and says why.
+ * A worktree makes the directory the task's alone, which is the condition this
+ * always needed; TASK-60 reinstates the rung there. */
 export function findResumableTranscript(
   task: { cwd: string; transcript_path: string | null; created_at: number },
   options: { notThis?: string | null } = {},
@@ -105,13 +111,34 @@ export function sessionIdFromTranscript(transcriptPath: string | null): string |
  * true: a directory can hold the task's conversation, another task's, and the
  * conversation of whoever is running an agent there by hand.
  *
- * So it is only offered when the newest transcript in the directory is the one
- * the task itself reported. A row that has never reported one cannot make the
- * comparison, and there `--continue` is still the best guess available. */
-export function continueIsSafe(task: { cwd: string; transcript_path: string | null }): boolean {
-  if (!task.transcript_path) return true;
-  const newest = listTranscripts(transcriptDirFor(task))[0];
-  return !newest || newest.sessionId === sessionIdFromTranscript(task.transcript_path);
+ * So it is offered only when the newest transcript in the directory is one we
+ * can *name* as this task's. Two things can name one: the path the agent
+ * reported at its SessionStart, and — for a task that never reported one — the
+ * id we minted and passed to `--session-id`, which nothing else in the
+ * directory can be called, because we generated it.
+ *
+ * A row with no reported transcript used to answer `true`, on the reading that
+ * a guard unable to tell should not stand in the way. That was backwards, and
+ * it is the whole of TASK-43. This is asked only after the ladder has already
+ * declined or failed the minted id, so for such a row that conversation is not
+ * in the directory — which makes the newest thing there something we never
+ * started, and `--continue` would bind the task to it permanently at its next
+ * SessionStart. Being unable to tell is the reason to refuse: refusing costs a
+ * rung, allowing costs somebody else's conversation.
+ *
+ * Seeing nothing at all answers `false` for the same reason. An empty
+ * directory would make `--continue` merely useless — but we may equally be
+ * looking in the wrong one, since `projectsDirFor` only guesses at the
+ * escaping rule, and `--continue` opens what is really there rather than what
+ * our guess found. */
+export function continueIsSafe(task: {
+  cwd: string;
+  transcript_path: string | null;
+  agent_session_id?: string | null;
+}): boolean {
+  const ours = sessionIdFromTranscript(task.transcript_path) ?? task.agent_session_id;
+  if (!ours) return false;
+  return listTranscripts(transcriptDirFor(task))[0]?.sessionId === ours;
 }
 
 /** Whether it is worth asking to resume a particular conversation: is there a

@@ -112,6 +112,25 @@ exec cat
   };
 }
 
+/** Plants conversations in the directory a task's transcripts are looked up
+ * in. Needed far more often since TASK-43: `--continue` is now offered only
+ * when the newest transcript there is demonstrably the task's, so a directory
+ * with nothing in it takes the rung off the ladder rather than leaving it. */
+function plantTranscripts(cwd: string, names: string[]): string {
+  const dir = projectsDirFor(cwd);
+  fs.mkdirSync(dir, { recursive: true });
+  tempDirs.push(dir);
+  // Aged by position so the array reads newest-first — the order the lookup
+  // answers in, and the order every caller here reasons about.
+  for (const [i, name] of names.entries()) {
+    const full = path.join(dir, `${name}.jsonl`);
+    fs.writeFileSync(full, "{}");
+    const when = new Date(Date.now() - i * 1_000);
+    fs.utimesSync(full, when, when);
+  }
+  return dir;
+}
+
 function suspendedTask(
   manager: TaskManager,
   store: TaskStore,
@@ -239,9 +258,12 @@ describe("resuming a suspended task", () => {
     expect(first).not.toContain("the original prompt");
   });
 
-  test("falls back to --continue when the stored conversation is gone", async () => {
+  test("falls back to --continue when the stored conversation will not open", async () => {
     const { manager, store, agent } = newManager(["--resume"]);
     const row = suspendedTask(manager, store);
+    // The stored conversation is the only one in the directory, so it is the
+    // newest and `--continue` demonstrably opens it and not a stranger's.
+    plantTranscripts(row.cwd, ["stored-session-id"]);
 
     const resumed = await manager.resumeTask(row.id);
 
@@ -274,25 +296,47 @@ describe("resuming a suspended task", () => {
     expect(resumed!.agent_state).toBe("could_not_resume");
   });
 
-  // And where the directory is the task's own — which is what worktree-per-task
-  // makes true for every task (m-4) — the scan is exactly the rung §4.3 wants.
-  test("scans for a conversation nobody told us about when the directory is its own", async () => {
-    // `--continue` fails too, so the ladder gets as far as the scan.
-    const { manager, store, agent } = newManager(["stored-session-id", "--continue"]);
-    // A row that has never had a hook report a transcript path, so the
-    // directory is the derived one for its cwd.
+  // TASK-43, and the case that pays for the guard being asked of every row
+  // rather than only the ones that reported a transcript. A task whose minted
+  // id was never written has nothing of its own in the directory — so the one
+  // conversation sitting there was started by somebody else, and both the
+  // guess that opens "the most recent one" and the scan that goes looking
+  // would land on it. Its SessionStart would then bind this task to a
+  // stranger's conversation permanently.
+  test("opens nothing when the only conversation present was never ours", async () => {
+    const { manager, store, agent } = newManager();
+    // Never had a hook report a transcript path, so the lookup falls back to
+    // the derived directory for its cwd.
     const row = suspendedTask(manager, store, { created_at: Date.now() - 60_000 });
-    const derived = projectsDirFor(store.get(row.id)!.cwd);
-    fs.mkdirSync(derived, { recursive: true });
-    tempDirs.push(derived);
-    fs.writeFileSync(path.join(derived, "found-by-scanning.jsonl"), "{}");
+    // Fresh, and so inside the task's lifetime: the mtime window §4.3 leans on
+    // does not tell this apart from the task's own conversation. Only the name
+    // does, and the name is not one we ever minted.
+    plantTranscripts(row.cwd, ["someone-elses"]);
 
-    await manager.resumeTask(row.id);
+    const resumed = await manager.resumeTask(row.id);
 
-    const ids = (await agent.settled(1)).map((argv) => argv[argv.indexOf("--resume") + 1]);
-    // The stored id has no transcript here, so it is never attempted; the
-    // conversation that is actually present is.
-    expect(ids).toContain("found-by-scanning");
+    expect(agent.invocations()).toHaveLength(0);
+    expect(resumed!.agent_state).toBe("could_not_resume");
+    expect(resumed!.lifecycle).toBe("suspended");
+  });
+
+  // The other half of the same judgement: an id we minted is one nothing else
+  // in the directory can be called, so finding it newest is proof rather than
+  // a guess — and a degraded task, whose hooks never arrived to set
+  // `transcript_path`, stays resumable on the strength of it.
+  test("a minted id still names the conversation when no hook ever reported one", async () => {
+    const { manager, store, agent } = newManager(["stored-session-id"]);
+    const row = suspendedTask(manager, store, { created_at: Date.now() - 60_000 });
+    plantTranscripts(row.cwd, ["stored-session-id", "someone-elses"]);
+
+    const resumed = await manager.resumeTask(row.id);
+
+    expect(resumed!.lifecycle).toBe("live");
+    // `--resume stored-session-id` is offered and fails; `--continue` is then
+    // offered because the newest conversation is that same minted one.
+    const modes = (await agent.settled(2))
+      .map((argv) => argv.find((a) => a === "--resume" || a === "--continue"));
+    expect(modes).toEqual(["--resume", "--continue"]);
   });
 
   // The rung that recovers a row whose id has gone stale: transcript_path came
@@ -343,9 +387,10 @@ describe("resuming a suspended task", () => {
 
   test("when nothing opens, the task is a card with a button, not a dead terminal", async () => {
     const { manager, store, agent } = newManager(["--resume", "--continue"]);
-    // No transcript_path, so nothing can rule `--continue` out: both rungs run
-    // and both fail.
     const row = suspendedTask(manager, store);
+    // The task's own conversation, and only it, so both rungs are offered —
+    // and both fail.
+    plantTranscripts(row.cwd, ["stored-session-id"]);
 
     const resumed = await manager.resumeTask(row.id);
 
@@ -378,6 +423,9 @@ describe("resuming a suspended task", () => {
   test("hooks from the last agent do not vouch for the next one", async () => {
     const { manager, store, agent } = newManager(["stored-session-id"]);
     const row = suspendedTask(manager, store);
+    // Enough of a directory for a second rung to exist at all: `--continue` is
+    // offered because the task's own conversation is the newest one there.
+    plantTranscripts(row.cwd, ["stored-session-id"]);
 
     // A first life, which reports in the way a working agent does.
     manager.applyHook(row.id, { hook_event_name: "SessionStart", session_id: "stored-session-id" });
@@ -395,6 +443,9 @@ describe("resuming a suspended task", () => {
   test("a failed rung's death does not follow the task that recovered", async () => {
     const { manager, store } = newManager(["--resume"]);
     const row = suspendedTask(manager, store);
+    // So the first rung has somewhere to fail *to*: `--resume` dies and
+    // `--continue` takes the same, demonstrably-ours conversation.
+    plantTranscripts(row.cwd, ["stored-session-id"]);
 
     const resumed = await manager.resumeTask(row.id);
     expect(resumed!.lifecycle).toBe("live");

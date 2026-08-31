@@ -115,13 +115,62 @@ describe("transcriptExists", () => {
 });
 
 describe("continueIsSafe", () => {
-  test("a row with no transcript cannot tell, so --continue stays available", () => {
-    expect(continueIsSafe({ cwd: "/x", transcript_path: null })).toBe(true);
-  });
-
   test("safe when the newest conversation is the one the task reported", () => {
     const dir = transcriptDir([{ name: "ours.jsonl" }, { name: "older.jsonl", ageMs: 60_000 }]);
     expect(continueIsSafe({ cwd: "/x", transcript_path: path.join(dir, "ours.jsonl") })).toBe(true);
+  });
+
+  // TASK-43. A row that never reported a transcript used to answer `true` on
+  // the grounds that it could not tell — but this is asked only after the
+  // ladder has declined or failed the minted id, so there is no conversation
+  // of ours in the directory and the newest one is by elimination a
+  // stranger's. `--continue` would take exactly that, and its SessionStart
+  // would bind the task to it for good.
+  test("unsafe for a row whose id has no transcript and a stranger's is newest", () => {
+    // Reached through the derived directory, because that is how such a row is
+    // really read: with no transcript_path there is nothing to take a dirname
+    // of, and the lookup guesses at where the conversations are.
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-cwd-"));
+    dirs.push(cwd);
+    const derived = projectsDirFor(cwd);
+    fs.mkdirSync(derived, { recursive: true });
+    dirs.push(derived);
+    fs.writeFileSync(path.join(derived, "someone-elses.jsonl"), "{}");
+
+    expect(continueIsSafe({ cwd, transcript_path: null, agent_session_id: "never-written" }))
+      .toBe(false);
+  });
+
+  // The one case a row with no reported transcript can still make: the id we
+  // minted and passed to `--session-id` names a conversation nothing else
+  // could be called, so finding it newest is proof and not a guess. This is
+  // what keeps a degraded task — one whose hooks never arrived, so no
+  // SessionStart ever set transcript_path — resumable.
+  test("a minted id names the conversation when no transcript was ever reported", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-cwd-"));
+    dirs.push(cwd);
+    const derived = projectsDirFor(cwd);
+    fs.mkdirSync(derived, { recursive: true });
+    dirs.push(derived);
+    fs.writeFileSync(path.join(derived, "minted.jsonl"), "{}");
+    const older = path.join(derived, "older.jsonl");
+    fs.writeFileSync(older, "{}");
+    const then = new Date(Date.now() - 60_000);
+    fs.utimesSync(older, then, then);
+
+    expect(continueIsSafe({ cwd, transcript_path: null, agent_session_id: "minted" })).toBe(true);
+  });
+
+  // Seeing nothing is not evidence of safety. The directory may hold nothing,
+  // in which case refusing costs a rung that would have opened nothing — or
+  // `projectsDirFor` may simply have guessed the escaping rule wrong, and
+  // `--continue` opens what is really in the cwd rather than what we found.
+  test("unsafe when the directory shows nothing at all", () => {
+    expect(continueIsSafe({
+      cwd: "/no/such/directory",
+      transcript_path: null,
+      agent_session_id: "minted",
+    })).toBe(false);
   });
 
   // The case that turned up in live verification: a resume in a repo where
