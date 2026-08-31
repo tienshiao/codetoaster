@@ -8,7 +8,7 @@ import { applyMigrations, updateProject } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import type { ServerMessage, WebSocketData } from "../xtmux/types";
-import { taskDir, taskScrollbackPath, taskSettingsPath } from "../agent/spawn";
+import { buildAgentCommand, taskDir, taskScrollbackPath, taskSettingsPath } from "../agent/spawn";
 import { writeTaskSettings } from "../agent/settings";
 import { readSnapshot, writeSnapshot } from "./snapshot";
 import { sessionDisplayNames } from "../xtmux/naming";
@@ -190,6 +190,19 @@ describe("titles", () => {
       expect(store.get(id)!.title).toContain(" · ");
       expect(store.get(id)!.title_source).toBe("derived");
     }
+  });
+
+  test("a prompt of nothing but whitespace is nothing to the agent either", async () => {
+    const { manager, store } = newManager();
+    await manager.createTask({ id: "t1", command: shell(), prompt: "   \n\t\n " });
+
+    // `titleFromPrompt` calls this "nothing to say" and falls back to the
+    // directory; `buildAgentCommand` judges `initial_prompt` on truthiness, and
+    // the two must agree. Stored untrimmed, the agent would be started with a
+    // blank turn already submitted instead of the plain interactive session the
+    // title fallback just decided this task was.
+    expect(store.get("t1")!.initial_prompt).toBe("");
+    expect(buildAgentCommand(store.get("t1")!)).not.toContain("--");
   });
 
   test("an explicit title outranks the prompt, and is recorded as chosen", async () => {

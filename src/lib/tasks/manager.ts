@@ -311,8 +311,15 @@ export class TaskManager {
     // `||`, not `??`: an empty title is no title at all, and `title_source`
     // below judges it on truthiness — the two must not disagree, or a task
     // ends up labelled "" and recorded as having derived that.
-    const derived = titleFromPrompt(options.prompt) || (await deriveTitle(cwd));
-    const title = options.title || uniqueName(derived, this.taskTitles());
+    //
+    // One expression, so each `||` still short-circuits the one after it:
+    // `deriveTitle` shells out to git (two calls on a detached HEAD, 2s of
+    // timeout budget), and a create that already knows its title — or can read
+    // one off the prompt — must not block on a lookup whose answer it throws
+    // away. Hoisting the derived label to its own `const` is what would cost
+    // that.
+    const title = options.title
+      || uniqueName(titleFromPrompt(options.prompt) || (await deriveTitle(cwd)), this.taskTitles());
 
     // Resolved once and reused below, rather than asked again after the
     // settings write and the spawn. `resolveProjectId` keys off `afterTaskId`
@@ -333,7 +340,13 @@ export class TaskManager {
       agent_session_id: crypto.randomUUID(),
       title,
       title_source: options.title ? "manual" : "derived",
-      initial_prompt: options.prompt ?? "",
+      // Trimmed, because `buildAgentCommand` judges this on truthiness: a
+      // prompt of nothing but whitespace is "nothing to say" to
+      // `titleFromPrompt` above, and has to be the same thing here — untrimmed
+      // it is truthy, and the agent is started with a blank turn already
+      // submitted instead of the plain interactive session the title fallback
+      // just decided this task was.
+      initial_prompt: options.prompt?.trim() ?? "",
       // Resolved once and stored, so the data routes never have to ask a
       // process where they are (§5.4). `undefined` (the lookup never ran) is
       // recorded as "no repository" here, since there is no earlier value to

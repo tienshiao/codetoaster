@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 22:11'
-updated_date: '2026-08-31 00:17'
+updated_date: '2026-08-31 00:30'
 labels:
   - server
   - frontend
@@ -59,6 +59,12 @@ Decide the behaviour, then make the doc and the code agree — including decidin
 Verified in the browser, and the whole ranking is legible in a single row: a task created with a prompt shows its opening line; once its agent sets an OSC title the row shows *that*; renamed, the row shows the chosen name and the OSC title drops to the second line — which is §7.5's original subtitle idea appearing exactly where it earns its place. Three tasks in one checkout now read as three different things instead of `codetoaster · v2`, `… 2`, `… 3`.
 
 Tests: seven in `derive.test.ts` for the string work (blank lines, whitespace runs, word-boundary cut, an overlong single word, exact fit, nothing-to-say), six in `manager.test.ts` for the ranking and both projection directions. The three that matter were confirmed to fail against the old `deriveTitle`-only line.
+
+Post-review, two defects in this commit, both mine and both found by reading rather than by a test:
+
+**The explicit-title path lost its short-circuit.** Hoisting the derived label to `const derived = titleFromPrompt(...) || (await deriveTitle(cwd))` made that `await` unconditional, so `POST /api/tasks {"title":"Chosen"}` — the CLI's shape — blocked on `git rev-parse` (two calls on a detached HEAD, up to the full 2s timeout on a contended index.lock) to compute a label thrown away on the next line. Folded back into one expression so each `||` short-circuits.
+
+**A whitespace-only prompt disagreed with itself.** `titleFromPrompt` calls `"   \n\t\n "` nothing to say and falls back to the directory — which this task's own tests assert — but `initial_prompt` stored it verbatim and `buildAgentCommand` judges that on truthiness, so the agent was started with `-- "   \n "` and a blank turn already submitted, instead of the plain interactive session the title fallback had just decided this task was. Two truthiness judgements on one value, disagreeing. `initial_prompt` is trimmed now, with a test asserting both halves agree.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

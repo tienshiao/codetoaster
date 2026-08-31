@@ -53,6 +53,20 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
 
   const terminalRef = useRef<TerminalHandle>(null);
   const [phase, setPhase] = useState<ReopenPhase>("live");
+  /**
+   * Why the reopen failed, when there is a why.
+   *
+   * The overlay is the one place a resume failure is reported — `resumeTask` is
+   * asked not to toast, because a toast saying almost the same sentence beside
+   * a persistent affordance is the duplication `RequestOptions` exists to
+   * settle. Carrying the reason here is what makes that trade honest: the toast
+   * had the cause and the overlay's fixed string did not.
+   *
+   * Null for the failure that has no message to carry — the ladder ran, tried
+   * every rung and gave up, which arrives as a 200 whose row says
+   * `could_not_resume` (§4.3) and never toasted anything either way.
+   */
+  const [failure, setFailure] = useState<string | null>(null);
   // Read as a guard from a fetch callback, in the same commit that writes it,
   // so the ref is the authority and the state only catches the render up.
   const phaseRef = useRef(phase);
@@ -117,13 +131,18 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
     // to the router: it seeds the respawned PTY, and a task that came back at
     // 80×24 would reflow the snapshot the user returned to read.
     const size = sizeRef.current ?? terminalRef.current?.getSize() ?? { cols: 80, rows: 24 };
-    const result = await resumeTask(taskId, { cols: size.cols, rows: size.rows });
+    const result = await resumeTask(
+      taskId,
+      { cols: size.cols, rows: size.rows },
+      { inline: true },
+    );
 
     // A 200 is not by itself a success: the route answers with the row whatever
     // the ladder managed, and a task that could not be reopened is a card with
     // a button on it (§4.3), not an HTTP error.
     if (result.ok && result.value.agentState !== "could_not_resume") return;
 
+    setFailure(result.ok ? null : result.error.message);
     setPhase("failed");
     // No agent is coming, so nothing will ever swap the grid over: left
     // standing, the phase would sit on "resuming…" and refuse input for as long
@@ -203,6 +222,7 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
 
   const retry = useCallback(() => {
     reopenedRef.current = false;
+    setFailure(null);
     void reopen();
   }, [reopen]);
 
@@ -222,6 +242,7 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
       />
       <Overlay
         phase={phase}
+        failure={failure}
         // A suspended task with the phase already settled: it was suspended out
         // from under the view, or a reopen failed and was dismissed. Either way
         // the way back is a click, not something that happens on its own.
@@ -243,10 +264,13 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
  */
 function Overlay({
   phase,
+  failure,
   resting,
   onReopen,
 }: {
   phase: ReopenPhase;
+  /** What went wrong, when the server said. */
+  failure: string | null;
   resting: boolean;
   onReopen: () => void;
 }) {
@@ -262,7 +286,18 @@ function Overlay({
           </>
         ) : (
           <>
-            <span>{phase === "failed" ? "Could not resume this task" : "Suspended"}</span>
+            <span>
+              {phase === "failed" ? "Could not resume this task" : "Suspended"}
+              {failure ? (
+                // The cause, where the toast used to carry it. Truncated by the
+                // pill rather than by us: a network error can be a paragraph,
+                // and the sentence in front of it is the part that must stay
+                // readable.
+                <span className="ml-2 max-w-[28ch] truncate align-bottom text-subtle-foreground">
+                  {failure}
+                </span>
+              ) : null}
+            </span>
             <Button variant="outline" className="h-7 rounded-full" onClick={onReopen}>
               {phase === "failed" ? "Try again" : "Reopen"}
             </Button>

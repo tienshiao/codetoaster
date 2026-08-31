@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 22:11'
-updated_date: '2026-08-31 00:10'
+updated_date: '2026-08-31 00:30'
 labels:
   - frontend
 milestone: m-3
@@ -50,6 +50,12 @@ The opt-out is per *call*, not per mutation, and that is the point: `createTask`
 The composer was the only inline error surface in the app — checked the rename and close dialogs, which show none and rely on the toast, which is now stated rather than accidental.
 
 Two tests, both confirmed to fail against the old code: `Composer.render.tsx` asserts the composer asks for `inline`, and `TaskContext.render.tsx` drives a failing create both ways and asserts exactly one report each — no toast with `inline`, a toast without it, which is AC #2 in the same test as AC #1.
+
+Post-review. The rule this task wrote down had one more consumer than the composer: `AgentPane`'s reopen overlay renders 'Could not resume this task' beside a Try again button, while `request` toasted 'Could not resume the task' — two near-identical sentences, the same symptom the composer had.
+
+The review flagged it and skipped the fix, correctly: the toast carried `result.error.message` and the overlay's fixed string did not, so threading `{ inline: true }` alone would have silently dropped the cause. Fixed properly instead — the overlay carries the reason and `resumeTask` opts out. That also makes the two failure shapes consistent for the first time: a failed *request* has a message, while a ladder that ran every rung and gave up arrives as a 200 with `could_not_resume` and never toasted anything, so until now one shape reported twice and the other once.
+
+`AgentPane.render.tsx` is new: the two-phase reopen is the most intricate lifecycle in the app and had no rendering coverage, which is how this went unnoticed. Four tests — the opt-out, both failure shapes, and a live task not being reopened — the first two confirmed to fail against the old code. Seen in the browser with the daemon stopped mid-reopen: the overlay reads 'Could not resume this task — Failed to fetch — Try again', and no toast.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

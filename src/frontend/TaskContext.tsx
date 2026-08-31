@@ -84,7 +84,13 @@ export interface TaskContextValue {
   ) => Promise<TaskResult<TaskInfo>>;
   renameTask: (id: string, title: string) => Promise<TaskResult<TaskInfo>>;
   closeTask: (id: string) => Promise<TaskResult<TaskInfo>>;
-  resumeTask: (id: string, options?: ResumeTaskOptions) => Promise<TaskResult<TaskInfo>>;
+  /** Takes `{ inline: true }` for the same reason `createTask` does: the reopen
+   * overlay renders the reason itself. */
+  resumeTask: (
+    id: string,
+    options?: ResumeTaskOptions,
+    reporting?: RequestOptions,
+  ) => Promise<TaskResult<TaskInfo>>;
   /** Open a plain shell inside a task, as a sibling of its agent (§3). Answers
    * with the new PTY's id and the task it now belongs to — the task because it
    * carries `shellPtyIds`, so the caller has the tab and the proof that its PTY
@@ -449,7 +455,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   );
 
   const resumeTask = useCallback(
-    (id: string, options: ResumeTaskOptions = {}) =>
+    (id: string, options: ResumeTaskOptions = {}, reporting?: RequestOptions) =>
       request<TaskInfo>(
         `/api/tasks/${id}/resume`,
         {
@@ -458,6 +464,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify(options),
         },
         "Could not resume the task",
+        reporting,
       ),
     [],
   );
