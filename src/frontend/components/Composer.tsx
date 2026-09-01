@@ -6,22 +6,15 @@ import { Button } from "@/frontend/components/v2/Button";
 import { Checkbox } from "@/frontend/components/v2/Checkbox";
 import { KeyHint } from "@/frontend/components/v2/KeyHint";
 import { Select } from "@/frontend/components/v2/Select";
-import {
-  knownValue,
-  MODEL_VALUES,
-  optionsWithFallback,
-  PERMISSION_MODE_VALUES,
-  UNSET,
-} from "@/frontend/lib/agent-options";
+import { knownValue, modelOptions, UNSET } from "@/frontend/lib/agent-options";
 import { TextInput } from "@/frontend/components/v2/TextInput";
 import { Textarea } from "@/frontend/components/v2/Textarea";
 
 /** `""` is not a model — it is the absence of an override, which lets the
- * server answer with the project's column. Same for the mode. */
+ * server answer with the project's column. */
 const PROJECT_DEFAULT = UNSET;
 
-const MODELS = optionsWithFallback(MODEL_VALUES, "Project default");
-const MODES = optionsWithFallback(PERMISSION_MODE_VALUES, "Project default");
+const MODELS = modelOptions("Project default");
 
 /**
  * Starting a task (§7.5).
@@ -30,11 +23,17 @@ const MODES = optionsWithFallback(PERMISSION_MODE_VALUES, "Project default");
  * starting a task and resuming one are the same gesture in the same place. No
  * "recent tasks" list belongs under it — the sidebar already is the history.
  *
- * The options row is worktree, base ref, project, model, mode — everything a
- * task is decided by before it starts. All five send nothing when they match
- * the project's own answer, because the server resolves an absent field
- * against the project's columns and that is what gives the HTTP API and the
- * CLI the same behaviour for free (§7.5).
+ * The options row is project, model, worktree, base ref — everything a task is
+ * decided by before it starts. Each sends nothing when it matches the
+ * project's own answer, because the server resolves an absent field against
+ * the project's columns and that is what gives the HTTP API and the CLI the
+ * same behaviour for free (§7.5).
+ *
+ * Permission mode is not among them, and deliberately: the row offered a
+ * `--permission-mode` picker that Claude Code is better placed to answer than
+ * a chip on a form, so nothing here sets one and the agent keeps its own
+ * default. The column, the `POST /api/tasks` field and the server's resolution
+ * of them all survive — a mode set by the API or the CLI still spawns with it.
  *
  * `projectId` is what a project group's `+` in the sidebar asks for, carried
  * here as `/?project=<id>`. It is a preference and not an address: it seeds the
@@ -57,7 +56,6 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   const [prompt, setPrompt] = useState("");
   const [projectId, setProjectId] = useState(requestedProjectId ?? "");
   const [model, setModel] = useState(PROJECT_DEFAULT);
-  const [mode, setMode] = useState(PROJECT_DEFAULT);
   const [worktree, setWorktree] = useState(false);
   const [baseRef, setBaseRef] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -83,16 +81,15 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   // is a `?project=` naming one that never existed, which lands here too.
   const project = projects.find((p) => p.id === projectId) ?? projects[0];
 
-  // React's own "adjust state when a prop changes": model and mode belong to
-  // the project they were read from, so they are re-seeded during the render
-  // that moves the selection — including the one where the list first lands and
-  // picks the first project. An effect would paint a frame of the previous
-  // project's choices first, and ⌘⏎ in that frame would send them.
+  // React's own "adjust state when a prop changes": the model belongs to the
+  // project it was read from, so it is re-seeded during the render that moves
+  // the selection — including the one where the list first lands and picks the
+  // first project. An effect would paint a frame of the previous project's
+  // choices first, and ⌘⏎ in that frame would send them.
   const [seededFor, setSeededFor] = useState<string | null>(null);
   if (project && seededFor !== project.id) {
     setSeededFor(project.id);
     setModel(knownValue(MODELS, project.defaultModel));
-    setMode(knownValue(MODES, project.defaultPermissionMode));
     setWorktree(project.worktreeDefault);
     setBaseRef(project.defaultBaseRef ?? "");
   }
@@ -121,7 +118,6 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
         prompt: text,
         projectId: project?.id,
         model: model || undefined,
-        permissionMode: mode || undefined,
         // Sent only when it differs from what the project would have done on
         // its own, so "I did not touch this" and "I chose the same thing"
         // stay the same request — and a project whose default later changes
@@ -168,7 +164,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
     // Left submitting: the navigation unmounts this, and until it does the
     // button must not take a second ⌘⏎.
     openTask(result.value.id, { tab: "agent" });
-  }, [prompt, submitting, createTask, project, model, mode, worktree, baseRef, canWorktree, openTask]);
+  }, [prompt, submitting, createTask, project, model, worktree, baseRef, canWorktree, openTask]);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -210,12 +206,6 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
             options={MODELS}
             value={model}
             onChange={(e) => setModel(e.target.value)}
-          />
-          <Select
-            label="mode"
-            options={MODES}
-            value={mode}
-            onChange={(e) => setMode(e.target.value)}
           />
           <Checkbox
             variant="chip"

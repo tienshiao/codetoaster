@@ -143,7 +143,6 @@ describe("project settings", () => {
   test("seeds every field from the project", () => {
     open({
       defaultModel: "opus",
-      defaultPermissionMode: "plan",
       defaultBaseRef: "release",
       setupCommand: "bun install",
       worktreeCopy: ".env\n.config",
@@ -151,8 +150,6 @@ describe("project settings", () => {
     });
 
     expect((screen.getByLabelText("Default model") as HTMLSelectElement).value).toBe("opus");
-    expect((screen.getByLabelText("Default permission mode") as HTMLSelectElement).value)
-      .toBe("plan");
     expect((screen.getByLabelText("Base ref for new worktrees") as HTMLInputElement).value)
       .toBe("release");
     expect((screen.getByLabelText("Setup command") as HTMLTextAreaElement).value)
@@ -183,7 +180,6 @@ describe("project settings", () => {
     // is meant to be empty. The server turns blank into NULL.
     expect(saved()).toEqual({
       defaultModel: "",
-      defaultPermissionMode: "",
       defaultBaseRef: "",
       worktreeDefault: false,
       setupCommand: "",

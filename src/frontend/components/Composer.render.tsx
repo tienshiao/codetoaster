@@ -88,11 +88,10 @@ test("⌘⏎ starts the task and opens its agent tab", async () => {
   expect(stubs.createTask.mock.calls[0]![0]).toEqual({
     prompt: "ship it",
     projectId: "general",
-    // Neither select was touched, and neither project column is set — so
-    // nothing about the model or the mode goes on the wire, and the server
-    // resolves both from the project.
+    // The model select was not touched and the project's column is unset, so
+    // nothing about the model goes on the wire and the server resolves it from
+    // the project.
     model: undefined,
-    permissionMode: undefined,
     // The grid the agent is spawned at, so its first paint is not laid out for
     // the 80×24 fallback and reflowed on the first attach.
     cols: 120,
@@ -231,21 +230,32 @@ test("a failed create keeps the prompt and says why", async () => {
   expect(startButton().disabled).toBe(false);
 });
 
-test("what the selects show is what gets sent", async () => {
+test("what the select shows is what gets sent", async () => {
   // The project's own column is seeded into the select rather than left as
   // "Project default", so the user can see what they are about to run.
   stubs.projects = [project("general", { defaultModel: "opus" })];
   render(<Composer />);
 
   expect(valueOf("model")).toBe("opus");
-  fireEvent.change(screen.getByLabelText("mode"), { target: { value: "plan" } });
+  fireEvent.change(screen.getByLabelText("model"), { target: { value: "fable" } });
   submitKey(type("ship it"));
 
   await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
-  expect(stubs.createTask.mock.calls[0]![0]).toMatchObject({
-    model: "opus",
-    permissionMode: "plan",
-  });
+  expect(stubs.createTask.mock.calls[0]![0]).toMatchObject({ model: "fable" });
+});
+
+test("the composer never sends a permission mode", async () => {
+  // TASK-80: the mode chip is gone, and with it any `--permission-mode` this
+  // surface could put on the agent's argv. The field, the column and the
+  // server's resolution of them all stay — the API and the CLI still set one.
+  stubs.projects = [project("general", { defaultPermissionMode: "plan" })];
+  render(<Composer />);
+
+  expect(screen.queryByLabelText("mode")).toBeNull();
+  submitKey(type("ship it"));
+
+  await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+  expect(stubs.createTask.mock.calls[0]![0]).not.toHaveProperty("permissionMode");
 });
 
 test("changing project re-seeds the model from the project it moved to", () => {

@@ -6,18 +6,12 @@ import { Select } from "@/frontend/components/v2/Select";
 import { TextInput } from "@/frontend/components/v2/TextInput";
 import { DirectoryBrowser, PathField } from "@/frontend/components/PathField";
 import { Textarea } from "@/frontend/components/v2/Textarea";
-import {
-  knownValue,
-  MODEL_VALUES,
-  optionsWithFallback,
-  PERMISSION_MODE_VALUES,
-} from "@/frontend/lib/agent-options";
+import { knownValue, modelOptions } from "@/frontend/lib/agent-options";
 
 // "Claude Code default", not "None": the empty choice does not turn the flag
 // off, it declines to pass one, and what happens then is the agent's own
 // business rather than ours.
-const MODELS = optionsWithFallback(MODEL_VALUES, "Claude Code default");
-const MODES = optionsWithFallback(PERMISSION_MODE_VALUES, "Claude Code default");
+const MODELS = modelOptions("Claude Code default");
 
 /** A stacked label over a control, which is how `TextInput` and `Textarea`
  * already draw themselves.
@@ -25,8 +19,8 @@ const MODES = optionsWithFallback(PERMISSION_MODE_VALUES, "Claude Code default")
  * `Select` cannot use theirs: it *is* a `<label>` — the chip's words are part
  * of its hit area — and labels do not nest. So the text goes in a sibling span
  * and the control carries an `aria-label` of its own. Worth the duplication,
- * because a form that stacks four labels and inlines two reads as two forms
- * that happen to share a dialog. */
+ * because a form that stacks its labels and inlines one reads as two forms that
+ * happen to share a dialog. */
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -73,7 +67,6 @@ export function ProjectSettingsDialog({
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [model, setModel] = useState("");
-  const [mode, setMode] = useState("");
   const [baseRef, setBaseRef] = useState("");
   const [worktreeDefault, setWorktreeDefault] = useState(false);
   const [setupCommand, setSetupCommand] = useState("");
@@ -110,7 +103,6 @@ export function ProjectSettingsDialog({
       setBrowsed(false);
       setPicked(null);
       setModel(knownValue(MODELS, project.defaultModel));
-      setMode(knownValue(MODES, project.defaultPermissionMode));
       setBaseRef(project.defaultBaseRef ?? "");
       setWorktreeDefault(project.worktreeDefault);
       setSetupCommand(project.setupCommand ?? "");
@@ -158,7 +150,6 @@ export function ProjectSettingsDialog({
         // "unset" rather than as an empty string.
         onSave(name.trim(), path.trim(), {
           defaultModel: model,
-          defaultPermissionMode: mode,
           defaultBaseRef: baseRef,
           worktreeDefault: hasRepo && worktreeDefault,
           setupCommand,
@@ -194,15 +185,6 @@ export function ProjectSettingsDialog({
           value={model}
           className="w-full"
           onChange={(e) => setModel(e.target.value)}
-        />
-      </Field>
-      <Field label="Default permission mode">
-        <Select
-          aria-label="Default permission mode"
-          options={MODES}
-          value={mode}
-          className="w-full"
-          onChange={(e) => setMode(e.target.value)}
         />
       </Field>
       <Checkbox
