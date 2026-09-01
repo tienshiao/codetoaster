@@ -32,6 +32,22 @@ function stubGeometry(container: HTMLElement): void {
   document.elementFromPoint = () => strip;
 }
 
+/**
+ * The drag proxy, which is portalled to `<body>` and so is nowhere in the
+ * render's own container.
+ *
+ * Found by being an `aria-hidden` child of `<body>` itself: Testing Library's
+ * container is body's other child and carries no such attribute, so this stays
+ * specific without the component needing a hook that exists only for a test.
+ */
+function proxyEl(): HTMLElement | null {
+  return (
+    (Array.from(document.body.children).find((el) => el.hasAttribute("aria-hidden")) as
+      | HTMLElement
+      | undefined) ?? null
+  );
+}
+
 function pointer(type: string, x: number, id: number): PointerEvent {
   return new PointerEvent(type, {
     bubbles: true,
@@ -68,6 +84,11 @@ function mountArea() {
       act(() => {
         target.dispatchEvent(pointer(type, x, id));
       }),
+    press: (key: string) =>
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      }),
+    unmount: () => act(() => view.unmount()),
   };
 }
 
@@ -124,6 +145,99 @@ test("a cancelled gesture drops the move rather than committing it", () => {
   area.on(window, "pointercancel", centreOf(2) + 40, 1);
 
   expect(area.order()).toEqual(["Agent", "Changes", "History"]);
+});
+
+/**
+ * The proxy: the tab the user is carrying.
+ *
+ * Its position is never in the JSX — it is written to `style.transform` from
+ * the pointermove handler, because a `TabArea` re-render is every group, strip
+ * and mounted pane, and the gesture would pay that on every move across a
+ * strip. That makes *where* it ends up something only a mounted component can
+ * answer, which is why these are here and not in `drag.test.ts`.
+ */
+
+test("a drag past the threshold carries a proxy under the pointer", () => {
+  const area = mountArea();
+
+  // The press alone carries nothing: until the threshold is crossed this is
+  // still a click, and a proxy appearing under a click is the gesture
+  // announcing itself before it has happened.
+  area.on(area.tabAt(1), "pointerdown", centreOf(1), 1);
+  expect(proxyEl()).toBeNull();
+  expect(document.body.dataset.dragging).toBeUndefined();
+
+  area.on(window, "pointermove", centreOf(2) + 40, 1);
+
+  const proxy = proxyEl();
+  expect(proxy).not.toBeNull();
+  // Grabbed 50px into a 100px-wide tab, so it hangs 50px left of the pointer
+  // and keeps the tab's width rather than shrinking to fit its own label.
+  expect(proxy!.style.width).toBe("100px");
+  expect(proxy!.style.transform).toContain("240px");
+  // The hook `index.css` hangs the grabbing cursor and the selection guard on:
+  // without it the drag paints every pane it crosses blue.
+  expect(document.body.dataset.dragging).toBe("tab");
+
+  area.on(window, "pointerup", centreOf(2) + 40, 1);
+
+  expect(proxyEl()).toBeNull();
+  expect(document.body.dataset.dragging).toBeUndefined();
+});
+
+test("the proxy keeps its place across a re-render mid-drag", () => {
+  const area = mountArea();
+
+  area.on(area.tabAt(1), "pointerdown", centreOf(1), 1);
+  area.on(window, "pointermove", centreOf(2) + 40, 1);
+  expect(proxyEl()!.style.transform).toContain("240px");
+
+  // Crossing back over a midpoint moves the drop indicator, which is state, so
+  // this move re-renders the whole area. The transform lives outside the JSX
+  // and React does not restore it — so unless a layout effect re-applies it
+  // after every render, the proxy snaps back to where the drag began.
+  area.on(window, "pointermove", centreOf(0) + 10, 1);
+
+  expect(proxyEl()!.style.transform).toContain("10px");
+  expect(proxyEl()!.style.transform).not.toContain("240px");
+});
+
+test("Escape abandons the drag and puts the proxy down", () => {
+  const area = mountArea();
+
+  // The one way out that does not involve letting go: the pointer is still
+  // held, so neither `pointerup` nor `pointercancel` is coming.
+  area.on(area.tabAt(1), "pointerdown", centreOf(1), 1);
+  area.on(window, "pointermove", centreOf(2) + 40, 1);
+  expect(proxyEl()).not.toBeNull();
+
+  area.press("Escape");
+
+  expect(area.order()).toEqual(["Agent", "Changes", "History"]);
+  expect(proxyEl()).toBeNull();
+  expect(document.body.dataset.dragging).toBeUndefined();
+
+  // And the gesture is genuinely retired, not merely hidden: a release that
+  // arrives afterwards must not commit the move Escape just refused.
+  area.on(window, "pointerup", centreOf(2) + 40, 1);
+  expect(area.order()).toEqual(["Agent", "Changes", "History"]);
+});
+
+test("a component unmounted mid-drag leaves no proxy on the page", () => {
+  const area = mountArea();
+
+  area.on(area.tabAt(1), "pointerdown", centreOf(1), 1);
+  area.on(window, "pointermove", centreOf(2) + 40, 1);
+  expect(proxyEl()).not.toBeNull();
+
+  // The task closed under the drag, or the shell navigated away. The proxy is
+  // portalled to `<body>`, so nothing about the component going away removes
+  // it on its own — and `<body>` would keep the grabbing cursor for the life
+  // of the page.
+  area.unmount();
+
+  expect(proxyEl()).toBeNull();
+  expect(document.body.dataset.dragging).toBeUndefined();
 });
 
 /**

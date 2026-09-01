@@ -1,4 +1,14 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   canSplit,
   closeTab,
@@ -13,7 +23,7 @@ import {
   type TaskLayout,
 } from "@/frontend/layout-store";
 import { ResizeHandle } from "@/frontend/components/v2/ResizeHandle";
-import { TabStrip, type TabProps } from "@/frontend/components/v2/TabStrip";
+import { Tab, TabStrip, type TabProps } from "@/frontend/components/v2/TabStrip";
 import { cn } from "@/frontend/lib/utils";
 import { dropIndexAt, moveIndexFor, resizeFlex, type TabBox } from "./drag";
 import { presentTab } from "./tab-labels";
@@ -80,6 +90,17 @@ interface DragGesture {
   fromGroupId: string;
   startX: number;
   startY: number;
+  /**
+   * The pointer's offset inside the tab it grabbed, and how wide that tab was.
+   *
+   * Measured at pointerdown, while the tab is still under the press: it is what
+   * lets the proxy be carried from the point it was picked up rather than
+   * snapping its corner to the cursor, which reads as the tab jumping out of
+   * the user's hand at the moment they start to move it.
+   */
+  grabX: number;
+  grabY: number;
+  width: number;
   started: boolean;
   /** Where the drop would land, recomputed on every move. The boxes travel with
    * it so the commit does not have to re-measure a strip the pointer may have
@@ -120,8 +141,38 @@ export function TabArea({
   // What the strips draw while a gesture is live. In state because it is
   // feedback; the gesture itself stays in a ref, so the pointermoves that change
   // nothing cost no renders.
-  const [draggingId, setDraggingId] = useState<string | null>(null);
+  //
+  // The drag carries the proxy's width as well as its id: the proxy is drawn
+  // outside the strip and has nothing to size itself against there, and it has
+  // to stay the width of the tab it stands for rather than the width its own
+  // label happens to want.
+  const [drag, setDrag] = useState<{ tabId: string; width: number } | null>(null);
   const [dropTarget, setDropTarget] = useState<{ groupId: string; index: number } | null>(null);
+
+  // The proxy's position never goes through state. It changes on every
+  // pointermove, and a `TabArea` re-render is every group, every strip and
+  // every mounted pane — a cost this gesture would pay a hundred times on the
+  // way across one strip.
+  const proxyRef = useRef<HTMLDivElement>(null);
+  const proxyPosRef = useRef({ x: 0, y: 0 });
+  const placeProxy = useCallback((x: number, y: number) => {
+    proxyPosRef.current = { x, y };
+    // Absent until the render that mounts it; the effect below is what covers
+    // that first frame.
+    if (proxyRef.current) proxyRef.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  }, []);
+  // Deliberately without a dependency array. The transform is not in the JSX,
+  // so React does not restore it, and `setDropTarget` re-renders this component
+  // in the middle of the drag — with the position in an inline style, every one
+  // of those renders would snap the proxy back to wherever the gesture began.
+  // Re-applying after *every* render is what makes the imperative write above
+  // safe, and it is also what positions the proxy on the frame it mounts.
+  useLayoutEffect(() => {
+    const el = proxyRef.current;
+    if (!el) return;
+    const { x, y } = proxyPosRef.current;
+    el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  });
 
   // Read through refs inside the window listeners: a gesture installs them once
   // and would otherwise close over the layout as it was when the pointer went
@@ -144,6 +195,7 @@ export function TabArea({
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", up);
         window.removeEventListener("pointercancel", cancel);
+        window.removeEventListener("keydown", key);
         releaseRef.current = null;
         onFinish(committed);
       };
@@ -152,9 +204,18 @@ export function TabArea({
       // dimmed and an indicator hanging with no gesture behind either.
       const up = done(true);
       const cancel = done(false);
+      // Escape abandons a drag the pointer is still holding — the one exit that
+      // does not involve letting go, and the only way out for a user who has
+      // picked up a tab and does not want to drop it anywhere. It goes through
+      // the same `done` as every other ending: four ways out of a gesture is
+      // four chances to leave a proxy on screen, unless they are one path.
+      const key = (e: KeyboardEvent) => {
+        if (e.key === "Escape") cancel();
+      };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", up);
       window.addEventListener("pointercancel", cancel);
+      window.addEventListener("keydown", key);
       releaseRef.current = () => cancel();
     },
     [],
@@ -175,11 +236,19 @@ export function TabArea({
     // was starting.
     releaseRef.current?.();
 
+    // Taken now rather than when the threshold is crossed: by then the pointer
+    // has moved, and the offset that matters is where inside the tab the user
+    // actually pressed.
+    const grabbed = e.currentTarget.getBoundingClientRect();
+
     dragRef.current = {
       tabId: tab.id,
       fromGroupId: group.id,
       startX: e.clientX,
       startY: e.clientY,
+      grabX: e.clientX - grabbed.left,
+      grabY: e.clientY - grabbed.top,
+      width: grabbed.width,
       started: false,
       target: null,
     };
@@ -193,8 +262,19 @@ export function TabArea({
             Math.abs(move.clientX - gesture.startX) + Math.abs(move.clientY - gesture.startY);
           if (travelled < DRAG_THRESHOLD_PX) return;
           gesture.started = true;
-          setDraggingId(gesture.tabId);
+          // On `<body>`, because the pointer spends the drag over panes rather
+          // than over the strip it started in: the grabbing cursor and the
+          // guard against painting every pane it crosses blue both have to
+          // apply to the document. Shares its shape with `ResizeHandle`; see
+          // `index.css`.
+          document.body.dataset.dragging = "tab";
+          setDrag({ tabId: gesture.tabId, width: gesture.width });
         }
+
+        // Before the hit test, and outside it: the proxy follows the pointer
+        // even where a drop is refused, because it is the thing the user is
+        // holding. Only the indicator answers whether it may be let go here.
+        placeProxy(move.clientX - gesture.grabX, move.clientY - gesture.grabY);
 
         const strip = document
           .elementFromPoint(move.clientX, move.clientY)
@@ -230,8 +310,9 @@ export function TabArea({
       (committed) => {
         const gesture = dragRef.current;
         dragRef.current = null;
-        setDraggingId(null);
+        setDrag(null);
         setDropTarget(null);
+        delete document.body.dataset.dragging;
         if (!committed || !gesture?.started || !gesture.target) return;
         const { groupId, index, boxes } = gesture.target;
         // Within one group the tab is lifted out before it is put back, so the
@@ -264,6 +345,12 @@ export function TabArea({
 
   // ── render ────────────────────────────────────────────────────────────────
 
+  // Safe to read from the layout as it is now: the move commits on release, so
+  // nothing rewrites the tab out from under the proxy mid-gesture.
+  const dragged = drag
+    ? layout.groups.flatMap((g) => g.tabs).find((t) => t.id === drag.tabId)
+    : undefined;
+
   return (
     <div ref={rowRef} className={cn("flex min-h-0 min-w-0 flex-1", className)}>
       {layout.groups.map((group, groupIndex) => {
@@ -295,7 +382,7 @@ export function TabArea({
                 }
               : undefined,
             onPointerDown: startDrag(tab, group),
-            dragging: draggingId === tab.id,
+            dragging: drag?.tabId === tab.id,
             dropBefore: target === tabIndex,
             dropAfter: target === group.tabs.length && tabIndex === group.tabs.length - 1,
           };
@@ -393,6 +480,31 @@ export function TabArea({
           </Fragment>
         );
       })}
+      {/* Portalled to `<body>`, not rendered into the strip: every strip is
+          `overflow-hidden` — it has to be, so a group narrowed by a split
+          clips its tabs rather than spilling them — and a proxy that
+          disappears at the edge of the group it came from cannot be carried to
+          the group beside it, which is most of what a tab drag is for.
+
+          `pointer-events-none` and no `data-tab-id`: the proxy sits directly
+          under the cursor, and either one would have the drag hit-testing
+          against the thing it is dragging. */}
+      {drag && dragged
+        ? createPortal(
+            <div
+              aria-hidden
+              ref={proxyRef}
+              style={{ width: drag.width }}
+              className="pointer-events-none fixed left-0 top-0 z-50 opacity-75 shadow-lg"
+            >
+              {/* Drawn active whatever it was in the strip: a tab held above
+                  the page is the foreground thing on screen, and the muted
+                  treatment reads as disabled once it is off the strip. */}
+              <Tab {...presentTab(dragged.descriptor)} active className="rounded-sm bg-pane" />
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

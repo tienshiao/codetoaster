@@ -611,19 +611,32 @@
   }
   ::selection { background: var(--selected); }
 
-  /* While a divider is being dragged (`ResizeHandle`), set on `<body>` because
-     that is what the pointer is over: a handle is 6px wide and the gesture is
-     tracked on the window, so by the second pointermove the cursor is out over
-     a terminal or a diff, and those are not the handle's to style one by one.
-     `!important` because it has to beat whatever cursor and selection the pane
-     underneath sets for itself — a text pane's caret is exactly the flicker
-     this exists to stop, and the selection it would otherwise start is the
-     drag painting every pane it crosses blue. */
+  /* While a divider is being dragged (`ResizeHandle`) or a tab is being carried
+     (`TabArea`), set on `<body>` because that is what the pointer is over: the
+     gesture is tracked on the window and its target is small — a handle is 6px
+     wide, a tab not much taller — so by the second pointermove the cursor is
+     out over a terminal or a diff, and those are not the gesture's to style one
+     by one. `!important` because it has to beat whatever cursor and selection
+     the pane underneath sets for itself — a text pane's caret is exactly the
+     flicker this exists to stop, and the selection it would otherwise start is
+     the drag painting every pane it crosses blue.
+
+     The selection guard is what the two gestures share; the cursor is not, so
+     it is stated once per gesture rather than folded in above. */
+  body[data-resizing="col"],
+  body[data-resizing="col"] *,
+  body[data-dragging="tab"],
+  body[data-dragging="tab"] * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
   body[data-resizing="col"],
   body[data-resizing="col"] * {
     cursor: col-resize !important;
-    user-select: none !important;
-    -webkit-user-select: none !important;
+  }
+  body[data-dragging="tab"],
+  body[data-dragging="tab"] * {
+    cursor: grabbing !important;
   }
 }
 
