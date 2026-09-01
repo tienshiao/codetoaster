@@ -367,8 +367,11 @@ export function DiffLayout({
     // handler inside it can stop the event — but only from a pane that is
     // listening: pointing at an "all"-mode pane, where the arrows do nothing,
     // must not take them away from the single-file pane beside it.
+    // `overflow-hidden`, because with a tree the row's two floors add up to
+    // more than a tab group's own minimum (160px): a diff dragged that narrow
+    // would otherwise paint over the group beside it rather than be clipped.
     <div
-      className="flex h-full"
+      className="flex h-full min-w-0 overflow-hidden"
       onPointerDownCapture={() => {
         if (viewMode === "single") diffKeyboardOwner = layoutId;
       }}

@@ -332,7 +332,10 @@ function TreeMode({
     : undefined;
 
   return (
-    <div className="flex h-full">
+    // `overflow-hidden` for the same reason as `DiffLayout`: the tree's floor
+    // and the pane's beside it add up to more than a tab group's minimum, and
+    // the spill has to be clipped rather than painted over the next group.
+    <div className="flex h-full min-w-0 overflow-hidden">
       <div {...treeWidth.paneProps} className="overflow-hidden">
         <FileTree
           files={files}
