@@ -10,12 +10,23 @@ export interface DialogProps {
   description?: ReactNode;
   /** Fields, when there are any. A confirmation has none. */
   children?: ReactNode;
-  /** The affirmative button's label. */
+  /** The affirmative button's label. Defaults to "Save" for a form, "Done" for
+   * a dismiss-only panel. */
   confirmLabel?: string;
   confirmVariant?: "primary" | "destructive";
   /** Off while the form is not yet valid — an empty name, say. */
   confirmDisabled?: boolean;
-  onConfirm: () => void;
+  /**
+   * What Save does. Omit it and the dialog is dismiss-only: one button, no
+   * Cancel, and submitting simply closes.
+   *
+   * That is not a cosmetic variant. A panel whose controls each write their own
+   * change as they are touched — the settings, all `localStorage` — has nothing
+   * for Save to do and nothing for Cancel to undo, and offering either says the
+   * opposite: that the changes are pending, and that leaving by the other
+   * button would put them back.
+   */
+  onConfirm?: () => void;
   onClose: () => void;
   className?: string;
 }
@@ -23,9 +34,10 @@ export interface DialogProps {
 /**
  * The v2 modal: a scrim, a panel, Escape and a footer.
  *
- * Deliberately not `components/ui/dialog` — that is Radix over shadcn over the
+ * Deliberately not `components/ui/dialog` — that was Radix over shadcn over the
  * v1 token set, and the v2 surface is not allowed to grow a dependency on it
- * (CLAUDE.md). What is lost is a focus trap; what is kept is the part these
+ * (CLAUDE.md); it has since been deleted, this being its last consumer's
+ * replacement. What is lost is a focus trap; what is kept is the part these
  * dialogs actually use, which is "a name and two buttons".
  *
  * `fixed`, and mounted onto `document.body` through a portal. The portal is not
@@ -42,7 +54,7 @@ export function Dialog({
   title,
   description,
   children,
-  confirmLabel = "Save",
+  confirmLabel,
   confirmVariant = "primary",
   confirmDisabled = false,
   onConfirm,
@@ -77,7 +89,7 @@ export function Dialog({
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (confirmDisabled) return;
-    onConfirm();
+    onConfirm?.();
     onClose();
   };
 
@@ -108,9 +120,12 @@ export function Dialog({
         </div>
         {children}
         <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="outline" size="lg" onClick={onClose}>
-            Cancel
-          </Button>
+          {/* No Cancel without a Save to cancel: see `onConfirm`. */}
+          {onConfirm ? (
+            <Button type="button" variant="outline" size="lg" onClick={onClose}>
+              Cancel
+            </Button>
+          ) : null}
           <Button
             type="submit"
             data-confirm
@@ -118,7 +133,7 @@ export function Dialog({
             size="lg"
             disabled={confirmDisabled}
           >
-            {confirmLabel}
+            {confirmLabel ?? (onConfirm ? "Save" : "Done")}
           </Button>
         </div>
       </form>
