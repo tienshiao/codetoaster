@@ -174,7 +174,11 @@ export interface TaskContextValue {
    * re-broadcasts the whole list when either lands; `createProject` returns the
    * id it minted so the caller can select what it just made.
    */
-  createProject: (name: string, initialPath: string) => string;
+  createProject: (
+    name: string,
+    initialPath: string,
+    settings?: Partial<ProjectSettings>,
+  ) => string;
   /** `settings` is a patch — an absent field keeps what the project has. */
   updateProject: (
     id: string,
@@ -720,9 +724,9 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   // server-assigned one would only come back with the next broadcast and the
   // caller could not tell which project in it was the one it just asked for.
   const createProject = useCallback(
-    (name: string, initialPath: string) => {
+    (name: string, initialPath: string, settings?: Partial<ProjectSettings>) => {
       const id = generateUUID();
-      send({ type: "createProject", id, name, initialPath });
+      send({ type: "createProject", id, name, initialPath, settings });
       return id;
     },
     [send],

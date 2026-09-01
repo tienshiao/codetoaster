@@ -16,8 +16,8 @@ import type { AppShellProps, ShellTask } from "@/frontend/components/v2/AppShell
 import { Dialog } from "@/frontend/components/v2/Dialog";
 import { IconButton } from "@/frontend/components/v2/IconButton";
 import { TextInput } from "@/frontend/components/v2/TextInput";
-import { DirectoryBrowser, PathField } from "@/frontend/components/PathField";
 import { ProjectSettingsDialog } from "@/frontend/components/ProjectSettingsDialog";
+import { BLANK_PROJECT, ProjectDialog } from "@/frontend/components/ProjectDialog";
 
 /**
  * The chat-history / resume list (§7.5): the shell's left column, fed by
@@ -384,31 +384,17 @@ function ProjectActions({ project, onSave, onDelete, deletable, onNewTask }: Pro
  * does. Self-contained — button plus dialog — so it can be handed to the shell
  * as a header slot without the shell learning what a project is.
  *
- * Two views, one dialog. Browsing for a directory swaps the body and re-labels
- * the footer rather than opening a second `Dialog`: `Dialog` binds Escape to
- * `document` and renders `fixed z-50`, so stacking two of them would dismiss
- * both at once and leave their z-order to declaration order.
+ * The dialog is `ProjectDialog`, the same one editing a project opens. It used
+ * to be a form of its own asking for a name and a path, which is how projects
+ * came into being with none of their five defaults set and had to be reopened
+ * to finish (TASK-81).
  */
 export function NewProjectButton({
   onCreate,
 }: {
-  onCreate: (name: string, initialPath: string) => void;
+  onCreate: (name: string, initialPath: string, settings: Partial<ProjectSettings>) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [path, setPath] = useState("");
-  const [browsing, setBrowsing] = useState(false);
-  /** Whether the browser has been open once — only then should returning to the
-   * form pull focus, since the first open belongs to the Name field. */
-  const [browsed, setBrowsed] = useState(false);
-  /** The row highlighted in the browser, already spelled the way the field wants. */
-  const [picked, setPicked] = useState<string | null>(null);
-
-  const usePicked = useCallback((chosen: string) => {
-    setPath(chosen);
-    setPicked(null);
-    setBrowsing(false);
-  }, []);
 
   return (
     <>
@@ -416,61 +402,19 @@ export function NewProjectButton({
         icon={FolderPlus}
         label="New project"
         size="sm"
-        onClick={() => {
-          setName("");
-          setPath("");
-          setPicked(null);
-          setBrowsing(false);
-          setBrowsed(false);
-          setOpen(true);
-        }}
+        onClick={() => setOpen(true)}
       />
-      <Dialog
+      <ProjectDialog
         open={open}
-        title={browsing ? "Choose a folder" : "New project"}
-        confirmLabel={browsing ? "Use this folder" : "Create"}
-        confirmDisabled={browsing ? !picked : !name.trim()}
-        onConfirm={() => (browsing ? usePicked(picked!) : onCreate(name.trim(), path.trim()))}
-        // While browsing, Cancel and Escape mean "back to the form", not
-        // "abandon the project". That also makes confirming work without
-        // `Dialog` growing a stay-open option: it calls `onConfirm` then
-        // `onClose`, and here the second is the same leave-browse-mode the
-        // first already did.
-        onClose={() => (browsing ? setBrowsing(false) : setOpen(false))}
-        className={browsing ? "max-w-md" : undefined}
-      >
-        {browsing ? (
-          <DirectoryBrowser
-            initialPath={path}
-            onSelectionChange={setPicked}
-            onCommit={usePicked}
-          />
-        ) : (
-          <>
-            <TextInput
-              id="new-project-name"
-              label="Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Website"
-              data-1p-ignore
-            />
-            <PathField
-              id="new-project-path"
-              label="Repository path"
-              value={path}
-              onChange={setPath}
-              placeholder="~/projects/website"
-              autoFocus={browsed}
-              onBrowse={() => {
-                setPicked(null);
-                setBrowsed(true);
-                setBrowsing(true);
-              }}
-            />
-          </>
-        )}
-      </Dialog>
+        title="New project"
+        confirmLabel="Create"
+        initial={BLANK_PROJECT}
+        // A constant is enough: the dialog is closed between openings, so the
+        // key passes through null and the blank values are read again.
+        seedKey="new"
+        onSubmit={(name, path, settings) => onCreate(name, path, settings)}
+        onClose={() => setOpen(false)}
+      />
     </>
   );
 }

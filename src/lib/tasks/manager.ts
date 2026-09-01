@@ -3243,15 +3243,44 @@ export class TaskManager {
     }
   }
 
-  createProject(id: string, name: string, initialPath: string): void {
+  /** Add a project, with whatever it starts out deciding for its tasks.
+   *
+   * `settings` is optional and normalized exactly as `updateProject` does it,
+   * so blank reaches the column as NULL rather than as an empty string — a
+   * project storing `""` as its model would put an empty `--model` on an
+   * agent's argv. Anything left out keeps the unset default.
+   *
+   * One write and one broadcast, rather than a create followed by an update:
+   * the second would put a project on every attached client with none of the
+   * defaults it was created with, and leave it that way if the update failed. */
+  createProject(
+    id: string,
+    name: string,
+    initialPath: string,
+    settings?: Partial<ProjectSettings>,
+  ): void {
     if (this.projects.some((p) => p.id === id)) {
       throw new Error(`Project "${id}" already exists`);
     }
-    db.createProject({ id, name, initial_path: initialPath, sort_order: this.projects.length }, this.db);
-    // No defaults yet: `createProject` writes the identity columns only, so a
-    // fresh project resolves to whatever the caller asks for until something
-    // sets them.
-    this.projects.push({ id, name, initialPath, taskIds: [], ...UNSET_PROJECT_SETTINGS });
+    const patch = settings ? normalizeSettingsPatch(settings) : {};
+    db.createProject(
+      {
+        id,
+        name,
+        initial_path: initialPath,
+        sort_order: this.projects.length,
+        ...settingsColumns(patch),
+      },
+      this.db,
+    );
+    this.projects.push({
+      id,
+      name,
+      initialPath,
+      taskIds: [],
+      ...UNSET_PROJECT_SETTINGS,
+      ...patch,
+    });
     this.broadcastTasks();
   }
 

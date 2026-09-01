@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-01 18:03'
-updated_date: '2026-09-01 18:08'
+updated_date: '2026-09-01 18:31'
 labels:
   - frontend
   - ui
@@ -57,3 +57,9 @@ Server untouched, and proved so — `permission_mode` still round-trips in `stor
 
 Two render tests added/reworked: the model select sends `fable`, and the composer never sends a permissionMode even when the project column holds one.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The model list gained Fable and reads as names rather than wire values; the permission-mode controls left the composer and project settings, so nothing in the UI puts --permission-mode on the agent's argv. The column, the API field and the server's resolution are untouched.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -71,7 +71,19 @@ export type ClientMessage =
   | { type: "kill"; taskId: string }
   | { type: "acknowledge"; taskId: string }
   | { type: "reorder"; projects: Array<{ id: string; taskIds: string[] }> }
-  | { type: "createProject"; id: string; name: string; initialPath: string }
+  | {
+      type: "createProject";
+      id: string;
+      name: string;
+      initialPath: string;
+      /** What the project starts out deciding for its tasks. Optional because
+       * the CLI and any other caller may have no opinion, but the dialog sends
+       * all of it: a project created without its defaults has to be reopened
+       * to finish, which is what having two different project forms cost
+       * (TASK-81). Applied in the same write as the identity columns, so the
+       * project is never broadcast without them. */
+      settings?: Partial<ProjectSettings>;
+    }
   | {
       type: "updateProject";
       id: string;

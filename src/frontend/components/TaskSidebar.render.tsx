@@ -347,7 +347,15 @@ test("creating a project reports name and path, and only once submitted", () => 
   expect(onCreate).not.toHaveBeenCalled();
 
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
-  expect(onCreate).toHaveBeenCalledWith("Website", "~/projects/website");
+  // The whole form, the same shape editing a project sends (TASK-81): untouched
+  // defaults travel as blank, which the server normalizes to NULL columns.
+  expect(onCreate).toHaveBeenCalledWith("Website", "~/projects/website", {
+    defaultModel: "",
+    defaultBaseRef: "",
+    worktreeDefault: false,
+    setupCommand: "",
+    worktreeCopy: "",
+  });
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 

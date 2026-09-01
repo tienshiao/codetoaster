@@ -532,6 +532,74 @@ describe("creating a task", () => {
     expect(store.get("t1")!.permission_mode).toBe("plan");
   });
 
+  // TASK-81: creating a project and editing one now ask for the same eight
+  // fields, so a create has to be able to carry the five defaults an update
+  // could. One write, because a create followed by an update would put the
+  // project on every attached client with none of them.
+  test("a project can be created already configured", () => {
+    const { manager, db: database } = newManager();
+
+    manager.createProject("proj", "Project", "~/src/proj", {
+      defaultModel: "fable",
+      defaultBaseRef: "main",
+      worktreeDefault: true,
+      setupCommand: "bun install",
+      worktreeCopy: ".env",
+    });
+
+    // In memory, without a reload...
+    const project = manager.getProjects().find((p) => p.id === "proj")!;
+    expect(project.defaultModel).toBe("fable");
+    expect(project.defaultBaseRef).toBe("main");
+    expect(project.worktreeDefault).toBe(true);
+    expect(project.setupCommand).toBe("bun install");
+    expect(project.worktreeCopy).toBe(".env");
+
+    // ...and on the row, in the same write as the identity columns.
+    const row = database
+      .query("SELECT * FROM projects WHERE id = ?")
+      .get("proj") as Record<string, unknown>;
+    expect(row.default_model).toBe("fable");
+    expect(row.default_base_ref).toBe("main");
+    expect(row.worktree_default).toBe(1);
+  });
+
+  // The same normalization `updateProject` does, and for the same reason: a
+  // project storing "" as its model would put an empty `--model` on an agent's
+  // argv. The dialog sends every field every time, so blanks are the common
+  // case rather than the odd one.
+  test("blank settings are stored as unset, not as empty strings", () => {
+    const { manager } = newManager();
+
+    manager.createProject("proj", "Project", "", {
+      defaultModel: "",
+      defaultBaseRef: "   ",
+      setupCommand: "",
+      worktreeCopy: "",
+      worktreeDefault: false,
+    });
+
+    const project = manager.getProjects().find((p) => p.id === "proj")!;
+    expect(project.defaultModel).toBeNull();
+    expect(project.defaultBaseRef).toBeNull();
+    expect(project.setupCommand).toBeNull();
+  });
+
+  test("a project created with no settings is unset throughout", () => {
+    const { manager } = newManager();
+
+    manager.createProject("proj", "Project", "");
+
+    expect(manager.getProjects().find((p) => p.id === "proj")).toMatchObject({
+      defaultModel: null,
+      defaultPermissionMode: null,
+      defaultBaseRef: null,
+      setupCommand: null,
+      worktreeCopy: null,
+      worktreeDefault: false,
+    });
+  });
+
   test("refuses a duplicate id rather than orphaning the first task's terminal", async () => {
     const { manager } = newManager();
     await manager.createTask({ id: "t1", command: shell() });

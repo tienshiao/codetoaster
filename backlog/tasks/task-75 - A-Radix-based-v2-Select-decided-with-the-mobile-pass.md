@@ -4,7 +4,7 @@ title: A Radix-based v2 Select
 status: Done
 assignee: []
 created_date: '2026-09-01 08:44'
-updated_date: '2026-09-01 18:22'
+updated_date: '2026-09-01 18:31'
 labels:
   - frontend
   - ui
@@ -62,3 +62,9 @@ Fixed while in there: the preview strip's ten fixed 28px swatches came to 334px 
 
 New: `src/frontend/components/v2/Select.render.tsx` (9 tests) and `test/v2-select.ts`. 166 render tests pass, `tsc --noEmit` clean, no console errors in Chrome in either theme.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The v2 Select is Radix: a popup drawn from the design system's own tokens, with a filter and a per-row preview the OS menu could never have. Terminal Theme's 157 entries now show their palettes and filter as you type. Keyboard and the Escape-inside-a-Dialog case verified in Chrome, not just in happy-dom.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -130,7 +130,7 @@ export function handleClientMessage(
 
     case "createProject": {
       try {
-        manager.createProject(parsed.id, parsed.name, parsed.initialPath);
+        manager.createProject(parsed.id, parsed.name, parsed.initialPath, parsed.settings);
       } catch (e: any) {
         sendError(ws, e.message);
       }

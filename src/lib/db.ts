@@ -364,17 +364,6 @@ export function getAllProjects(database: Database = getDb()): ProjectRow[] {
   return database.query("SELECT * FROM projects ORDER BY sort_order").all() as ProjectRow[];
 }
 
-// Only the identity columns: everything v2 added to `projects` is a default
-// that is set later, through updateProject, if it is ever set at all.
-export type NewProject = Pick<ProjectRow, "id" | "name" | "initial_path" | "sort_order">;
-
-export function createProject(project: NewProject, database: Database = getDb()): void {
-  database.run(
-    "INSERT INTO projects (id, name, initial_path, sort_order) VALUES (?, ?, ?, ?)",
-    [project.id, project.name, project.initial_path, project.sort_order],
-  );
-}
-
 // Every column an update is allowed to name. The SET clause is built from
 // caller-supplied keys, and a key reaches SQL as an identifier, not a bound
 // parameter — so it is checked against this set rather than trusted. The type
@@ -384,6 +373,39 @@ const UPDATABLE_PROJECT_COLUMNS: ReadonlySet<string> = new Set([
   "name", "initial_path", "sort_order", "default_base_ref", "default_model",
   "default_permission_mode", "setup_command", "worktree_copy", "worktree_default",
 ]);
+
+// An insert may name everything an update may, plus the id it is being given.
+const INSERTABLE_PROJECT_COLUMNS: ReadonlySet<string> = new Set([
+  "id",
+  ...UPDATABLE_PROJECT_COLUMNS,
+]);
+
+/** The identity columns, and optionally any default the project is created
+ * with. The defaults were once always set afterwards through `updateProject`;
+ * they are writable here so a project can be created already configured
+ * without a second write and a second broadcast (TASK-81). */
+export type NewProject = Pick<ProjectRow, "id" | "name" | "initial_path" | "sort_order"> &
+  Partial<Omit<ProjectRow, "id" | "name" | "initial_path" | "sort_order">>;
+
+export function createProject(project: NewProject, database: Database = getDb()): void {
+  // Built from the caller's keys rather than a fixed list, for the same reason
+  // `updateProject` is — and checked against the same kind of allowlist, since
+  // a column name reaches SQL as an identifier and cannot be bound.
+  const columns: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(project)) {
+    if (value === undefined) continue;
+    if (!INSERTABLE_PROJECT_COLUMNS.has(key)) {
+      throw new Error(`Not an insertable project column: ${key}`);
+    }
+    columns.push(key);
+    values.push(value);
+  }
+  database.run(
+    `INSERT INTO projects (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+    values as any,
+  );
+}
 
 export function updateProject(id: string, fields: Partial<Omit<ProjectRow, "id">>, database: Database = getDb()): void {
   const sets: string[] = [];

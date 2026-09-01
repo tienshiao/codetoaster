@@ -145,7 +145,9 @@ test("browsing swaps the dialog body and hands the choice back to the field", as
 
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Website" } });
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
-  expect(onCreate).toHaveBeenCalledWith("Website", "~/Projects");
+  // The settings come with it now that creating a project asks for them all
+  // (TASK-81); this test is about the path the browser handed back.
+  expect(onCreate.mock.calls[0]!.slice(0, 2)).toEqual(["Website", "~/Projects"]);
 });
 
 test("browsing opens on what the field holds, and picks the deepest real folder", async () => {
