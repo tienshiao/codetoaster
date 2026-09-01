@@ -57,8 +57,12 @@ export function graceFor(baseMs: number, setupDurationMs: number | null): number
 
 // The harvester (docs/v2-architecture.md §5.5, §5.6). It decides *whether* a
 // task should be harvested and nothing else — the harvesting itself is
-// `TaskManager.suspendTask` and `TaskManager.evictTask`, and `closeTask`
-// reaches the first of those by another road entirely.
+// `TaskManager.harvestTask` and `TaskManager.evictTask`, and `closeTask`
+// reaches the same suspend by another road entirely, carrying none of the
+// guards below. That `harvestTask` takes a predicate does not move the
+// decision into the manager: the predicate is the pair re-checked in
+// `shouldHarvest`, handed over so it can be asked once more from inside the
+// snapshot write, which is the one window this file cannot see.
 //
 // Two tiers, sharing one timer because they share one shutdown: a sweep may be
 // mid-write when the daemon is asked to stop, and `stop()` has to be able to
@@ -204,7 +208,17 @@ export class Harvester {
     }
     for (const task of tasks) {
       try {
-        if (await this.shouldHarvest(task.id, now)) await this.manager.suspendTask(task.id);
+        if (!(await this.shouldHarvest(task.id, now))) continue;
+        // The same two guards again, this time for the manager to ask on the
+        // far side of the snapshot write — the window between judging this
+        // task harvestable and its PTYs actually being killed, which is long
+        // enough to service the attach of a user who has just clicked it.
+        // Passed rather than reimplemented so the late guard cannot drift from
+        // the early one.
+        await this.manager.harvestTask(
+          task.id,
+          () => this.rowAllows(task.id, now) && this.hasNoAttachedViews(task.id),
+        );
       } catch (e) {
         console.warn(`Idle harvester skipped task ${task.id}:`, e);
       }

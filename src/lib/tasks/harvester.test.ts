@@ -187,6 +187,84 @@ describe("the guards", () => {
     stillRunning(manager, store, id);
   });
 
+  // And the window the guards above cannot see at all, because it opens after
+  // the last of them has answered: `suspendTask` awaits a snapshot write —
+  // queued behind any earlier one for the task, so as long as a large screen
+  // takes to reach the disk — and only then kills the PTYs. The daemon goes on
+  // servicing WebSocket attaches throughout, and answers them `attached` and
+  // `restore`. Without a guard on the inside of that call, the user watches the
+  // terminal they just opened die.
+  test("a task someone attached to during the snapshot write is left alone", async () => {
+    const { manager, store, harvester } = newManager();
+    const id = await harvestableTask(manager, store);
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    const pty = manager.primaryPty(id)!;
+    // After the screen is on disk and before the first kill — the exact
+    // instant a click landing on this task would have been served.
+    const realSnapshot = manager.snapshot.bind(manager);
+    (manager as any).snapshot = async (taskId: string) => {
+      const written = await realSnapshot(taskId);
+      manager.attachClient(pty.id, client.id, client.ws, 80, 24);
+      return written;
+    };
+
+    await harvester.tick();
+
+    stillRunning(manager, store, id);
+    // And the attach it raced is a live one, not a corpse the client is
+    // holding: this is the whole complaint, that the terminal answered and
+    // then died.
+    expect(pty.getClientCount()).toBe(1);
+  });
+
+  // The other half of the contract. The guards are the harvester's alone, so a
+  // user closing a task they are looking at must still close it — the very
+  // condition that makes a harvest walk away.
+  test("a manual close still suspends a task the closing client is attached to", async () => {
+    const { manager, store, harvester } = newManager();
+    const id = await harvestableTask(manager, store);
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    const pty = manager.primaryPty(id)!;
+    manager.attachClient(pty.id, client.id, client.ws, 80, 24);
+
+    // The harvester refuses it, on the guard the close does not have.
+    await harvester.tick();
+    stillRunning(manager, store, id);
+
+    expect(await manager.closeTask(id)).toBe(true);
+    expect(store.get(id)!.lifecycle).toBe("suspended");
+  });
+
+  // A close arriving while a harvest of the same task is mid-write, where the
+  // attach that prompts the close is also what makes the harvest walk away. If
+  // the close simply joined the promise already in flight it would inherit that
+  // refusal and report the user's click as a no-op.
+  test("a close that lands during a harvest does not inherit its refusal", async () => {
+    const { manager, store, harvester } = newManager();
+    const id = await harvestableTask(manager, store);
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    const pty = manager.primaryPty(id)!;
+
+    let closed: Promise<boolean> | null = null;
+    const realSnapshot = manager.snapshot.bind(manager);
+    (manager as any).snapshot = async (taskId: string) => {
+      const written = await realSnapshot(taskId);
+      // The user clicks the task, then closes it, both inside the write.
+      manager.attachClient(pty.id, client.id, client.ws, 80, 24);
+      closed = manager.closeTask(id);
+      return written;
+    };
+
+    await harvester.tick();
+
+    expect(closed).not.toBeNull();
+    expect(await closed!).toBe(true);
+    expect(store.get(id)!.lifecycle).toBe("suspended");
+  });
+
   // `idle` is the only state that means the agent said it stopped. Everything
   // else is either work in progress or an admission that we do not know.
   for (const state of ["busy", "needs_attention", "starting", "compacting", "unknown"] as const) {

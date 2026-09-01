@@ -342,7 +342,11 @@ export class TaskManager {
   // two can never wait on each other — and each starts over once that wait is
   // done rather than carrying on, since the promise it waited on may have
   // handed straight to another one of the other kind.
-  private suspending: Map<string, Promise<boolean>> = new Map();
+  // `conditional` is whether this attempt may still refuse: a harvest re-checks
+  // its caller's guards on the far side of the snapshot write and can walk
+  // away, a close cannot. A joiner has to know, because adopting a harvest's
+  // verdict would report a user's click as the no-op the *harvest* decided on.
+  private suspending: Map<string, { done: Promise<boolean>; conditional: boolean }> = new Map();
   // The third of the same family, and it exists because `suspended` is not a
   // quiet state. An eviction takes a snapshot and then runs `git worktree
   // remove --force`, and a resume leaves the row `suspended` for its *whole*
@@ -1376,7 +1380,7 @@ export class TaskManager {
     // task the close produced, which is the task as it now is.
     const suspendInFlight = this.suspending.get(taskId);
     if (suspendInFlight) {
-      await suspendInFlight.catch(() => undefined);
+      await suspendInFlight.done.catch(() => undefined);
       return this.resumeTask(taskId, options);
     }
     // An eviction already in flight settles first, for the same reason and with
@@ -2038,7 +2042,35 @@ export class TaskManager {
    * reversible level of gone (§5.6): the settings file is what the resumed
    * agent is started with, and the scrollback we just wrote is what the user
    * sees while it comes back. */
-  async suspendTask(taskId: string): Promise<boolean> {
+  suspendTask(taskId: string): Promise<boolean> {
+    return this.putDown(taskId, undefined);
+  }
+
+  /**
+   * Harvest a task, unless `stillHarvestable` has stopped being true by the
+   * time it can actually be acted on.
+   *
+   * The guards stay the caller's, exactly as `suspendTask` says they must —
+   * this does not learn what idle means. What it adds is the one moment the
+   * caller cannot reach: `doSuspend` awaits a snapshot write before it kills
+   * anything, that write is queued behind any earlier one for the task, and a
+   * WebSocket attach serviced in that window is answered `attached`/`restore`
+   * by a daemon that then kills the terminal out from under it. The harvester
+   * re-checks its own guards either side of its `ps` (`shouldHarvest`), but the
+   * window it cannot see from there is this one, on the inside of the call it
+   * has already made.
+   *
+   * So the predicate is asked once more, as late as it can be: after the screen
+   * is safely on disk, immediately before the first `kill`.
+   */
+  harvestTask(taskId: string, stillHarvestable: () => boolean): Promise<boolean> {
+    return this.putDown(taskId, stillHarvestable);
+  }
+
+  private async putDown(
+    taskId: string,
+    stillHarvestable: (() => boolean) | undefined,
+  ): Promise<boolean> {
     // A resume in flight has to settle first. The ladder leaves the row
     // `suspended` for its whole run and only writes `live` on the rung that
     // works, so a close arriving mid-resume read "not live", answered false and
@@ -2061,24 +2093,53 @@ export class TaskManager {
       // writes `live` again, leaving an agent running on a task the user
       // closed. Asking again is the whole fix: the click lands on the task the
       // *last* resume produced.
-      return this.suspendTask(taskId);
+      return this.putDown(taskId, stillHarvestable);
     }
     // Registered only now, on the far side of that wait, so a resume waiting on
     // us and a suspend waiting on it can never be waiting on each other. A
     // second close joins the first rather than snapshotting the task twice.
     const alreadySuspending = this.suspending.get(taskId);
-    if (alreadySuspending) return alreadySuspending;
-    const attempt = this.doSuspend(taskId).finally(() => {
+    if (alreadySuspending) {
+      // A close cannot adopt a harvest's verdict. The harvest may be about to
+      // refuse on a guard the close does not have — and the commonest way for
+      // that to happen is the user attaching, which is exactly what someone
+      // who then clicks close has just done. Joining would answer their click
+      // with the harvest's `false` and leave the task live. So this waits it
+      // out and asks again, the way a suspend already waits out a resume.
+      //
+      // Every other pairing joins: a harvest behind anything is getting the
+      // suspension it wanted, and a close behind a close is the same click
+      // twice.
+      if (alreadySuspending.conditional && !stillHarvestable) {
+        await alreadySuspending.done.catch(() => undefined);
+        return this.putDown(taskId, stillHarvestable);
+      }
+      return alreadySuspending.done;
+    }
+    const done = this.doSuspend(taskId, stillHarvestable).finally(() => {
       this.suspending.delete(taskId);
     });
-    this.suspending.set(taskId, attempt);
-    return attempt;
+    this.suspending.set(taskId, { done, conditional: stillHarvestable !== undefined });
+    return done;
   }
 
-  private async doSuspend(taskId: string): Promise<boolean> {
+  private async doSuspend(
+    taskId: string,
+    stillHarvestable?: () => boolean,
+  ): Promise<boolean> {
     const row = this.store.get(taskId);
     if (!row || row.lifecycle !== "live") return false;
     await this.snapshot(taskId);
+    // The last possible moment, and the only one that closes the window: the
+    // write above is queued behind any earlier one for this task, so it can
+    // take as long as a multi-hundred-KB screen takes to reach the disk, and
+    // the daemon services WebSocket attaches throughout. A user who clicked
+    // this task in that window has already been sent `attached` and `restore`.
+    //
+    // Walking away leaves the snapshot on disk, deliberately: it is the screen
+    // the task really had, the task stays live, and the next tick will write
+    // another. Nothing was killed, which is the whole point.
+    if (stillHarvestable && !stillHarvestable()) return false;
     for (const ptyId of [...(this.taskPtys.get(taskId) ?? [])]) {
       // Every terminal the task holds, not just the agent's: a shell tab
       // (TASK-27) is a process in the task's directory like any other, and §5.5
