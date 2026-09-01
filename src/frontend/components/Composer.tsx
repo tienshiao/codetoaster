@@ -199,13 +199,13 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
             icon={Folder}
             options={projects.map((p) => ({ value: p.id, label: p.name }))}
             value={project?.id ?? ""}
-            onChange={(e) => setProjectId(e.target.value)}
+            onValueChange={setProjectId}
           />
           <Select
             label="model"
             options={MODELS}
             value={model}
-            onChange={(e) => setModel(e.target.value)}
+            onValueChange={setModel}
           />
           <Checkbox
             variant="chip"

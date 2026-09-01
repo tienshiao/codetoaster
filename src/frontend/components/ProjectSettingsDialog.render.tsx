@@ -1,6 +1,7 @@
 import { test, expect, describe, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { chooseOption, selectValue } from "../../../test/v2-select";
 import type { ProjectInfo, ProjectSettings } from "../../lib/xtmux/types";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 
@@ -87,7 +88,7 @@ describe("project settings", () => {
     fireEvent.change(screen.getByLabelText("Repository path"), {
       target: { value: "~/projects/marketing" },
     });
-    fireEvent.change(screen.getByLabelText("Default model"), { target: { value: "opus" } });
+    chooseOption("Default model", "Opus");
     save();
 
     // One message, not three: a split write is a way for half an edit to land.
@@ -149,7 +150,7 @@ describe("project settings", () => {
       worktreeDefault: true,
     });
 
-    expect((screen.getByLabelText("Default model") as HTMLSelectElement).value).toBe("opus");
+    expect(selectValue("Default model")).toBe("Opus");
     expect((screen.getByLabelText("Base ref for new worktrees") as HTMLInputElement).value)
       .toBe("release");
     expect((screen.getByLabelText("Setup command") as HTMLTextAreaElement).value)
@@ -164,14 +165,14 @@ describe("project settings", () => {
 
     // "" is the option meaning "Claude Code default" — the same empty value
     // that reaches the server as no column at all.
-    expect((screen.getByLabelText("Default model") as HTMLSelectElement).value).toBe("");
+    expect(selectValue("Default model")).toBe("Claude Code default");
     expect((screen.getByLabelText("Base ref for new worktrees") as HTMLInputElement).value)
       .toBe("");
   });
 
   test("Save sends the whole form, so a cleared field is cleared", () => {
     open({ defaultModel: "opus", setupCommand: "bun install", worktreeDefault: true });
-    fireEvent.change(screen.getByLabelText("Default model"), { target: { value: "" } });
+    chooseOption("Default model", "Claude Code default");
     fireEvent.change(screen.getByLabelText("Setup command"), { target: { value: "" } });
     fireEvent.click(worktreeBox());
     save();
@@ -224,6 +225,7 @@ describe("project settings", () => {
 
     // The model and mode are still the project's to decide: they have nothing
     // to do with having a checkout.
-    expect((screen.getByLabelText("Default model") as HTMLSelectElement).disabled).toBe(false);
+    expect((screen.getByRole("combobox", { name: "Default model" }) as HTMLButtonElement).disabled)
+      .toBe(false);
   });
 });

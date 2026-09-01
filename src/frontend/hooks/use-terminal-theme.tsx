@@ -4,6 +4,32 @@ import type { ITheme } from "@xterm/xterm";
 
 export const terminalThemeNames: string[] = Object.keys(themes).filter(k => k !== "default").sort();
 
+/** The palette a swatch strip draws, in order. Exported so the strip under the
+ * Terminal Theme setting and the strip on each row of its picker are the same
+ * ten colours in the same places — a preview that ordered them differently
+ * from the one below it would be worse than no preview. */
+export const TERMINAL_SWATCH_KEYS = [
+  "background",
+  "foreground",
+  "black",
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+] as const satisfies readonly (keyof ITheme)[];
+
+/** One named theme's swatches, or none if the name is not a theme this build
+ * ships — which is what an unset preference and a stale `localStorage` value
+ * both look like. */
+export function terminalThemeSwatches(name: string): string[] | undefined {
+  const theme = (themes as Record<string, ITheme>)[name];
+  if (!theme) return undefined;
+  return TERMINAL_SWATCH_KEYS.map((key) => (theme[key] as string | undefined) ?? "transparent");
+}
+
 function relativeLuminance(hex: string): number {
   const m = hex.match(/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i);
   if (!m) return 0;

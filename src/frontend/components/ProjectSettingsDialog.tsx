@@ -184,7 +184,7 @@ export function ProjectSettingsDialog({
           options={MODELS}
           value={model}
           className="w-full"
-          onChange={(e) => setModel(e.target.value)}
+          onValueChange={setModel}
         />
       </Field>
       <Checkbox

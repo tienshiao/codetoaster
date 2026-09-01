@@ -1,10 +1,10 @@
 ---
 id: TASK-75
 title: A Radix-based v2 Select
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-01 08:44'
-updated_date: '2026-09-01 18:03'
+updated_date: '2026-09-01 18:22'
 labels:
   - frontend
   - ui
@@ -34,9 +34,31 @@ Consumers: the composer's project and model chips, `ProjectSettingsDialog`'s def
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The v2 Select is a Radix Select styled from the semantic tokens, living in components/v2/ with no new dependency
-- [ ] #2 Typeahead, arrow keys and the accessibility tree are no worse than the native element's, verified not assumed
-- [ ] #3 The Terminal Theme list is filterable and previews each theme's palette beside its name
-- [ ] #4 Escape over an open popup inside a Dialog closes the popup only, covered by a rendering test
-- [ ] #5 Every existing consumer — composer chips, ProjectSettingsDialog, SettingsDialog's five — is on the new control
+- [x] #1 The v2 Select is a Radix Select styled from the semantic tokens, living in components/v2/ with no new dependency
+- [x] #2 Typeahead, arrow keys and the accessibility tree are no worse than the native element's, verified not assumed
+- [x] #3 The Terminal Theme list is filterable and previews each theme's palette beside its name
+- [x] #4 Escape over an open popup inside a Dialog closes the popup only, covered by a rendering test
+- [x] #5 Every existing consumer — composer chips, ProjectSettingsDialog, SettingsDialog's five — is on the new control
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Radix Select in `components/v2/Select.tsx`, no new dependency. API changed from `onChange(event)` to `onValueChange(value)`; all eight call sites moved.
+
+Three things the swap forced, each commented at the site:
+
+1. **The empty string.** Radix throws on an item valued `""` and reads a root value of `""` as 'show the placeholder'. `""` is this system's 'someone below me decides', so it is swapped for a sentinel at the boundary and back on the way out. Callers are unchanged.
+2. **The trigger's text** comes from the `options` prop, not from the selected `ItemText` portaling into it (Radix's default). Filtering unmounts rows, and an unmounted selected row would blank the chip. Passing children to `Select.Value` is Radix's own opt-out (`valueNodeHasChildren`).
+3. **The filter is not a focusable input.** That was the first design and it cannot work: Radix focuses the selected item as soon as the popper reports itself positioned, so a box taking focus on mount loses it a frame later, and `Select.Content` has no `onOpenAutoFocus` to prevent it. Typing is intercepted on the content instead — `preventDefault` makes Radix skip its own typeahead, since it composes a caller's handler ahead of its own. Focus stays in the list, so arrow keys and Enter are untouched.
+
+Escape: `onEscapeKeyDown` + `stopPropagation`. Radix's DismissableLayer listens in the *capture* phase, which is early enough to take the event out of the path before `Dialog`'s own document listener is reached. Verified both ways in happy-dom and in Chrome — one press closes the popup, the dialog stays, a second press closes the dialog.
+
+Keyboard verified in Chrome, not happy-dom: with `position=\"popper\"` Radix moves focus only once floating-ui reports the content placed, and happy-dom has no layout, so focus never leaves `body` there. ArrowDown/ArrowDown/Enter moved Project default → Opus in the real browser. `test/v2-select.ts` documents this and aims keystrokes at the listbox.
+
+Terminal Theme: `filterPlaceholder` plus a palette strip on every one of the 157 rows, from a new `terminalThemeSwatches` export so the row preview and the strip under the setting are the same ten colours in the same order.
+
+Fixed while in there: the preview strip's ten fixed 28px swatches came to 334px against a 311px column, and an `fr` track takes its minimum from its content — so it was widening the whole second column and leaving that one row's select 23px left of the four below it. All five now sit at 710/311, measured in the browser.
+
+New: `src/frontend/components/v2/Select.render.tsx` (9 tests) and `test/v2-select.ts`. 166 render tests pass, `tsc --noEmit` clean, no console errors in Chrome in either theme.
+<!-- SECTION:NOTES:END -->

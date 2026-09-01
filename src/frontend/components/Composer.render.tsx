@@ -1,5 +1,6 @@
 import { test, expect, describe, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { chooseOption, selectValue } from "../../../test/v2-select";
 import type { CreateTaskOptions, TaskResult } from "../TaskContext";
 import type { ProjectInfo, TaskInfo } from "../../lib/xtmux/types";
 
@@ -64,9 +65,10 @@ function type(text: string) {
   return box;
 }
 
-/** The value a field is showing. Read off the element rather than through
+/** The value a text field is showing. Read off the element rather than through
  * jest-dom's matchers, which this project extends `expect` with but has no
- * types for. */
+ * types for. The two `Select`s are read with `selectValue`, which returns the
+ * label Radix shows rather than a value the DOM no longer carries. */
 function valueOf(name: string): string {
   return (screen.getByLabelText(name) as HTMLInputElement).value;
 }
@@ -236,11 +238,12 @@ test("what the select shows is what gets sent", async () => {
   stubs.projects = [project("general", { defaultModel: "opus" })];
   render(<Composer />);
 
-  expect(valueOf("model")).toBe("opus");
-  fireEvent.change(screen.getByLabelText("model"), { target: { value: "fable" } });
+  expect(selectValue("model")).toBe("Opus");
+  chooseOption("model", "Fable");
   submitKey(type("ship it"));
 
   await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+  // The label is capitalised; what goes on `claude --model` is not.
   expect(stubs.createTask.mock.calls[0]![0]).toMatchObject({ model: "fable" });
 });
 
@@ -251,7 +254,7 @@ test("the composer never sends a permission mode", async () => {
   stubs.projects = [project("general", { defaultPermissionMode: "plan" })];
   render(<Composer />);
 
-  expect(screen.queryByLabelText("mode")).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "mode" })).toBeNull();
   submitKey(type("ship it"));
 
   await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
@@ -261,11 +264,11 @@ test("the composer never sends a permission mode", async () => {
 test("changing project re-seeds the model from the project it moved to", () => {
   stubs.projects = [project("general", { defaultModel: "opus" }), project("web")];
   render(<Composer />);
-  expect(valueOf("model")).toBe("opus");
+  expect(selectValue("model")).toBe("Opus");
 
-  fireEvent.change(screen.getByLabelText("project"), { target: { value: "web" } });
+  chooseOption("project", "web");
   // Not carried across: the choice belonged to the project it was read from.
-  expect(valueOf("model")).toBe("");
+  expect(selectValue("model")).toBe("Project default");
 });
 
 describe("the project a group's + asked for", () => {
@@ -276,8 +279,8 @@ describe("the project a group's + asked for", () => {
     stubs.projects = [project("general"), project("web", { defaultModel: "sonnet" })];
     render(<Composer projectId="web" />);
 
-    expect(valueOf("project")).toBe("web");
-    expect(valueOf("model")).toBe("sonnet");
+    expect(selectValue("project")).toBe("web");
+    expect(selectValue("model")).toBe("Sonnet");
   });
 
   test("arriving while the user is typing moves the selection and nothing else", () => {
@@ -286,11 +289,11 @@ describe("the project a group's + asked for", () => {
     // prompt is the user's and the only copy of it.
     const view = render(<Composer />);
     type("ship it");
-    expect(valueOf("project")).toBe("general");
+    expect(selectValue("project")).toBe("general");
 
     view.rerender(<Composer projectId="web" />);
 
-    expect(valueOf("project")).toBe("web");
+    expect(selectValue("project")).toBe("web");
     expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe("ship it");
   });
 
@@ -300,6 +303,6 @@ describe("the project a group's + asked for", () => {
     // nothing at all.
     render(<Composer projectId="nope" />);
 
-    expect(valueOf("project")).toBe("general");
+    expect(selectValue("project")).toBe("general");
   });
 });

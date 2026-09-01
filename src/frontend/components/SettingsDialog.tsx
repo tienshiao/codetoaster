@@ -1,6 +1,13 @@
+import { useMemo } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "../hooks/use-theme";
-import { useTerminalTheme, terminalThemeNames, terminalFontOptions } from "../hooks/use-terminal-theme";
+import {
+  useTerminalTheme,
+  terminalThemeNames,
+  terminalThemeSwatches,
+  terminalFontOptions,
+  TERMINAL_SWATCH_KEYS,
+} from "../hooks/use-terminal-theme";
 import { useNotificationSound, useBellSound, SOUND_OPTIONS } from "../hooks/use-notification-sound";
 import { Dialog } from "@/frontend/components/v2/Dialog";
 import { Button } from "@/frontend/components/v2/Button";
@@ -25,23 +32,41 @@ const fontSizeOptions = [
   { value: "24", label: "24" },
 ];
 
-const swatchNames = [
-  "background",
-  "foreground",
-  "black",
-  "red",
-  "green",
-  "yellow",
-  "blue",
-  "magenta",
-  "cyan",
-  "white",
-];
+/** A theme's palette as a row of colours. Small on a picker row, larger under
+ * the setting itself — the same ten colours in the same order either way, so
+ * the row you chose and the strip that confirms it are visibly the same thing.
+ *
+ * The preview shares out the column rather than claiming ten fixed widths.
+ * Ten of those came to 334px against a 311px column, and an `fr` track takes
+ * its minimum from its content — so the strip was quietly widening the whole
+ * second column and leaving this one row's select 23px left of the four under
+ * it. `min-w-0` is the other half: without it a flex item will not shrink
+ * below its content either. */
+function Swatches({ colors, size }: { colors: string[]; size: "row" | "preview" }) {
+  return (
+    <span className={size === "row" ? "flex gap-px" : "flex gap-1.5 pt-1"}>
+      {colors.map((color, i) => (
+        <span
+          key={i}
+          className={
+            size === "row"
+              ? "h-3 w-1.5 rounded-[1px]"
+              : "h-5 min-w-0 flex-1 rounded-sm border border-border"
+          }
+          // The fill is the terminal palette being previewed — data, not app
+          // chrome, so it stays inline.
+          style={{ backgroundColor: color }}
+          title={size === "preview" ? TERMINAL_SWATCH_KEYS[i] : undefined}
+        />
+      ))}
+    </span>
+  );
+}
 
 /**
  * The v2 `Select` is a chip sized to its value; these sit in a settings column
  * and want the whole of it, with the chevron at the far edge the way the v1
- * trigger drew it. The inner `<select>` grows to fill (see `Select`), so the
+ * trigger drew it. The trigger's value grows to fill (see `Select`), so the
  * chevron lands at the trailing edge without a `justify-between` that would
  * leave the space between them dead to a click.
  */
@@ -70,6 +95,27 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { themeName, setThemeName, theme: terminalTheme, fontFamily, setFontFamily, fontSize, setFontSize } = useTerminalTheme();
   const { soundOption, setSoundOption, previewSound } = useNotificationSound();
   const { soundOption: bellOption, setSoundOption: setBellOption, previewSound: previewBell } = useBellSound();
+
+  // 157 themes, each with ten swatches, built once rather than on every
+  // keystroke of the picker's filter — the list itself never changes.
+  const terminalThemeItems = useMemo(
+    () => [
+      { value: "default", label: "Default" },
+      ...terminalThemeNames.map((name) => {
+        const swatches = terminalThemeSwatches(name);
+        return {
+          value: name,
+          label: name,
+          trailing: swatches ? <Swatches colors={swatches} size="row" /> : undefined,
+        };
+      }),
+    ],
+    [],
+  );
+
+  const previewSwatches = terminalTheme
+    ? TERMINAL_SWATCH_KEYS.map((key) => (terminalTheme[key] as string | undefined) ?? "transparent")
+    : undefined;
 
   return (
     <Dialog
@@ -119,42 +165,19 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <label className="text-sm font-medium">Terminal Theme</label>
             <p className="text-xs text-muted-foreground">Color scheme for the terminal emulator</p>
           </div>
-          <div className="space-y-2">
+          <div className="min-w-0 space-y-2">
             <Select
               className={SELECT}
               aria-label="Terminal Theme"
               value={themeName || "default"}
-              onChange={(e) => setThemeName(e.target.value === "default" ? "" : e.target.value)}
-              options={[
-                { value: "default", label: "Default" },
-                ...terminalThemeNames.map((name) => ({ value: name, label: name })),
-              ]}
+              onValueChange={(value) => setThemeName(value === "default" ? "" : value)}
+              // 157 of them, alphabetical, and named things like "Sundried"
+              // and "Hivacruz". Without these two the only way to choose was
+              // to apply one and look at the strip below.
+              filterPlaceholder="Type to filter"
+              options={terminalThemeItems}
             />
-            {terminalTheme && (
-              <div className="flex gap-1.5 pt-1">
-                {[
-                  terminalTheme.background,
-                  terminalTheme.foreground,
-                  terminalTheme.black,
-                  terminalTheme.red,
-                  terminalTheme.green,
-                  terminalTheme.yellow,
-                  terminalTheme.blue,
-                  terminalTheme.magenta,
-                  terminalTheme.cyan,
-                  terminalTheme.white,
-                ].map((color, i) => (
-                  <div
-                    key={i}
-                    className="h-5 w-7 rounded-sm border border-border"
-                    // The fill is the terminal palette being previewed — data,
-                    // not app chrome, so it stays inline.
-                    style={{ backgroundColor: color }}
-                    title={swatchNames[i]}
-                  />
-                ))}
-              </div>
-            )}
+            {previewSwatches ? <Swatches colors={previewSwatches} size="preview" /> : null}
           </div>
         </div>
         <div className="grid sm:grid-cols-[1fr_1.5fr] gap-x-6 gap-y-2 items-start">
@@ -166,7 +189,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             className={SELECT}
             aria-label="Terminal Font"
             value={fontFamily || "default"}
-            onChange={(e) => setFontFamily(e.target.value === "default" ? "" : e.target.value)}
+            onValueChange={(value) => setFontFamily(value === "default" ? "" : value)}
             options={[
               { value: "default", label: "Default (monospace)" },
               ...terminalFontOptions.map((font) => ({ value: font.value, label: font.label })),
@@ -182,7 +205,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             className={SELECT}
             aria-label="Font Size"
             value={String(fontSize || 0)}
-            onChange={(e) => setFontSize(Number(e.target.value))}
+            onValueChange={(value) => setFontSize(Number(value))}
             options={fontSizeOptions}
           />
         </div>
@@ -195,10 +218,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             className={SELECT}
             aria-label="Notification Sound"
             value={soundOption}
-            onChange={(e) => {
-              const value = e.target.value as typeof soundOption;
-              setSoundOption(value);
-              previewSound(value);
+            onValueChange={(value) => {
+              setSoundOption(value as typeof soundOption);
+              previewSound(value as typeof soundOption);
             }}
             options={[...SOUND_OPTIONS]}
           />
@@ -212,10 +234,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             className={SELECT}
             aria-label="Bell Sound"
             value={bellOption}
-            onChange={(e) => {
-              const value = e.target.value as typeof bellOption;
-              setBellOption(value);
-              previewBell(value);
+            onValueChange={(value) => {
+              setBellOption(value as typeof bellOption);
+              previewBell(value as typeof bellOption);
             }}
             options={[...SOUND_OPTIONS]}
           />
