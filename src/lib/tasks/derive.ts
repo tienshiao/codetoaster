@@ -60,8 +60,9 @@ const TITLE_MAX = 60;
  * paragraphs under it are the detail.
  *
  * Undefined for a prompt that says nothing, which is a real case rather than a
- * defensive one: a task can be created with no prompt at all (the sidebar's New
- * task button), and the caller falls back to the directory label for those.
+ * defensive one: a task can be created with no prompt at all (`POST /api/tasks`
+ * without one, which the CLI can do), and the caller falls back to the
+ * directory label for those.
  *
  * Deliberately *not* recorded as a manual title. A rename is a choice the user
  * made and outranks the live terminal title for good (naming.ts); this is a

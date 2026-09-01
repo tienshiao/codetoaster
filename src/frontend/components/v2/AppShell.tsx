@@ -81,6 +81,9 @@ export interface AppShellProps {
   onToggleGrouping?: () => void;
   showArchived?: boolean;
   onToggleArchived?: () => void;
+  /** The header's `+`. It opens the composer rather than creating anything —
+   * the project, model, mode and worktree a task is decided by all live there
+   * (§7.5). */
   onNewTask?: () => void;
   /** Checkouts the boot sweep found and would not delete (§5.6). A band at the
    * foot of the list rather than rows in it, because these are not tasks and

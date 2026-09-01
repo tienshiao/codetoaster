@@ -66,8 +66,9 @@ describe("titleFromPrompt", () => {
   });
 
   test("says nothing for a prompt that says nothing", () => {
-    // Not defensive: a task can be created with no prompt at all — the
-    // sidebar's New task button — and the caller falls back to the directory.
+    // Not defensive: a task can be created with no prompt at all — `POST
+    // /api/tasks` without one, which the CLI can do — and the caller falls
+    // back to the directory.
     expect(titleFromPrompt(undefined)).toBeUndefined();
     expect(titleFromPrompt("")).toBeUndefined();
     expect(titleFromPrompt("   \n\t\n  ")).toBeUndefined();

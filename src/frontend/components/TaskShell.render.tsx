@@ -47,7 +47,10 @@ vi.mock("@/frontend/TaskContext", () => ({
 }));
 vi.mock("sonner", () => ({ toast: Object.assign(stubs.toast, { error: vi.fn() }) }));
 vi.mock("@/frontend/PtyContext", () => ({ usePty: () => ({ sendInput: vi.fn() }) }));
-vi.mock("@/frontend/hooks/use-task-nav", () => ({ useOpenTask: () => vi.fn() }));
+vi.mock("@/frontend/hooks/use-task-nav", () => ({
+  useOpenTask: () => vi.fn(),
+  useOpenComposer: () => vi.fn(),
+}));
 vi.mock("@/frontend/hooks/use-explorer-panel", () => ({
   useExplorerPanel: () => ({ section: "Changes", setSection: vi.fn(), open: false, setOpen: vi.fn() }),
 }));

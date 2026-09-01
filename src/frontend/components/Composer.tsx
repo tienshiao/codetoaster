@@ -1,7 +1,7 @@
 import { useCallback, useState, type KeyboardEvent } from "react";
 import { CornerDownLeft, Folder, GitBranch } from "lucide-react";
 import { useTasks } from "@/frontend/TaskContext";
-import { useOpenTask } from "@/frontend/hooks/use-task-nav";
+import { COMPOSER_PROMPT_ID, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { Button } from "@/frontend/components/v2/Button";
 import { Checkbox } from "@/frontend/components/v2/Checkbox";
 import { KeyHint } from "@/frontend/components/v2/KeyHint";
@@ -35,14 +35,27 @@ const MODES = optionsWithFallback(PERMISSION_MODE_VALUES, "Project default");
  * the project's own answer, because the server resolves an absent field
  * against the project's columns and that is what gives the HTTP API and the
  * CLI the same behaviour for free (§7.5).
+ *
+ * `projectId` is what a project group's `+` in the sidebar asks for, carried
+ * here as `/?project=<id>`. It is a preference and not an address: it seeds the
+ * selection and every later change to it moves the selection, but an id that
+ * names no project falls through the same fallback a deleted project's id does
+ * and the composer opens on the first one. Nothing else is disturbed by it —
+ * the prompt in particular, since the user can already be typing when the
+ * request arrives.
  */
 
-export function Composer() {
+export interface ComposerProps {
+  /** The project to open on, if the caller has an opinion (§7.5). */
+  projectId?: string;
+}
+
+export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) {
   const { projects, createTask } = useTasks();
   const openTask = useOpenTask();
 
   const [prompt, setPrompt] = useState("");
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(requestedProjectId ?? "");
   const [model, setModel] = useState(PROJECT_DEFAULT);
   const [mode, setMode] = useState(PROJECT_DEFAULT);
   const [worktree, setWorktree] = useState(false);
@@ -50,9 +63,24 @@ export function Composer() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // The same "adjust state when a prop changes" as the seeding below, for the
+  // one prop that is a request rather than a fact: `/` is already showing when
+  // a project group's `+` is pressed, so this never remounts and the new id
+  // arrives as a changed prop into a live form. Only the selection moves — the
+  // prompt is the user's and may already have been typed into, and it is the
+  // only copy of it. Tracked by *what was last asked for* rather than by what
+  // is selected, so a hand-made selection is not undone on every render, and so
+  // asking for the same project twice after a detour still lands.
+  const [lastRequested, setLastRequested] = useState(requestedProjectId ?? null);
+  if ((requestedProjectId ?? null) !== lastRequested) {
+    setLastRequested(requestedProjectId ?? null);
+    if (requestedProjectId) setProjectId(requestedProjectId);
+  }
+
   // The list arrives over the socket, so there is a first render with no
   // projects at all and the selection has to survive it: an id held from before
-  // a project was deleted elsewhere is no longer a choice either.
+  // a project was deleted elsewhere is no longer a choice either — and neither
+  // is a `?project=` naming one that never existed, which lands here too.
   const project = projects.find((p) => p.id === projectId) ?? projects[0];
 
   // React's own "adjust state when a prop changes": model and mode belong to
@@ -119,8 +147,7 @@ export function Composer() {
         // The grid the agent is spawned at, before any client has attached and
         // so the only size the server has to go on. Left off, the agent paints
         // its opening banner at the 80×24 fallback and reflows the moment the
-        // tab attaches at the real width. Same pair the sidebar's "new task"
-        // sends, so the two doors produce the same task.
+        // tab attaches at the real width.
         cols: 120,
         rows: 30,
       },
@@ -157,6 +184,12 @@ export function Composer() {
     <div className="grid h-full place-items-center overflow-auto p-6">
       <div className="flex w-full max-w-[720px] flex-col gap-2.5">
         <Textarea
+          // Addressed by id, and focused on mount: arriving at `/` — by the
+          // sidebar's New task button or by any other route — means the user
+          // is about to type. `useOpenComposer` focuses it by that id for the
+          // case where `/` is already showing and this never remounts.
+          id={COMPOSER_PROMPT_ID}
+          autoFocus
           rows={5}
           value={prompt}
           placeholder="What should the agent do?"

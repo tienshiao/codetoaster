@@ -22,7 +22,14 @@ const stubs = vi.hoisted(() => ({
 vi.mock("@/frontend/TaskContext", () => ({
   useTasks: () => ({ projects: stubs.projects, createTask: stubs.createTask }),
 }));
-vi.mock("@/frontend/hooks/use-task-nav", () => ({ useOpenTask: () => stubs.openTask }));
+vi.mock("@/frontend/hooks/use-task-nav", async (importOriginal) => ({
+  // The real module, with only the navigation replaced. `COMPOSER_PROMPT_ID`
+  // in particular has to be the real one: the composer puts it on the textarea
+  // and `useOpenComposer` focuses by it, so a copy of the literal here would
+  // keep passing after the constant moved — which is the drift worth catching.
+  ...(await importOriginal<typeof import("@/frontend/hooks/use-task-nav")>()),
+  useOpenTask: () => stubs.openTask,
+}));
 
 const { Composer } = await import("./Composer");
 
@@ -249,4 +256,40 @@ test("changing project re-seeds the model from the project it moved to", () => {
   fireEvent.change(screen.getByLabelText("project"), { target: { value: "web" } });
   // Not carried across: the choice belonged to the project it was read from.
   expect(valueOf("model")).toBe("");
+});
+
+describe("the project a group's + asked for", () => {
+  test("opens on that project, seeded from its columns", () => {
+    // TASK-77: `/?project=web`. Not just the select — the project's own
+    // defaults come with it, since the seeding is keyed off the selection and
+    // this moved the selection.
+    stubs.projects = [project("general"), project("web", { defaultModel: "sonnet" })];
+    render(<Composer projectId="web" />);
+
+    expect(valueOf("project")).toBe("web");
+    expect(valueOf("model")).toBe("sonnet");
+  });
+
+  test("arriving while the user is typing moves the selection and nothing else", () => {
+    // The real shape of it: `/` is already showing, so pressing a group's `+`
+    // changes a prop on a live composer rather than mounting a new one. The
+    // prompt is the user's and the only copy of it.
+    const view = render(<Composer />);
+    type("ship it");
+    expect(valueOf("project")).toBe("general");
+
+    view.rerender(<Composer projectId="web" />);
+
+    expect(valueOf("project")).toBe("web");
+    expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe("ship it");
+  });
+
+  test("an id that names no project is not honoured", () => {
+    // A preference, not an address: a stale link or a project deleted on
+    // another client leaves the composer on the first project rather than on
+    // nothing at all.
+    render(<Composer projectId="nope" />);
+
+    expect(valueOf("project")).toBe("general");
+  });
 });

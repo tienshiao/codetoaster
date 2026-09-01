@@ -680,6 +680,15 @@ grows without bound and is no longer hand-curated, so it needs:
 Because the sidebar carries history, the composer stays minimal — no "recent tasks"
 list underneath duplicating what is already on screen.
 
+**The sidebar's New task button opens the composer and creates nothing.** It is a
+navigation to `/` with the prompt box focused, not a second door onto `POST /api/tasks`:
+every answer a task needs before it starts — project, model, permission mode, worktree —
+is a control in the composer, and a button that spawned a task directly would be
+choosing all of them, and a promptless task, on the user's behalf. Each project group
+header carries its own `+` alongside it, which opens the composer at `/?project=<id>` with
+that project already selected; the composer treats the parameter as a preference rather
+than an address, and an id it does not know is simply not honoured.
+
 Submit → `POST /api/tasks` → server creates the worktree, writes the per-task settings,
 spawns the agent with the prompt in argv → client navigates to `/t/<slug>` with the
 agent tab focused.
@@ -689,7 +698,8 @@ agent tab focused.
 opening line, so the live OSC terminal title is still projected over it by
 `sessionDisplayNames` exactly as it is over a `<dir> · <branch>` label. A rename is the
 only thing that outranks the agent's own account of what it is doing. A task started
-with no prompt — the sidebar's New task button — falls back to `<dir> · <branch>`.
+with no prompt — `POST /api/tasks` without one, which the CLI can do — falls back to
+`<dir> · <branch>`.
 
 The card's second line is **`last_message`, not the terminal title.** The original plan
 here was to demote the OSC projection to a subtitle, but the two want the same row and

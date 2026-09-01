@@ -1,5 +1,6 @@
 import { test, expect, vi, beforeEach } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ChangeEvent } from "react";
 import type { ProjectInfo, TaskInfo } from "@/lib/xtmux/types";
 import { resetSidebarState } from "./sidebar-store";
@@ -67,7 +68,10 @@ function project(id: string, name: string): ProjectInfo {
 // and fetches, and none of that is what this file is asking about. The two
 // tasks and two projects are only enough to give the grouping something to
 // group and the closed-group record something to name.
-const stubs = vi.hoisted(() => ({ loadArchivedTasks: vi.fn(async () => {}) }));
+const stubs = vi.hoisted(() => ({
+  loadArchivedTasks: vi.fn(async () => {}),
+  onNewTask: vi.fn(),
+}));
 
 vi.mock("@/frontend/TaskContext", () => ({
   useTasks: () => ({
@@ -108,7 +112,7 @@ type SidebarProps = import("./components/TaskSidebar").TaskSidebarProps;
  */
 function mount() {
   const view = renderHook(() =>
-    useTaskSidebar({ selectedTaskId: null, onSelectTask: vi.fn() }),
+    useTaskSidebar({ selectedTaskId: null, onSelectTask: vi.fn(), onNewTask: stubs.onNewTask }),
   );
   return {
     unmount: () => view.unmount(),
@@ -127,6 +131,7 @@ beforeEach(() => {
   resetSidebarState();
   localStorage.clear();
   stubs.loadArchivedTasks.mockClear();
+  stubs.onNewTask.mockClear();
 });
 
 test("grouping the list survives a navigation", () => {
@@ -193,4 +198,35 @@ test("a closed group named by the store but gone from the list is simply inert",
   expect(view.state.grouped).toBe(true);
   expect(view.state.groups.map((g) => g.id)).toEqual(["website", "infra"]);
   expect(view.state.groups.every((g) => g.open)).toBe(true);
+});
+
+test("the header's New task names no project", () => {
+  // TASK-76: the hook used to build this itself, as a promptless `createTask`.
+  // It is a navigation to the composer now, which is the route's business and
+  // not the sidebar's — so the only thing to assert here is what the hook adds
+  // to it, which for the header's button is nothing.
+  //
+  // Called bare rather than passed straight through (TASK-77): the shell wires
+  // this onto a button, and handing the caller's function over directly would
+  // deliver a MouseEvent into the options argument.
+  const view = mount();
+  act(() => view.state.onNewTask());
+  expect(stubs.onNewTask).toHaveBeenCalledTimes(1);
+  expect(stubs.onNewTask).toHaveBeenCalledWith();
+});
+
+test("a project group's New task names that group's project", () => {
+  // TASK-77. The button lives in the group header's actions, which the hook
+  // builds per group — so this mounts the node it built rather than asserting
+  // on a callback, since which project each header closes over is the whole
+  // question. A client because the settings dialog next to it asks the server
+  // for directories; see `TaskSidebar.render.tsx`.
+  const view = mount();
+  const group = view.state.groups[0]!;
+
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}>{group.actions}</QueryClientProvider>);
+
+  fireEvent.click(screen.getByRole("button", { name: /new task in/i }));
+  expect(stubs.onNewTask).toHaveBeenCalledWith({ projectId: group.id });
 });

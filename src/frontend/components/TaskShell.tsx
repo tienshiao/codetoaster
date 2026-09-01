@@ -9,7 +9,7 @@ import { WipNotice } from "@/frontend/components/WipNotice";
 import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
-import { useOpenTask } from "@/frontend/hooks/use-task-nav";
+import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { pathLabel } from "@/frontend/utils/path-label";
 import { TabArea, TabPane, useTaskLayout } from "@/frontend/components/tabs";
 import {
@@ -49,11 +49,16 @@ export interface TaskShellProps {
 export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }: TaskShellProps) {
   const { tasks, loaded, home, openShell, closeShell, setViewedTask } = useTasks();
   const openTask = useOpenTask();
+  const openComposer = useOpenComposer();
   const explorerPanel = useExplorerPanel();
   const explorerSections = useExplorerRail(taskId);
   // A real layout for the selected task, persisted per task id.
   const { layout, setLayout } = useTaskLayout(taskId);
-  const sidebar = useTaskSidebar({ selectedTaskId: taskId, onSelectTask: openTask });
+  const sidebar = useTaskSidebar({
+    selectedTaskId: taskId,
+    onSelectTask: openTask,
+    onNewTask: openComposer,
+  });
   // The shell's footer draws the Settings button; the dialog it opens is held
   // here, since it is the shell's chrome and belongs to no task.
   const [settingsOpen, setSettingsOpen] = useState(false);

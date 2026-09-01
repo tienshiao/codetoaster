@@ -3,6 +3,15 @@ import { TaskShell } from "../components/TaskShell";
 import { Composer } from "../components/Composer";
 
 export const Route = createFileRoute("/")({
+  // `project` is a preference the sidebar's per-project `+` expresses, not an
+  // address: it says which project the composer should open on, and an id that
+  // names no project is simply not honoured. So it is validated only as "a
+  // string or absent" — whether it names a real project is the composer's
+  // question, and its answer depends on a list that arrives over the socket
+  // rather than on the URL.
+  validateSearch: (search: Record<string, unknown>): { project?: string } => ({
+    project: typeof search.project === "string" && search.project ? search.project : undefined,
+  }),
   component: HomeRoute,
 });
 
@@ -22,9 +31,10 @@ export const Route = createFileRoute("/")({
  * thing to do here is start one.
  */
 function HomeRoute() {
+  const { project } = Route.useSearch();
   return (
     <TaskShell taskId={null}>
-      <Composer />
+      <Composer projectId={project} />
     </TaskShell>
   );
 }

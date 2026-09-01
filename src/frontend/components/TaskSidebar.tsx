@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Archive, FolderPlus, Pencil, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Archive, FolderPlus, Pencil, Plus, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { archiveSummary } from "@/frontend/archive-summary";
 import { groupByProject, selectTasks } from "@/frontend/task-list";
@@ -332,14 +332,20 @@ interface ProjectActionsProps {
    * settings are still worth reaching: it has no repository, but it still
    * decides a default model and permission mode. */
   deletable: boolean;
+  /** Start a task in this project: the composer, opened with the project the
+   * press was made under already chosen. First among the header's controls
+   * because it is the one that is used, and the only one that is not
+   * administrative. */
+  onNewTask: () => void;
 }
 
-function ProjectActions({ project, onSave, onDelete, deletable }: ProjectActionsProps) {
+function ProjectActions({ project, onSave, onDelete, deletable, onNewTask }: ProjectActionsProps) {
   const [confirming, setConfirming] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const name = project.name;
   return (
     <>
+      <IconButton icon={Plus} label={`New task in ${name}`} size="sm" onClick={onNewTask} />
       <IconButton
         icon={SlidersHorizontal}
         label={`${name} settings`}
@@ -472,6 +478,11 @@ export function NewProjectButton({
 export interface TaskSidebarOptions {
   selectedTaskId: string | null;
   onSelectTask: (id: string) => void;
+  /** What the header's New task button does, and each project group header's.
+   * Passed in rather than decided here: it is a navigation, and the sidebar
+   * knows about tasks, not about addresses. The group headers name their
+   * project; the header at the top names none. */
+  onNewTask: (options?: { projectId?: string }) => void;
 }
 
 /** Exactly the left-column half of `AppShellProps`. Spread, so adding a control
@@ -494,13 +505,13 @@ export type TaskSidebarProps = Pick<
 export function useTaskSidebar({
   selectedTaskId,
   onSelectTask,
+  onNewTask,
 }: TaskSidebarOptions): TaskSidebarProps {
   const {
     tasks,
     archivedTasks,
     projects,
     unclaimed,
-    createTask,
     renameTask,
     closeTask,
     loadArchivedTasks,
@@ -742,10 +753,11 @@ export function useTaskSidebar({
           onSave={(name, path, settings) => handleSaveProject(group.id, name, path, settings)}
           onDelete={handleDeleteProject}
           deletable={group.id !== "general"}
+          onNewTask={() => onNewTask({ projectId: group.id })}
         />
       ) : undefined,
     }));
-  }, [rows, visible, projects, projectNames, closedGroups, filter, projectById, handleSaveProject, handleDeleteProject]);
+  }, [rows, visible, projects, projectNames, closedGroups, filter, projectById, handleSaveProject, handleDeleteProject, onNewTask]);
 
   const headerActions: ReactNode = <NewProjectButton onCreate={createProject} />;
 
@@ -777,7 +789,11 @@ export function useTaskSidebar({
     onToggleGrouping: () => setSidebar(toggleSidebarFlag("grouped")),
     showArchived,
     onToggleArchived: () => setSidebar(toggleSidebarFlag("showArchived")),
-    onNewTask: () => void createTask({ cols: 120, rows: 30 }),
+    // Bare, not passed through: the shell wires this straight onto a button, so
+    // handing the caller's function over directly would call it with a
+    // MouseEvent — which is now an options object, and would read as a request
+    // for a project whose id is `undefined` at best.
+    onNewTask: () => onNewTask(),
     headerActions,
   };
 }
