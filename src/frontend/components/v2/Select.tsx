@@ -47,7 +47,7 @@ export function Select({
     // the way they look like they are.
     <label
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border border-input bg-pane pl-2 pr-1.5",
+        "relative inline-flex items-center gap-1.5 rounded-md border border-input bg-pane pl-2 pr-1.5",
         "cursor-pointer focus-within:border-ring",
         size === "sm" ? "h-control-sm text-xs" : "h-control text-sm",
         disabled && "cursor-default opacity-50",
@@ -60,16 +60,21 @@ export function Select({
         aria-label={label}
         disabled={disabled}
         className={cn(
-          "cursor-pointer appearance-none border-0 bg-transparent pr-0.5 disabled:cursor-default",
+          "cursor-pointer appearance-none border-0 bg-transparent disabled:cursor-default",
           "font-sans tracking-ui text-foreground outline-none",
-          // The `<select>` takes the chip's spare width rather than sitting at
-          // its intrinsic one. Clicking a `<label>` only *focuses* a select — a
-          // select has no activation behaviour — so any part of the chip the
-          // element itself does not cover looks like it opens the picker and
-          // does not, the chevron included. `flex-auto` keeps the basis at the
-          // content size, so a chip with no width of its own is unchanged;
-          // `min-w-0` lets a long option clip instead of overflowing.
-          "min-w-0 flex-auto",
+          // The element has to cover the whole chip, because clicking a
+          // `<label>` only *focuses* a select — a select has no activation
+          // behaviour — so anywhere the element itself does not reach looks
+          // like it opens the picker and does not.
+          //
+          // `flex-auto` takes the spare width of a chip that has some (a
+          // settings row), while keeping the basis at content size so a chip
+          // that sizes to itself (the composer's) is unchanged. `min-w-0` lets
+          // a long option clip rather than overflow. `pr-5` is the room the
+          // chevron used to occupy in the flow, now held open from the inside —
+          // it is what keeps the chip the width it was, and what keeps the
+          // value from running under the glyph.
+          "min-w-0 flex-auto pr-5",
           size === "sm" ? "text-xs" : "text-sm",
         )}
         {...rest}
@@ -80,7 +85,15 @@ export function Select({
           </option>
         ))}
       </select>
-      <ChevronDown size={13} className="flex-none text-subtle-foreground" />
+      {/* Over the select's trailing padding rather than beside it, and inert.
+          In the flow it was a sibling the select could not extend under, which
+          made the one piece of chrome that says "this is a dropdown" the one
+          piece that did nothing when clicked. `pointer-events-none` hands the
+          click to the element underneath, which is now the select itself. */}
+      <ChevronDown
+        size={13}
+        className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-subtle-foreground"
+      />
     </label>
   );
 }
