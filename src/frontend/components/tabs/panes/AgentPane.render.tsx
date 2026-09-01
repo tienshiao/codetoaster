@@ -56,6 +56,7 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     lifecycle: "suspended",
     cwd: "/Users/someone/projects/app",
     worktreePath: null,
+    branch: null,
     lastMessage: null,
     clientCount: 0,
     size: { cols: 80, rows: 24 },

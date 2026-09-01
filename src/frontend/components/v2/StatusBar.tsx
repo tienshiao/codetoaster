@@ -27,13 +27,19 @@ export function StatusBar({ state, items = [], right, className }: StatusBarProp
         </span>
       ) : null}
       {items.map((it, i) => (
-        // `min-w-0` so an item that is too long loses its own characters rather
-        // than pushing the ones after it off the bar. A flex child's default
-        // `min-width: auto` refuses to shrink below its content, which is what
-        // turns one long value — a task's working directory — into a bar that
-        // silently stops showing the grid size. Nothing here is load-bearing
-        // enough to be worth that, and the long ones carry a `title`.
-        <span key={i} className="min-w-0 truncate">
+        // A string is a short machine value — `91×45`, `2 viewing` — and is
+        // pinned; anything the caller had to build a node for is the one that
+        // may be long, and is the one allowed to lose characters.
+        //
+        // The distinction has to be made *somewhere*, and per-item is the only
+        // place it can be: a flex child's default `min-width: auto` refuses to
+        // shrink below its content, so without `min-w-0` one long working
+        // directory pushes the grid size off the end of the bar — but with
+        // `min-w-0` on everything the deficit is shared out in proportion to
+        // content width, so a tight bar truncates `2 viewing` into `2 view…`
+        // as well. Pinning the strings gets both: the long item absorbs the
+        // whole squeeze, and it is the one carrying a `title`.
+        <span key={i} className={typeof it === "string" ? "flex-none" : "min-w-0 truncate"}>
           {it}
         </span>
       ))}

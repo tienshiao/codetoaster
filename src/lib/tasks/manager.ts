@@ -547,13 +547,28 @@ export class TaskManager {
     // its project was deleted would have its live checkout read as a stranger's
     // and never reconciled.
     const projectIds = new Set(this.projects.map((p) => p.id));
+    const taskIds = new Set<string>();
     for (const row of this.store.list()) {
+      taskIds.add(row.id);
       if (row.worktree_path) projectIds.add(path.basename(path.dirname(row.worktree_path)));
     }
 
+    // "Minted per database" is true of every project id but one. `general` is
+    // inserted by the schema into *every* database that is opened, so two
+    // daemons on two `--db` files both name it, and its bucket is the one place
+    // the id above proves nothing — a second daemon's clean checkout under
+    // `<root>/general/<id>` would read as our orphan and be deleted, which is
+    // the failure the scoping exists to prevent. There the task id decides,
+    // since that really is ours or not.
     let report: ReconcileReport;
     try {
-      report = await reconcileWorktrees({ repoRoots: [...repoRoots], claimed, projectIds });
+      report = await reconcileWorktrees({
+        repoRoots: [...repoRoots],
+        claimed,
+        projectIds,
+        sharedProjectIds: new Set(["general"]),
+        taskIds,
+      });
     } catch (e) {
       console.warn("Could not reconcile worktrees:", e);
       return { removed: [], unclaimed: [] };
@@ -3044,6 +3059,7 @@ export class TaskManager {
         && !this.archiving.has(row.id),
       cwd: row.cwd,
       worktreePath: row.worktree_path,
+      branch: row.branch,
       lastMessage: row.last_message,
       clientCount: pty?.getClientCount() ?? 0,
       // A suspended task remembers the grid it had, so resuming it does not

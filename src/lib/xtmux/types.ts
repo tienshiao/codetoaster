@@ -241,6 +241,16 @@ export interface TaskInfo {
    * worth saying is when the two disagree, because that is an agent that has
    * cd'd out of its own checkout (§5.4). */
   worktreePath: string | null;
+  /** The branch the task's checkout is on, or null for a task with no checkout
+   * of its own.
+   *
+   * Off the row, and deliberately *not* read out of `worktree` below. That is a
+   * measurement, and the server only measures a checkout that is on disk — so
+   * an evicted task, or one whose first measurement has not landed yet, has a
+   * branch in the database and `worktree: null` on the wire. A client reading
+   * the branch off the measurement conflates "no branch" with "not measured",
+   * which is the one thing `TaskWorktreeInfo` says not to do. */
+  branch: string | null;
   /** The last thing the agent said, from the Stop hook. The task list shows it
    * under the title, which is how a list of thirty answers "which of these
    * want me?" without opening any of them (§7.5). Null until the agent has

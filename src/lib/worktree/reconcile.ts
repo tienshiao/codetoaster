@@ -130,8 +130,22 @@ async function repoOfCheckout(dir: string): Promise<string | null> {
  * task row are both gone, so nothing here can name its id. That is left on
  * disk forever, which is the right way round — it takes two failures to reach
  * (deleting a task already removes its checkout), and the alternative is a
- * sweep that reaches into another daemon's work. */
-function checkoutsOnDisk(projectIds: ReadonlySet<string>): string[] {
+ * sweep that reaches into another daemon's work.
+ *
+ * **`sharedProjectIds` is the hole in "ids are minted per database".** Not all
+ * of them are: the schema inserts `general` into *every* database it opens, so
+ * two daemons on two `--db` files both name it, and the id alone is no longer
+ * evidence that `<root>/general/<taskId>` is ours. For those buckets the task
+ * id decides instead — it really is minted per database — and a directory
+ * whose task id is not a row here is left exactly as alone as a stranger's
+ * project would be. The cost is the same doubly-orphaned case as above, now
+ * also reached by a `general` checkout whose row was hard-deleted without its
+ * directory going with it. */
+function checkoutsOnDisk(
+  projectIds: ReadonlySet<string>,
+  sharedProjectIds: ReadonlySet<string>,
+  taskIds: ReadonlySet<string>,
+): string[] {
   const root = worktreesRoot();
   const found: string[] = [];
   let projects: fs.Dirent[];
@@ -144,6 +158,7 @@ function checkoutsOnDisk(projectIds: ReadonlySet<string>): string[] {
   }
   for (const project of projects) {
     if (!project.isDirectory() || !projectIds.has(project.name)) continue;
+    const shared = sharedProjectIds.has(project.name);
     let tasks: fs.Dirent[];
     try {
       tasks = fs.readdirSync(path.join(root, project.name), { withFileTypes: true });
@@ -151,7 +166,9 @@ function checkoutsOnDisk(projectIds: ReadonlySet<string>): string[] {
       continue;
     }
     for (const task of tasks) {
-      if (task.isDirectory()) found.push(path.join(root, project.name, task.name));
+      if (!task.isDirectory()) continue;
+      if (shared && !taskIds.has(task.name)) continue;
+      found.push(path.join(root, project.name, task.name));
     }
   }
   return found;
@@ -169,6 +186,12 @@ function checkoutsOnDisk(projectIds: ReadonlySet<string>): string[] {
  * see `checkoutsOnDisk`. A directory under an id that is not in it is somebody
  * else's daemon's, and is not touched, reported or counted.
  *
+ * `sharedProjectIds` names the ids that bound nothing, because every database
+ * mints them identically — `general` is one. Under those, `taskIds` (the rows
+ * this database holds) is what separates our checkouts from another daemon's.
+ * Both default to empty, which is the pre-existing behaviour: a caller that
+ * knows of no shared id has nothing to narrow.
+ *
  * `repoRoots` is where to look first — the repositories the daemon already
  * knows about, from projects and from tasks' `worktree_repo`. It is an
  * optimisation and not the source of truth: git's own list gives us a
@@ -183,6 +206,8 @@ export async function reconcileWorktrees(input: {
   repoRoots: readonly string[];
   claimed: ReadonlySet<string>;
   projectIds: ReadonlySet<string>;
+  sharedProjectIds?: ReadonlySet<string>;
+  taskIds?: ReadonlySet<string>;
 }): Promise<ReconcileReport> {
   const root = worktreesRoot();
   // Path → the repository it belongs to, where something already knows. Filled
@@ -199,7 +224,11 @@ export async function reconcileWorktrees(input: {
   // The union of the two views, minus everything a task claims. A registered
   // worktree whose directory is gone is *not* an orphan to act on — that is
   // what `worktree prune` is for, at the end.
-  const orphans = checkoutsOnDisk(input.projectIds)
+  const orphans = checkoutsOnDisk(
+    input.projectIds,
+    input.sharedProjectIds ?? new Set<string>(),
+    input.taskIds ?? new Set<string>(),
+  )
     .map((dir) => path.resolve(dir))
     .filter((dir) => !input.claimed.has(dir));
 

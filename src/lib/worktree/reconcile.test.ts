@@ -65,6 +65,10 @@ async function sweep(
   // has invented, which is what a daemon holding all of them would pass; the
   // scoping test narrows it to model a daemon that holds only some.
   projectIds: readonly string[] = ourProjectIds(),
+  // The ids the caller says every database mints alike — `general` at run time
+  // — and the task rows it holds. Empty by default, which is the case where the
+  // project id alone is enough.
+  shared: { sharedProjectIds?: readonly string[]; taskIds?: readonly string[] } = {},
 ) {
   return reconcileWorktrees({
     repoRoots,
@@ -73,6 +77,8 @@ async function sweep(
     // not invent, so `foreignCheckouts` above is now the second line rather
     // than the first — and it stays, because a gap here costs somebody's work.
     projectIds: new Set(projectIds),
+    sharedProjectIds: new Set(shared.sharedProjectIds ?? []),
+    taskIds: new Set(shared.taskIds ?? []),
   });
 }
 
@@ -310,6 +316,32 @@ describe("reconcileWorktrees", () => {
     // to remove, it is a directory that is none of our business, and a card
     // asking the user about another daemon's live checkout would be its own
     // kind of wrong.
+    expect(report.unclaimed).toEqual([]);
+    expect(fs.existsSync(other.worktreePath)).toBe(true);
+  });
+
+  // The hole in "ids are minted per database": `general` is not. The schema
+  // inserts it into every database it opens, so two daemons on two `--db` files
+  // both name it and the id above stops being evidence of anything. Under such
+  // a bucket the *task* id is what separates our checkout from a stranger's —
+  // and a test scoped to a temp id rather than the literal `general`, because a
+  // suite that made real directories under the developer's own `general` and
+  // then swept them is the very accident this is about.
+  test("under a shared project id, only our own task ids are ours to sweep", async () => {
+    const { root } = await tempRepo();
+    const shared = project(root);
+    const mineTask = task("Ours");
+    const mine = await createWorktree(shared, mineTask, "main");
+    const other = await createWorktree(shared, task("Another daemon's"), "main");
+
+    const report = await sweep([root], [], [shared.id], {
+      sharedProjectIds: [shared.id],
+      taskIds: [mineTask.id],
+    });
+
+    expect(report.removed).toEqual([mine.worktreePath]);
+    expect(fs.existsSync(mine.worktreePath)).toBe(false);
+    // Untouched *and* unreported, for the same reason as the test above.
     expect(report.unclaimed).toEqual([]);
     expect(fs.existsSync(other.worktreePath)).toBe(true);
   });

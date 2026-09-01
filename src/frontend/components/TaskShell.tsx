@@ -343,6 +343,13 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
           // The branch is drawn only when there is one. A task running in the
           // project's own directory has no checkout of ours and a detached head
           // has no branch, and neither is a blank worth a column.
+          //
+          // Read off the task and not off `worktree`, which is the *measurement*
+          // and exists only for a checkout that is on disk. Taking it from there
+          // left an evicted task saying nothing at all about where it is — no
+          // branch, because nothing had been measured, and no path either,
+          // because the rule above suppresses it — which is the state a task
+          // spends most of its life in.
           items: selected
             ? [
                 ...(selected.cwd === selected.worktreePath
@@ -352,7 +359,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                         {pathLabel(selected.cwd, home)}
                       </span>,
                     ]),
-                ...(selected.worktree?.branch ? [selected.worktree.branch] : []),
+                ...(selected.branch ? [selected.branch] : []),
                 `${selected.size.cols}×${selected.size.rows}`,
                 `${selected.clientCount} viewing`,
               ]

@@ -606,16 +606,21 @@ export function useTaskSidebar({
   // `selectTasks` keeps its `archived` predicate all the same — it is the
   // guarantee that an archived row never draws while the toggle is off,
   // whoever concatenated what.
-  const visible = useMemo(
-    () =>
-      selectTasks(showArchived ? [...tasks, ...archivedTasks] : tasks, {
-        labels,
-        projectNames,
-        filter,
-        showArchived,
-      }),
-    [tasks, archivedTasks, labels, projectNames, filter, showArchived],
-  );
+  //
+  // Concatenated by id and not blindly, because for a moment the two lists can
+  // hold the same task. They are corrected by different transports — `tasks` by
+  // the socket's delta, `archivedTasks` by a fetch — so an archive whose fetch
+  // lands before the delta that drops the live row has the task in both, and
+  // the row would draw twice under one React key. The live copy wins: it is the
+  // one the socket is about to correct.
+  const visible = useMemo(() => {
+    let all = tasks;
+    if (showArchived) {
+      const live = new Set(tasks.map((t) => t.id));
+      all = [...tasks, ...archivedTasks.filter((t) => !live.has(t.id))];
+    }
+    return selectTasks(all, { labels, projectNames, filter, showArchived });
+  }, [tasks, archivedTasks, labels, projectNames, filter, showArchived]);
 
   const rows = useMemo(() => {
     // Read inside the memo, not in the render body: as a dependency it changes

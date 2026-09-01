@@ -121,6 +121,7 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     lifecycle: "live",
     cwd: "/Users/someone/projects/app",
     worktreePath: null,
+    branch: null,
     lastMessage: null,
     clientCount: 0,
     size: { cols: 80, rows: 24 },
@@ -344,12 +345,42 @@ test("a dismissed WIP notice does not follow the user to the next task", () => {
  */
 test("the status bar drops a path that is only the task's own worktree", () => {
   const checkout = "/Users/someone/.codetoaster/worktrees/ct/4b55ec75-3bd6-4dbd-a2e1-937affffb044";
-  stubs.tasks = [task({ cwd: checkout, worktreePath: checkout })];
+  stubs.tasks = [task({ cwd: checkout, worktreePath: checkout, branch: "ct/thing" })];
   renderShell();
 
   const status = screen.getByTestId("status-items").textContent ?? "";
   expect(status).not.toContain("worktrees");
   expect(status).not.toContain("4b55ec75");
+  // Dropping the path is only defensible because the branch is saying it.
+  expect(status).toContain("ct/thing");
+});
+
+/**
+ * The state a task spends most of its life in, and the one the first version of
+ * this got wrong.
+ *
+ * The server measures only a checkout that is on disk, so an evicted task has
+ * `worktree: null` — and reading the branch out of that measurement left the
+ * bar saying *nothing at all* about where the task is: no branch, because
+ * nothing had been measured, and no path either, because the rule above
+ * suppresses it. The branch is a fact of the row, not of the measurement.
+ */
+test("an evicted task still says which branch it is on", () => {
+  const checkout = "/Users/someone/.codetoaster/worktrees/ct/4b55ec75";
+  stubs.tasks = [
+    task({
+      lifecycle: "suspended",
+      worktreeState: "evicted",
+      cwd: checkout,
+      worktreePath: checkout,
+      branch: "ct/thing",
+      // Nothing measured, which is what an evicted checkout always looks like.
+      worktree: null,
+    }),
+  ];
+  renderShell();
+
+  expect(screen.getByTestId("status-items").textContent).toContain("ct/thing");
 });
 
 test("an agent that has left its own checkout gets its path back", () => {
