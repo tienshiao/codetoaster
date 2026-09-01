@@ -661,7 +661,10 @@ The composer itself:
 
 - prompt textarea (⌘⏎ to submit)
 - project selector (existing `projects`, with `initialPath`)
-- an options row: new-worktree toggle + base ref, model, permission mode
+- an options row: new-worktree toggle + base ref, model. Not permission mode: the
+  chip was removed (TASK-80) because Claude Code answers that better than a form
+  does. The column, the `POST /api/tasks` field and the server's resolution of
+  them all remain, so the API and the CLI can still set one.
 
 **The left sidebar is the chat history, and the primary resume affordance.** v1's
 sidebar already does this job; what changes is what it has to survive. A cattle list
@@ -682,7 +685,7 @@ list underneath duplicating what is already on screen.
 
 **The sidebar's New task button opens the composer and creates nothing.** It is a
 navigation to `/` with the prompt box focused, not a second door onto `POST /api/tasks`:
-every answer a task needs before it starts — project, model, permission mode, worktree —
+every answer a task needs before it starts — project, model, worktree, base ref —
 is a control in the composer, and a button that spawned a task directly would be
 choosing all of them, and a promptless task, on the user's behalf. Each project group
 header carries its own `+` alongside it, which opens the composer at `/?project=<id>` with

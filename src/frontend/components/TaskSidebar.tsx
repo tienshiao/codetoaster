@@ -330,7 +330,7 @@ interface ProjectActionsProps {
    * leave them nowhere. The server refuses, and offering a button that opens a
    * dialog that does nothing would be worse than not offering one. Its
    * settings are still worth reaching: it has no repository, but it still
-   * decides a default model and permission mode. */
+   * decides a default model. */
   deletable: boolean;
   /** Start a task in this project: the composer, opened with the project the
    * press was made under already chosen. First among the header's controls
@@ -412,7 +412,7 @@ export function NewProjectButton({
         // A constant is enough: the dialog is closed between openings, so the
         // key passes through null and the blank values are read again.
         seedKey="new"
-        onSubmit={(name, path, settings) => onCreate(name, path, settings)}
+        onSubmit={onCreate}
         onClose={() => setOpen(false)}
       />
     </>

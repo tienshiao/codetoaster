@@ -16,6 +16,11 @@ const PROJECT_DEFAULT = UNSET;
 
 const MODELS = modelOptions("Project default");
 
+export interface ComposerProps {
+  /** The project to open on, if the caller has an opinion (§7.5). */
+  projectId?: string;
+}
+
 /**
  * Starting a task (§7.5).
  *
@@ -43,12 +48,6 @@ const MODELS = modelOptions("Project default");
  * the prompt in particular, since the user can already be typing when the
  * request arrives.
  */
-
-export interface ComposerProps {
-  /** The project to open on, if the caller has an opinion (§7.5). */
-  projectId?: string;
-}
-
 export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) {
   const { projects, createTask } = useTasks();
   const openTask = useOpenTask();

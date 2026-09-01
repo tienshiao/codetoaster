@@ -40,7 +40,7 @@ export function useOpenTask(): (taskId: string, options?: { tab?: string }) => v
  * Open the composer (§7.5).
  *
  * The sidebar's New task button lands here and creates nothing. Everything a
- * task is decided by — project, model, permission mode, worktree — lives in the
+ * task is decided by — project, model, worktree, base ref — lives in the
  * composer, so a button that spawned one directly would be committing to every
  * one of those answers on the user's behalf, and to a promptless task besides.
  *
