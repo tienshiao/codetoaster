@@ -41,10 +41,11 @@ const swatchNames = [
 /**
  * The v2 `Select` is a chip sized to its value; these sit in a settings column
  * and want the whole of it, with the chevron at the far edge the way the v1
- * trigger drew it. `justify-between` is what pins it there once the label is
- * full width.
+ * trigger drew it. The inner `<select>` grows to fill (see `Select`), so the
+ * chevron lands at the trailing edge without a `justify-between` that would
+ * leave the space between them dead to a click.
  */
-const SELECT = "w-full justify-between";
+const SELECT = "w-full";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -95,8 +96,15 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 key={value}
                 variant="outline"
                 size="sm"
+                // `outline` carries `hover:bg-hover hover:border-border-strong`,
+                // and a hover variant is a different tailwind-merge group from
+                // the base one — so without restating them the selected button
+                // sheds both its fill and its border under the cursor, i.e. the
+                // one row you point at stops looking selected.
                 className={`flex-1 gap-1.5 ${
-                  theme === value ? "border-selected-border bg-selected text-selected-foreground" : ""
+                  theme === value
+                    ? "border-selected-border bg-selected text-selected-foreground hover:border-selected-border hover:bg-selected"
+                    : ""
                 }`}
                 onClick={() => setTheme(value)}
               >

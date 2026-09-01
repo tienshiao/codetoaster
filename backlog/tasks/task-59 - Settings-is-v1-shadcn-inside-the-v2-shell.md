@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 23:10'
-updated_date: '2026-09-01 08:02'
+updated_date: '2026-09-01 08:24'
 labels:
   - frontend
 milestone: m-5
@@ -78,6 +78,22 @@ Driven in a browser, since 'stops reading as a different application' is not uni
 - All five selects wrote through to `localStorage` (`terminal-theme=AdventureTime`, `terminal-font=JetBrainsMono`, `terminal-font-size=20`, `notification-sound=chime`, `bell-sound=ping`), and the swatch row appeared with ten real palette colours.
 - The theme buttons work and — the thing worth checking, since the dialog is now a `<form>` — do **not** submit it: `Button` hardcodes `type="button"` before `{...rest}`, so the panel stays open while the app repaints light. `Dialog`'s own confirm still gets `type="submit"` through rest.
 - One `Done`, no `Cancel`; both Escape and `Done` dismiss. No console errors.
+
+## Code review (`/code-review --fix`, post-commit)
+
+Two findings, both applied, and the first is one the browser pass should have caught.
+
+**The chip was mostly not clickable.** `justify-between` stretched the `Select`'s wrapping `<label>` to full width and pinned the chevron to the trailing edge, but the inner `<select>` kept its intrinsic width — the widest option. A `<select>` has no activation behaviour, so clicking its wrapping label only *focuses* it. On Notification Sound that left roughly 250px of a 311px chip, chevron included, where a click did nothing. Fixed in `v2/Select.tsx` rather than here: the inner `<select>` takes `min-w-0 flex-auto`, so it fills the chip's spare width and `justify-between` becomes unnecessary. `flex-auto` keeps the basis at content size, so a chip with no width of its own is unchanged. This fixes `ProjectSettingsDialog`'s selects too, which had it as well.
+
+**The selected theme button shed its look under the cursor.** `Button`'s `outline` variant carries `hover:bg-hover hover:border-border-strong`, and a hover variant is a different tailwind-merge group from the base one, so both survived alongside `bg-selected`/`border-selected-border` and won whenever the pointer was over the button — the one row you point at stopped looking selected. Restated as `hover:bg-selected hover:border-selected-border`. v1 did not have this because shadcn's `hover:bg-accent` happened to match its selected `bg-accent`.
+
+Verified both by measurement rather than by reading the diff: the `<select>` now spans 10–85% of the chip (`elementFromPoint` returns it across that range, where it previously returned the label), composer chips are unmoved at their content width, and the selected button's computed class list carries only the selected hover while idle buttons keep the neutral one.
+
+**Why the browser pass missed the first one:** the selects were driven with synthetic `change` events, which exercise the handler but never the hit area. Same shape of gap as TASK-72, where synthetic `PointerEvent`s could not exercise native text selection. Driving a control programmatically tests what it does, not whether it can be reached.
+
+### Left alone, and flagged rather than fixed
+
+The chevron itself is still not an opener — `elementFromPoint` at 95% of the chip returns the SVG path. It is a flex sibling of the `<select>` and always has been, so every v2 `Select` in the app has behaved this way since the composer chips shipped; it is not a regression from this port, and making it one would mean floating the chevron over a full-bleed select and changing the metrics of every chip in the app. Worth its own task if the affordance matters.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

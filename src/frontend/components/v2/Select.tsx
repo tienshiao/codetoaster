@@ -62,6 +62,14 @@ export function Select({
         className={cn(
           "cursor-pointer appearance-none border-0 bg-transparent pr-0.5 disabled:cursor-default",
           "font-sans tracking-ui text-foreground outline-none",
+          // The `<select>` takes the chip's spare width rather than sitting at
+          // its intrinsic one. Clicking a `<label>` only *focuses* a select — a
+          // select has no activation behaviour — so any part of the chip the
+          // element itself does not cover looks like it opens the picker and
+          // does not, the chevron included. `flex-auto` keeps the basis at the
+          // content size, so a chip with no width of its own is unchanged;
+          // `min-w-0` lets a long option clip instead of overflowing.
+          "min-w-0 flex-auto",
           size === "sm" ? "text-xs" : "text-sm",
         )}
         {...rest}
