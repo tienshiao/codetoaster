@@ -1,5 +1,6 @@
 /**
- * The geometry a tab drag and a group resize need, with no DOM in it.
+ * The geometry a tab drag, a group resize and a fixed-width pane need, with no
+ * DOM in it.
  *
  * The components measure — `getBoundingClientRect` on things carrying
  * `data-tab-id` / `data-tab-group` — and these answer. Keeping the arithmetic
@@ -84,4 +85,57 @@ export function resizeFlex(
   next[index] = (pairFlex * clamped) / pair;
   next[index + 1] = pairFlex - next[index]!;
   return next;
+}
+
+/**
+ * A pane's width, held to its own floor and to the one it leaves its neighbour.
+ *
+ * `pairPx` is the two panes either side of a divider taken together — the same
+ * invariant `resizeFlex` works from, since a drag moves the boundary and not
+ * the total. What differs is what is stored: a tab group keeps a share, because
+ * a persisted split has to survive a resize, while a sidebar keeps its pixels.
+ * So the clamp is the piece these have in common.
+ *
+ * This bounds a *gesture*, and only a gesture. Making a stored width fit a
+ * window that cannot grant it is not this function's job and must not become
+ * it — `use-pane-width` leaves that to flexbox, because the shell's two
+ * sidebars share one main area and clamping them a pair at a time has no fixed
+ * point. Here the total really is fixed: it is whatever was measured the
+ * instant the pointer went down.
+ *
+ * `minPx` wins if both floors cannot be honoured — a pane with no width is a
+ * pane with no handle, and no way back. An unmeasured pair (0, from a ref that
+ * is not attached) falls back to that floor alone rather than inventing a
+ * ceiling out of a number that means "unknown".
+ */
+export function clampPaneWidth(
+  px: number,
+  pairPx: number,
+  minPx: number,
+  minRestPx: number,
+): number {
+  if (!Number.isFinite(px)) return minPx;
+  if (pairPx <= 0) return Math.max(minPx, px);
+  return Math.max(minPx, Math.min(pairPx - minRestPx, px));
+}
+
+/**
+ * Where a divider drag of `deltaPx` leaves the pane it belongs to.
+ *
+ * `side` is which side of the divider the pane is on, so a right-hand panel —
+ * the Explorer — grows as the pointer moves left without its caller having to
+ * remember to negate. Measured from the width at pointerdown rather than the
+ * live one, as in `TabArea`: resizing off the current frame compounds its own
+ * rounding until the boundary drifts away from the pointer.
+ */
+export function nextPaneWidth(
+  startPx: number,
+  deltaPx: number,
+  side: "left" | "right",
+  pairPx: number,
+  minPx: number,
+  minRestPx: number,
+): number {
+  const moved = startPx + (side === "right" ? -deltaPx : deltaPx);
+  return clampPaneWidth(moved, pairPx, minPx, minRestPx);
 }

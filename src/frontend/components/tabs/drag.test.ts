@@ -1,5 +1,12 @@
 import { test, expect } from "bun:test";
-import { dropIndexAt, moveIndexFor, resizeFlex, type TabBox } from "./drag";
+import {
+  clampPaneWidth,
+  dropIndexAt,
+  moveIndexFor,
+  nextPaneWidth,
+  resizeFlex,
+  type TabBox,
+} from "./drag";
 
 // Three 100px tabs starting at x=0, the shape every drop test below reads
 // against: midpoints at 50, 150 and 250.
@@ -100,4 +107,75 @@ test("a pair too narrow for two minimums is left alone rather than halved", () =
 test("a boundary that names no pair leaves every share untouched", () => {
   expect(resizeFlex([1], [800], 0, 50)).toEqual([1]);
   expect(resizeFlex([1, 1], [400, 400], 5, 50)).toEqual([1, 1]);
+});
+
+// ── a fixed-width pane ──────────────────────────────────────────────────────
+//
+// A 1000px pair throughout — a sidebar and the main area beside it — with a
+// 160px floor for the pane and 240px kept for what it sits next to, so the
+// usable range is 160..760.
+
+const MIN = 160;
+const REST = 240;
+
+test("a width inside the range is left exactly as asked", () => {
+  expect(clampPaneWidth(400, 1000, MIN, REST)).toBe(400);
+});
+
+test("a pane cannot be dragged below the width of its own handle", () => {
+  expect(clampPaneWidth(20, 1000, MIN, REST)).toBe(MIN);
+  expect(clampPaneWidth(-500, 1000, MIN, REST)).toBe(MIN);
+});
+
+// AC5. The width the user set on a wide monitor, restored into a laptop.
+test("a stored width wider than the window comes back clamped", () => {
+  expect(clampPaneWidth(900, 1000, MIN, REST)).toBe(760);
+});
+
+test("the neighbour keeps its room no matter how far the drag goes", () => {
+  expect(clampPaneWidth(Number.MAX_SAFE_INTEGER, 1000, MIN, REST)).toBe(760);
+});
+
+// The two floors cannot both be honoured on a pair this narrow, and the pane's
+// own is the one that matters: a pane clamped to nothing has no handle left to
+// drag back out with.
+test("on a pair too narrow for both floors the pane keeps its own", () => {
+  expect(clampPaneWidth(400, 300, MIN, REST)).toBe(MIN);
+});
+
+// The first render, before any observer has measured. Guessing a width from an
+// unmeasured pair is how a panel paints one width and then jumps to another.
+test("an unmeasured pair clamps to the floor and nothing else", () => {
+  expect(clampPaneWidth(900, 0, MIN, REST)).toBe(900);
+  expect(clampPaneWidth(20, 0, MIN, REST)).toBe(MIN);
+});
+
+test("a width that is not a number falls back to the floor", () => {
+  expect(clampPaneWidth(Number.NaN, 1000, MIN, REST)).toBe(MIN);
+});
+
+test("a left-hand pane grows as the pointer moves right", () => {
+  expect(nextPaneWidth(400, 60, "left", 1000, MIN, REST)).toBe(460);
+  expect(nextPaneWidth(400, -60, "left", 1000, MIN, REST)).toBe(340);
+});
+
+// The Explorer. Its divider is on its left, so the same rightward pointer
+// travel that widens the sidebar has to narrow it.
+test("a right-hand pane grows as the pointer moves left", () => {
+  expect(nextPaneWidth(400, -60, "right", 1000, MIN, REST)).toBe(460);
+  expect(nextPaneWidth(400, 60, "right", 1000, MIN, REST)).toBe(340);
+});
+
+test("a drag is clamped by the same rules as a restore", () => {
+  expect(nextPaneWidth(400, 5000, "left", 1000, MIN, REST)).toBe(760);
+  expect(nextPaneWidth(400, -5000, "left", 1000, MIN, REST)).toBe(MIN);
+});
+
+// Measured from the width at pointerdown, so a gesture is reversible: dragging
+// past the floor and back returns to where it started rather than to the floor
+// plus whatever came after it.
+test("a drag past the floor and back lands where it started", () => {
+  const start = 400;
+  expect(nextPaneWidth(start, -5000, "left", 1000, MIN, REST)).toBe(MIN);
+  expect(nextPaneWidth(start, 0, "left", 1000, MIN, REST)).toBe(start);
 });

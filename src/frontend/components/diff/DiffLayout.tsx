@@ -10,6 +10,8 @@ import {
   type DOMAttributes,
 } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ResizeHandle } from "../v2/ResizeHandle";
+import { usePaneWidth } from "../../hooks/use-pane-width";
 import { FileTree } from "./FileTree";
 import { DiffFile } from "./DiffFile";
 import { sumDiffStats } from "./DiffStat";
@@ -134,6 +136,7 @@ export function DiffLayout({
 }: DiffLayoutProps) {
   const diffContainerRef = useRef<HTMLDivElement>(null);
   const fileRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const treeWidth = usePaneWidth("file-tree", "left");
 
   const totalLines = files.reduce((sum, f) => sum + f.additions + f.deletions, 0);
   const isLargeDiff = files.length >= FILE_COUNT_THRESHOLD || totalLines >= TOTAL_LINES_THRESHOLD;
@@ -372,22 +375,37 @@ export function DiffLayout({
     >
       {/* File tree sidebar */}
       {showFileTree && (
-        <div className="w-[280px] shrink-0">
-          <FileTree
-            files={files}
-            selectedFile={selectedFile}
-            onSelectFile={handleSelectFile}
-            totalAdditions={totalAdditions}
-            totalDeletions={totalDeletions}
-            commentCounts={commentCounts}
-            collapsedPaths={treeCollapsedPaths}
-            onCollapsedPathsChange={onTreeCollapsedPathsChange}
+        <>
+          <div {...treeWidth.paneProps} className="overflow-hidden">
+            <FileTree
+              files={files}
+              selectedFile={selectedFile}
+              onSelectFile={handleSelectFile}
+              totalAdditions={totalAdditions}
+              totalDeletions={totalDeletions}
+              commentCounts={commentCounts}
+              collapsedPaths={treeCollapsedPaths}
+              onCollapsedPathsChange={onTreeCollapsedPathsChange}
+            />
+          </div>
+          <ResizeHandle
+            label="Resize file tree"
+            onResizeStart={treeWidth.onResizeStart}
+            onResize={treeWidth.onResize}
+            onResizeEnd={treeWidth.onResizeEnd}
+            onNudge={treeWidth.onNudge}
           />
-        </div>
+        </>
       )}
 
-      {/* Diff content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Diff content. The floor that keeps room beside the tree is the tree's
+          to impose, so it is only worn while there is a tree: a diff pane in a
+          narrow tab group can be 160px (`MIN_GROUP_PX`) wide, and a 240px
+          minimum on its only child would push the overflow out of the row. */}
+      <div
+        {...(showFileTree ? treeWidth.restProps : {})}
+        className={`flex flex-col overflow-hidden${showFileTree ? "" : " min-w-0 flex-1"}`}
+      >
         {/* View mode toggle + toolbar extras. Skipped entirely when neither is
             present, so a bare pane does not carry an empty band. */}
         {(showViewModeToggle || toolbarExtra) && (

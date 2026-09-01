@@ -12,6 +12,7 @@ import {
   type TabState,
   type TaskLayout,
 } from "@/frontend/layout-store";
+import { ResizeHandle } from "@/frontend/components/v2/ResizeHandle";
 import { TabStrip, type TabProps } from "@/frontend/components/v2/TabStrip";
 import { cn } from "@/frontend/lib/utils";
 import { dropIndexAt, moveIndexFor, resizeFlex, type TabBox } from "./drag";
@@ -73,8 +74,6 @@ const MIN_GROUP_PX = 160;
  * Small enough to feel immediate, large enough that a click with a shaky hand
  * is still a click. */
 const DRAG_THRESHOLD_PX = 4;
-/** One arrow key's worth of boundary. */
-const NUDGE_PX = 16;
 
 interface DragGesture {
   tabId: string;
@@ -91,7 +90,6 @@ interface DragGesture {
 interface ResizeGesture {
   /** The boundary being dragged: between group `index` and `index + 1`. */
   index: number;
-  startX: number;
   flexes: number[];
   widths: number[];
 }
@@ -124,7 +122,6 @@ export function TabArea({
   // nothing cost no renders.
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ groupId: string; index: number } | null>(null);
-  const [resizing, setResizing] = useState(false);
 
   // Read through refs inside the window listeners: a gesture installs them once
   // and would otherwise close over the layout as it was when the pointer went
@@ -254,42 +251,6 @@ export function TabArea({
       (el) => el.getBoundingClientRect().width,
     );
 
-  const startResize = (index: number) => (e: PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    // Or the drag selects the text of every pane it crosses.
-    e.preventDefault();
-    // As in `startDrag`: release before the ref is written, not after.
-    releaseRef.current?.();
-    resizeRef.current = {
-      index,
-      startX: e.clientX,
-      flexes: layout.groups.map((g) => g.flex),
-      widths: columnWidths(),
-    };
-    setResizing(true);
-    listen(
-      (move) => {
-        const gesture = resizeRef.current;
-        if (!gesture) return;
-        // Against the widths measured at pointerdown, not the live ones:
-        // resizing off the current frame compounds its own rounding and the
-        // boundary drifts away from the pointer.
-        const next = resizeFlex(
-          gesture.flexes,
-          gesture.widths,
-          gesture.index,
-          move.clientX - gesture.startX,
-          MIN_GROUP_PX,
-        );
-        changeRef.current(setGroupFlex(layoutRef.current, next));
-      },
-      () => {
-        resizeRef.current = null;
-        setResizing(false);
-      },
-    );
-  };
-
   const nudge = (index: number, deltaPx: number) => {
     const next = resizeFlex(
       layout.groups.map((g) => g.flex),
@@ -304,16 +265,7 @@ export function TabArea({
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
-    <div
-      ref={rowRef}
-      className={cn(
-        "flex min-h-0 min-w-0 flex-1",
-        // While a boundary is moving the cursor must not flicker back to a text
-        // caret every time the pointer crosses a pane.
-        resizing && "cursor-col-resize select-none",
-        className,
-      )}
-    >
+    <div ref={rowRef} className={cn("flex min-h-0 min-w-0 flex-1", className)}>
       {layout.groups.map((group, groupIndex) => {
         const active = group.tabs.find((t) => t.id === group.activeTabId) ?? group.tabs[0] ?? null;
         const target = dropTarget?.groupId === group.id ? dropTarget.index : null;
@@ -352,26 +304,39 @@ export function TabArea({
         return (
           <Fragment key={group.id}>
             {groupIndex > 0 && (
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize groups"
-                tabIndex={0}
-                onPointerDown={startResize(groupIndex - 1)}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowLeft") nudge(groupIndex - 1, -NUDGE_PX);
-                  else if (e.key === "ArrowRight") nudge(groupIndex - 1, NUDGE_PX);
-                  else return;
-                  e.preventDefault();
+              <ResizeHandle
+                label="Resize groups"
+                // The flexes and widths are taken once, at pointerdown, and
+                // every move is measured against them: resizing off the current
+                // frame compounds its own rounding and the boundary drifts away
+                // from the pointer.
+                onResizeStart={() => {
+                  resizeRef.current = {
+                    index: groupIndex - 1,
+                    flexes: layout.groups.map((g) => g.flex),
+                    widths: columnWidths(),
+                  };
                 }}
-                // Pulled over the border it sits on: a 1px target is a target
-                // nobody hits, and a 6px gutter between panes is visible slack.
-                className={cn(
-                  "z-10 -mx-[3px] w-1.5 flex-none cursor-col-resize",
-                  "hover:bg-[oklch(var(--ct-blue-500-ch)/0.35)]",
-                  "focus-visible:bg-[oklch(var(--ct-blue-500-ch)/0.35)] focus-visible:outline-none",
-                  resizing && "bg-[oklch(var(--ct-blue-500-ch)/0.35)]",
-                )}
+                onResize={(delta) => {
+                  const gesture = resizeRef.current;
+                  if (!gesture) return;
+                  changeRef.current(
+                    setGroupFlex(
+                      layoutRef.current,
+                      resizeFlex(
+                        gesture.flexes,
+                        gesture.widths,
+                        gesture.index,
+                        delta,
+                        MIN_GROUP_PX,
+                      ),
+                    ),
+                  );
+                }}
+                onResizeEnd={() => {
+                  resizeRef.current = null;
+                }}
+                onNudge={(delta) => nudge(groupIndex - 1, delta)}
               />
             )}
             <section

@@ -8,6 +8,8 @@ import { DiffStat, sumDiffStats } from "../diff/DiffStat";
 import { FileTree } from "../file/FileTree";
 import { FileContent } from "../file/FileContent";
 import { Button } from "../ui/button";
+import { ResizeHandle } from "../v2/ResizeHandle";
+import { usePaneWidth } from "../../hooks/use-pane-width";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
 import { toggleInSet, getViewState, setViewField, viewRef, type ViewRef } from "../../view-state-store";
 import { useViewState } from "../../hooks/use-view-state";
@@ -279,6 +281,7 @@ function TreeMode({
   // preference, so it must not be re-answered for every commit opened.
   const [expandedPaths, setExpandedPaths] = useViewState("commit", view, "treeExpandedPaths");
   const [lineWrap, setLineWrap] = useViewState("prefs", viewRef(view.taskId, "prefs"), "treeLineWrap");
+  const treeWidth = usePaneWidth("file-tree", "left");
 
   const selectedFile = file ?? null;
   const {
@@ -330,7 +333,7 @@ function TreeMode({
 
   return (
     <div className="flex h-full">
-      <div className="w-[280px] shrink-0">
+      <div {...treeWidth.paneProps} className="overflow-hidden">
         <FileTree
           files={files}
           selectedFile={selectedFile}
@@ -339,7 +342,14 @@ function TreeMode({
           onExpandedPathsChange={setExpandedPaths}
         />
       </div>
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <ResizeHandle
+        label="Resize file tree"
+        onResizeStart={treeWidth.onResizeStart}
+        onResize={treeWidth.onResize}
+        onResizeEnd={treeWidth.onResizeEnd}
+        onNudge={treeWidth.onNudge}
+      />
+      <div {...treeWidth.restProps} className="flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
           <div className="flex items-center gap-2 text-xs">
             <span className="font-mono text-foreground">{selectedFile || "No file selected"}</span>

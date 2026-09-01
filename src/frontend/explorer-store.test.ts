@@ -5,68 +5,9 @@ import {
   reviveExplorerState,
   saveExplorerState,
 } from "./explorer-store";
+import { installBrokenStorage, installStorage, removeStorage } from "../../test/local-storage";
 
 const KEY = "codetoaster:explorer";
-
-// ── storage stub (bun test has no DOM) ──────────────────────────────────────
-
-function installStorage(): Map<string, string> {
-  const data = new Map<string, string>();
-  const stub: Storage = {
-    get length() {
-      return data.size;
-    },
-    clear() {
-      data.clear();
-    },
-    getItem(key: string) {
-      return data.get(key) ?? null;
-    },
-    key(index: number) {
-      return [...data.keys()][index] ?? null;
-    },
-    removeItem(key: string) {
-      data.delete(key);
-    },
-    setItem(key: string, value: string) {
-      data.set(key, String(value));
-    },
-  };
-  Object.defineProperty(globalThis, "localStorage", {
-    value: stub,
-    writable: true,
-    configurable: true,
-  });
-  return data;
-}
-
-function installBrokenStorage(): void {
-  const stub: Storage = {
-    length: 0,
-    clear() {},
-    getItem() {
-      throw new Error("blocked");
-    },
-    key() {
-      throw new Error("blocked");
-    },
-    removeItem() {
-      throw new Error("blocked");
-    },
-    setItem() {
-      throw new Error("blocked");
-    },
-  };
-  Object.defineProperty(globalThis, "localStorage", {
-    value: stub,
-    writable: true,
-    configurable: true,
-  });
-}
-
-function removeStorage(): void {
-  Reflect.deleteProperty(globalThis, "localStorage");
-}
 
 let stored: Map<string, string>;
 

@@ -1,12 +1,14 @@
-import { useState, type ChangeEvent, type ReactNode } from "react";
+import { useCallback, useState, type ChangeEvent, type ReactNode } from "react";
 import { Archive, FilePen, GitBranch, ListFilter, PanelLeft, Plus, Settings } from "lucide-react";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
+import { usePaneWidth } from "@/frontend/hooks/use-pane-width";
 import { Badge } from "./Badge";
 import { Button } from "./Button";
 import { ExplorerRail, type ExplorerRailItem } from "./ExplorerRail";
 import { FilterInput } from "./FilterInput";
 import { IconButton } from "./IconButton";
 import { ProjectGroup } from "./ProjectGroup";
+import { ResizeHandle } from "./ResizeHandle";
 import { StatusBar, type StatusBarProps } from "./StatusBar";
 import { TabStrip, type TabProps } from "./TabStrip";
 import { TaskRow, type TaskRowProps } from "./TaskRow";
@@ -314,6 +316,19 @@ export function AppShell({
   };
   const isMobile = useIsMobile();
 
+  const sidebarWidth = usePaneWidth("sidebar", "left");
+  const explorerWidth = usePaneWidth("explorer", "right");
+  // Both sidebars take their space from the main area, so it is the sibling
+  // both hooks measure against, and it carries one set of flex rules for the
+  // two of them — they are the same rules, and `restProps.style` does not vary.
+  const mainRef = useCallback(
+    (el: HTMLElement | null) => {
+      sidebarWidth.restProps.ref(el);
+      explorerWidth.restProps.ref(el);
+    },
+    [sidebarWidth.restProps.ref, explorerWidth.restProps.ref],
+  );
+
   // A rail click on the section already showing closes the panel; any other
   // click opens it on that section. The toggle is the rail, so there is no
   // separate collapse control to confuse with Split.
@@ -367,9 +382,11 @@ export function AppShell({
     >
       {showSidebar && (
         <aside
+          ref={sidebarWidth.paneProps.ref}
+          style={overlay ? undefined : sidebarWidth.paneProps.style}
           className={cn(
-            "flex w-sidebar min-w-0 flex-none flex-col border-r border-sidebar-border bg-sidebar",
-            overlay && "absolute inset-y-0 left-0 z-20 shadow-overlay",
+            "flex min-w-0 flex-col border-r border-sidebar-border bg-sidebar",
+            overlay && "w-sidebar flex-none absolute inset-y-0 left-0 z-20 shadow-overlay",
           )}
         >
           <div className="flex h-titlebar flex-none items-center gap-2 border-b border-sidebar-border pr-2 pl-2.5">
@@ -472,7 +489,24 @@ export function AppShell({
         </aside>
       )}
 
-      <main className="flex min-w-0 flex-1 flex-col bg-pane">
+      {/* Nothing to drag while a panel is floating: an overlay sits *over* the
+          main area rather than taking width from it, so there is no boundary
+          between the two for a divider to move. */}
+      {showSidebar && !overlay && (
+        <ResizeHandle
+          label="Resize task list"
+          onResizeStart={sidebarWidth.onResizeStart}
+          onResize={sidebarWidth.onResize}
+          onResizeEnd={sidebarWidth.onResizeEnd}
+          onNudge={sidebarWidth.onNudge}
+        />
+      )}
+
+      <main
+        ref={mainRef}
+        style={overlay ? undefined : sidebarWidth.restProps.style}
+        className={cn("flex min-w-0 flex-col bg-pane", overlay && "flex-1")}
+      >
         {/* The sidebar toggles ride the tab strip, at the outer edges of the
             chrome they open — so each one sits against the sidebar it controls
             and stays put whether that sidebar is open or shut. */}
@@ -493,13 +527,25 @@ export function AppShell({
         {status && <StatusBar {...status} />}
       </main>
 
+      {showExplorer && !overlay && (
+        <ResizeHandle
+          label="Resize Explorer"
+          onResizeStart={explorerWidth.onResizeStart}
+          onResize={explorerWidth.onResize}
+          onResizeEnd={explorerWidth.onResizeEnd}
+          onNudge={explorerWidth.onNudge}
+        />
+      )}
+
       {showExplorer && (
         <aside
+          ref={explorerWidth.paneProps.ref}
+          style={overlay ? undefined : explorerWidth.paneProps.style}
           className={cn(
-            "flex w-sidebar-right min-w-0 flex-none flex-col border-l border-sidebar-border bg-sidebar",
+            "flex min-w-0 flex-col border-l border-sidebar-border bg-sidebar",
             // On a phone the panel floats left of the rail, which stays put —
             // it is the only way back to the other sections.
-            overlay && "absolute inset-y-0 right-9 z-20 shadow-overlay",
+            overlay && "w-sidebar-right flex-none absolute inset-y-0 right-9 z-20 shadow-overlay",
           )}
         >
           <div className="flex h-titlebar flex-none items-center gap-2 border-b border-sidebar-border px-3">
