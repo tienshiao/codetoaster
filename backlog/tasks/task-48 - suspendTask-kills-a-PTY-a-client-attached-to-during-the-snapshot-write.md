@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 01:27'
-updated_date: '2026-09-01 06:40'
+updated_date: '2026-09-01 06:52'
 labels:
   - server
   - tasks
@@ -76,6 +76,16 @@ The three new tests were checked against the unfixed behaviour rather than merel
 - `a manual close still suspends a task the closing client is attached to` passes in both worlds, as AC #2's regression guard should.
 
 No runtime browser pass: the window is a queued disk write inside the daemon and cannot be hit by hand. The tests open it deliberately by hooking `manager.snapshot` to attach between the write and the kill, which is the same idiom the existing 'attached while the guards ran' test uses one await earlier.
+
+## Code review (`/code-review --fix`, post-commit)
+
+One finding, and a fair one: the commit's own comment claimed the late guard was 'passed rather than reimplemented so it cannot drift from the early one', while the call site spelled the `rowAllows && hasNoAttachedViews` conjunction out a third time. Three copies is exactly the drift the comment was claiming to prevent — a fourth cheap guard would mean editing three lines and silently getting two-of-three. Extracted as `Harvester.cheapGuards(taskId, now)` and used at all three sites, so the predicate handed to `harvestTask` is now literally the function the early guards call. Behaviour-identical, short-circuit included.
+
+No correctness defect found in the concurrency, which was the part worth a second pair of eyes. Confirmed independently of the review: no wait cycle is introduced (`doSuspend` never waits on `resuming`/`evicting`/`archiving`, and `putDown`'s new await sits after the `resuming` check); the `.finally` cannot delete a foreign entry, since a joiner adopts or awaits the finally-wrapped promise itself; and the late predicate is reached with no await before the first `kill`, so a synchronously-serviced attach really is visible to it.
+
+The reviewer also flagged, and I agree, that re-asking `nothingRunning` late would be wrong rather than more thorough: a `ps` per terminal opens a fresh multi-second window of its own, and a process long enough to matter was already foreground at the early check.
+
+Re-ran the neutering check after the refactor to confirm the guard is still load-bearing: with `stillHarvestable` disabled, the same two race tests fail. `bun run test` 977 + 148, 0 fail; `tsc` clean.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

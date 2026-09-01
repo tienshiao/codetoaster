@@ -214,11 +214,9 @@ export class Harvester {
         // task harvestable and its PTYs actually being killed, which is long
         // enough to service the attach of a user who has just clicked it.
         // Passed rather than reimplemented so the late guard cannot drift from
-        // the early one.
-        await this.manager.harvestTask(
-          task.id,
-          () => this.rowAllows(task.id, now) && this.hasNoAttachedViews(task.id),
-        );
+        // the early one — which is why it is `cheapGuards` handed over whole
+        // rather than the same conjunction spelled out a third time here.
+        await this.manager.harvestTask(task.id, () => this.cheapGuards(task.id, now));
       } catch (e) {
         console.warn(`Idle harvester skipped task ${task.id}:`, e);
       }
@@ -287,8 +285,16 @@ export class Harvester {
    * the far side of the only await here, which is where the window actually
    * is. */
   private async shouldHarvest(taskId: string, now: number): Promise<boolean> {
-    if (!this.rowAllows(taskId, now) || !this.hasNoAttachedViews(taskId)) return false;
+    if (!this.cheapGuards(taskId, now)) return false;
     if (!(await this.nothingRunning(taskId))) return false;
+    return this.cheapGuards(taskId, now);
+  }
+
+  /** The guards worth asking more than once: the row, and who is watching.
+   * Named because they are asked three times over one harvest — either side of
+   * the `ps` above, and once more from inside `doSuspend` — and a guard written
+   * out at each of those points is a guard free to drift from the others. */
+  private cheapGuards(taskId: string, now: number): boolean {
     return this.rowAllows(taskId, now) && this.hasNoAttachedViews(taskId);
   }
 
