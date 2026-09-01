@@ -156,6 +156,18 @@ export function TaskRow({
       role="option"
       aria-selected={selected}
       onClick={onClick}
+      // A row with nothing to click is not a tab stop. An archived row is drawn
+      // deliberately without an `onClick` — the server refuses to reopen one —
+      // and left as an ordinary button it still took focus, still answered
+      // Enter and Space, and still did nothing: the same "a control that could
+      // only fail" this list avoids by not offering an unarchive at all.
+      //
+      // Still `role="option"`, and still in the list: it *is* one of the rows,
+      // and `aria-disabled` is how a listbox says an option cannot be taken.
+      // Its delete button is a sibling rather than a child (see `RowActions`),
+      // so removing the row from the tab order does not put that out of reach.
+      tabIndex={onClick ? undefined : -1}
+      aria-disabled={onClick ? undefined : true}
       // 21px lines the dot up under a group header's chevron; no spacing step
       // lands there.
       style={indent ? { paddingLeft: 21 } : undefined}

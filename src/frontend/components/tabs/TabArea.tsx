@@ -19,7 +19,7 @@ import { presentTab } from "./tab-labels";
 
 /**
  * The tabbed main area (§7.1, §7.2): a flat row of groups, each with its own
- * strip, header and pane.
+ * strip and pane.
  *
  * Every rule about what a layout may become lives in `layout-store.ts`. This is
  * the chrome that calls those operations and draws the answer — it does not
@@ -41,9 +41,6 @@ export interface TabAreaProps {
    * it is showing, so it is only ever called with true.
    */
   renderPane: (tab: TabState, group: TabGroup, visible: boolean) => ReactNode;
-  /** The band under each group's strip. Repeated per group — the task's own
-   * values, beside the strip they belong to. */
-  header?: ReactNode;
   /** Chrome for the first strip only: the shell's sidebar toggle, which belongs
    * at the window's edge rather than following the active group. */
   leading?: ReactNode;
@@ -113,7 +110,6 @@ export function TabArea({
   layout,
   onLayoutChange,
   renderPane,
-  header,
   leading,
   onTabActions,
   onNewShell,
@@ -401,7 +397,6 @@ export function TabArea({
                   }
                 }}
               />
-              {header}
               {/* Terminal tabs stay mounted and merely hide, which is the one
                   place a pane's identity outlives its being on screen.
                   Unmounting one would drop the attachment, throw the xterm grid

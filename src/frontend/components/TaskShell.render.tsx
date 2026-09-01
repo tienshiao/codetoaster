@@ -69,14 +69,22 @@ vi.mock("@/frontend/components/v2/AppShell", () => ({
   AppShell: ({
     tabArea,
     onOpenSettings,
+    status,
   }: {
     tabArea?: (chrome: { leading: ReactNode }) => ReactNode;
     onOpenSettings?: () => void;
+    status?: { items?: ReactNode[] };
   }) => (
     <div>
       <button type="button" onClick={onOpenSettings}>
         Settings
       </button>
+      {/* The items only, not `StatusBar` itself — what this file asks is which
+          facts the shell decided to put there, which is its own decision and
+          not the bar's. */}
+      <div data-testid="status-items">
+        {status?.items?.map((it, i) => <span key={i}>{it}</span>)}
+      </div>
       {tabArea ? tabArea({ leading: null }) : null}
     </div>
   ),
@@ -111,6 +119,8 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     terminalTitle: "",
     agentState: "idle",
     lifecycle: "live",
+    cwd: "/Users/someone/projects/app",
+    worktreePath: null,
     lastMessage: null,
     clientCount: 0,
     size: { cols: 80, rows: 24 },
@@ -320,4 +330,43 @@ test("a dismissed WIP notice does not follow the user to the next task", () => {
   // The second task has said nothing about its own snapshot, so it still asks.
   expect(screen.queryByRole("status")).not.toBeNull();
   expect(stubs.resolveWip).not.toHaveBeenCalled();
+});
+
+/**
+ * What the status bar says about *where* a task is (TASK-71).
+ *
+ * The rule is a comparison, not a flag: the path is left out exactly when the
+ * task is sitting in the checkout we made for it, because that path is a
+ * generated `~/.codetoaster/worktrees/<project>/<uuid>` and the branch beside
+ * it says everything it would. The same comparison is what puts the path back
+ * when an agent cd's out of its own checkout, which is the case §5.4 exists for
+ * and the one where a path is worth the width.
+ */
+test("the status bar drops a path that is only the task's own worktree", () => {
+  const checkout = "/Users/someone/.codetoaster/worktrees/ct/4b55ec75-3bd6-4dbd-a2e1-937affffb044";
+  stubs.tasks = [task({ cwd: checkout, worktreePath: checkout })];
+  renderShell();
+
+  const status = screen.getByTestId("status-items").textContent ?? "";
+  expect(status).not.toContain("worktrees");
+  expect(status).not.toContain("4b55ec75");
+});
+
+test("an agent that has left its own checkout gets its path back", () => {
+  stubs.tasks = [
+    task({
+      cwd: "/Users/someone/elsewhere",
+      worktreePath: "/Users/someone/.codetoaster/worktrees/ct/4b55ec75",
+    }),
+  ];
+  renderShell();
+
+  expect(screen.getByTestId("status-items").textContent).toContain("elsewhere");
+});
+
+test("a task with no checkout of its own always shows its path", () => {
+  stubs.tasks = [task({ cwd: "/Users/someone/projects/app", worktreePath: null })];
+  renderShell();
+
+  expect(screen.getByTestId("status-items").textContent).toContain("projects/app");
 });

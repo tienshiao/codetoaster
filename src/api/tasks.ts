@@ -63,7 +63,13 @@ export const taskRoutes = {
       return Response.json(await Promise.all(
         tasks.map(async (task) => ({
           ...task,
-          cwd: (await taskManager.refreshCwd(task.id)) ?? null,
+          // Falls back to the row's own `cwd` rather than to null. `TaskInfo`
+          // declares this a string and the socket snapshot always sends one, so
+          // a null here would be this route alone contradicting the type every
+          // client reads — and `refreshCwd` answers undefined only for a task
+          // that has gone between the list and the refresh, where the row we
+          // are already holding is the better of the two answers.
+          cwd: (await taskManager.refreshCwd(task.id)) ?? task.cwd,
         }))
       ));
     },

@@ -114,7 +114,18 @@ export type ServerMessage =
   // has run we have no evidence of an unclaimed checkout, and a band warning
   // about work we have not found would be worse than the moment of silence.
   // Optional only so an older client is not a parse error.
-  | { type: "tasks"; list: TaskInfo[]; projects: ProjectInfo[]; unclaimed?: UnclaimedInfo[] }
+  // `home` rides the snapshot as the per-server constant it is, so a client can
+  // write a path the way a shell would — `~/projects/thing`, not
+  // `/Users/someone/projects/thing`. Once per snapshot rather than once per
+  // task, and absent from the `task` delta below for the same reason: it cannot
+  // change while the daemon is up.
+  | {
+      type: "tasks";
+      list: TaskInfo[];
+      projects: ProjectInfo[];
+      unclaimed?: UnclaimedInfo[];
+      home?: string;
+    }
   // One row changed. A delta rather than a fresh snapshot, so a busy agent
   // does not re-send every task on every state transition.
   | { type: "task"; task: TaskInfo }
@@ -211,6 +222,25 @@ export interface TaskInfo {
    * set for a task that has a checkout of its own — a task running in the
    * project's directory has no branch of ours to report on. */
   worktree: TaskWorktreeInfo | null;
+  /** Where the task's terminal actually is (§5.4).
+   *
+   * Straight off the row, which `refreshCwd` writes back when it notices the
+   * agent has cd'd somewhere else — and which broadcasts a `task` delta when it
+   * does, so this stays true without the client asking. On the wire and not
+   * only bolted onto the `GET /api/tasks` response, because the socket snapshot
+   * is what the UI renders from and chrome that is always on screen cannot go
+   * and fetch it. */
+  cwd: string;
+  /** The checkout this task was given, or null for one running in the project's
+   * own directory (§5.6). Remembered across an eviction, so it is where the
+   * checkout *was* as much as where it is.
+   *
+   * On the wire so a client can tell `cwd` apart from a generated location: a
+   * worktree path is `~/.codetoaster/worktrees/<project>/<uuid>`, which is not
+   * information — the branch beside it says everything that path would. What is
+   * worth saying is when the two disagree, because that is an agent that has
+   * cd'd out of its own checkout (§5.4). */
+  worktreePath: string | null;
   /** The last thing the agent said, from the Stop hook. The task list shows it
    * under the title, which is how a list of thirty answers "which of these
    * want me?" without opening any of them (§7.5). Null until the agent has

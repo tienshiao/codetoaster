@@ -53,6 +53,8 @@ function task(id: string, overrides: Partial<TaskInfo> = {}): TaskInfo {
     terminalTitle: "",
     agentState: "idle",
     lifecycle: "live",
+    cwd: "/Users/someone/projects/app",
+    worktreePath: null,
     lastMessage: null,
     clientCount: 0,
     size: { cols: 80, rows: 24 },

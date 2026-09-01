@@ -752,6 +752,7 @@ export class TaskManager {
       type: "tasks",
       list: this.listTasks(),
       projects: this.getProjects(),
+      home: os.homedir(),
       // Rides the snapshot because it changes for the snapshot's reasons: the
       // boot sweep finishes, or the user deletes one. Both of those already
       // call `broadcastTasks`.
@@ -3041,6 +3042,8 @@ export class TaskManager {
         && row.wip_ref !== null
         && !this.evicting.has(row.id)
         && !this.archiving.has(row.id),
+      cwd: row.cwd,
+      worktreePath: row.worktree_path,
       lastMessage: row.last_message,
       clientCount: pty?.getClientCount() ?? 0,
       // A suspended task remembers the grid it had, so resuming it does not

@@ -139,11 +139,19 @@ export function TaskRowActions({
     let live = true;
     setPreview(null);
     setPreviewFailed(false);
-    void onArchivePreview(taskId).then((answer) => {
-      if (!live) return;
-      setPreview(answer);
-      setPreviewFailed(answer === null);
-    });
+    // Rejection is the same answer as `null`, and it has to be handled or the
+    // "failed" state is unreachable by the one route that reaches it without a
+    // resolved value: `request` swallows fetch and HTTP failures, so what is
+    // left to throw is a 200 whose body would not parse. Unhandled, that leaves
+    // the dialog sitting on "Checking what this would remove…" for good, with
+    // the confirm disabled and nothing saying why.
+    void onArchivePreview(taskId)
+      .catch(() => null)
+      .then((answer) => {
+        if (!live) return;
+        setPreview(answer);
+        setPreviewFailed(answer === null);
+      });
     // Not a cancellation of the request — there is nothing to cancel — but of
     // its effect: a dialog closed and reopened has two in flight, and the
     // slower one would otherwise land on top of the newer answer.

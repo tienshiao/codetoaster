@@ -2,13 +2,13 @@ import { useState, type ChangeEvent, type ReactNode } from "react";
 import { Archive, FilePen, GitBranch, ListFilter, PanelLeft, Plus, Settings } from "lucide-react";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { Badge } from "./Badge";
+import { Button } from "./Button";
 import { ExplorerRail, type ExplorerRailItem } from "./ExplorerRail";
 import { FilterInput } from "./FilterInput";
 import { IconButton } from "./IconButton";
 import { ProjectGroup } from "./ProjectGroup";
 import { StatusBar, type StatusBarProps } from "./StatusBar";
 import { TabStrip, type TabProps } from "./TabStrip";
-import { TaskHeader, type TaskHeaderProps } from "./TaskHeader";
 import { TaskRow, type TaskRowProps } from "./TaskRow";
 import { cn } from "@/frontend/lib/utils";
 
@@ -61,9 +61,6 @@ export interface ShellUnclaimedWorktree {
 
 export type ShellTab = TabProps & { id: string };
 
-/** @see TaskHeader — the band under the tabs. */
-export type ShellBreadcrumb = TaskHeaderProps;
-
 export interface AppShellProps {
   // ── left rail ──
   /** The flat, recency-ordered list (§7.5) — the default view. Rows are drawn
@@ -98,10 +95,10 @@ export interface AppShellProps {
 
   // ── main area ──
   /**
-   * The whole tabbed region — every strip, header and pane — when the task has
-   * a layout to draw. `TabArea` supplies it; `tabs`, `breadcrumb` and
-   * `children` are then unused, because with two groups on screen there is no
-   * single strip or header for the shell to place.
+   * The whole tabbed region — every strip and pane — when the task has a
+   * layout to draw. `TabArea` supplies it; `tabs` and `children` are then
+   * unused, because with two groups on screen there is no single strip for the
+   * shell to place.
    *
    * A function, not a node, because the sidebar toggle rides the first strip
    * and the shell owns whether the sidebar is open. Handing the toggle down is
@@ -112,7 +109,6 @@ export interface AppShellProps {
   tabs?: ShellTab[];
   onSplit?: () => void;
   onTabActions?: () => void;
-  breadcrumb?: ShellBreadcrumb;
   status?: StatusBarProps;
   /** The active tab's content. The shell gives it a bounded, non-scrolling box
    * — a terminal or a diff pane scrolls inside itself, never the page. The
@@ -296,7 +292,6 @@ export function AppShell({
   tabs = [],
   onSplit,
   onTabActions,
-  breadcrumb,
   status,
   children,
   explorerSections = [],
@@ -458,9 +453,18 @@ export function AppShell({
 
           {unclaimed.length > 0 && <UnclaimedSection items={unclaimed} />}
 
-          <div className="flex h-titlebar flex-none items-center gap-2 border-t border-sidebar-border pr-2 pl-2.5 text-xs text-muted-foreground">
-            <IconButton icon={Settings} label="Settings" size="sm" onClick={onOpenSettings} />
-            <span>Settings</span>
+          <div className="flex h-titlebar flex-none items-center gap-2 border-t border-sidebar-border pr-2 pl-1 text-xs text-muted-foreground">
+            {/* One control, not a gear with a caption beside it. The word reads
+                as the button's label either way, so leaving it outside made the
+                whole affordance a 13px glyph — the smallest target in the shell,
+                for the only way into settings — and put a click target where
+                there was no focus ring and no keyboard.
+                `Button` rather than `IconButton`, which is square by
+                construction and has nowhere to put a label; ghost/sm is what
+                the footer was already drawing by hand. */}
+            <Button variant="ghost" size="sm" icon={Settings} onClick={onOpenSettings}>
+              Settings
+            </Button>
             {endpoint && (
               <span className="ml-auto font-mono text-micro tracking-mono text-subtle-foreground">{endpoint}</span>
             )}
@@ -482,7 +486,6 @@ export function AppShell({
               onTabActions={onTabActions}
               leading={sidebarToggle}
             />
-            {breadcrumb && <TaskHeader {...breadcrumb} />}
             <div className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
           </>
         )}

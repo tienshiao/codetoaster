@@ -101,6 +101,8 @@ const task = (id: string): TaskInfo => ({
   titleSource: "derived",
   terminalTitle: "",
   agentState: "idle",
+  cwd: "/Users/someone/projects/app",
+  worktreePath: null,
   lastMessage: null,
   lifecycle: "live",
   clientCount: 0,

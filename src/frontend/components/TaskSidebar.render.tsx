@@ -359,3 +359,26 @@ test("a project with no name cannot be created", () => {
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(onCreate).not.toHaveBeenCalled();
 });
+
+/**
+ * The sidebar footer's Settings control (TASK-68).
+ *
+ * It used to be an `IconButton` with a `<span>Settings</span>` next to it —
+ * the word looked like the button's label and behaved as dead text, so the
+ * only way into settings was a 13px glyph with no focus ring around what a
+ * user was actually aiming at.
+ */
+test("Settings is one control, and its label is part of it", () => {
+  const onOpenSettings = vi.fn();
+  render(<AppShell onOpenSettings={onOpenSettings} />);
+
+  // One button, named by its visible word rather than by an aria-label that
+  // duplicates it — so there is one tab stop, not a button beside dead text.
+  const settings = screen.getByRole("button", { name: "Settings" });
+  fireEvent.click(settings);
+  expect(onOpenSettings).toHaveBeenCalledTimes(1);
+
+  // The word is *inside* the control. This is the assertion that fails if it
+  // goes back to being a sibling of it.
+  expect(settings.textContent).toContain("Settings");
+});

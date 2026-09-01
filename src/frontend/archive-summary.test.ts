@@ -22,6 +22,18 @@ test("a task with no checkout of its own says exactly that", () => {
   ]);
 });
 
+// `status: null` has two causes and only the branch separates them: no branch
+// at all (the task ran in the project's directory) versus a branch whose
+// repository could not be resolved. Reporting the second as "no checkout of its
+// own" claims something about the disk nobody established, and silently drops
+// the branch this file promises always to speak to.
+test("a checkout whose repository could not be read is not called an absent one", () => {
+  const lines = archiveSummary(preview({ status: null }));
+  expect(lines[0]).not.toMatch(/no checkout of its own/);
+  expect(lines[0]).toMatch(/could not be established/);
+  expect(lines).toContain("The branch task/parser is not deleted.");
+});
+
 test("a clean checkout draws no zeros — only what happens to the branch", () => {
   expect(archiveSummary(preview())).toEqual([
     "The branch task/parser will be kept, since deleting it would take that work with it.",

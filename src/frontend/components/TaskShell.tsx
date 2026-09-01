@@ -5,12 +5,12 @@ import { usePty } from "@/frontend/PtyContext";
 import { AppShell } from "@/frontend/components/v2/AppShell";
 import { useTaskSidebar } from "@/frontend/components/TaskSidebar";
 import { Button } from "@/frontend/components/v2/Button";
-import { TaskHeader } from "@/frontend/components/v2/TaskHeader";
 import { WipNotice } from "@/frontend/components/WipNotice";
 import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useOpenTask } from "@/frontend/hooks/use-task-nav";
+import { pathLabel } from "@/frontend/utils/path-label";
 import { TabArea, TabPane, useTaskLayout } from "@/frontend/components/tabs";
 import {
   allTabs,
@@ -47,7 +47,7 @@ export interface TaskShellProps {
  * hooks, so the routes stay about addresses.
  */
 export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }: TaskShellProps) {
-  const { tasks, loaded, openShell, closeShell, setViewedTask } = useTasks();
+  const { tasks, loaded, home, openShell, closeShell, setViewedTask } = useTasks();
   const openTask = useOpenTask();
   const explorerPanel = useExplorerPanel();
   const explorerSections = useExplorerRail(taskId);
@@ -92,10 +92,10 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   const selected = tasks.find((t) => t.id === taskId);
   const { sendInput } = usePty();
 
-  // The label the header shows, in the browser's tab too. Set here rather than
-  // by the route, which knows an id and not a title — and left unset, the tab
-  // reads a static "CodeToaster" for every task, which is how the v1 session
-  // route's title effect (TASK-21) is not simply dropped.
+  // The label the browser's tab shows. Set here rather than by the route, which
+  // knows an id and not a title — and left unset, the tab reads a static
+  // "CodeToaster" for every task, which is how the v1 session route's title
+  // effect (TASK-21) is not simply dropped.
   const label = selected ? (displayNames.get(selected.id) ?? selected.title) : null;
   useEffect(() => {
     document.title = label ? `${label} — CodeToaster` : "CodeToaster";
@@ -296,15 +296,6 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                   onNewShell={taskId ? handleNewShell : undefined}
                   onCloseTab={handleCloseTab}
                   leading={leading}
-                  header={
-                    // No path or branch yet: neither is on the wire, and a task
-                    // header is the wrong place to invent one. They arrive with
-                    // the worktree work in Phase 5, which is what makes a task's
-                    // checkout a fact the server knows.
-                    <TaskHeader
-                      title={selected ? (displayNames.get(selected.id) ?? selected.title) : "Task"}
-                    />
-                  }
                   renderPane={(tab, _group, visible) => (
                     // Keyed by task *and* tab. The tab key alone was not enough:
                     // every task's agent tab keys as "agent", so switching tasks
@@ -333,8 +324,38 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         }
         status={{
           state: selected ? taskStateOf(selected) : undefined,
+          // Where you are, then what you are on: the two facts here that are
+          // about the task rather than about the window, and the reason this
+          // bar carries them at all (TASK-71). The sidebar shows the branch
+          // too, but the sidebar can be closed and the status bar cannot.
+          //
+          // The path is left out when the task is sitting in the checkout we
+          // made for it, because that path is `~/.codetoaster/worktrees/<
+          // project>/<uuid>` — a generated location that says nothing the
+          // branch beside it does not say better, and spends the whole width of
+          // the bar saying it. What the comparison *does* catch is the two
+          // disagreeing: an agent that has cd'd out of its own checkout (§5.4)
+          // gets its path back, which is the case where a path is worth reading.
+          //
+          // Shortened for display, with the real one in its `title`, so nothing
+          // elided is more than a hover away.
+          //
+          // The branch is drawn only when there is one. A task running in the
+          // project's own directory has no checkout of ours and a detached head
+          // has no branch, and neither is a blank worth a column.
           items: selected
-            ? [`${selected.size.cols}×${selected.size.rows}`, `${selected.clientCount} viewing`]
+            ? [
+                ...(selected.cwd === selected.worktreePath
+                  ? []
+                  : [
+                      <span key="cwd" title={selected.cwd}>
+                        {pathLabel(selected.cwd, home)}
+                      </span>,
+                    ]),
+                ...(selected.worktree?.branch ? [selected.worktree.branch] : []),
+                `${selected.size.cols}×${selected.size.rows}`,
+                `${selected.clientCount} viewing`,
+              ]
             : ["no task"],
         }}
         explorerSections={explorerSections}

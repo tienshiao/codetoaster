@@ -27,7 +27,15 @@ export function StatusBar({ state, items = [], right, className }: StatusBarProp
         </span>
       ) : null}
       {items.map((it, i) => (
-        <span key={i}>{it}</span>
+        // `min-w-0` so an item that is too long loses its own characters rather
+        // than pushing the ones after it off the bar. A flex child's default
+        // `min-width: auto` refuses to shrink below its content, which is what
+        // turns one long value — a task's working directory — into a bar that
+        // silently stops showing the grid size. Nothing here is load-bearing
+        // enough to be worth that, and the long ones carry a `title`.
+        <span key={i} className="min-w-0 truncate">
+          {it}
+        </span>
       ))}
       {right ? <span className="ml-auto">{right}</span> : null}
     </div>

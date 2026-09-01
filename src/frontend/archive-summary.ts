@@ -29,9 +29,27 @@ export function archiveSummary(preview: ArchivePreview): string[] {
   const { status, branch, branchWouldBeDeleted, wipRetentionDays } = preview;
 
   if (!status) {
-    // No branch, or no repository to ask about one: the task ran in the
-    // project's own directory. There is no checkout of ours to remove and no
-    // branch of ours to weigh, so the archive is only the row and the files.
+    // `archivePreview` answers null here for two different reasons, and the
+    // branch is what tells them apart: `branchStatusOf` returns null when the
+    // row has no branch *or* when its repository could not be resolved. Saying
+    // "no checkout of its own" of the second is the fail-closed rule run
+    // backwards — a positive claim about the disk on evidence nobody gathered,
+    // in the one dialog whose whole job is to be true about uncommitted work —
+    // and it also drops the branch, which this file promises always to speak
+    // to when there is one.
+    //
+    // The archive itself agrees: with no repository root, `doArchive` skips
+    // both `evictWorktree` and the branch deletion, so a branch named here
+    // really is left standing.
+    if (branch) {
+      return [
+        `Its repository could not be read, so what archiving removes could not be established.`,
+        `The branch ${branch} is not deleted.`,
+      ];
+    }
+    // No branch at all: the task ran in the project's own directory. There is
+    // no checkout of ours to remove and no branch of ours to weigh, so the
+    // archive is only the row and the files.
     return ["This task has no checkout of its own, so nothing on disk is removed."];
   }
 

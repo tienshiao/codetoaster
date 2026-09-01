@@ -92,6 +92,10 @@ export interface TaskContextValue {
    * tell "no tasks" from "not told yet" — they look identical and mean
    * opposite things. */
   loaded: boolean;
+  /** The daemon's home directory, so a path can be written the way a shell
+   * writes it. Empty until a snapshot has said otherwise — `tildePath` treats
+   * that as "do not abbreviate" rather than as a prefix matching everything. */
+  home: string;
   isConnected: boolean;
   /** Debounced liveness per task id, straight from the socket's `activity`. */
   activity: Record<string, boolean>;
@@ -339,6 +343,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [unclaimed, setUnclaimed] = useState<UnclaimedInfo[]>([]);
+  const [home, setHome] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [activity, setActivity] = useState<Record<string, boolean>>({});
   const tasksRef = useRef<TaskInfo[]>([]);
@@ -380,6 +385,10 @@ export function TaskProvider({ children }: { children: ReactNode }) {
             // the section every time anything else about the tasks changed.
             // The server states the list when it has one; until then, keep.
             if (message.unclaimed) setUnclaimed(message.unclaimed);
+            // Absent is not empty here either, and for a blunter reason: an
+            // older daemon does not send it, and writing "" over a home we
+            // already have would un-abbreviate every path on screen.
+            if (message.home) setHome(message.home);
             setLoaded(true);
             return;
           }
@@ -743,6 +752,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       tasks,
       projects,
       unclaimed,
+      home,
       loaded,
       isConnected,
       activity,
@@ -769,6 +779,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       tasks,
       projects,
       unclaimed,
+      home,
       loaded,
       isConnected,
       activity,

@@ -96,3 +96,20 @@ test("an archived row says so, and stops describing a checkout that is gone", ()
   expect(screen.queryByLabelText(/uncommitted/)).toBeNull();
   expect(screen.queryByLabelText(/unpushed/)).toBeNull();
 });
+
+test("a row with nothing to click is not a tab stop", () => {
+  const view = render(<TaskRow title="Fix the parser" archived />);
+  const row = screen.getByRole("option", { name: /Fix the parser/ });
+
+  // Left as an ordinary button it took focus and answered Enter, and did
+  // nothing — the same dead control the list avoids by offering no unarchive.
+  expect(row.tabIndex).toBe(-1);
+  expect(row.getAttribute("aria-disabled")).toBe("true");
+
+  // A row that *can* be opened is unchanged: this must not quietly take the
+  // keyboard away from the live list.
+  view.rerender(<TaskRow title="Fix the parser" onClick={() => {}} />);
+  const live = screen.getByRole("option", { name: /Fix the parser/ });
+  expect(live.tabIndex).toBe(0);
+  expect(live.getAttribute("aria-disabled")).toBeNull();
+});
