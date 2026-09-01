@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 23:57'
-updated_date: '2026-09-01 03:21'
+updated_date: '2026-09-01 03:40'
 labels:
   - frontend
   - ui
@@ -78,6 +78,12 @@ Lifting `TaskShell` to the root route so it is never remounted would also fix it
 Driven in Chrome on an isolated server, the reported repro first: filtered on "v2 3", clicked the matching row, and on `/t/...` the box still read "v2 3" with the one row under it. Grouping and the archived toggle set on the task screen were both still on after navigating back to `/`, and the stored record held `{grouped, showArchived, closedGroups}` and no filter. A reload cleared the filter and kept both settings. A closed group stayed closed across a navigation, and reopening it removed the key rather than storing `false`. Seeding storage with a `closedGroups` naming a deleted project, plus a `false` entry and a non-boolean value, rendered the list normally with no console errors.
 
 972 unit tests and 143 render tests pass; `tsc --noEmit` clean on the touched files.
+
+**Correction.** The note above claimed the stale-spread bug was "unrepresentable here" because `patchSidebarState` merges against the store. That was only true of the merge. `onToggleGrouping` and `onToggleArchived` computed `!grouped` / `!showArchived` from the render's own snapshot, so the *value* being patched was still stale even though the merge was fresh — two toggles of one flag batched into a single event both compute the same answer, and the second is a no-op instead of putting the setting back. Caught in review and fixed with `toggleSidebarFlag`, which reads the live value; the claim holds now.
+
+Also from review: `patchSidebarState` persisted unconditionally, so every filter keystroke ran a `JSON.stringify` and a synchronous `setItem` writing byte-identical content — the filter is not in the persisted shape. It now writes only when the patch touches a persisted key.
+
+Left open as TASK-73: two file trees on screen share the `file-tree` pane id but each holds its own `useState`, so dragging one leaves the other stale until it remounts. A consequence of TASK-69 sharing the id, and it needs a subscriber list on `pane-size-store` rather than a patch.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
