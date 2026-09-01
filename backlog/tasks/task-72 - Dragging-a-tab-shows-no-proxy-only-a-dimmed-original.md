@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-01 00:07'
-updated_date: '2026-09-01 05:13'
+updated_date: '2026-09-01 06:20'
 labels:
   - frontend
   - ui
@@ -84,6 +84,20 @@ Driven in a real browser (`verify` skill, isolated instance on :4599) by dispatc
 - Release committed the move; Escape left the order untouched and a pointerup arriving *after* Escape did not resurrect it. No console errors.
 
 AC #5 (cross-group previewed, not committed on entry) was verified by reading the commit path rather than by driving a split in the browser — the move has one call site, in the finish handler, so the group a drop lands in cannot be committed before release.
+
+## Code review (`/code-review --fix`, post-commit)
+
+Three real defects in the seams of the new gesture, all fixed in a follow-up commit; a fourth reported and deliberately skipped.
+
+**Escape was wrong twice** — and both halves were mine, not pre-existing. It was registered in the bubble phase without `preventDefault`, so a drag over a terminal cancelled *and* let xterm write the key to the PTY (vim leaving insert mode). Worse, it was ungated: a press that had not yet crossed `DRAG_THRESHOLD_PX` retired its own gesture, so the still-held pointer could not then drag at all. Now capture-phase, consumed, and gated on `started`.
+
+**Selection was only suppressed from the threshold on.** `body[data-dragging]` lands on the first move past 4px, but nothing stopped the pointerdown itself anchoring a native selection — `ResizeHandle` calls `preventDefault()` for exactly that and `startDrag` did not. Fixed with `select-none` on the `TabStrip` root rather than `preventDefault()`, which would also have suppressed focus moving to the clicked tab. Worth recording *why* the browser pass missed it: synthetic `PointerEvent`s never exercise the browser's native selection machinery, so no amount of driving the page that way would have caught it.
+
+**`aria-hidden` over focusable content.** The proxy wraps a real `<button role="tab">` and a close button, so for the life of the drag they sat in the tab order while hidden from the accessibility tree — the axe `aria-hidden-focus` violation. `inert` added alongside.
+
+Skipped: the proxy is looked up in the current layout, so a reconciliation rewriting the layout mid-drag (`pruneShellTabs` dropping a shell whose PTY died) makes it disappear while the gesture runs on. It degrades safely — the move handler's own lookup refuses every drop and `moveTab` is a no-op for a missing id — so a guard would only restate the refusal path.
+
+Re-verified in the browser rather than taken on trust: `inert` really is emitted by React 19 (`inert=""`, `.inert === true`) and focusing the proxy's button is genuinely refused; the strip computes `user-select: none`; a pre-threshold Escape is not consumed *and* the same held pointer still goes on to drag; a mid-drag Escape is consumed and stopped in capture before any document-level listener sees it. `bun run test` 974 + 148, 0 fail; `tsc` clean.
 <!-- SECTION:NOTES:END -->
 
 ## Comments

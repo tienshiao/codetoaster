@@ -84,10 +84,16 @@ function mountArea() {
       act(() => {
         target.dispatchEvent(pointer(type, x, id));
       }),
-    press: (key: string) =>
+    // Returns the event so a test can ask whether the drag consumed it: an
+    // Escape that reaches the pane behind the gesture is one the terminal
+    // under the pointer also acts on.
+    press: (key: string) => {
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
       act(() => {
-        window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-      }),
+        window.dispatchEvent(event);
+      });
+      return event;
+    },
     unmount: () => act(() => view.unmount()),
   };
 }
@@ -220,6 +226,26 @@ test("Escape abandons the drag and puts the proxy down", () => {
   // And the gesture is genuinely retired, not merely hidden: a release that
   // arrives afterwards must not commit the move Escape just refused.
   area.on(window, "pointerup", centreOf(2) + 40, 1);
+  expect(area.order()).toEqual(["Agent", "Changes", "History"]);
+});
+
+test("Escape is the drag's only once there is a drag", () => {
+  const area = mountArea();
+
+  // A press that has not passed the threshold is still a click. Escape here
+  // belongs to whatever has focus behind the strip — the terminal the pointer
+  // is over, a dialog — so the gesture must neither swallow it nor retire
+  // itself over it, or the same still-held pointer could no longer drag.
+  area.on(area.tabAt(1), "pointerdown", centreOf(1), 1);
+  expect(area.press("Escape").defaultPrevented).toBe(false);
+
+  area.on(window, "pointermove", centreOf(2) + 40, 1);
+  expect(proxyEl()).not.toBeNull();
+
+  // Now it is the drag's, and is consumed: left to bubble it would cancel the
+  // drag *and* reach the pane under the pointer.
+  expect(area.press("Escape").defaultPrevented).toBe(true);
+  expect(proxyEl()).toBeNull();
   expect(area.order()).toEqual(["Agent", "Changes", "History"]);
 });
 

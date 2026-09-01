@@ -195,7 +195,7 @@ export function TabArea({
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", up);
         window.removeEventListener("pointercancel", cancel);
-        window.removeEventListener("keydown", key);
+        window.removeEventListener("keydown", key, true);
         releaseRef.current = null;
         onFinish(committed);
       };
@@ -209,13 +209,24 @@ export function TabArea({
       // picked up a tab and does not want to drop it anywhere. It goes through
       // the same `done` as every other ending: four ways out of a gesture is
       // four chances to leave a proxy on screen, unless they are one path.
+      //
+      // In the capture phase, and consumed: the key is dispatched at whatever
+      // has focus, which during a drag over a terminal is xterm's textarea —
+      // left to bubble, Escape would cancel the drag *and* put vim back in
+      // command mode. Only a drag past the threshold consumes it, though: until
+      // then the press is still a click, and Escape belongs to the pane behind
+      // it.
       const key = (e: KeyboardEvent) => {
-        if (e.key === "Escape") cancel();
+        if (e.key !== "Escape") return;
+        if (!dragRef.current?.started) return;
+        e.preventDefault();
+        e.stopPropagation();
+        cancel();
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", up);
       window.addEventListener("pointercancel", cancel);
-      window.addEventListener("keydown", key);
+      window.addEventListener("keydown", key, true);
       releaseRef.current = () => cancel();
     },
     [],
@@ -493,6 +504,12 @@ export function TabArea({
         ? createPortal(
             <div
               aria-hidden
+              // `aria-hidden` alone over a subtree holding a real `<button
+              // role="tab">` — and, for a closable tab, a close button — is the
+              // one thing aria-hidden may not do: those buttons stay in the tab
+              // order while the proxy is mounted. `inert` is what actually
+              // takes them out of it.
+              inert
               ref={proxyRef}
               style={{ width: drag.width }}
               className="pointer-events-none fixed left-0 top-0 z-50 opacity-75 shadow-lg"

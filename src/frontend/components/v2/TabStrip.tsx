@@ -216,7 +216,12 @@ export function TabStrip({
       data-tab-group={groupId}
       onPointerDown={onPointerDown}
       className={cn(
-        "flex h-tabstrip flex-none items-stretch overflow-hidden border-b border-border bg-chrome",
+        // `select-none`: a press in the strip is a click or the start of a tab
+        // drag, never the start of a selection. `body[data-dragging]` suppresses
+        // selection once a drag is live, but only from the threshold on — the
+        // first few pixels would otherwise have already anchored one here and be
+        // painting the panes the drag crosses.
+        "flex h-tabstrip flex-none select-none items-stretch overflow-hidden border-b border-border bg-chrome",
         className,
       )}
     >
