@@ -136,3 +136,45 @@ test("a live task is not reopened, and shows no overlay", async () => {
   expect(screen.queryByText("Could not resume this task")).toBeNull();
   expect(screen.queryByText("Suspended")).toBeNull();
 });
+
+/**
+ * The two states the tests above never reached (TASK-70).
+ *
+ * They are the ones the overlay's *chrome* changed under — it stopped being the
+ * only `rounded-full` thing in the app and picked up the system's radius,
+ * surface, shadow, control size and status dot — so this is where "all three
+ * still render" is pinned rather than asserted by hand in a browser: the
+ * restoring state lasts a few hundred milliseconds and is not a thing a
+ * screenshot reliably catches.
+ */
+test("a resume in flight says so, and offers nothing to press", async () => {
+  // Never resolves: the pane is left in the phase it enters on mount.
+  stubs.resumeTask.mockReturnValue(new Promise(() => {}));
+
+  await act(async () => {
+    render(<AgentPane taskId={TASK_ID} visible />);
+  });
+
+  await screen.findByText("Suspended — resuming…");
+  // Nothing to press while it is working — a second Reopen would race the
+  // first, and the ladder is not idempotent.
+  expect(screen.queryByRole("button", { name: "Reopen" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+test("a task suspended out from under the view offers the way back", async () => {
+  stubs.tasks = [task({ lifecycle: "live", ptyId: "pty-1" })];
+
+  const view = await act(async () => render(<AgentPane taskId={TASK_ID} visible />));
+  expect(screen.queryByText("Suspended")).toBeNull();
+
+  // Harvested, or closed from another client. The phase never left "live", so
+  // this is the plain resting state and not the tail of a reopen.
+  stubs.tasks = [task({ lifecycle: "suspended", ptyId: null })];
+  await act(async () => {
+    view.rerender(<AgentPane taskId={TASK_ID} visible />);
+  });
+
+  await screen.findByText("Suspended");
+  expect(screen.getByRole("button", { name: "Reopen" })).toBeDefined();
+});

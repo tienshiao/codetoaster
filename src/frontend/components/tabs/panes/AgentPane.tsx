@@ -3,6 +3,8 @@ import { usePty } from "@/frontend/PtyContext";
 import { useTasks } from "@/frontend/TaskContext";
 import { XTerminal, type TerminalHandle, type TerminalSize } from "@/frontend/Terminal";
 import { Button } from "@/frontend/components/v2/Button";
+import { StatusDot } from "@/frontend/components/v2/StatusDot";
+import { cn } from "@/frontend/lib/utils";
 
 /**
  * The agent tab (§7.2): one terminal, bound to one task's PTY.
@@ -268,6 +270,21 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
  * is holding the snapshot — a banner typed into it would corrupt the one thing
  * the user came back to see. Sized to stay out of the way for the same reason,
  * and click-through except for the button that is there to be clicked.
+ *
+ * **Not a `Notice`, and the reason is the same snapshot** (TASK-70). A Notice
+ * sits in the flow and pushes the pane down, which for this pane means giving
+ * the terminal a different height: that renegotiates the grid and reflows the
+ * restored scrollback — rewrapping the screen the user came back to read, at
+ * the exact moment they came back to read it. Notice's own comment draws the
+ * line at transient-versus-state and puts this on the transient side, which is
+ * only half right — `Suspended` waits for an answer and is a state — but it
+ * lands in the right place for the better reason.
+ *
+ * What it is not allowed to be is *off the system*, which it was: the only
+ * `rounded-full` chrome in the app, over a `bg-pane/95` and a raw `shadow-lg`,
+ * with a hand-set button height and a status dot rolled by hand. It floats;
+ * it still uses the same radius, surface, shadow, control sizes and dot as
+ * everything else.
  */
 function Overlay({
   phase,
@@ -288,10 +305,15 @@ function Overlay({
 
   return (
     <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center">
-      <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-border bg-pane/95 py-1.5 pl-4 pr-1.5 text-sm text-muted-foreground shadow-lg">
+      <div
+        className={cn(
+          "pointer-events-auto flex items-center gap-3 rounded-md border border-border",
+          "bg-pane py-1.5 pl-3 pr-1.5 text-sm text-muted-foreground shadow-overlay",
+        )}
+      >
         {phase === "restoring" ? (
           <>
-            <span className="size-2 animate-pulse rounded-full bg-state-busy" />
+            <StatusDot state="busy" />
             <span className="pr-2.5">
               {restoringWorkspace ? "Restoring workspace…" : "Suspended — resuming…"}
             </span>
@@ -302,7 +324,7 @@ function Overlay({
               {phase === "failed" ? "Could not resume this task" : "Suspended"}
               {failure ? (
                 // The cause, where the toast used to carry it. Truncated by the
-                // pill rather than by us: a network error can be a paragraph,
+                // card rather than by us: a network error can be a paragraph,
                 // and the sentence in front of it is the part that must stay
                 // readable.
                 <span className="ml-2 max-w-[28ch] truncate align-bottom text-subtle-foreground">
@@ -310,7 +332,7 @@ function Overlay({
                 </span>
               ) : null}
             </span>
-            <Button variant="outline" className="h-7 rounded-full" onClick={onReopen}>
+            <Button variant="outline" size="sm" onClick={onReopen}>
               {phase === "failed" ? "Try again" : "Reopen"}
             </Button>
           </>
