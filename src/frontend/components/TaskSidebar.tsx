@@ -3,6 +3,13 @@ import { Archive, FolderPlus, Pencil, SlidersHorizontal, Trash2, X } from "lucid
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { archiveSummary } from "@/frontend/archive-summary";
 import { groupByProject, selectTasks } from "@/frontend/task-list";
+import {
+  getSidebarState,
+  patchSidebarState,
+  toggleSidebarFlag,
+  toggleSidebarGroup,
+  type SidebarState,
+} from "@/frontend/sidebar-store";
 import { meaningfulTitle, sessionDisplayNames } from "@/lib/xtmux/naming";
 import type { ArchivePreview, ProjectInfo, ProjectSettings, TaskInfo } from "@/lib/xtmux/types";
 import type { AppShellProps, ShellTask } from "@/frontend/components/v2/AppShell";
@@ -505,11 +512,27 @@ export function useTaskSidebar({
     updateProject,
     deleteProject,
   } = useTasks();
-  const [filter, setFilter] = useState("");
-  const [grouped, setGrouped] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
-  // Only the groups the user has closed; everything else defaults open.
-  const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>({});
+  // The filter, the grouping, the archived toggle and the closed groups live in
+  // `sidebar-store`, not in this component (TASK-67). `/` and `/t/$slug` are
+  // separate route components that each render their own `TaskShell`, so a
+  // `useState` here is thrown away the moment the user acts on what they were
+  // looking at — filter the list, click the task you found, and the box is empty
+  // on the screen you used it to reach.
+  //
+  // Read with the initialiser rather than in an effect, so the first paint is
+  // already the stored arrangement. An effect would draw the ungrouped default
+  // and then swap it, which is the flash the store exists to avoid.
+  const [sidebar, setSidebar] = useState(getSidebarState);
+  const { filter, grouped, showArchived, closedGroups } = sidebar;
+  /** Every write goes through the store, which merges against the live value
+   * rather than against whatever this render closed over — two writes fired
+   * from one event cannot then undo each other. A *toggle* has to read the
+   * live value too, so it goes through `toggleSidebarFlag` rather than
+   * negating what this render destructured. */
+  const update = useCallback(
+    (patch: Partial<SidebarState>) => setSidebar(patchSidebarState(patch)),
+    [],
+  );
 
   const handleRename = useCallback(
     (id: string, title: string) => void renameTask(id, title),
@@ -706,8 +729,7 @@ export function useTaskSidebar({
       open: !closedGroups[group.id],
       count: group.tasks.length,
       attention: group.tasks.some((t) => taskStateOf(t) === "attention"),
-      onToggle: () =>
-        setClosedGroups((closed) => ({ ...closed, [group.id]: !closed[group.id] })),
+      onToggle: () => setSidebar(toggleSidebarGroup(group.id)),
       // Indented here and not in `rows`, because the same row is drawn both
       // ways and only one of them has a chevron to line up under.
       tasks: group.tasks.map((t) => ({ ...rowById.get(t.id)!, indent: true })),
@@ -751,10 +773,10 @@ export function useTaskSidebar({
     groups,
     grouped,
     taskFilter: filter,
-    onTaskFilterChange: (e) => setFilter(e.target.value),
-    onToggleGrouping: () => setGrouped((on) => !on),
+    onTaskFilterChange: (e) => update({ filter: e.target.value }),
+    onToggleGrouping: () => setSidebar(toggleSidebarFlag("grouped")),
     showArchived,
-    onToggleArchived: () => setShowArchived((on) => !on),
+    onToggleArchived: () => setSidebar(toggleSidebarFlag("showArchived")),
     onNewTask: () => void createTask({ cols: 120, rows: 30 }),
     headerActions,
   };
