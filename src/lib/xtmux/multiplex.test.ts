@@ -2,8 +2,9 @@ import { test, expect, describe, afterEach } from "bun:test";
 import type { ServerWebSocket } from "bun";
 import { PtyManager } from "./pty-manager";
 import type { ServerMessage, WebSocketData } from "./types";
+import { TEST_SHELL } from "../../../test/shell";
 
-const SHELL = [process.env.SHELL || "bash"];
+const SHELL = [TEST_SHELL];
 
 // A client socket that records what the server sent it. Standing in for a
 // browser tab: the thing under test is addressing and negotiation, not the

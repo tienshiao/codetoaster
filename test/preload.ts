@@ -6,9 +6,11 @@
 // suite, including the ones with no idea what an agent is.
 import { beforeEach } from "bun:test";
 import { useFakeAgentBin } from "./agent-bin";
+import { useTestShell } from "./shell";
 
-// Once, for anything that reads the variable at module scope.
+// Once, for anything that reads the variables at module scope.
 useFakeAgentBin();
+useTestShell();
 
 // And again before every test, because setting it once is not enough. Files
 // move this variable around: one `delete`s it in an `afterEach` so its
@@ -20,3 +22,8 @@ useFakeAgentBin();
 // Bun runs this outer hook before a file's own, so a file that needs a
 // different agent still sets it in its `beforeEach` or its test body and wins.
 beforeEach(useFakeAgentBin);
+
+// And `SHELL`, for the same reason and with the same shape: the shell-tab and
+// harvester tests reach a shell through `openShell`, which reads the variable
+// itself, so nothing they pass could pin it. See `test/shell.ts`.
+beforeEach(useTestShell);

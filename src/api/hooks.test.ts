@@ -7,6 +7,7 @@ import { initDatabase } from "../lib/db";
 import { taskManager } from "../lib/tasks/manager";
 import { hookRoutes } from "./hooks";
 import type { ServerMessage, WebSocketData } from "../lib/xtmux/types";
+import { TEST_SHELL } from "../../test/shell";
 
 let server: ReturnType<typeof Bun.serve>;
 let base: string;
@@ -33,7 +34,7 @@ afterAll(() => {
 /** A task with a plain command, so these tests never start an agent — the
  * route under test does not care what the PTY is running. */
 async function task(id: string) {
-  await taskManager.createTask({ id, command: [process.env.SHELL || "bash"] });
+  await taskManager.createTask({ id, command: [TEST_SHELL] });
   return id;
 }
 

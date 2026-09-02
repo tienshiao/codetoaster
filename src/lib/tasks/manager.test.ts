@@ -12,6 +12,7 @@ import { buildAgentCommand, taskDir, taskScrollbackPath, taskSettingsPath } from
 import { writeTaskSettings } from "../agent/settings";
 import { readSnapshot, writeSnapshot } from "./snapshot";
 import { sessionDisplayNames } from "../xtmux/naming";
+import { TEST_SHELL } from "../../../test/shell";
 
 // A client socket that records what the server sent it.
 function fakeClient(id = "c1") {
@@ -60,7 +61,7 @@ afterEach(async () => {
 
 // `true` runs a command that exits at once, so the exit path is testable.
 function shell(exitImmediately = false): string[] {
-  return exitImmediately ? ["true"] : [process.env.SHELL || "bash"];
+  return exitImmediately ? ["true"] : [TEST_SHELL];
 }
 
 /** A task whose terminal has actually painted something, and the wait for it to

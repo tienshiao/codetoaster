@@ -1,4 +1,5 @@
 import { useFakeAgentBin } from "./agent-bin";
+import { useTestShell } from "./shell";
 
 // Testing Library's matchers on Vitest's `expect`, and the unmount between
 // tests that keeps one test's rendered tree from being found by the next.
@@ -15,3 +16,4 @@ afterEach(cleanup);
 // about that is a real agent session. The two runners agree on this rather than
 // one of them being the exception nobody remembers.
 useFakeAgentBin();
+useTestShell();

@@ -6,6 +6,7 @@ import { initDatabase, getDatabase } from "../lib/db";
 import { TaskStore } from "../lib/tasks/store";
 import { taskManager } from "../lib/tasks/manager";
 import { resolveTaskRoot } from "./utils";
+import { TEST_SHELL } from "../../test/shell";
 
 let dbDir: string;
 let store: TaskStore;
@@ -151,7 +152,7 @@ describe("noticing that the agent has moved", () => {
 
   async function taskInThisRepo(id: string) {
     spawned.push(id);
-    await taskManager.createTask({ id, command: [process.env.SHELL || "bash"] });
+    await taskManager.createTask({ id, command: [TEST_SHELL] });
     return id;
   }
 
