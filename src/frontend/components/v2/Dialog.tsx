@@ -42,12 +42,12 @@ export interface DialogProps {
  *
  * `fixed`, and mounted onto `document.body` through a portal. The portal is not
  * tidiness: the per-row actions that own these dialogs live inside the cluster
- * `AppShell` fades in on hover with `opacity-0`, and opacity paints an entire
- * subtree no matter what any descendant's `position` says. Rendered in place, an
- * open dialog and its full-screen scrim would vanish the moment the pointer left
- * the row — click the dialog's own title, which takes no focus, and it does —
- * while still swallowing every click, which looks precisely like an app that has
- * stopped responding.
+ * `AppShell` reveals on hover with `opacity-0` and `pointer-events-none`, and
+ * both reach an entire subtree no matter what any descendant's `position` says.
+ * Rendered in place, an open dialog and its full-screen scrim would vanish the
+ * moment the pointer left the row — click the dialog's own title, which takes no
+ * focus, and it does — and lose every hit target in the panel with it: a modal
+ * that neither draws nor answers, over an app its scrim no longer shields.
  */
 export function Dialog({
   open,

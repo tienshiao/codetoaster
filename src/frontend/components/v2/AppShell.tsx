@@ -143,9 +143,17 @@ export interface AppShellProps {
 /**
  * A row's hover/focus actions, floated over its trailing edge.
  *
- * `opacity`, not `hidden`: a `display: none` control is not focusable, so
- * nothing could ever tab into it and `focus-within` would never fire — the
- * actions would be hover-only, which is exactly what they must not be.
+ * `opacity` plus `pointer-events`, not `hidden`: a `display: none` control is
+ * not focusable, so nothing could ever tab into it and `focus-within` would
+ * never fire — the actions would be hover-only, which is exactly what they must
+ * not be. `pointer-events` does not touch focus, so the pair keeps that keyboard
+ * path while covering what opacity alone cannot: opacity hides the paint and
+ * nothing else, so a fully invisible button still catches the tap. Touch is
+ * where that bites — `group-hover` compiles inside `@media (hover: hover)`, so
+ * the first tap on a row arrives with the strip still unpainted and used to land
+ * on a button nobody could see. The strip is not lost there: `group-focus-within`
+ * is not hover-gated, and tapping the row's own button focuses it, so the strip
+ * appears and a second tap can aim at it.
  *
  * The background is the sidebar's own and not the row's, so the cluster reads
  * as a chip floating over the trailing `meta` column in every row state —
@@ -153,16 +161,18 @@ export interface AppShellProps {
  * currently painted underneath it.
  *
  * Anything mounted in here that must outlive the hover — a dialog, a menu —
- * has to render through a portal, and `v2/Dialog` does. Opacity paints the whole
- * subtree whatever a descendant's `position` says, so a modal left in place
- * fades out the instant the pointer leaves the row while its full-screen scrim
- * goes on swallowing clicks.
+ * has to render through a portal, and `v2/Dialog` does. Both properties reach
+ * the whole subtree whatever a descendant's `position` says, so a modal left in
+ * place fades out the instant the pointer leaves the row — and, with
+ * `pointer-events`, goes dead with it: a dialog that neither draws nor answers,
+ * over an app the scrim has stopped shielding.
  */
 function RowActions({ children }: { children: ReactNode }) {
   return (
     <span
       className={cn(
         "absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-sidebar",
+        "pointer-events-none group-hover/row:pointer-events-auto group-focus-within/row:pointer-events-auto",
         "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100",
       )}
     >
@@ -454,10 +464,14 @@ export function AppShell({
                   </ProjectGroup>
                   {group.actions && (
                     // Pinned to the header row rather than centred on the
-                    // group, whose height is however many tasks are in it.
+                    // group, whose height is however many tasks are in it. The
+                    // opacity/pointer-events pair is the one `RowActions`
+                    // carries: hidden strips have no hit target, or on touch a
+                    // tap meant for the header lands on an invisible button.
                     <span
                       className={cn(
                         "absolute top-0 right-1 flex h-group items-center gap-0.5 rounded-md bg-sidebar",
+                        "pointer-events-none group-hover/project:pointer-events-auto group-focus-within/project:pointer-events-auto",
                         "opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100",
                       )}
                     >

@@ -205,14 +205,15 @@ test("a row's actions are focusable, so they are not hover-only", () => {
   expect(document.activeElement).toBe(action);
 });
 
-/** Whether `el` sits under anything the shell fades out with the row. Walked
- * rather than asserted on one known parent, because the trap is any ancestor at
- * all: opacity applies to a whole subtree, `position: fixed` included. */
-function fadesWithTheRow(el: HTMLElement): boolean {
+/** The ancestors of `el` that carry `cls`. Walked rather than asserted on one
+ * known parent, because the trap is any ancestor at all: opacity and
+ * `pointer-events` each paint a whole subtree, `position: fixed` included. */
+function ancestorsWith(el: HTMLElement, cls: string): HTMLElement[] {
+  const found: HTMLElement[] = [];
   for (let node: HTMLElement | null = el; node; node = node.parentElement) {
-    if (node.classList.contains("opacity-0")) return true;
+    if (node.classList.contains(cls)) found.push(node);
   }
-  return false;
+  return found;
 }
 
 test("a row's dialog is not inside the cluster that fades with the hover", () => {
@@ -242,7 +243,101 @@ test("a row's dialog is not inside the cluster that fades with the hover", () =>
   // Left in the cluster, the dialog and its scrim drop to `opacity: 0` the
   // moment focus leaves the row — clicking the dialog's own title is enough —
   // and the invisible scrim then eats every click in the app.
-  expect(fadesWithTheRow(screen.getByRole("dialog", { name: "Close this task?" }))).toBe(false);
+  const dialog = screen.getByRole("dialog", { name: "Close this task?" });
+  expect(ancestorsWith(dialog, "opacity-0")).toHaveLength(0);
+  // The same trap on the hit-target axis: `pointer-events` reaches the whole
+  // subtree too, so the portal must keep the dialog outside that as well — or
+  // leaving the row leaves a scrim that swallows every click without drawing
+  // itself.
+  expect(ancestorsWith(dialog, "pointer-events-none")).toHaveLength(0);
+});
+
+/**
+ * The strips hide with `opacity-0` but, until this fix, kept their hit target
+ * with it — opacity hides the paint and nothing else. On a pointer that is
+ * nearly harmless: the pointer has to be on the row to miss anyway. On touch
+ * the reveal never comes, so an invisible strip stays live: a tap on the right
+ * end of a project header, meaning to collapse the group, hit the "new task"
+ * button and opened the composer.
+ *
+ * The fix pairs `pointer-events-none` with the opacity, re-enabled by the same
+ * variants that do the painting. Happy-DOM has neither hover nor layout, so
+ * what is asserted is the pairing itself, not the moment a pointer arrives.
+ */
+test("a hidden strip has no hit target, and the reveal hands it back", () => {
+  render(
+    <AppShell
+      groups={[
+        {
+          id: "p1",
+          name: "Website",
+          actions: <button type="button">New task in Website</button>,
+          tasks: [
+            {
+              id: "t1",
+              title: "Fix the parser",
+              actions: <button type="button">Close Fix the parser</button>,
+            },
+          ],
+        },
+      ]}
+      grouped
+    />,
+  );
+
+  const strips: [string, string, string][] = [
+    [
+      "Close Fix the parser",
+      "group-hover/row:pointer-events-auto",
+      "group-focus-within/row:pointer-events-auto",
+    ],
+    [
+      "New task in Website",
+      "group-hover/project:pointer-events-auto",
+      "group-focus-within/project:pointer-events-auto",
+    ],
+  ];
+  for (const [button, hover, focusWithin] of strips) {
+    // The nearest `opacity-0` ancestor of a button in a strip is the strip
+    // itself.
+    const strip = ancestorsWith(screen.getByRole("button", { name: button }), "opacity-0")[0];
+    expect(strip).toBeDefined();
+    // Invisible and unclickable: the pair the fix establishes.
+    expect(strip!.classList.contains("pointer-events-none")).toBe(true);
+    // And the same variants that make it visible must hand the hit target
+    // back — a row a pointer can see is a row a pointer can touch.
+    expect(strip!.classList.contains(hover)).toBe(true);
+    expect(strip!.classList.contains(focusWithin)).toBe(true);
+  }
+});
+
+test("a project header is still the toggle beneath its hidden strip", () => {
+  const onToggle = vi.fn();
+  render(
+    <AppShell
+      groups={[
+        {
+          id: "p1",
+          name: "Website",
+          onToggle,
+          actions: <button type="button">New task in Website</button>,
+        },
+      ]}
+      grouped
+    />,
+  );
+  // The other half of the touch fix: with the strip's hit target gone, the
+  // tap on the header's right end falls through to the header itself.
+  // Happy-DOM dispatches to the named element, so this pins that the header
+  // beneath is still a live button — the geometric fall-through is a real
+  // device's call (TASK-33).
+  const header = screen.getByRole("button", { name: "Website" });
+  fireEvent.click(header);
+  expect(onToggle).toHaveBeenCalledTimes(1);
+  // And that the header did not get swept into the deadening: the strip is a
+  // sibling of the group's content, so nothing on the header's own ancestor
+  // chain may carry the class that makes the strip untappable.
+  expect(ancestorsWith(header, "pointer-events-none")).toHaveLength(0);
 });
 
 test("a row's actions sit outside its button, not inside it", () => {
