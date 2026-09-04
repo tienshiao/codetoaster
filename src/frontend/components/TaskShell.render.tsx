@@ -61,10 +61,9 @@ vi.mock("@/frontend/hooks/use-explorer-panel", () => ({
     setBacklogTab: vi.fn(),
   }),
 }));
-// The shell asks whether the repository is a Backlog.md one, to decide whether
-// a stored Backlog section still has a rail item (TASK-85). Undecided here, so
-// nothing fetches and the section is left as stored.
-vi.mock("@/frontend/hooks/use-backlog", () => ({ useBacklog: () => ({ data: undefined }) }));
+// The rail decides which sections exist, and the shell shows the stored one
+// only if the rail still offers it (TASK-85) — so a stubbed rail is a shell
+// showing Changes, which is all this file's tests want from the Explorer.
 vi.mock("@/frontend/components/Explorer", () => ({
   Explorer: () => null,
   useExplorerRail: () => [],

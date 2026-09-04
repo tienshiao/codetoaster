@@ -63,11 +63,23 @@ const SECTION_ICONS: Record<ExplorerSection, LucideIcon> = {
  * Backlog is *absent* rather than disabled when the repository is not a
  * Backlog.md one (TASK-85): a permanently greyed rail item is a promise about a
  * feature this repository will never have, and the rail is four icons tall.
+ *
+ * `section` is the section the panel is showing, and it is what decides the
+ * undecided case — the query has no answer while it is in flight, and never
+ * gets one at the composer, where there is no task to ask about. Dropping the
+ * item on `undefined` therefore stranded a stored Backlog section with no rail
+ * item to click back out of, while the panel's title went on naming it; keeping
+ * it on `undefined` would flash an item onto every repository that has no
+ * backlog. So while the answer is out the item survives exactly as long as it
+ * is the section showing, which is neither.
  */
-export function useExplorerRail(taskId: string | null): ExplorerRailItem[] {
+export function useExplorerRail(
+  taskId: string | null,
+  section?: ExplorerSection,
+): ExplorerRailItem[] {
   const { data } = useTaskDiff(taskId ?? "", taskId != null);
   const count = data?.length;
-  const backlog = useBacklog(taskId).data?.detected === true;
+  const backlog = useBacklog(taskId).data?.detected ?? section === "Backlog";
   return useMemo(
     () =>
       EXPLORER_SECTIONS.filter((label) => label !== "Backlog" || backlog).map((label) => ({

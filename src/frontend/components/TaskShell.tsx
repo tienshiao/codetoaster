@@ -8,7 +8,6 @@ import { Button } from "@/frontend/components/v2/Button";
 import { WipNotice } from "@/frontend/components/WipNotice";
 import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
-import { useBacklog } from "@/frontend/hooks/use-backlog";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { pathLabel } from "@/frontend/utils/path-label";
@@ -52,18 +51,20 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   const openTask = useOpenTask();
   const openComposer = useOpenComposer();
   const explorerPanel = useExplorerPanel();
-  const explorerSections = useExplorerRail(taskId);
+  const explorerSections = useExplorerRail(taskId, explorerPanel.section);
   // The Explorer's section is per device and the Backlog one only exists for a
   // Backlog.md repository (TASK-85), so a user who left the panel on Backlog
   // and moved to a task without one would open onto a section whose rail item
-  // is gone — nothing to click back out of. Not while the query is still
-  // undecided: falling back on `undefined` would flash Changes on every load of
-  // a repository that does have a backlog.
-  const backlog = useBacklog(taskId);
-  const explorerSection =
-    explorerPanel.section === "Backlog" && backlog.data?.detected === false
-      ? "Changes"
-      : explorerPanel.section;
+  // is gone — nothing to click back out of.
+  //
+  // Read off the rail rather than re-derived from the same query: two
+  // predicates over one `detected` disagreed about the undecided case, so at
+  // the composer — where the query is disabled and so never answers `false` —
+  // the rail dropped the item while this went on showing the section, and the
+  // panel was titled Backlog with nothing under it to close.
+  const explorerSection = explorerSections.some((s) => s.label === explorerPanel.section)
+    ? explorerPanel.section
+    : "Changes";
   // A real layout for the selected task, persisted per task id.
   const { layout, setLayout } = useTaskLayout(taskId);
   const sidebar = useTaskSidebar({

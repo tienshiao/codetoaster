@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { BacklogResponse } from "@/types/backlog";
+import type { ExplorerSection } from "@/frontend/explorer-store";
 import type { TabDescriptor } from "@/frontend/layout-store";
 import { BacklogSection } from "./BacklogSection";
 import { useExplorerRail } from "./Explorer";
@@ -185,8 +186,14 @@ test("a repository with no backlog says so rather than showing an empty list", a
 
 /** The rail's labels only, so the claim is about which sections exist rather
  * than about the icons they carry. */
-function Rail() {
-  const items = useExplorerRail("t1");
+function Rail({
+  taskId = "t1",
+  section,
+}: {
+  taskId?: string | null;
+  section?: ExplorerSection;
+}) {
+  const items = useExplorerRail(taskId, section);
   return <div data-testid="rail">{items.map((i) => i.label).join(",")}</div>;
 }
 
@@ -203,4 +210,36 @@ test("the rail offers Backlog only where the route reports one", async () => {
   body = response();
   mount(<Rail />);
   await waitFor(() => expect(screen.getByTestId("rail").textContent).toContain("Backlog"));
+});
+
+test("with no answer yet, Backlog survives only as the section showing", () => {
+  // The composer is this case permanently: no task, so the query is disabled
+  // and never reports `detected` either way. Dropping the item there left the
+  // panel titled Backlog with no rail item under it to close — the shell reads
+  // its section off the rail, so the item and the title now go together.
+  mount(<Rail taskId={null} section="Backlog" />);
+  expect(screen.getByTestId("rail").textContent).toContain("Backlog");
+});
+
+test("with no answer yet, Backlog stays absent for any other section", () => {
+  // The other half: keeping the item while the answer is out would flash one
+  // onto every repository that has no backlog.
+  mount(<Rail taskId={null} section="Changes" />);
+  expect(screen.getByTestId("rail").textContent).toBe("Changes,Files,History,Refs");
+});
+
+test("a detected repository outranks the section showing", async () => {
+  // `detected` decides once it lands, in both directions: present for a backlog
+  // repository the user is not looking at the section of...
+  const detected = mount(<Rail section="Changes" />);
+  await waitFor(() => expect(screen.getByTestId("rail").textContent).toContain("Backlog"));
+  detected.unmount();
+
+  // ...and gone for one that is not, even though the panel is on Backlog — the
+  // frame before the shell falls the section back to Changes.
+  body = { detected: false };
+  mount(<Rail section="Backlog" />);
+  await waitFor(() =>
+    expect(screen.getByTestId("rail").textContent).toBe("Changes,Files,History,Refs"),
+  );
 });
