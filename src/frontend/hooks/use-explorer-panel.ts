@@ -3,6 +3,7 @@ import {
   isExplorerSection,
   loadExplorerState,
   saveExplorerState,
+  type BacklogTab,
   type ExplorerSection,
   type ExplorerState,
 } from "@/frontend/explorer-store";
@@ -10,10 +11,14 @@ import {
 export interface ExplorerPanel {
   open: boolean;
   section: ExplorerSection;
+  /** The Backlog section's split (TASK-85), remembered per device alongside the
+   * section so reopening the panel lands where it was left. */
+  backlogTab: BacklogTab;
   setOpen: (open: boolean) => void;
   /** Takes a plain string because it is fed straight from the rail, which
    * names sections by label. An unknown label is ignored. */
   setSection: (label: string) => void;
+  setBacklogTab: (tab: BacklogTab) => void;
 }
 
 /**
@@ -50,5 +55,16 @@ export function useExplorerPanel(): ExplorerPanel {
     [update],
   );
 
-  return { open: state.open, section: state.section, setOpen, setSection };
+  // Through the same `update`, so the tab is written with whatever the panel's
+  // open flag and section are *now* rather than with the render's snapshot.
+  const setBacklogTab = useCallback((backlogTab: BacklogTab) => update({ backlogTab }), [update]);
+
+  return {
+    open: state.open,
+    section: state.section,
+    backlogTab: state.backlogTab,
+    setOpen,
+    setSection,
+    setBacklogTab,
+  };
 }

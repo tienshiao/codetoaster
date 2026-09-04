@@ -138,7 +138,7 @@ test("every slot kind starts at its defaults", () => {
 
   const file = getViewState("file", at("file:src/a.ts"));
   expect(file.lineWrap).toBe(false);
-  expect(file.markdownPreview).toBe(false);
+  expect(file.markdownPreview).toBe(true);
   expect(file.scrollTops).toBeInstanceOf(Map);
   expect(file.scrollTops.size).toBe(0);
 
@@ -435,7 +435,7 @@ test("a field added since the entry was written hydrates to its default", () => 
 
   const file = getViewState("file", viewRef(task, "file:src/a.ts"));
   expect(file.lineWrap).toBe(true);
-  expect(file.markdownPreview).toBe(false);
+  expect(file.markdownPreview).toBe(true);
   expect(file.scrollTops).toBeInstanceOf(Map);
   expect(file.scrollTops.size).toBe(0);
 

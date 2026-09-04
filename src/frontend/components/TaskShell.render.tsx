@@ -52,8 +52,19 @@ vi.mock("@/frontend/hooks/use-task-nav", () => ({
   useOpenComposer: () => vi.fn(),
 }));
 vi.mock("@/frontend/hooks/use-explorer-panel", () => ({
-  useExplorerPanel: () => ({ section: "Changes", setSection: vi.fn(), open: false, setOpen: vi.fn() }),
+  useExplorerPanel: () => ({
+    section: "Changes",
+    setSection: vi.fn(),
+    open: false,
+    setOpen: vi.fn(),
+    backlogTab: "Open",
+    setBacklogTab: vi.fn(),
+  }),
 }));
+// The shell asks whether the repository is a Backlog.md one, to decide whether
+// a stored Backlog section still has a rail item (TASK-85). Undecided here, so
+// nothing fetches and the section is left as stored.
+vi.mock("@/frontend/hooks/use-backlog", () => ({ useBacklog: () => ({ data: undefined }) }));
 vi.mock("@/frontend/components/Explorer", () => ({
   Explorer: () => null,
   useExplorerRail: () => [],

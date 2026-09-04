@@ -61,6 +61,10 @@ export interface DiffFileViewState {
  * rendered markdown have unrelated content heights. */
 export interface FileViewState {
   lineWrap: boolean;
+  /** On by default: a markdown file opened from a tree, a Backlog card or a
+   * terminal link (TASK-85, TASK-86) is there to be read, and the eye button
+   * turns it back into source for the tab that wants it. Non-markdown files
+   * ignore it. */
   markdownPreview: boolean;
   scrollTops: Map<string, number>;
 }
@@ -159,7 +163,7 @@ const DEFAULTS: { [K in ViewSlotKind]: () => ViewStateShapes[K] } = {
     hunkExpansions: new Map(),
   }),
   diffFile: () => ({ scrollTop: 0, hunkExpansions: new Map() }),
-  file: () => ({ lineWrap: false, markdownPreview: false, scrollTops: new Map() }),
+  file: () => ({ lineWrap: false, markdownPreview: true, scrollTops: new Map() }),
   commit: () => ({
     mode: "commit",
     file: null,

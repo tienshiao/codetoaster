@@ -8,6 +8,7 @@ import { Button } from "@/frontend/components/v2/Button";
 import { WipNotice } from "@/frontend/components/WipNotice";
 import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
+import { useBacklog } from "@/frontend/hooks/use-backlog";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { pathLabel } from "@/frontend/utils/path-label";
@@ -52,6 +53,17 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   const openComposer = useOpenComposer();
   const explorerPanel = useExplorerPanel();
   const explorerSections = useExplorerRail(taskId);
+  // The Explorer's section is per device and the Backlog one only exists for a
+  // Backlog.md repository (TASK-85), so a user who left the panel on Backlog
+  // and moved to a task without one would open onto a section whose rail item
+  // is gone — nothing to click back out of. Not while the query is still
+  // undecided: falling back on `undefined` would flash Changes on every load of
+  // a repository that does have a backlog.
+  const backlog = useBacklog(taskId);
+  const explorerSection =
+    explorerPanel.section === "Backlog" && backlog.data?.detected === false
+      ? "Changes"
+      : explorerPanel.section;
   // A real layout for the selected task, persisted per task id.
   const { layout, setLayout } = useTaskLayout(taskId);
   const sidebar = useTaskSidebar({
@@ -378,17 +390,23 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
             : ["no task"],
         }}
         explorerSections={explorerSections}
-        explorerTab={explorerPanel.section}
+        explorerTab={explorerSection}
         onExplorerTabChange={explorerPanel.setSection}
         explorerOpen={explorerPanel.open}
         onExplorerOpenChange={explorerPanel.setOpen}
         explorer={
-          <Explorer taskId={taskId} section={explorerPanel.section} onOpenTab={handleOpenTab} />
+          <Explorer
+            taskId={taskId}
+            section={explorerSection}
+            backlogTab={explorerPanel.backlogTab}
+            onBacklogTabChange={explorerPanel.setBacklogTab}
+            onOpenTab={handleOpenTab}
+          />
         }
         // No "Commit" button beside it: every route under `src/api/git.ts` is a
         // read-only GET, so there is nothing behind one.
         explorerFooter={
-          explorerPanel.section === "Changes" && layout ? (
+          explorerSection === "Changes" && layout ? (
             <Button
               variant="outline"
               className="flex-1"

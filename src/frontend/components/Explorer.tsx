@@ -4,26 +4,35 @@ import {
   Files,
   GitBranch,
   GitCommitHorizontal,
-  Loader2,
-  RefreshCw,
+  ListTodo,
   type LucideIcon,
 } from "lucide-react";
-import { Button } from "@/frontend/components/v2";
 import type { ExplorerRailItem } from "@/frontend/components/v2/ExplorerRail";
+import { BacklogSection } from "@/frontend/components/BacklogSection";
+import {
+  ExplorerError,
+  ExplorerLoading,
+  ExplorerNote,
+} from "@/frontend/components/explorer-notes";
 import { FileTree as DiffFileTree } from "@/frontend/components/diff/FileTree";
 import { FileTree as WorkspaceFileTree } from "@/frontend/components/file/FileTree";
 import { CommitList } from "@/frontend/components/git/CommitList";
 import { RefSidebar, type RefSidebarHeadExpanded } from "@/frontend/components/git/RefSidebar";
+import { useBacklog } from "@/frontend/hooks/use-backlog";
 import { useGitHistory } from "@/frontend/hooks/use-git-history";
 import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
 import { useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useViewState } from "@/frontend/hooks/use-view-state";
-import { EXPLORER_SECTIONS, type ExplorerSection } from "@/frontend/explorer-store";
+import {
+  EXPLORER_SECTIONS,
+  type BacklogTab,
+  type ExplorerSection,
+} from "@/frontend/explorer-store";
 import type { OpenOptions, TabDescriptor } from "@/frontend/layout-store";
 import { getViewState, setViewField, viewRef } from "@/frontend/view-state-store";
 
 /**
- * The Explorer's body (§7.1): the four sections that live in the right-hand
+ * The Explorer's body (§7.1): the five sections that live in the right-hand
  * panel.
  *
  * This is the body and not the chrome. `AppShell` owns the rail, the panel
@@ -42,6 +51,7 @@ const SECTION_ICONS: Record<ExplorerSection, LucideIcon> = {
   Files: Files,
   History: GitCommitHorizontal,
   Refs: GitBranch,
+  Backlog: ListTodo,
 };
 
 /**
@@ -49,29 +59,44 @@ const SECTION_ICONS: Record<ExplorerSection, LucideIcon> = {
  * section opens already use, so a rail icon and the tab it produces read as
  * the same thing — and the changed-file count rides the rail rather than the
  * panel header precisely so it still reads with the panel shut.
+ *
+ * Backlog is *absent* rather than disabled when the repository is not a
+ * Backlog.md one (TASK-85): a permanently greyed rail item is a promise about a
+ * feature this repository will never have, and the rail is four icons tall.
  */
 export function useExplorerRail(taskId: string | null): ExplorerRailItem[] {
   const { data } = useTaskDiff(taskId ?? "", taskId != null);
   const count = data?.length;
+  const backlog = useBacklog(taskId).data?.detected === true;
   return useMemo(
     () =>
-      EXPLORER_SECTIONS.map((label) => ({
+      EXPLORER_SECTIONS.filter((label) => label !== "Backlog" || backlog).map((label) => ({
         label,
         icon: SECTION_ICONS[label],
         count: label === "Changes" ? count : undefined,
       })),
-    [count],
+    [count, backlog],
   );
 }
 
 export interface ExplorerProps {
   taskId: string | null;
   section: ExplorerSection;
+  /** The Backlog section's Open/Closed split, held by the panel so it survives
+   * the section being unmounted (TASK-85). */
+  backlogTab: BacklogTab;
+  onBacklogTabChange: (tab: BacklogTab) => void;
   /** Opening a tab is the layout's business; the Explorer only says what. */
   onOpenTab: (descriptor: TabDescriptor, options?: OpenOptions) => void;
 }
 
-export function Explorer({ taskId, section, onOpenTab }: ExplorerProps): ReactNode {
+export function Explorer({
+  taskId,
+  section,
+  backlogTab,
+  onBacklogTabChange,
+  onOpenTab,
+}: ExplorerProps): ReactNode {
   const preview = usePreviewOpen(onOpenTab);
 
   if (taskId == null) {
@@ -94,6 +119,15 @@ export function Explorer({ taskId, section, onOpenTab }: ExplorerProps): ReactNo
       return <HistorySection taskId={taskId} onOpenTab={onOpenTab} {...preview} />;
     case "Refs":
       return <RefsSection taskId={taskId} {...preview} />;
+    case "Backlog":
+      return (
+        <BacklogSection
+          taskId={taskId}
+          backlogTab={backlogTab}
+          onBacklogTabChange={onBacklogTabChange}
+          {...preview}
+        />
+      );
   }
 }
 
@@ -352,34 +386,6 @@ function RefsSection({ taskId, open, handlers }: SectionProps) {
   );
 }
 
-// ── small print ─────────────────────────────────────────────────────────────
-
-/** A section that has nothing to draw. The panel is 272px wide, so a state
- * says what it is in one line rather than centring a paragraph. */
-function ExplorerNote({ children }: { children: ReactNode }) {
-  return <div className="px-2 py-3 text-xs text-subtle-foreground">{children}</div>;
-}
-
-function ExplorerLoading({ children }: { children: ReactNode }) {
-  return (
-    <ExplorerNote>
-      <span className="inline-flex items-center gap-1.5">
-        <Loader2 size={12} className="animate-spin" />
-        {children}
-      </span>
-    </ExplorerNote>
-  );
-}
-
-function ExplorerError({ children, onRetry }: { children: ReactNode; onRetry: () => void }) {
-  return (
-    <div className="flex flex-col items-start">
-      <ExplorerNote>{children}</ExplorerNote>
-      <div className="px-2 pb-2">
-        <Button variant="outline" size="sm" icon={RefreshCw} onClick={onRetry}>
-          Retry
-        </Button>
-      </div>
-    </div>
-  );
-}
+// The empty/loading/error states the sections share live in
+// `explorer-notes.tsx`, so a section in a file of its own can reach them
+// without importing this one back.
