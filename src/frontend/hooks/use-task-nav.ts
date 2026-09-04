@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { requestComposerProject } from "../composer-request-store";
 import { useTasks } from "../TaskContext";
 import { buildTaskSlug } from "../utils/slug";
 
@@ -44,11 +45,15 @@ export function useOpenTask(): (taskId: string, options?: { tab?: string }) => v
  * composer, so a button that spawned one directly would be committing to every
  * one of those answers on the user's behalf, and to a promptless task besides.
  *
- * A project group's `+` passes that project's id and it rides along as
- * `?project=`, so the composer opens on the project the press was made under;
- * the header's `+` passes nothing and the composer opens wherever it would
- * have. Only ever an opinion about the selection — the composer is free to
- * ignore an id it does not recognise, and does.
+ * A project group's `+` passes that project's id and it goes out twice: to the
+ * request store, which is what actually moves the composer's selection, and
+ * into the URL as `?project=` so the address opens on the same project when it
+ * is reloaded or copied. The store is needed because the URL alone cannot
+ * express a second press — `/?project=web` is already showing, the navigation
+ * is a no-op, and the composer sees nothing (TASK-82). The header's `+` passes
+ * nothing and the composer opens wherever it would have. Only ever an opinion
+ * about the selection — the composer is free to ignore an id it does not
+ * recognise, and does.
  *
  * Focus is moved after the navigation rather than left to the pane's own
  * autofocus, because `/` may already be what is showing: nothing remounts then,
@@ -59,6 +64,10 @@ export function useOpenComposer(): (options?: { projectId?: string }) => void {
 
   return useCallback(
     (options = {}) => {
+      // Before the navigation, not after it: a composer already mounted at `/`
+      // is re-rendered by the navigation attempt, and the request is what that
+      // render has to read.
+      if (options.projectId) requestComposerProject(options.projectId);
       // Focus only once the navigation has landed, and only if it did: a
       // navigation that rejects — blocked, or redirected out from under this —
       // leaves the caret where it was. Handled rather than left to float,

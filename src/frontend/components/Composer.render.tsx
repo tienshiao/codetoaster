@@ -1,6 +1,10 @@
 import { test, expect, describe, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { chooseOption, selectValue } from "../../../test/v2-select";
+import {
+  requestComposerProject,
+  resetComposerRequest,
+} from "../composer-request-store";
 import type { CreateTaskOptions, TaskResult } from "../TaskContext";
 import type { ProjectInfo, TaskInfo } from "../../lib/xtmux/types";
 
@@ -53,6 +57,8 @@ function project(id: string, overrides: Partial<ProjectInfo> = {}): ProjectInfo 
 const created = { id: "task-1" } as TaskInfo;
 
 beforeEach(() => {
+  // Module state, so a request made by one test is one the next would open on.
+  resetComposerRequest();
   stubs.projects = [project("general"), project("web")];
   stubs.createTask.mockReset();
   stubs.createTask.mockResolvedValue({ ok: true, value: created });
@@ -285,13 +291,29 @@ describe("the project a group's + asked for", () => {
 
   test("arriving while the user is typing moves the selection and nothing else", () => {
     // The real shape of it: `/` is already showing, so pressing a group's `+`
-    // changes a prop on a live composer rather than mounting a new one. The
-    // prompt is the user's and the only copy of it.
-    const view = render(<Composer />);
+    // is a request into a live composer rather than a new mount. The prompt is
+    // the user's and the only copy of it.
+    render(<Composer />);
     type("ship it");
     expect(selectValue("project")).toBe("general");
 
-    view.rerender(<Composer projectId="web" />);
+    act(() => requestComposerProject("web"));
+
+    expect(selectValue("project")).toBe("web");
+    expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe("ship it");
+  });
+
+  test("a press lands even when the URL already names that project", () => {
+    // TASK-82, the whole of it: opened at `/?project=web`, chip moved to
+    // general by hand, then web's `+` pressed again. The navigation behind that
+    // press goes to the address already showing and so changes nothing, which
+    // is why the request is counted rather than compared by id.
+    render(<Composer projectId="web" />);
+    chooseOption("project", "general");
+    type("ship it");
+    expect(selectValue("project")).toBe("general");
+
+    act(() => requestComposerProject("web"));
 
     expect(selectValue("project")).toBe("web");
     expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe("ship it");

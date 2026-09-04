@@ -1,6 +1,10 @@
-import { useCallback, useState, type KeyboardEvent } from "react";
+import { useCallback, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { CornerDownLeft, Folder, GitBranch } from "lucide-react";
 import { useTasks } from "@/frontend/TaskContext";
+import {
+  getComposerRequest,
+  subscribeComposerRequest,
+} from "@/frontend/composer-request-store";
 import { COMPOSER_PROMPT_ID, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { Button } from "@/frontend/components/v2/Button";
 import { Checkbox } from "@/frontend/components/v2/Checkbox";
@@ -40,13 +44,18 @@ export interface ComposerProps {
  * default. The column, the `POST /api/tasks` field and the server's resolution
  * of them all survive — a mode set by the API or the CLI still spawns with it.
  *
- * `projectId` is what a project group's `+` in the sidebar asks for, carried
- * here as `/?project=<id>`. It is a preference and not an address: it seeds the
- * selection and every later change to it moves the selection, but an id that
- * names no project falls through the same fallback a deleted project's id does
- * and the composer opens on the first one. Nothing else is disturbed by it —
- * the prompt in particular, since the user can already be typing when the
- * request arrives.
+ * `projectId` is what the composer opens on, carried here as `/?project=<id>`.
+ * It is a preference and not an address: it seeds the selection on mount, so a
+ * copied URL opens on the project it names, and an id that names no project
+ * falls through the same fallback a deleted project's id does and the composer
+ * opens on the first one. The selection is not written back to it.
+ *
+ * Moving the selection of a composer that is *already* showing is a different
+ * question and is answered by `composer-request-store`, not by this prop —
+ * pressing a project group's `+` while `/?project=web` is the address changes
+ * nothing about the address to react to. Whichever way the ask arrives, only
+ * the selection moves: the prompt is the user's and may already have been typed
+ * into, and it is the only copy of it.
  */
 export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) {
   const { projects, createTask } = useTasks();
@@ -61,17 +70,23 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   const [submitting, setSubmitting] = useState(false);
 
   // The same "adjust state when a prop changes" as the seeding below, for the
-  // one prop that is a request rather than a fact: `/` is already showing when
-  // a project group's `+` is pressed, so this never remounts and the new id
-  // arrives as a changed prop into a live form. Only the selection moves — the
-  // prompt is the user's and may already have been typed into, and it is the
-  // only copy of it. Tracked by *what was last asked for* rather than by what
-  // is selected, so a hand-made selection is not undone on every render, and so
-  // asking for the same project twice after a detour still lands.
-  const [lastRequested, setLastRequested] = useState(requestedProjectId ?? null);
-  if ((requestedProjectId ?? null) !== lastRequested) {
-    setLastRequested(requestedProjectId ?? null);
-    if (requestedProjectId) setProjectId(requestedProjectId);
+  // ask that arrives while this is mounted: `/` is already showing when a
+  // project group's `+` is pressed, so nothing remounts and the prop above has
+  // already been read. Keyed on the store's count rather than on the id it
+  // carries, because a press names a project the composer may well be showing
+  // already — the user having moved the chip by hand since — and comparing ids
+  // would read that as nothing having been asked for (TASK-82). Only the
+  // selection moves; the prompt is untouched, since the user can already be
+  // typing when the request arrives.
+  const request = useSyncExternalStore(
+    subscribeComposerRequest,
+    getComposerRequest,
+    getComposerRequest,
+  );
+  const [seenSeq, setSeenSeq] = useState(request.seq);
+  if (request.seq !== seenSeq) {
+    setSeenSeq(request.seq);
+    if (request.projectId) setProjectId(request.projectId);
   }
 
   // The list arrives over the socket, so there is a first render with no

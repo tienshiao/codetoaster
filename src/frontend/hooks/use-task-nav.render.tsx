@@ -1,5 +1,6 @@
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
+import { getComposerRequest, resetComposerRequest } from "../composer-request-store";
 
 /**
  * What the sidebar's New task button does, which is the whole of TASK-76: it
@@ -26,6 +27,8 @@ const { COMPOSER_PROMPT_ID, useOpenComposer } = await import("./use-task-nav");
 beforeEach(() => {
   stubs.navigate.mockReset();
   stubs.navigate.mockResolvedValue(undefined);
+  // Module state, so a request counted by one test is still counted in the next.
+  resetComposerRequest();
 });
 
 afterEach(() => {
@@ -49,9 +52,8 @@ test("the New task button navigates to the composer and creates nothing", async 
 });
 
 test("a project group's New task carries the project in the URL", async () => {
-  // TASK-77. The id goes in the address rather than into a store, so the
-  // composer reads it from the route it is mounted under and a reload lands
-  // back on the same project.
+  // TASK-77. The id goes in the address as well, so a reload — or a copied
+  // link — lands back on the same project.
   const { result } = renderHook(() => useOpenComposer());
 
   await act(async () => {
@@ -59,6 +61,28 @@ test("a project group's New task carries the project in the URL", async () => {
   });
 
   expect(stubs.navigate).toHaveBeenCalledWith({ to: "/", search: { project: "web" } });
+});
+
+test("a project group's New task is a counted request, not only an address", async () => {
+  // TASK-82. Pressed twice, the second navigation is to the URL already
+  // showing and tells the composer nothing; the count is what makes it an ask.
+  const { result } = renderHook(() => useOpenComposer());
+
+  await act(async () => {
+    result.current({ projectId: "web" });
+  });
+  expect(getComposerRequest()).toEqual({ projectId: "web", seq: 1 });
+
+  await act(async () => {
+    result.current({ projectId: "web" });
+  });
+  expect(getComposerRequest()).toEqual({ projectId: "web", seq: 2 });
+
+  // The header's `+` has no opinion about the project, so it asks for nothing.
+  await act(async () => {
+    result.current();
+  });
+  expect(getComposerRequest().seq).toBe(2);
 });
 
 test("the prompt box takes focus once the navigation has landed", async () => {
