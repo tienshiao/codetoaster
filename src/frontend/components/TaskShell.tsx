@@ -10,6 +10,7 @@ import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
+import { useShellKeymap } from "@/frontend/hooks/use-shell-keymap";
 import { pathLabel } from "@/frontend/utils/path-label";
 import { TabArea, TabPane, useTaskLayout } from "@/frontend/components/tabs";
 import {
@@ -211,6 +212,20 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     },
     [taskId, closeShell],
   );
+
+  // The keyboard's half of the tab strip (TASK-34). Mounted here because this
+  // is where the three actions it drives already are, and given the same
+  // handlers the strip's own controls get — so ⌘K W kills a shell exactly as
+  // the X does, rather than by a second path that could drift from it.
+  useShellKeymap({
+    // Through the ref, not the render's `layout`: `applyLayout` writes it
+    // before `setLayout`, so two chords inside one commit still compose. The
+    // comment on `layoutRef` above is about the same hazard.
+    layout: () => layoutRef.current,
+    onLayoutChange: applyLayout,
+    onNewShell: taskId ? handleNewShell : undefined,
+    onCloseTab: handleCloseTab,
+  });
 
   /**
    * Shell tabs whose PTY the client has been told is live. The layout is

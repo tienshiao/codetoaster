@@ -4,6 +4,8 @@ import {
   isLeader,
   matchCommand,
   terminalMustYield,
+  stepKeymap,
+  LEADER_TIMEOUT_MS,
   leaderCaps,
   chordCaps,
   capsFor,
@@ -115,8 +117,17 @@ test("the leader's modifier may still be held on the second press", () => {
   expect(matchCommand(press("]", CTRL_SHIFT))?.command).toBe("next-tab");
 });
 
-test("Shift on the second press still matches, since ⇧ is how [ and ] are reached", () => {
+test("Shift on the second press still matches — off a Mac the leader itself needs it", () => {
   expect(matchCommand(press("W", { shiftKey: true }))?.command).toBe("close-tab");
+});
+
+test("a held Shift folds punctuation back onto the cap the table names", () => {
+  // ⌃⇧K then ⇧] is `}`, and it has to mean the same as `]`, or every
+  // punctuation chord is broken on the one platform whose leader needs Shift.
+  expect(matchCommand(press("}", { ctrlKey: true, shiftKey: true }))?.command).toBe("next-tab");
+  expect(matchCommand(press("{", { ctrlKey: true, shiftKey: true }))?.command).toBe("prev-tab");
+  expect(matchCommand(press("|", { ctrlKey: true, shiftKey: true }))?.command).toBe("split");
+  expect(matchCommand(press("~", { ctrlKey: true, shiftKey: true }))?.command).toBe("new-shell");
 });
 
 test("⌥ on the second press matches nothing — that is the terminal's Meta", () => {
@@ -177,4 +188,99 @@ test("a chord prints leader-first, with letters capitalised and arrows drawn", (
 test("capsFor looks a chord up by id, and draws nothing for one that is gone", () => {
   expect(capsFor("new-shell", true)).toEqual(["⌘", "K", "`"]);
   expect(capsFor("no-such-command", true)).toEqual([]);
+});
+
+// ── the leader state machine ────────────────────────────────────────────────
+
+const MAC = true;
+
+/** `stepKeymap` from cold, so a test only names the presses it cares about. */
+function run(presses: Array<[KeyLike, number?]>, mac = MAC) {
+  let armedAt: number | null = null;
+  const results = [];
+  for (const [ev, now] of presses) {
+    const step = stepKeymap(armedAt, ev, now ?? 0, mac);
+    armedAt = step.armedAt;
+    results.push(step.result);
+  }
+  return { armedAt, results, last: results[results.length - 1]! };
+}
+
+test("the leader arms, and the next press is a command", () => {
+  const { results, armedAt } = run([[press("k", CMD)], [press("]", CMD)]]);
+  expect(results[0]).toEqual({ kind: "armed" });
+  expect(results[1]).toMatchObject({ kind: "command", command: { command: "next-tab" } });
+  // Disarmed again: the chord is two presses, not a mode.
+  expect(armedAt).toBeNull();
+});
+
+test("an unarmed press is nobody's business but the pane's", () => {
+  expect(run([[press("]")]]).last).toEqual({ kind: "idle" });
+  expect(run([[press("w", { ctrlKey: true })]]).last).toEqual({ kind: "idle" });
+});
+
+test("an unbound key after the leader is eaten, not typed into the agent", () => {
+  // `q` would quit the pager the user was reading.
+  expect(run([[press("k", CMD)], [press("q")]]).last).toEqual({ kind: "cancelled" });
+});
+
+test("Escape cancels the chord instead of reaching the pane", () => {
+  const { last, armedAt } = run([[press("k", CMD)], [press("Escape")]]);
+  expect(last).toEqual({ kind: "cancelled" });
+  expect(armedAt).toBeNull();
+});
+
+test("Escape with nothing armed is the pane's, so vim still gets it", () => {
+  expect(run([[press("Escape")]]).last).toEqual({ kind: "idle" });
+});
+
+test("a modifier pressed alone does not disarm the leader", () => {
+  // Reaching for ⇧ between the two presses raises a keydown of its own, and
+  // disarming on it would break every chord that needs Shift.
+  const { results } = run([[press("k", CMD)], [press("Shift")], [press("]", CMD)]]);
+  expect(results[1]).toEqual({ kind: "idle" });
+  expect(results[2]).toMatchObject({ kind: "command" });
+});
+
+test("the leader expires, and the key after it goes back to the pane", () => {
+  const { results } = run([
+    [press("k", CMD), 0],
+    [press("]", CMD), LEADER_TIMEOUT_MS + 1],
+  ]);
+  expect(results[1]).toEqual({ kind: "idle" });
+});
+
+test("the leader is still good on the timeout's last millisecond", () => {
+  const { results } = run([
+    [press("k", CMD), 0],
+    [press("]", CMD), LEADER_TIMEOUT_MS],
+  ]);
+  expect(results[1]).toMatchObject({ kind: "command" });
+});
+
+test("a second leader press re-arms rather than being read as a second key", () => {
+  const { results, armedAt } = run([
+    [press("k", CMD), 0],
+    [press("k", CMD), 10],
+  ]);
+  // The first is armed; the second is not a command (`k` is in no row), so it
+  // cancels — and then arms again, so the chord the user is halfway through
+  // still works.
+  expect(results[1]).toEqual({ kind: "cancelled" });
+  expect(armedAt).toBeNull();
+});
+
+test("an expired leader followed by the leader arms again", () => {
+  const { results, armedAt } = run([
+    [press("k", CMD), 0],
+    [press("k", CMD), LEADER_TIMEOUT_MS + 1],
+  ]);
+  expect(results[1]).toEqual({ kind: "armed" });
+  expect(armedAt).toBe(LEADER_TIMEOUT_MS + 1);
+});
+
+test("the machine runs on the non-Mac leader too", () => {
+  const { results } = run([[press("k", CTRL_SHIFT)], [press("}", CTRL_SHIFT)]], false);
+  expect(results[0]).toEqual({ kind: "armed" });
+  expect(results[1]).toMatchObject({ kind: "command", command: { command: "next-tab" } });
 });

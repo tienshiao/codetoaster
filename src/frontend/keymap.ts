@@ -107,9 +107,21 @@ export interface KeyLike {
   altKey: boolean;
 }
 
-/** Letters compare case-insensitively; `ArrowLeft` and `]` are already exact. */
+/**
+ * Shifted punctuation folded back onto the cap the table names.
+ *
+ * Off a Mac the leader is ⌃⇧K, and a hand that has not let go of ⇧ for the
+ * second press sends `}` where the table says `]` — so on the platform whose
+ * leader needs Shift, every punctuation chord would be the one that does not
+ * work.
+ */
+const UNSHIFTED: Record<string, string> = { "}": "]", "{": "[", "|": "\\", "~": "`" };
+
+/** Letters compare case-insensitively; `ArrowLeft` is already exact. */
 function normalizeKey(key: string): string {
-  return key.length === 1 ? key.toLowerCase() : key;
+  if (key.length !== 1) return key;
+  const lower = key.toLowerCase();
+  return UNSHIFTED[lower] ?? lower;
 }
 
 /**
@@ -132,9 +144,9 @@ export function isLeader(ev: KeyLike, mac: boolean = isMac()): boolean {
  * The leader's own modifier is allowed to still be held: releasing ⌘ between
  * the two presses of `⌘K ]` is not something a hand does, and requiring it
  * would make the chord fire only for the slow. Shift is allowed for the same
- * reason — a hand on `⌘K [` often arrives via `{`. Alt is not, because ⌥ is
- * how a terminal sends Meta and a user pressing it means the pane, not the
- * shell.
+ * reason, and matters more — the non-Mac leader *is* ⌃⇧K, so a held Shift is
+ * the normal case there rather than the sloppy one. Alt is not, because ⌥ is
+ * how a terminal sends Meta, and a user pressing it means the pane.
  */
 export function matchCommand(ev: KeyLike): ShellCommand | null {
   if (ev.altKey) return null;
@@ -169,6 +181,79 @@ function isSearchChord(ev: KeyLike): boolean {
  */
 export function terminalMustYield(ev: KeyLike, mac: boolean = isMac()): boolean {
   return isLeader(ev, mac) || isSearchChord(ev);
+}
+
+// ── the leader state machine ────────────────────────────────────────────────
+
+/**
+ * How long the leader stays armed.
+ *
+ * VS Code waits indefinitely and says so in its status bar. There is nowhere
+ * here that would say so, and an indefinite arm is a trap: a ⌘K the user has
+ * forgotten about swallows their next keystroke, and in a pane where the next
+ * keystroke goes to an agent that is a keystroke they have to notice missing.
+ * Long enough to be a chord, short enough to forget safely.
+ */
+export const LEADER_TIMEOUT_MS = 3000;
+
+export type KeymapResult =
+  /** Not the shell's — the pane should have it. */
+  | { kind: "idle" }
+  /** The leader itself: eaten, and the next press means something. */
+  | { kind: "armed" }
+  /** Eaten, and this is what it meant. */
+  | { kind: "command"; command: ShellCommand }
+  /** Eaten because the leader was armed, but bound to nothing. */
+  | { kind: "cancelled" };
+
+/** Keydowns for a modifier alone. Pressing ⌘K and then reaching for Shift
+ * raises one of these, and disarming on it would make every chord whose second
+ * press needs Shift — `⌘K \`, on a keyboard where that is ⇧ of something —
+ * impossible to type. */
+function isModifierKey(key: string): boolean {
+  return (
+    key === "Shift" || key === "Meta" || key === "Control" || key === "Alt" || key === "CapsLock"
+  );
+}
+
+/**
+ * One keypress against the leader map: the whole of the dispatcher's logic,
+ * as a function of the state and the event.
+ *
+ * `armedAt` is when the leader was pressed, or null. Returned rather than
+ * mutated so the caller can hold it in a ref and the rules can be tested
+ * without a keyboard.
+ */
+export function stepKeymap(
+  armedAt: number | null,
+  ev: KeyLike,
+  now: number,
+  mac: boolean = isMac(),
+): { armedAt: number | null; result: KeymapResult } {
+  if (isModifierKey(ev.key)) return { armedAt, result: { kind: "idle" } };
+
+  const armed = armedAt !== null && now - armedAt <= LEADER_TIMEOUT_MS;
+
+  if (armed) {
+    // Escape cancels the chord rather than reaching the pane. A user who has
+    // armed the leader by accident presses it meaning exactly that, and an
+    // Escape that both cancelled and put vim into command mode would be one
+    // keystroke doing two things.
+    if (ev.key === "Escape") return { armedAt: null, result: { kind: "cancelled" } };
+
+    const command = matchCommand(ev);
+    if (command) return { armedAt: null, result: { kind: "command", command } };
+
+    // Bound to nothing, and still eaten: after a leader the keyboard belongs
+    // to the map, and letting an unbound key fall through would type it into
+    // the agent — a `q` that quits the pager the user was reading.
+    return { armedAt: null, result: { kind: "cancelled" } };
+  }
+
+  // Not armed, or armed too long ago to still mean anything. A second leader
+  // press re-arms rather than being read as the first chord's second key.
+  if (isLeader(ev, mac)) return { armedAt: now, result: { kind: "armed" } };
+  return { armedAt: null, result: { kind: "idle" } };
 }
 
 // ── display ─────────────────────────────────────────────────────────────────
