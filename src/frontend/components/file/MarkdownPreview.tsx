@@ -53,7 +53,10 @@ export const MarkdownPreview = memo(function MarkdownPreview({
     </ReactMarkdown>
   );
 
-  if (!frontmatter) {
+  // An empty mapping (`---\n{}\n---`) parses, so a block can arrive with nothing
+  // in it. `FrontmatterHeader` draws nothing for that, and taking the branch
+  // below anyway would leave the body with the header's missing top padding.
+  if (!frontmatter || frontmatter.entries.length === 0) {
     return <div className="markdown-preview max-w-3xl px-6 py-4 text-sm">{body}</div>;
   }
 

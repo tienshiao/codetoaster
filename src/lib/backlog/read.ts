@@ -81,6 +81,10 @@ export function compareBacklogTasks(a: BacklogTask, b: BacklogTask): number {
   }
   const an = numericId(a.id);
   const bn = numericId(b.id);
+  // Both NaN before either: `NaN === NaN` is false, so two numberless ids would
+  // each sort after the other — an inconsistent comparator, and the order it
+  // leaves them in is whatever the sort happened to do.
+  if (Number.isNaN(an) && Number.isNaN(bn)) return 0;
   if (an === bn) return 0;
   if (Number.isNaN(an)) return 1;
   if (Number.isNaN(bn)) return -1;
@@ -108,7 +112,13 @@ export async function readBacklog(repoRoot: string): Promise<BacklogResponse> {
   try {
     const config = Bun.YAML.parse(await configFile.text()) as Record<string, unknown> | null;
     if (config && typeof config === "object" && !Array.isArray(config)) {
-      if (Array.isArray(config.statuses) && config.statuses.every((s) => typeof s === "string")) {
+      // Non-empty, like the prefix below: `statuses: []` would leave no terminal
+      // status, and every Done task would show under Open.
+      if (
+        Array.isArray(config.statuses)
+        && config.statuses.length > 0
+        && config.statuses.every((s) => typeof s === "string")
+      ) {
         statuses = config.statuses as string[];
       }
       if (typeof config.task_prefix === "string" && config.task_prefix.length > 0) {

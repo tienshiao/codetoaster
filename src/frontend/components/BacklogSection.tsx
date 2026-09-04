@@ -42,13 +42,23 @@ export function BacklogSection({
   open,
   handlers,
 }: BacklogSectionProps): ReactNode {
-  const { data, isLoading, error, refetch } = useBacklog(taskId, { refetchInterval: POLL_MS });
+  const { data, error, refetch } = useBacklog(taskId, { refetchInterval: POLL_MS });
 
   const grouped = useMemo(() => groupBacklog(data?.detected ? data : null), [data]);
 
-  if (isLoading) return <ExplorerLoading>Loading tasks…</ExplorerLoading>;
+  // "Nothing has answered yet", rather than `isLoading`: React Query's
+  // `isLoading` is `isPending && isFetching`, so a first load the browser has
+  // *paused* — offline, the laptop the comment below is about before its wifi is
+  // back — is pending with nothing in flight, and the cascade below would fall
+  // through to claim the repository has no backlog at all.
+  if (!data && !error) return <ExplorerLoading>Loading tasks…</ExplorerLoading>;
 
-  if (error) {
+  // Only when there is nothing to show instead. This polls every three seconds,
+  // so a single failed poll — a server restart, a laptop waking up — would
+  // otherwise replace a perfectly good list with an error box until the next one
+  // succeeds. React Query keeps the last data through a failed refetch; the
+  // list it holds is what the user was reading.
+  if (error && !data) {
     return (
       <ExplorerError onRetry={() => refetch()}>
         {error instanceof Error ? error.message : String(error)}

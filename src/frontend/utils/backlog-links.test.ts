@@ -167,6 +167,32 @@ test("the provider reads the index afresh, so a poll's result is honoured", () =
   expect(provide(provider, 1)?.map((link) => link.text)).toEqual(["TASK-82"]);
 });
 
+test("a double-width cell ahead of an id shifts the range, as it shifts the grid", () => {
+  // "✅ TASK-82": the check mark is one character of the translated string and
+  // two columns of the grid, so the id starts at column 4, not column 3.
+  const cells = [
+    { chars: "✅", width: 2 },
+    { chars: "", width: 0 }, // the wide char's right half
+    { chars: " ", width: 1 },
+    ..."TASK-82".split("").map((chars) => ({ chars, width: 1 })),
+  ];
+  const line = {
+    translateToString: () => "✅ TASK-82",
+    length: cells.length,
+    getCell: (x: number) => {
+      const cell = cells[x];
+      return cell === undefined ? undefined : { getChars: () => cell.chars, getWidth: () => cell.width };
+    },
+  };
+  const provider = createBacklogLinkProvider(
+    { buffer: { active: { getLine: () => line } } },
+    () => TASKS,
+    () => {},
+  );
+
+  expect(provide(provider, 1)?.[0]?.range).toEqual({ start: { x: 4, y: 1 }, end: { x: 10, y: 1 } });
+});
+
 test("a line the buffer does not have offers nothing", () => {
   const provider = createBacklogLinkProvider(buffer("filed TASK-82"), () => TASKS, () => {});
   expect(provide(provider, 9)).toBeUndefined();
