@@ -18,6 +18,10 @@ import {
   splitTab,
   moveTab,
   setGroupFlex,
+  cycleTab,
+  focusTabAt,
+  focusGroup,
+  findAgentTab,
   pruneShellTabs,
   reconcileShellTabs,
   reviveLayout,
@@ -1207,4 +1211,113 @@ test("a live task with every shell reported changes nothing", () => {
   expect(
     reconcileShellTabs(layout, { lifecycle: "live", shellPtyIds: ["p1"] }, new Set(["p1"])),
   ).toBe(layout);
+});
+
+// ── navigation (TASK-34) ────────────────────────────────────────────────────
+
+/** Which tab is active in each group, by key — what the navigation
+ * assertions read off, since none of them move a tab. */
+function activeGrid(layout: TaskLayout): string[] {
+  return layout.groups.map((g) => g.tabs.find((t) => t.id === g.activeTabId)?.key ?? "");
+}
+
+/** Two groups: [agent, a.ts, abc] active on the agent, and [history].
+ *
+ * A second group only comes from `splitTab`, which leaves a copy of the split
+ * tab in it; the copy is closed once `history` is in there beside it, so the
+ * two groups hold nothing in common and an assertion naming a key names one
+ * tab. */
+function twoGroups(): TaskLayout {
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, file("a.ts"));
+  layout = openTab(layout, commit("abc"));
+  layout = splitTab(layout, idOf(layout, "file:a.ts"));
+  const copyId = activeTab(layout)!.id;
+  layout = openTab(layout, history, { groupId: layout.activeGroupId });
+  layout = closeTab(layout, copyId);
+  return focusTab(layout, agentId(layout));
+}
+
+test("cycleTab walks the active group's strip", () => {
+  const layout = twoGroups();
+  expect(keyGrid(layout)).toEqual([["agent", "file:a.ts", "commit:abc"], ["history"]]);
+
+  const next = pure(layout, (l) => cycleTab(l, 1));
+  expect(activeGrid(next)).toEqual(["file:a.ts", "history"]);
+  expect(activeGrid(cycleTab(next, 1))).toEqual(["commit:abc", "history"]);
+});
+
+test("cycleTab wraps in both directions", () => {
+  const layout = twoGroups();
+  // Off the front of a three-tab strip, and off the back.
+  expect(activeGrid(cycleTab(layout, -1))).toEqual(["commit:abc", "history"]);
+  expect(activeGrid(cycleTab(cycleTab(cycleTab(layout, 1), 1), 1))).toEqual(["agent", "history"]);
+});
+
+test("cycleTab leaves a group of one alone", () => {
+  resetIdCounter();
+  const layout = createLayout();
+  expect(cycleTab(layout, 1)).toBe(layout);
+  expect(cycleTab(layout, -1)).toBe(layout);
+});
+
+test("cycleTab moves within the active group, never across groups", () => {
+  let layout = twoGroups();
+  // Focus the second group, which holds exactly one tab.
+  layout = focusGroup(layout, 1);
+  expect(cycleTab(layout, 1)).toBe(layout);
+  // ...and the first group's active tab has not moved either.
+  expect(activeGrid(layout)).toEqual(["agent", "history"]);
+});
+
+test("focusTabAt counts from 1 within the active group", () => {
+  const layout = twoGroups();
+  expect(activeGrid(pure(layout, (l) => focusTabAt(l, 2)))).toEqual(["file:a.ts", "history"]);
+  expect(activeGrid(focusTabAt(layout, 3))).toEqual(["commit:abc", "history"]);
+});
+
+test("focusTabAt past the end changes nothing, rather than clamping to the last tab", () => {
+  const layout = twoGroups();
+  expect(focusTabAt(layout, 4)).toBe(layout);
+  expect(focusTabAt(layout, 9)).toBe(layout);
+  expect(focusTabAt(layout, 0)).toBe(layout);
+});
+
+test("focusGroup moves the active group without moving any tab", () => {
+  const layout = twoGroups();
+  const right = pure(layout, (l) => focusGroup(l, 1));
+  expect(right.activeGroupId).toBe(right.groups[1]!.id);
+  expect(keyGrid(right)).toEqual(keyGrid(layout));
+  expect(focusGroup(right, -1).activeGroupId).toBe(layout.groups[0]!.id);
+});
+
+test("focusGroup clamps at both ends", () => {
+  const layout = twoGroups();
+  // Already leftmost, and already rightmost: the same layout, not a wrap.
+  expect(focusGroup(layout, -1)).toBe(layout);
+  const right = focusGroup(layout, 1);
+  expect(focusGroup(right, 1)).toBe(right);
+});
+
+test("focusGroup on a single group is a no-op", () => {
+  resetIdCounter();
+  const layout = createLayout();
+  expect(focusGroup(layout, 1)).toBe(layout);
+  expect(focusGroup(layout, -1)).toBe(layout);
+});
+
+test("findAgentTab finds the tab the shortcut goes back to", () => {
+  const layout = twoGroups();
+  expect(findAgentTab(layout)?.key).toBe("agent");
+  expect(findAgentTab(layout)?.id).toBe(agentId(layout));
+});
+
+test("findAgentTab finds it from another group, which is the case that matters", () => {
+  const layout = focusGroup(twoGroups(), 1);
+  const agentTab = findAgentTab(layout);
+  expect(agentTab?.key).toBe("agent");
+  // Focusing it brings its group back with it.
+  const focused = focusTab(layout, agentTab!.id);
+  expect(focused.activeGroupId).toBe(focused.groups[0]!.id);
 });

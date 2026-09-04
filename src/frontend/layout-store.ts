@@ -420,6 +420,67 @@ export function setGroupFlex(layout: TaskLayout, flexes: number[]): TaskLayout {
   return { ...layout, groups: layout.groups.map((g, i) => ({ ...g, flex: flexes[i]! })) };
 }
 
+// ── navigation ──────────────────────────────────────────────────────────────
+//
+// What the keyboard shortcuts move (TASK-34, keymap.ts). All reductions over
+// the layout, so the dispatcher decides nothing: it looks up a command and
+// applies it, and the rules about wrapping and clamping are testable without
+// a keyboard.
+
+/** Focus the tab `delta` along from the active one, within the active group.
+ *
+ * Wraps, because a group of two with no wrap makes the key dead half the time
+ * — the state the user is in whenever they have the agent and one other thing
+ * open, which is most of the time. Groups are not crossed: the strip the tab
+ * order belongs to is the group's own, and moving between groups is its own
+ * pair of commands. */
+export function cycleTab(layout: TaskLayout, delta: number): TaskLayout {
+  const group = activeGroup(layout);
+  if (group.tabs.length < 2) return layout;
+  const current = group.tabs.findIndex((t) => t.id === group.activeTabId);
+  // An active id naming no tab is not reachable through the operations above,
+  // but a revived layout is only checked for shape. Treat it as "before the
+  // first", so the next tab is the first one rather than nothing.
+  const from = current === -1 ? -delta : current;
+  const length = group.tabs.length;
+  const next = group.tabs[(((from + delta) % length) + length) % length]!;
+  return focusTab(layout, next.id);
+}
+
+/** Focus the `index`-th tab of the active group, counting from 1.
+ *
+ * Out of range is left alone rather than clamped to the last tab: the chord
+ * names a position, and a hand reaching for ⌘K 6 in a group of three means
+ * that tab, not whichever one happens to be last. */
+export function focusTabAt(layout: TaskLayout, index: number): TaskLayout {
+  const tab = activeGroup(layout).tabs[index - 1];
+  return tab ? focusTab(layout, tab.id) : layout;
+}
+
+/** Move focus to the neighbouring group, without moving anything into it.
+ *
+ * Clamped, not wrapped — the opposite of `cycleTab`, and for the same reason
+ * it wraps. Groups are laid out in a row on screen, so "left" is a direction
+ * on a surface the user is looking at; wrapping off the end would jump the
+ * caret across the whole window. Tabs have no such geometry: a strip is a
+ * cycle already. */
+export function focusGroup(layout: TaskLayout, delta: number): TaskLayout {
+  const index = layout.groups.findIndex((g) => g.id === layout.activeGroupId);
+  const from = index === -1 ? 0 : index;
+  const next = layout.groups[Math.min(Math.max(from + delta, 0), layout.groups.length - 1)];
+  if (!next || next.id === layout.activeGroupId) return layout;
+  return { ...layout, activeGroupId: next.id };
+}
+
+/** The task's agent tab, for the shortcut that goes back to it.
+ *
+ * Prefers the active group's copy, like `findByKey`, though only a hand-built
+ * layout has two: `openTab` finds the existing agent tab rather than adding a
+ * second, and `splitTab` refuses a terminal. */
+export function findAgentTab(layout: TaskLayout): TabState | null {
+  return findByKey(layout, tabKey({ kind: "agent" }))?.tab ?? null;
+}
+
 /**
  * Drop shell tabs whose PTY is gone, and nothing else.
  *
