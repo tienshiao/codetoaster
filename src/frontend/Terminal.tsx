@@ -16,6 +16,7 @@ import {
   timeoutRestore,
   type RestorePhase,
 } from "./utils/restore-phase";
+import { terminalMustYield } from "./keymap";
 import { usePtyOptional } from "./PtyContext";
 import type { PtySink } from "./pty-router";
 import type { ClientMessage, ServerMessage } from "../lib/xtmux/types";
@@ -402,7 +403,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         }
       });
 
-      // Handle shift-enter and Cmd/Ctrl+F for search
+      // Shift-enter, the search gesture, and anything the shell has claimed.
       term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
         if (ev.key === "Enter" && ev.shiftKey) {
           // Gated identically to onData: shift-enter is input by another door.
@@ -427,18 +428,14 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
           }
           return false;
         }
-        // Let Cmd+Shift+P propagate for command palette
-        if (ev.key === "p" && (ev.metaKey || ev.ctrlKey) && ev.shiftKey && !ev.altKey) {
-          return false;
-        }
-        // Let Ctrl+` / Ctrl+~ propagate for tab switcher
-        if ((ev.key === "`" || ev.key === "~") && (ev.metaKey || ev.ctrlKey) && !ev.altKey) {
-          return false;
-        }
-        // Let Cmd+G / Shift+Cmd+G propagate for search next/prev
-        if (ev.key === "g" && (ev.metaKey || ev.ctrlKey) && !ev.altKey) {
-          return false;
-        }
+        // Everything else the shell claims is asked of one table rather than
+        // listed here (keymap.ts). What stood in this place was three
+        // hardcoded escapes inherited from v1, two of which named surfaces
+        // that had not existed since TASK-28 — ⌘⇧P's command palette and ⌃`'s
+        // tab switcher — while every shortcut added since would have meant a
+        // fourth. The terminal should not have to know what the shortcuts are,
+        // only that a key is not its own.
+        if (terminalMustYield(ev)) return false;
         return true;
       });
 
