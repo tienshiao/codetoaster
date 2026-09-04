@@ -1,9 +1,11 @@
 ---
 id: TASK-84
 title: Detect Backlog.md in a task's repository and serve its task list
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@tma'
 created_date: '2026-09-04 21:36'
+updated_date: '2026-09-04 22:11'
 labels:
   - server
   - api
@@ -29,8 +31,29 @@ The list changes under the shell constantly — the agent files and updates task
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 GET /api/tasks/:id/backlog answers { detected: false } for a repository with no backlog/config.yml and for a task with no repository, with status 200
-- [ ] #2 For a Backlog.md repository it answers the id prefix, the statuses in configured order, and every task in backlog/tasks and backlog/completed with id, title, status, ordinal, priority, labels, assignee and repository-relative path, ordered by ordinal then numeric id
-- [ ] #3 A folded (>-) multi-line title comes back as one line, and a task file whose frontmatter does not parse is skipped without failing the request
-- [ ] #4 Tests cover detection, ordering, folded titles, the completed folder and the unparseable file
+- [x] #1 GET /api/tasks/:id/backlog answers { detected: false } for a repository with no backlog/config.yml and for a task with no repository, with status 200
+- [x] #2 For a Backlog.md repository it answers the id prefix, the statuses in configured order, and every task in backlog/tasks and backlog/completed with id, title, status, ordinal, priority, labels, assignee and repository-relative path, ordered by ordinal then numeric id
+- [x] #3 A folded (>-) multi-line title comes back as one line, and a task file whose frontmatter does not parse is skipped without failing the request
+- [x] #4 Tests cover detection, ordering, folded titles, the completed folder and the unparseable file
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. src/lib/backlog/read.ts: readBacklog(repoRoot) — detect backlog/config.yml, parse it with Bun.YAML (statuses, task_prefix uppercased), list backlog/tasks and backlog/completed .md files, parse each file's YAML frontmatter, skip unparseable ones, sort by ordinal then numeric id. parseTaskFile exported for tests.
+2. src/api/backlog.ts: GET /api/tasks/:id/backlog through resolveTaskRoot; a task with no repository (its 400) answers { detected: false } 200; 404 passes through. Register in server.ts beside fileRoutes.
+3. Response type in src/types/backlog.ts (shared with the frontend).
+4. Tests: src/lib/backlog/read.test.ts over temp-dir fixtures (detection, ordering, folded title, completed folder, unparseable file, archive/drafts excluded); src/api/backlog.test.ts over store rows like task-root.test.ts.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Reader in src/lib/backlog/read.ts (parseTaskFile, compareBacklogTasks exported), route in src/api/backlog.ts registered beside fileRoutes. A config that fails to parse still counts as detected with Backlog.md's defaults, since the directory is the signal. Sort is global (ordinal, then numeric id); the client groups by status. Validation: bun test src/lib/backlog src/api/backlog.test.ts (24 pass); smoke-tested against this repo through a running server: 86 tasks, prefix TASK, folded titles on one line.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+GET /api/tasks/:id/backlog reads backlog/config.yml and every .md under backlog/tasks and backlog/completed off disk (Bun.YAML, no git or CLI), answering { detected: false } for a repository without one or a task with no repository, and otherwise the uppercased prefix, configured statuses and the task list in board order. Verified with unit and route tests and against the real repository.
+<!-- SECTION:FINAL_SUMMARY:END -->

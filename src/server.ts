@@ -12,6 +12,7 @@ import { taskRoutes } from "./api/tasks";
 import { hookRoutes } from "./api/hooks";
 import { diffRoutes } from "./api/diff";
 import { fileRoutes } from "./api/files";
+import { backlogRoutes } from "./api/backlog";
 import { gitRoutes } from "./api/git";
 import { highlightRoutes } from "./api/highlight";
 import { symbolRoutes } from "./api/symbols";
@@ -264,6 +265,7 @@ export function startServer(options?: ServerOptions) {
         ...hookRoutes,
         ...diffRoutes,
         ...fileRoutes,
+        ...backlogRoutes,
         ...gitRoutes,
         ...highlightRoutes,
         ...symbolRoutes,
