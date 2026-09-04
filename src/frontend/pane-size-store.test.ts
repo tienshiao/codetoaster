@@ -1,10 +1,15 @@
 import { test, expect, beforeEach } from "bun:test";
 import { installBrokenStorage, installStorage, removeStorage } from "../../test/local-storage";
 import {
+  getPaneWidth,
   loadPaneWidth,
   loadPaneWidths,
+  paneListenerCount,
+  resetPaneWidths,
   revivePaneWidths,
   savePaneWidth,
+  setPaneWidth,
+  subscribePaneWidth,
   PANE_DEFAULT_PX,
 } from "./pane-size-store";
 
@@ -12,6 +17,10 @@ const KEY = "codetoaster:pane-widths";
 
 beforeEach(() => {
   installStorage();
+  // The live widths outlive a cleared `localStorage` — a seeded id never reads
+  // storage again — so one test's drag would otherwise be the next one's
+  // starting width.
+  resetPaneWidths();
 });
 
 test("an absent record leaves every pane on its default", () => {
@@ -40,6 +49,79 @@ test("a width written after another hook read the record survives", () => {
   savePaneWidth("explorer", 400);
   expect(before.explorer).toBeUndefined();
   expect(loadPaneWidths()).toEqual({ sidebar: 320, explorer: 400 });
+});
+
+// ── the live width, and who hears about it ──────────────────────────────────
+//
+// Two panes can be reading one id at once, so a drag has to reach the one the
+// pointer is not on (§TASK-73).
+
+test("a pane starts at what was stored, and at its default when nothing was", () => {
+  savePaneWidth("sidebar", 320);
+  resetPaneWidths();
+  expect(getPaneWidth("sidebar")).toBe(320);
+  expect(getPaneWidth("explorer")).toBe(PANE_DEFAULT_PX.explorer);
+});
+
+test("a subscriber hears the pane it reads move", () => {
+  let woken = 0;
+  subscribePaneWidth("sidebar", () => woken++);
+  setPaneWidth("sidebar", 320);
+  expect(getPaneWidth("sidebar")).toBe(320);
+  expect(woken).toBe(1);
+});
+
+// AC3. The reason the map is keyed per pane: dragging the sidebar must not
+// re-render every file tree on screen.
+test("a subscriber is not woken by a pane it does not read", () => {
+  let sidebar = 0;
+  let tree = 0;
+  subscribePaneWidth("sidebar", () => sidebar++);
+  subscribePaneWidth("file-tree", () => tree++);
+  setPaneWidth("file-tree", 400);
+  expect(tree).toBe(1);
+  expect(sidebar).toBe(0);
+});
+
+// A drag reports the same pixel repeatedly while the pointer is still.
+test("setting the width a pane already has wakes nobody", () => {
+  setPaneWidth("sidebar", 320);
+  let woken = 0;
+  subscribePaneWidth("sidebar", () => woken++);
+  setPaneWidth("sidebar", 320);
+  expect(woken).toBe(0);
+});
+
+// AC4. A closed pane leaves no entry for the next write to walk.
+test("unsubscribing drops the listener, and the set with the last of them", () => {
+  const off = subscribePaneWidth("sidebar", () => {});
+  const offToo = subscribePaneWidth("sidebar", () => {});
+  expect(paneListenerCount("sidebar")).toBe(2);
+  off();
+  expect(paneListenerCount("sidebar")).toBe(1);
+  offToo();
+  expect(paneListenerCount("sidebar")).toBe(0);
+  expect(() => setPaneWidth("sidebar", 400)).not.toThrow();
+});
+
+// The reason the walk is over a copy: a woken hook is free to unmount, and
+// unmounting is what unsubscribes.
+test("a listener that unsubscribes on being woken does not cost the next one", () => {
+  let second = 0;
+  const off = subscribePaneWidth("sidebar", () => off());
+  subscribePaneWidth("sidebar", () => second++);
+  setPaneWidth("sidebar", 320);
+  expect(second).toBe(1);
+  expect(paneListenerCount("sidebar")).toBe(1);
+});
+
+// So a width restored from anywhere but a drag still reaches the screen.
+test("persisting a width moves the live one with it", () => {
+  let woken = 0;
+  subscribePaneWidth("sidebar", () => woken++);
+  savePaneWidth("sidebar", 320);
+  expect(getPaneWidth("sidebar")).toBe(320);
+  expect(woken).toBe(1);
 });
 
 test.each([

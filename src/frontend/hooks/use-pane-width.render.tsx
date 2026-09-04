@@ -3,6 +3,8 @@ import { act, render } from "@testing-library/react";
 import { usePaneWidth, type PaneWidth } from "./use-pane-width";
 import {
   loadPaneWidth,
+  paneListenerCount,
+  resetPaneWidths,
   savePaneWidth,
   PANE_DEFAULT_PX,
   PANE_MIN_PX,
@@ -39,6 +41,9 @@ function stubRects(container: HTMLElement, total: number): void {
 
 beforeEach(() => {
   localStorage.clear();
+  // The live widths survive a cleared `localStorage`, so without this a test
+  // opens at whatever the last one dragged to.
+  resetPaneWidths();
 });
 
 function Harness({
@@ -171,4 +176,90 @@ test("an arrow key moves the divider and stores the result", () => {
   act(() => api.current!.onNudge(16));
   expect(view.basis()).toBe(256);
   expect(loadPaneWidth("sidebar")).toBe(256);
+});
+
+// ── two panes sharing one id ────────────────────────────────────────────────
+//
+// A split shows two file trees at once and both call `usePaneWidth("file-tree")`,
+// because a tree width is one preference and not one per view. Held in the
+// hook's own state, the width was one per *mount* instead: the drag moved the
+// tree under the pointer and the other stayed where it was until it remounted
+// (§TASK-73).
+
+function mountPair(total = PAIR) {
+  const first = { current: null as PaneWidth | null };
+  const second = { current: null as PaneWidth | null };
+  const view = render(
+    <>
+      <div data-first>
+        <Harness api={first} />
+      </div>
+      <div data-second>
+        <Harness api={second} />
+      </div>
+    </>,
+  );
+  const basisOf = (selector: string) => () => {
+    const el = view.container.querySelector<HTMLElement>(`${selector} [data-pane]`)!;
+    return Number.parseFloat(String(el.style.flexBasis));
+  };
+  stubRects(view.container.querySelector<HTMLElement>("[data-first]")!, total);
+  stubRects(view.container.querySelector<HTMLElement>("[data-second]")!, total);
+  return {
+    ...view,
+    first,
+    second,
+    basisFirst: basisOf("[data-first]"),
+    basisSecond: basisOf("[data-second]"),
+  };
+}
+
+// AC1.
+test("dragging one pane moves the other reading the same id, within the gesture", () => {
+  const view = mountPair();
+  expect(view.basisSecond()).toBe(PANE_DEFAULT_PX.sidebar);
+  act(() => {
+    view.first.current!.onResizeStart();
+    view.first.current!.onResize(80);
+  });
+  expect(view.basisFirst()).toBe(320);
+  expect(view.basisSecond()).toBe(320);
+});
+
+// AC2. Before the store held the live width this read `localStorage`, so a pane
+// opened mid-drag — a split made while dragging, a tab switched back to — came
+// up at whatever was last written rather than at what is on screen.
+test("a pane mounted after a drag opens at the dragged width, not the stored one", () => {
+  const api = { current: null as PaneWidth | null };
+  mount({ api });
+  act(() => {
+    api.current!.onResizeStart();
+    api.current!.onResize(80);
+  });
+  expect(loadPaneWidth("sidebar")).toBe(PANE_DEFAULT_PX.sidebar);
+  expect(mount().basis()).toBe(320);
+});
+
+// AC4. Every mounted pane is a listener, and panes close all day.
+test("a closed pane leaves no listener behind", () => {
+  const view = mount();
+  expect(paneListenerCount("sidebar")).toBe(1);
+  view.unmount();
+  expect(paneListenerCount("sidebar")).toBe(0);
+});
+
+// `onResizeEnd` fires on every pointerup, including one with no move behind it,
+// so what is written has to be the width the panes are actually at.
+test("a click on one handle does not persist over another pane's drag", () => {
+  const view = mountPair();
+  act(() => {
+    view.first.current!.onResizeStart();
+    view.first.current!.onResize(80);
+    view.first.current!.onResizeEnd();
+  });
+  act(() => {
+    view.second.current!.onResizeStart();
+    view.second.current!.onResizeEnd();
+  });
+  expect(loadPaneWidth("sidebar")).toBe(320);
 });

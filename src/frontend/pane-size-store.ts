@@ -78,9 +78,89 @@ export function loadPaneWidths(): PaneWidths {
   }
 }
 
-/** One pane's stored width, or its default. */
+/** One pane's *stored* width, or its default. What a reload would open at —
+ * `getPaneWidth` is what is on screen now. */
 export function loadPaneWidth(id: PaneId): number {
   return loadPaneWidths()[id] ?? PANE_DEFAULT_PX[id];
+}
+
+// ── the live width ──────────────────────────────────────────────────────────
+//
+// Storage is where a width survives a reload; this is where the panes showing
+// it agree on it *now*. Two of them can be on screen at once reading one id — a
+// split with two diffs, or a diff beside a commit detail, all asking for
+// `file-tree` — and a tree width is one preference rather than one per view, so
+// the second has to hear the first one's drag rather than find out on its next
+// mount (§TASK-73).
+//
+// Listeners are per pane id, as in `view-state-store`: dragging the sidebar
+// wakes the sidebar, not every file tree on screen.
+
+type PaneListener = () => void;
+
+const live = new Map<PaneId, number>();
+const listeners = new Map<PaneId, Set<PaneListener>>();
+
+/**
+ * The width `id` is at, seeded from storage the first time it is asked for.
+ *
+ * Fit to be a `useSyncExternalStore` snapshot: it is a number, and it is the
+ * same number until `setPaneWidth` says otherwise — the seed is memoised, so
+ * reading it twice cannot report a change nobody made.
+ */
+export function getPaneWidth(id: PaneId): number {
+  const current = live.get(id);
+  if (current !== undefined) return current;
+  const seeded = loadPaneWidths()[id] ?? PANE_DEFAULT_PX[id];
+  live.set(id, seeded);
+  return seeded;
+}
+
+/**
+ * Move `id` now, waking only what reads it.
+ *
+ * Deliberately not persistence: a drag calls this per `pointermove` and writes
+ * storage once, when the pointer lifts.
+ */
+export function setPaneWidth(id: PaneId, px: number): void {
+  if (getPaneWidth(id) === px) return;
+  live.set(id, px);
+  const set = listeners.get(id);
+  if (!set || set.size === 0) return;
+  // Copied: a listener may unsubscribe (a pane unmounting) mid-walk.
+  for (const listener of [...set]) listener();
+}
+
+/** Hear about `id` changing. Returns the unsubscribe. */
+export function subscribePaneWidth(id: PaneId, listener: PaneListener): () => void {
+  let set = listeners.get(id);
+  if (!set) {
+    set = new Set();
+    listeners.set(id, set);
+  }
+  set.add(listener);
+  return () => {
+    const current = listeners.get(id);
+    if (!current) return;
+    current.delete(listener);
+    // Dropped when empty, so a pane closed for the session leaves no entry
+    // behind for the next `setPaneWidth` to walk.
+    if (current.size === 0) listeners.delete(id);
+  };
+}
+
+/** Test-only: how many hooks are listening to `id`, so an unmount that fails to
+ * unsubscribe is a visible number rather than a slow leak. */
+export function paneListenerCount(id: PaneId): number {
+  return listeners.get(id)?.size ?? 0;
+}
+
+/** Test-only: forget the live widths and their subscribers. Clearing
+ * `localStorage` is not enough on its own — a seeded id never reads it again,
+ * so one test's drag would be the next one's starting width. */
+export function resetPaneWidths(): void {
+  live.clear();
+  listeners.clear();
 }
 
 /**
@@ -89,8 +169,13 @@ export function loadPaneWidth(id: PaneId): number {
  * Read-modify-write rather than holding the record in a module variable: two
  * panes are mounted at once and each has its own hook, so a cached copy would
  * let whichever wrote last drop the other's width.
+ *
+ * The live value moves with it. A caller that persists without having shown
+ * anything first — a width restored from elsewhere — otherwise leaves storage
+ * and the screen disagreeing until the next reload.
  */
 export function savePaneWidth(id: PaneId, px: number): void {
+  setPaneWidth(id, px);
   const store = storage();
   if (!store) return;
   try {

@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useMemo, useRef, useSyncExternalStore, type CSSProperties } from "react";
 import { nextPaneWidth } from "@/frontend/components/tabs/drag";
 import {
-  loadPaneWidth,
+  getPaneWidth,
   savePaneWidth,
+  setPaneWidth,
+  subscribePaneWidth,
   PANE_MIN_PX,
   PANE_MIN_REST_PX,
   type PaneId,
@@ -50,9 +52,18 @@ export interface PaneWidth {
  *
  * What is left for JavaScript is the drag itself, where the limits must be
  * known in pixels to keep the boundary under the pointer.
+ *
+ * The width lives in the store rather than in this hook because an id can have
+ * more than one hook on it: a split can show two file trees at once, and one
+ * tree width is one preference, not one per view. Held in `useState`, a drag
+ * moved the pane under the pointer and left the other on its old width until it
+ * remounted (§TASK-73).
  */
 export function usePaneWidth(id: PaneId, side: "left" | "right"): PaneWidth {
-  const [width, setWidth] = useState(() => loadPaneWidth(id));
+  const width = useSyncExternalStore(
+    useCallback((onChange: () => void) => subscribePaneWidth(id, onChange), [id]),
+    useCallback(() => getPaneWidth(id), [id]),
+  );
 
   const paneEl = useRef<HTMLElement | null>(null);
   const restEl = useRef<HTMLElement | null>(null);
@@ -66,10 +77,6 @@ export function usePaneWidth(id: PaneId, side: "left" | "right"): PaneWidth {
     return { pane, pair: pane + rest };
   }, []);
 
-  /** The width as of the last move, so the end of the gesture knows what to
-   * write without the caller having to hand it back. */
-  const latest = useRef(width);
-
   /**
    * Show a width now; persist it only when asked.
    *
@@ -80,13 +87,14 @@ export function usePaneWidth(id: PaneId, side: "left" | "right"): PaneWidth {
    * no gain: nothing reads the record until the next load, so the only write
    * that matters is the last one.
    */
-  const show = useCallback((px: number) => {
-    latest.current = px;
-    setWidth(px);
-  }, []);
+  const show = useCallback((px: number) => setPaneWidth(id, px), [id]);
 
+  // What is written is the store's width, not a width this hook remembers
+  // showing. `onResizeEnd` fires on every pointerup, including one with no move
+  // behind it, so a remembered number would let a click on one tree's handle
+  // persist the width from before another tree's drag.
   const persist = useCallback(() => {
-    savePaneWidth(id, latest.current);
+    savePaneWidth(id, getPaneWidth(id));
   }, [id]);
 
   // Where the pane actually was when the pointer went down — its laid-out
