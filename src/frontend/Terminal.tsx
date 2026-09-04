@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ILinkProvider } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
@@ -56,6 +56,17 @@ export interface TerminalHandle {
   getSearchAddon: () => SearchAddon | null;
 }
 
+/**
+ * Builds a link provider for a grid that already exists (TASK-86).
+ *
+ * A factory rather than a provider, because a provider has to read lines out of
+ * the buffer and the buffer is created inside the init effect below — there is
+ * no terminal for a caller to hold when it renders. The caller must memoize it:
+ * the registration effect is keyed on this identity, and an inline arrow would
+ * unregister and re-register the provider on every render.
+ */
+export type TerminalLinkProviderFactory = (terminal: Terminal) => ILinkProvider;
+
 interface XTerminalProps {
   // The PTY this terminal is showing. Input and resize are addressed by it: the
   // socket carries several terminals at once, so "the client's terminal" is not
@@ -74,11 +85,15 @@ interface XTerminalProps {
    * come down. The phase is left from inside `handleMessage`, which nothing
    * outside can observe. */
   onRestoreEnd?: () => void;
+  /** An extra xterm link provider, registered beside the web links addon once
+   * the grid exists. Absent leaves nothing registered at all, which is what a
+   * repository with no task ids in it gets (TASK-86). */
+  linkProvider?: TerminalLinkProviderFactory;
 }
 
 export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
   function XTerminal(
-    { ptyId, onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen, onRestoreEnd },
+    { ptyId, onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen, onRestoreEnd, linkProvider },
     ref,
   ) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -586,6 +601,18 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       // callback this effect uses goes through a ref for that reason; keep it
       // that way.
     }, [fitIfVisible]);
+
+    // The caller's link provider, registered on the grid the init effect built
+    // (TASK-86). Kept out of that effect deliberately: this one rebinds when the
+    // factory changes, and putting it up there would rebuild the whole terminal
+    // instead. `ready` is what says the grid exists — the factory is handed the
+    // instance, since a provider reads lines out of its buffer.
+    useEffect(() => {
+      const term = termRef.current;
+      if (!ready || !linkProvider || !term) return;
+      const disposable = term.registerLinkProvider(linkProvider(term));
+      return () => disposable.dispose();
+    }, [ready, linkProvider]);
 
     // Apply terminal theme changes reactively
     useEffect(() => {

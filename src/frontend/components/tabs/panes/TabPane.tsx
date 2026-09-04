@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { DiffView } from "@/frontend/DiffView";
+import { useBacklogLinkProvider } from "@/frontend/hooks/use-backlog-links";
 import { viewRef } from "@/frontend/view-state-store";
 import type { OpenOptions, TabDescriptor, TabState } from "@/frontend/layout-store";
 import { AgentPane } from "./AgentPane";
@@ -52,16 +53,24 @@ export function TabPane({ taskId, tab, onOpenTab, onSubmitReview, visible }: Tab
     [onOpenTab],
   );
 
+  // Task ids in the task's terminals, as links to the task files (TASK-86).
+  // Called unconditionally, above the switch, because the switch returns a
+  // different pane per descriptor and a hook cannot live behind that.
+  // Undefined outside a Backlog.md repository, which registers nothing.
+  const linkProvider = useBacklogLinkProvider(taskId, visible, onOpenTab);
+
   const { descriptor } = tab;
   switch (descriptor.kind) {
     case "agent":
-      return <AgentPane taskId={taskId} visible={visible} />;
+      return <AgentPane taskId={taskId} visible={visible} linkProvider={linkProvider} />;
 
     case "shell":
       // A second PTY in the task, spawned at its cwd (§3). Named by the
       // descriptor rather than by the task, since a task has one agent and
       // however many of these.
-      return <ShellPane ptyId={descriptor.ptyId} visible={visible} />;
+      return (
+        <ShellPane ptyId={descriptor.ptyId} visible={visible} linkProvider={linkProvider} />
+      );
 
     case "diffAll":
       // Rendered directly rather than through a pane of its own: `DiffView`

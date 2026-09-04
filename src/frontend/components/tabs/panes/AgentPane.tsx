@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePty } from "@/frontend/PtyContext";
 import { useTasks } from "@/frontend/TaskContext";
-import { XTerminal, type TerminalHandle, type TerminalSize } from "@/frontend/Terminal";
+import {
+  XTerminal,
+  type TerminalHandle,
+  type TerminalLinkProviderFactory,
+  type TerminalSize,
+} from "@/frontend/Terminal";
 import { Button } from "@/frontend/components/v2/Button";
 import { StatusDot } from "@/frontend/components/v2/StatusDot";
 import { cn } from "@/frontend/lib/utils";
@@ -42,9 +47,19 @@ export interface AgentPaneProps {
   visible: boolean;
   onSearchOpen?: () => void;
   onFileDrop?: (files: File[]) => void;
+  /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
+   * This is the task's own terminal, so the ids the agent writes here are the
+   * first place a link is wanted. */
+  linkProvider?: TerminalLinkProviderFactory;
 }
 
-export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPaneProps) {
+export function AgentPane({
+  taskId,
+  visible,
+  onSearchOpen,
+  onFileDrop,
+  linkProvider,
+}: AgentPaneProps) {
   const { tasks, resumeTask } = useTasks();
   const { attach, detach, resize, send, isConnected } = usePty();
 
@@ -247,6 +262,7 @@ export function AgentPane({ taskId, visible, onSearchOpen, onFileDrop }: AgentPa
         onSearchOpen={onSearchOpen}
         onFileDrop={onFileDrop}
         onRestoreEnd={handleRestoreEnd}
+        linkProvider={linkProvider}
       />
       <Overlay
         phase={phase}

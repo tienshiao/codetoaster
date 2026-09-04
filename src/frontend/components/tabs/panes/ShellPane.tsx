@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import { usePty } from "@/frontend/PtyContext";
-import { XTerminal, type TerminalHandle, type TerminalSize } from "@/frontend/Terminal";
+import {
+  XTerminal,
+  type TerminalHandle,
+  type TerminalLinkProviderFactory,
+  type TerminalSize,
+} from "@/frontend/Terminal";
 
 export interface ShellPaneProps {
   /** The PTY this tab was opened onto. Unlike the agent's, it is named by the
@@ -9,6 +14,10 @@ export interface ShellPaneProps {
   ptyId: string;
   visible: boolean;
   onSearchOpen?: () => void;
+  /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
+   * A shell tab gets the same one the agent does: it runs the same CLI in the
+   * same repository, and prints the same ids. */
+  linkProvider?: TerminalLinkProviderFactory;
 }
 
 /**
@@ -32,7 +41,7 @@ export interface ShellPaneProps {
  * would take the exit code down with it, which is the one place the reason a
  * shell died is written.
  */
-export function ShellPane({ ptyId, visible, onSearchOpen }: ShellPaneProps) {
+export function ShellPane({ ptyId, visible, onSearchOpen, linkProvider }: ShellPaneProps) {
   const { attach, detach, resize, send, isConnected } = usePty();
   const terminalRef = useRef<TerminalHandle>(null);
   /** The last grid measured against a *visible* container; never fabricated. */
@@ -74,6 +83,7 @@ export function ShellPane({ ptyId, visible, onSearchOpen }: ShellPaneProps) {
       onSizeChange={handleSizeChange}
       sendMessage={send}
       onSearchOpen={onSearchOpen}
+      linkProvider={linkProvider}
     />
   );
 }
