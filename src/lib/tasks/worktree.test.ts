@@ -11,6 +11,7 @@ import { gitSpawn } from "../../api/utils";
 import { foreignCheckouts } from "../../../test/git-repo";
 import { taskDir } from "../agent/spawn";
 import { WorktreeError, readWip, setupStampPath, worktreesRoot } from "../worktree";
+import { waitFor } from "../../../test/wait";
 
 // A task's checkout, from the manager's side (docs/v2-architecture.md §5.6).
 // `lib/worktree` is tested on its own against temporary repositories; this is
@@ -112,15 +113,6 @@ function taskId(): string {
   const id = `t-${crypto.randomUUID()}`;
   taskIds.push(id);
   return id;
-}
-
-async function waitFor(predicate: () => boolean, ms = 5000): Promise<boolean> {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  return predicate();
 }
 
 describe("creating a task with a worktree", () => {
@@ -258,8 +250,8 @@ describe("setup_command", () => {
       });
 
       // Setup ran, and it ran *in the worktree*.
-      expect(await waitFor(() => fs.existsSync(path.join(row.cwd, "setup-ran")))).toBe(true);
-      expect(await waitFor(() => agent.argv().length > 0)).toBe(true);
+      expect(await waitFor(() => fs.existsSync(path.join(row.cwd, "setup-ran")), 5000)).toBe(true);
+      expect(await waitFor(() => agent.argv().length > 0, 5000)).toBe(true);
 
       // And the agent got its argv through `exec "$@"` unflattened — the
       // prompt is one entry, dashes and all, behind the `--` separator.
@@ -283,11 +275,11 @@ describe("setup_command", () => {
       // The wrapper writes the stamp before it execs, so an agent that has
       // reported anything is proof it is there — which is why the read is hung
       // on the hook rather than on a timer.
-      expect(await waitFor(() => fs.existsSync(setupStampPath(id)))).toBe(true);
+      expect(await waitFor(() => fs.existsSync(setupStampPath(id)), 5000)).toBe(true);
 
       manager.applyHook(id, { hook_event_name: "SessionStart", session_id: "s1" } as any);
 
-      expect(await waitFor(() => store.get(id)?.setup_duration_ms !== null)).toBe(true);
+      expect(await waitFor(() => store.get(id)?.setup_duration_ms !== null, 5000)).toBe(true);
       const duration = store.get(id)!.setup_duration_ms!;
       expect(duration).toBeGreaterThanOrEqual(0);
       expect(duration).toBeLessThan(20_000);
@@ -690,7 +682,7 @@ describe("reopening an evicted task", () => {
     const id = taskId();
     const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
     const installed = path.join(row.worktree_path!, "installed.txt");
-    expect(await waitFor(() => fs.existsSync(installed))).toBe(true);
+    expect(await waitFor(() => fs.existsSync(installed), 5000)).toBe(true);
     await manager.closeTask(id);
     await manager.evictTask(id);
     expect(fs.existsSync(installed)).toBe(false);
@@ -699,7 +691,7 @@ describe("reopening an evicted task", () => {
     await manager.resumeTask(id);
 
     // Neither could have come out of git.
-    expect(await waitFor(() => fs.existsSync(installed))).toBe(true);
+    expect(await waitFor(() => fs.existsSync(installed), 5000)).toBe(true);
     expect(fs.readFileSync(path.join(row.worktree_path!, ".env"), "utf8")).toBe("SECRET=1\n");
 
     // And the restore times *itself*: the grace the next eviction uses is
@@ -707,9 +699,9 @@ describe("reopening an evicted task", () => {
     // was new. Recorded on the first hook, because the wrapper only execs the
     // agent once setup has exited — so an agent that has reported anything is
     // proof the stamp is already on disk.
-    expect(await waitFor(() => fs.existsSync(setupStampPath(id)))).toBe(true);
+    expect(await waitFor(() => fs.existsSync(setupStampPath(id)), 5000)).toBe(true);
     manager.applyHook(id, { hook_event_name: "SessionStart", session_id: "s1" } as any);
-    expect(await waitFor(() => store.get(id)!.setup_duration_ms !== null)).toBe(true);
+    expect(await waitFor(() => store.get(id)!.setup_duration_ms !== null, 5000)).toBe(true);
   }, 30000);
 
   // AC #5's first half. Not a resume that failed — the work is safe in the WIP
@@ -1113,7 +1105,7 @@ describe("the refused-snapshot state says only what is true", () => {
     const evicting = manager.evictTask(id);
     // Inside the window by construction: the ref is on the row and the checkout
     // is still there.
-    expect(await waitFor(() => store.get(id)!.wip_ref !== null)).toBe(true);
+    expect(await waitFor(() => store.get(id)!.wip_ref !== null, 5000)).toBe(true);
     expect(fs.existsSync(row.worktree_path!)).toBe(true);
 
     expect(await manager.discardTaskWip(id)).toBe(false);
@@ -1142,7 +1134,7 @@ describe("the refused-snapshot state says only what is true", () => {
     };
 
     const evicting = manager.evictTask(id);
-    expect(await waitFor(() => store.get(id)!.wip_ref !== null)).toBe(true);
+    expect(await waitFor(() => store.get(id)!.wip_ref !== null, 5000)).toBe(true);
     // The row says what a refused snapshot says, and the task still reports no
     // decision outstanding.
     expect(store.get(id)!.worktree_state).toBe("present");

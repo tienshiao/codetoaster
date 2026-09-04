@@ -3,6 +3,7 @@ import type { ServerWebSocket } from "bun";
 import { PtyManager } from "./pty-manager";
 import type { ServerMessage, WebSocketData } from "./types";
 import { TEST_SHELL } from "../../../test/shell";
+import { waitFor } from "../../../test/wait";
 
 const SHELL = [TEST_SHELL];
 
@@ -21,15 +22,6 @@ function fakeClient() {
     ptyIdsSeen: (type: string) =>
       new Set(received.filter((m) => m.type === type).map((m: any) => m.ptyId)),
   };
-}
-
-async function waitFor(predicate: () => boolean, ms = 4000): Promise<boolean> {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  return predicate();
 }
 
 const managers: PtyManager[] = [];

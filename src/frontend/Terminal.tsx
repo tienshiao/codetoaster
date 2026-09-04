@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { Upload } from "lucide-react";
+import { silenceTerminalQueries } from "./utils/terminal-queries";
 import { useTerminalTheme } from "./hooks/use-terminal-theme";
 import { playBellSound } from "./hooks/use-notification-sound";
 import {
@@ -355,6 +356,10 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       term.loadAddon(fitAddon);
       term.loadAddon(webLinksAddon);
       term.loadAddon(searchAddon);
+      // The server's headless terminal answers DA, cursor-position and mode
+      // queries for every viewer; this copy must not answer them too, or the
+      // program reads a second reply as keystrokes.
+      const querySilencer = silenceTerminalQueries(term);
       term.open(container);
 
       termRef.current = term;
@@ -556,6 +561,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       return () => {
         bellDisposable.dispose();
         dataDisposable.dispose();
+        querySilencer.dispose();
         resizeObserver.disconnect();
         if (resizeHudTimeoutRef.current) clearTimeout(resizeHudTimeoutRef.current);
         if (restoreTimerRef.current) clearTimeout(restoreTimerRef.current);

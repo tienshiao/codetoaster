@@ -8,6 +8,7 @@ import { TaskManager } from "./manager";
 import { Harvester, SEVEN_DAYS_MS, THIRTY_MINUTES_MS, graceFor } from "./harvester";
 import type { ServerMessage, WebSocketData } from "../xtmux/types";
 import { taskDir, taskScrollbackPath } from "../agent/spawn";
+import { waitFor } from "../../../test/wait";
 
 // A client socket that records what the server sent it.
 function fakeClient(id = "c1") {
@@ -22,15 +23,6 @@ function fakeClient(id = "c1") {
     of: (type: string) => received.filter((m) => m.type === type) as any[],
     last: (type: string) => [...received].reverse().find((m) => m.type === type) as any,
   };
-}
-
-async function waitFor(predicate: () => boolean | Promise<boolean>, ms = 4000): Promise<boolean> {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    if (await predicate()) return true;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  return await predicate();
 }
 
 const managers: TaskManager[] = [];

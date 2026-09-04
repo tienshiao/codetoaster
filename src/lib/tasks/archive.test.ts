@@ -9,6 +9,7 @@ import { TaskManager, WIP_RETENTION_MS } from "./manager";
 import { gitSpawn } from "../../api/utils";
 import { taskDir } from "../agent/spawn";
 import { readWip, wipRefFor, worktreesRoot } from "../worktree";
+import { waitFor } from "../../../test/wait";
 
 // The only way a task leaves (docs/v2-architecture.md §5.6, TASK-31 AC #7).
 //
@@ -106,15 +107,6 @@ function taskId(): string {
   return id;
 }
 
-async function waitFor(predicate: () => boolean, ms = 5000): Promise<boolean> {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  return predicate();
-}
-
 /** A task with a checkout of its own, branched from `main` so `merged` has a
  * base ref to be an ancestor of. */
 async function worktreeTask(manager: TaskManager, projectId: string, prompt = "do a thing") {
@@ -182,7 +174,7 @@ describe("archiving a task whose commits are already safe", () => {
     const root = await tempRepo();
     const { manager, store, projectId } = await newManager(root);
     const { id } = await worktreeTask(manager, projectId, "still working");
-    expect(await waitFor(() => manager.taskPtyList(id).length > 0)).toBe(true);
+    expect(await waitFor(() => manager.taskPtyList(id).length > 0, 5000)).toBe(true);
     expect(store.get(id)!.lifecycle).toBe("live");
 
     await manager.archiveTask(id);
@@ -674,7 +666,7 @@ describe("archiving cannot collide with what is holding the checkout", () => {
     const archiving = manager.archiveTask(id);
     // Inside the window by construction: the ref is on the row and the checkout
     // it was taken from is still there.
-    expect(await waitFor(() => store.get(id)!.wip_ref !== null)).toBe(true);
+    expect(await waitFor(() => store.get(id)!.wip_ref !== null, 5000)).toBe(true);
     expect(store.get(id)!.worktree_state).toBe("present");
     expect(fs.existsSync(worktree)).toBe(true);
 
@@ -700,7 +692,7 @@ describe("archiving cannot collide with what is holding the checkout", () => {
     const { id } = await halfArchived(manager, projectId);
 
     const archiving = manager.archiveTask(id);
-    expect(await waitFor(() => store.get(id)!.wip_ref !== null)).toBe(true);
+    expect(await waitFor(() => store.get(id)!.wip_ref !== null, 5000)).toBe(true);
 
     // The row says exactly what a refused snapshot says, and the task reports
     // no decision outstanding anyway — so the notice and the buttons behind it

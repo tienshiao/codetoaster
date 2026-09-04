@@ -79,6 +79,13 @@ export class Pty {
       rows: this.size.rows,
       scrollback: 10000,
       allowProposedApi: true,
+      // No renderer here, so this paints nothing; it is what the DECRQSS
+      // answer below reports for ` q` (cursor style), and the browser's
+      // terminal (`frontend/Terminal.tsx`) is built with the same value. A
+      // program that saves the cursor style and restores it on exit — tmux,
+      // neovim — would otherwise put back a steady cursor where the user had
+      // a blinking one.
+      cursorBlink: true,
     });
     this.serializeAddon = new SerializeAddon();
     this.terminal.loadAddon(this.serializeAddon);
@@ -87,6 +94,37 @@ export class Pty {
       this.title = title;
       this.onTitleChangeCallback?.();
     });
+
+    // What the headless terminal says back — Primary/Secondary DA, a cursor
+    // position report, DECRQM, DECRQSS — goes straight into the PTY. A program
+    // asking its terminal something is asking *this* one: it holds the PTY's
+    // real grid and modes, and it is there whether or not anyone is attached.
+    // Without this the query is consumed and never answered, and a program
+    // that waits for the answer before drawing never draws: fish opens with a
+    // burst of probes ending in a Primary DA and sits on that DA forever, so
+    // a fish user's shell tab — spawned before its tab attaches — never
+    // reached a prompt, and an agent started on boot or resume was in the
+    // same window. An attached browser's xterm.js also answers, but only the
+    // queries it saw arrive; a restore replays the painted screen, in which
+    // queries do not appear. The client side silences its own answers to
+    // this set (frontend/utils/terminal-queries.ts) so one PTY gets one
+    // reply, not one per viewer plus this.
+    //
+    // Registered before the spawn below but only ever fired after it: a
+    // reply is produced by parsing the process's own output.
+    this.terminal.onData((reply) => this.write(reply));
+
+    // The one answer that is also a question. A Secondary DA request is
+    // `CSI > c` (at most one parameter) and xterm's reply is `CSI > 0;276;0 c`,
+    // which xterm's own handler, guarding only on a non-zero first parameter,
+    // reads as another request. Nothing loops as long as the reply goes into
+    // the program, but a tty that reflects its input — `stty -echoctl` with
+    // echo on, a raw-mode `cat`, a nested pty forwarding what it does not
+    // recognise — feeds the reply back through the parser, and the answer to
+    // one query became an unbounded stream of them. A reply carries three
+    // parameters and a request never more than one, so that is the guard:
+    // returning true here takes the built-in's place for the reflected form.
+    this.terminal.parser.registerCsiHandler({ prefix: ">", final: "c" }, (params) => params.length > 1);
 
     // OSC 777: notify;title;body
     this.terminal.parser.registerOscHandler(777, (data: string) => {

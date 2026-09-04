@@ -13,6 +13,7 @@ import { writeTaskSettings } from "../agent/settings";
 import { readSnapshot, writeSnapshot } from "./snapshot";
 import { sessionDisplayNames } from "../xtmux/naming";
 import { TEST_SHELL } from "../../../test/shell";
+import { waitFor } from "../../../test/wait";
 
 // A client socket that records what the server sent it.
 function fakeClient(id = "c1") {
@@ -27,15 +28,6 @@ function fakeClient(id = "c1") {
     of: (type: string) => received.filter((m) => m.type === type) as any[],
     last: (type: string) => [...received].reverse().find((m) => m.type === type) as any,
   };
-}
-
-async function waitFor(predicate: () => boolean, ms = 4000): Promise<boolean> {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  return predicate();
 }
 
 const managers: TaskManager[] = [];

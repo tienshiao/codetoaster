@@ -284,6 +284,18 @@ position, where dragging a split narrow reflows the agent's output in the pane y
 reading. Splitting is for putting *different* things side by side; a second terminal is
 a second PTY.
 
+**Terminal queries are answered by the server, once.** A program asking its terminal
+something — Primary DA, a cursor-position report, DECRQM — is asking the headless
+terminal: it holds the PTY's real grid and modes, and it is there before any tab is.
+`Pty` writes its answers straight back into the PTY, attached or not. That matters
+because a shell is spawned before its tab attaches and an agent is respawned on boot
+with nobody watching, and a program that waits for an answer before drawing (fish waits
+on its Primary DA) otherwise never draws (TASK-83). The query bytes still stream to
+every client, so each client's xterm.js is made silent on exactly that set
+(`utils/terminal-queries.ts`) — otherwise a PTY with two viewers reads three replies as
+keystrokes. Colour queries (OSC 4/10/11/12) are the exception and stay client-answered:
+only the browser knows the theme.
+
 Internally `Pty.clients` re-keys from `clientId` to `${clientId}:${ptyId}`. Everything
 else about smallest-wins negotiation is unchanged, and two existing rules become load-
 bearing rather than incidental:

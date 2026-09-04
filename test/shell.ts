@@ -9,13 +9,16 @@ import { fileURLToPath } from "node:url";
  * ran on. Fish is the case that proved it: on startup it writes terminal
  * queries — the kitty-keyboard probe, `XTVERSION`, an OSC 11 background-colour
  * request, two `XTGETTCAP`s, and finally a Primary DA (`\x1b[0c`) — and then
- * waits for the answers before it will draw a prompt or run a line. The
- * server's headless terminal answers none of them (a real client's xterm.js
- * does, once one attaches), so under a fish `$SHELL` the shell never reaches
- * its prompt, every `waitFor` on a title or an exit burns its full deadline,
- * and seven tests fail on a machine where nothing is wrong with the code. bash
- * and zsh query nothing and print a prompt immediately, which is the only
- * reason this was ever green anywhere.
+ * waits for the answers before it will draw a prompt or run a line. Until
+ * TASK-83 the server's headless terminal answered none of them, so under a
+ * fish `$SHELL` the shell never reached its prompt, every `waitFor` on a title
+ * or an exit burned its full deadline, and seven tests failed on a machine
+ * where nothing was wrong with the code. bash and zsh query nothing and print
+ * a prompt immediately, which is the only reason this was ever green anywhere.
+ * The DA is answered now and fish starts, but the pin stays: a login shell is
+ * still whatever the developer's config makes it — its prompt, its greeting,
+ * its `exec` into something else — and none of that belongs in a test's
+ * scrollback.
  *
  * bash rather than `/bin/sh`: `/bin/sh` is dash on most Linux CI images, whose
  * `printf` does not read `\033`, and the title tests are written in exactly
