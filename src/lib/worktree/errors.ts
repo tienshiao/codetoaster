@@ -13,6 +13,13 @@
  *                      create either produces a set-up worktree or none.
  * `not-a-repo`       — the project's directory is not inside a git repository,
  *                      so there is nothing to add a worktree to.
+ * `project-outside-repo` — the project's directory is not inside the toplevel
+ *                      git answered with for it, so there is no offset to put
+ *                      the agent's cwd and the copied files at (TASK-65). Not
+ *                      reachable through git, which finds the toplevel *from*
+ *                      that directory; its own kind because the value is
+ *                      joined onto a worktree path, and refusing loudly beats
+ *                      writing outside the checkout.
  * `branch-missing`   — the branch a restore was going to check out is gone.
  *                      Told apart from `worktree-add-failed` deliberately: the
  *                      work is not lost — the WIP ref still holds it — but no
@@ -37,6 +44,7 @@ export type WorktreeErrorKind =
   | "worktree-add-failed"
   | "copy-failed"
   | "not-a-repo"
+  | "project-outside-repo"
   | "branch-missing"
   | "snapshot-failed"
   | "wip-apply-failed"

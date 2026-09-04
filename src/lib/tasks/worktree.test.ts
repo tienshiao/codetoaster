@@ -704,6 +704,51 @@ describe("reopening an evicted task", () => {
     expect(await waitFor(() => store.get(id)!.setup_duration_ms !== null, 5000)).toBe(true);
   }, 30000);
 
+  // TASK-65, both halves in one round trip. A project's directory need not be
+  // the repository's toplevel, and a worktree is a checkout of the whole
+  // repository — so the agent belongs in the matching subdirectory, and the
+  // copied files belong beside it. The restore has to reach the same answer
+  // from the row alone: it resolves the repository from `worktree_repo` and
+  // never asks the project where the checkout works.
+  test("a project below the toplevel works in the matching subdirectory", async () => {
+    const root = await tempRepo();
+    const sub = path.join(root, "sub");
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, "package.json"), "{}\n");
+    // Ignored, so the snapshot cannot carry it: the copy is the only thing
+    // that can put it back, which is what makes the second half a test.
+    fs.writeFileSync(path.join(root, ".gitignore"), ".env\n");
+    await git(root, "add", "-A");
+    await git(root, "commit", "-qm", "a project below the toplevel");
+    // Beside the project, and not at the toplevel — where the copy used to
+    // look, silently finding nothing.
+    fs.writeFileSync(path.join(sub, ".env"), "SECRET=1\n");
+    const { manager, store, projectId } = await newManager(sub, {
+      worktreeDefault: true,
+      worktreeCopy: ".env",
+    });
+    const id = taskId();
+
+    const row = await manager.createTask({ id, projectId, prompt: "do a thing" });
+
+    const cwd = path.join(row.worktree_path!, "sub");
+    expect(row.worktree_subdir).toBe("sub");
+    expect(row.cwd).toBe(cwd);
+    expect(fs.readFileSync(path.join(cwd, ".env"), "utf8")).toBe("SECRET=1\n");
+    expect(fs.existsSync(path.join(row.worktree_path!, ".env"))).toBe(false);
+
+    await manager.closeTask(id);
+    expect(await manager.evictTask(id)).toBe(true);
+    manager.setStartTimeout(200);
+    await manager.resumeTask(id);
+
+    const after = store.get(id)!;
+    expect(after.cwd).toBe(cwd);
+    expect(fs.readFileSync(path.join(cwd, ".env"), "utf8")).toBe("SECRET=1\n");
+    // And the agent is actually in it, which is the thing the user chose.
+    expect(await manager.primaryPty(id)?.getCwd()).toBe(cwd);
+  }, 30000);
+
   // AC #5's first half. Not a resume that failed — the work is safe in the WIP
   // ref — but a workspace with nowhere to go, which the caller has to be told
   // about rather than handed a dead terminal.

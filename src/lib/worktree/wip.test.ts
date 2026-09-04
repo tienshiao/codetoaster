@@ -146,8 +146,13 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "prune");
 
     const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     );
 
     expect(restored.wip).toBe("applied");
@@ -170,8 +175,13 @@ describe("restoreWorktree", () => {
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     );
 
     expect(await status(restored.worktreePath)).toContain("?? untracked.txt");
@@ -187,8 +197,13 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
     const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     );
 
     expect(restored.wip).toBe("none");
@@ -219,8 +234,13 @@ describe("restoreWorktree", () => {
     await git(root, "checkout", "-q", "main");
 
     const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     );
 
     expect(restored.wip).toBe("stale");
@@ -249,8 +269,13 @@ describe("restoreWorktree", () => {
     await git(root, "checkout", "-q", "main");
 
     const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     );
     expect(restored.wip).toBe("stale");
     await applyWip(restored.worktreePath, restored.staleRef!);
@@ -269,8 +294,13 @@ describe("restoreWorktree", () => {
     await git(root, "branch", "-D", created.branch);
 
     const error = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     ).catch((e) => e);
 
     expect(error).toBeInstanceOf(WorktreeError);
@@ -296,8 +326,13 @@ describe("restoreWorktree", () => {
     await git(root, "checkout", "-q", created.branch);
 
     const error = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     ).catch((e) => e);
 
     expect(error).toBeInstanceOf(WorktreeError);
@@ -320,8 +355,13 @@ describe("restoreWorktree", () => {
     fs.rmSync(created.worktreePath, { recursive: true, force: true });
 
     const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     );
 
     expect(restored.wip).toBe("applied");
@@ -348,12 +388,57 @@ describe("restoreWorktree and the project's files", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
     const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     );
 
     expect(restored.copied).toEqual([".env"]);
     expect(fs.readFileSync(path.join(restored.worktreePath, ".env"), "utf8")).toBe("SECRET=1\n");
+  });
+
+  // The other half of TASK-65: a project below the toplevel is restored the way
+  // it was created — the files come out of the project's own directory as it
+  // stands today, and land in the matching subdirectory of the checkout, which
+  // is also where the agent goes back to.
+  test("puts a subdirectory project's files back beside it, not at the toplevel", async () => {
+    const { root } = await tempRepo();
+    const sub = path.join(root, "sub");
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, "package.json"), "{}\n");
+    fs.writeFileSync(path.join(root, ".gitignore"), ".env\n");
+    await git(root, "add", "-A");
+    await git(root, "commit", "-qm", "a project below the toplevel");
+    // Ignored, so it cannot come back through the snapshot: the copy is the
+    // only thing that can put it there.
+    fs.writeFileSync(path.join(sub, ".env"), "SECRET=1\n");
+    const project = { ...tempProject(sub), worktree_copy: ".env" };
+    const task = tempTask("Restored below the toplevel");
+    const created = await createWorktree(project, task, "main");
+
+    await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
+    await git(root, "worktree", "remove", "--force", created.worktreePath);
+
+    const restored = await restoreWorktree(
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        // From the row, which is the whole point: the project is not consulted
+        // for where the checkout works, only for what to copy into it.
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
+    );
+
+    expect(restored.cwd).toBe(path.join(created.worktreePath, "sub"));
+    expect(restored.copied).toEqual([".env"]);
+    expect(fs.readFileSync(path.join(restored.cwd, ".env"), "utf8")).toBe("SECRET=1\n");
+    expect(fs.existsSync(path.join(restored.worktreePath, ".env"))).toBe(false);
   });
 
   // The ordering decision: a copy list may name a tracked path, and then the
@@ -370,8 +455,13 @@ describe("restoreWorktree and the project's files", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
     const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy },
-      { id: task.id, branch: created.branch, worktreePath: created.worktreePath },
+      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
+      {
+        id: task.id,
+        branch: created.branch,
+        worktreePath: created.worktreePath,
+        subdir: created.subdir,
+      },
     );
 
     expect(restored.wip).toBe("applied");

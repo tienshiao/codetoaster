@@ -63,7 +63,7 @@ afterEach(() => {
 
 const TASK_COLUMNS = [
   "id", "project_id", "title", "title_source", "initial_prompt", "repo_root", "cwd",
-  "worktree_path", "worktree_repo", "branch", "base_ref", "worktree_state",
+  "worktree_path", "worktree_repo", "worktree_subdir", "branch", "base_ref", "worktree_state",
   "wip_ref", "wip_at",
   "setup_duration_ms", "pinned", "agent_session_id", "transcript_path", "agent_state",
   "lifecycle", "last_message", "last_size_cols", "last_size_rows", "model",
@@ -115,6 +115,9 @@ describe("fresh database", () => {
     const row = db.query("SELECT * FROM tasks WHERE id = 't1'").get() as any;
     expect(row.pinned).toBe(0);
     expect(row.worktree_path).toBeNull();
+    // Which is what a task that predates the column reads as too: no offset,
+    // so the checkout's root is where it works.
+    expect(row.worktree_subdir).toBeNull();
     expect(row.exit_code).toBeNull();
   });
 });
@@ -293,6 +296,7 @@ describe("initDatabase", () => {
       "004_project_task_defaults",
       "005_tasks_repo_root_nullable",
       "006_tasks_worktree_repo",
+      "007_tasks_worktree_subdir",
     ]);
     db.close();
   });

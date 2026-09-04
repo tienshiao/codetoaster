@@ -62,6 +62,25 @@ export interface TaskRow {
    * this column existed — those resolve from the project once and write the
    * answer back. */
   worktree_repo: string | null;
+  /** Where in the checkout the task actually works: the project's directory
+   * relative to the repository's toplevel, `''` for a project pointing at the
+   * root (TASK-65).
+   *
+   * A project's `initial_path` need not be a repository root — `repo/frontend`
+   * is a reasonable thing to point one at — and a worktree is a checkout of the
+   * whole repository. So the offset is what turns one into the other: the
+   * agent's cwd is `<worktree>/<this>`, and the `worktree_copy` entries are read
+   * from and written to that directory rather than the toplevel.
+   *
+   * Recorded at create rather than recomputed, because a restore resolves the
+   * repository from `worktree_repo` and cannot ask the project: the project may
+   * have been deleted (TASK-64), or repointed somewhere else entirely, and
+   * either way the checkout the task was evicted from has to come back at the
+   * same directory the transcript was recorded against.
+   *
+   * NULL for every task created before this column existed, read as `''` — that
+   * is exactly what those tasks got, since the cwd was the worktree root. */
+  worktree_subdir: string | null;
   branch: string | null;
   base_ref: string | null;
   worktree_state: WorktreeState;
@@ -285,6 +304,23 @@ const migrations: Migration[] = [
     name: "006_tasks_worktree_repo",
     up(db) {
       addColumn(db, "tasks", "worktree_repo", "TEXT");
+    },
+  },
+  {
+    // Where the task works inside its checkout (TASK-65): a project may point
+    // below the repository's toplevel, and a worktree is a checkout of the
+    // whole repository, so the offset is what puts the agent — and the
+    // `worktree_copy` files — in the directory the user actually chose.
+    //
+    // No backfill, and none is needed: every existing worktree task ran at the
+    // toplevel, which is what a NULL read as `''` says.
+    //
+    // After 006 for the reason 006 is after 005: 005 rebuilds `tasks` from an
+    // explicit column list, so a column added ahead of it exists only until
+    // that rebuild fires.
+    name: "007_tasks_worktree_subdir",
+    up(db) {
+      addColumn(db, "tasks", "worktree_subdir", "TEXT");
     },
   },
 ];

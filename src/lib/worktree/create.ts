@@ -29,6 +29,16 @@ export interface CreatedWorktree {
    * able to find its repository after the project is gone (TASK-64). This is
    * the value already computed here, on the way to taking the lock. */
   repoRoot: string;
+  /** The project's directory relative to the repository's toplevel, `''` for a
+   * project pointing at the root. Recorded on the row, because a restore
+   * resolves the repository from there and cannot ask a project that may be
+   * gone by then (TASK-64). */
+  subdir: string;
+  /** Where the task's agent runs: `worktreePath` joined with `subdir`. The same
+   * directory as the checkout for a project at the toplevel, and the matching
+   * subdirectory for one pointing below it — the user chose `repo/frontend`, so
+   * that is where the work happens. */
+  cwd: string;
   /** The `worktree_copy` entries that were actually copied, for a caller that
    * wants to report what the checkout did and did not get. Absent sources are
    * left out rather than failing the create — a fresh clone with no `.env` is
@@ -55,6 +65,31 @@ async function assertBaseRef(repoRoot: string, baseRef: string): Promise<void> {
   }
 }
 
+/** Where the project sits inside its repository, as a relative path.
+ *
+ * A project's directory is not always the toplevel — `repo/frontend` is a
+ * reasonable thing to point one at — and everything about the checkout follows
+ * from the offset: the agent's cwd, and both ends of the `worktree_copy`.
+ *
+ * Both sides go through `realpath` first. `--show-toplevel` answers with the
+ * resolved path, while the project's directory is whatever the user typed, and
+ * comparing the two unresolved makes any symlink on the way in look like a
+ * project outside its own repository. `/tmp` on macOS is one, so this is the
+ * ordinary case rather than an exotic one. */
+async function subdirOf(repoRoot: string, projectPath: string): Promise<string> {
+  const subdir = path.relative(await fsp.realpath(repoRoot), await fsp.realpath(projectPath));
+  // Not reachable through git — the toplevel is found *from* this directory, so
+  // it always contains it — but the value ends up joined onto a worktree path,
+  // and a `..` there would write outside the checkout entirely.
+  if (subdir.split(path.sep)[0] === "..") {
+    throw new WorktreeError(
+      "project-outside-repo",
+      `${projectPath} is not inside ${repoRoot}`,
+    );
+  }
+  return subdir;
+}
+
 /** Make a task its own checkout, branched from `baseRef`.
  *
  * Everything below runs inside one per-repository critical section
@@ -73,8 +108,9 @@ export function createWorktree(
   task: WorktreeTask,
   baseRef: string,
 ): Promise<CreatedWorktree> {
-  return repoRootOf(project.initial_path).then(async (repoRoot) =>
-    withRepoLock(await lockKeyFor(repoRoot), async () => {
+  return repoRootOf(project.initial_path).then(async (repoRoot) => {
+    const subdir = await subdirOf(repoRoot, project.initial_path);
+    return withRepoLock(await lockKeyFor(repoRoot), async () => {
       const worktreePath = worktreePathFor(project.id, task.id);
       await assertBaseRef(repoRoot, baseRef);
       assertPathFree(worktreePath);
@@ -105,17 +141,26 @@ export function createWorktree(
         );
       }
 
+      // The subdirectory of the checkout matching the project's own directory:
+      // where the agent will run, and where its files go.
+      const cwd = path.join(worktreePath, subdir);
       try {
-        const copied = await copyProjectFiles(project, repoRoot, worktreePath);
-        return { worktreePath, branch, repoRoot, copied };
+        // Created rather than assumed. git checks out what the branch tracks,
+        // and a project directory holding nothing but ignored files — a
+        // `frontend/` that is all `node_modules` and `.env` until setup runs —
+        // is not in the branch, so the agent would be spawned into a cwd that
+        // does not exist.
+        if (subdir) await fsp.mkdir(cwd, { recursive: true });
+        const copied = await copyProjectFiles(project, project.initial_path, cwd);
+        return { worktreePath, branch, repoRoot, subdir, cwd, copied };
       } catch (e) {
         // Back out to nothing rather than leaving a checkout the project's
         // setup would run against a half-copied tree.
         await discard(repoRoot, worktreePath, branch);
         throw e;
       }
-    }),
-  );
+    });
+  });
 }
 
 /** Take a checkout and its branch back off disk.

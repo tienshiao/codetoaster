@@ -25,6 +25,11 @@ export function parseCopyList(worktreeCopy: string | null): string[] {
 
 /** Copy the project's ignored-but-needed files into the new checkout.
  *
+ * Both directories are the *project's*, not the repository's: entries are named
+ * relative to the directory the user pointed the project at, so a project
+ * rooted at `repo/frontend` reads `frontend/.env` and writes it to the matching
+ * subdirectory of the checkout rather than to the toplevel (TASK-65).
+ *
  * These are load-bearing rather than a convenience (§5.6): the WIP snapshot
  * that makes eviction safe is built with `git add -A`, which honours
  * `.gitignore`, so an ignored `.env` or a build directory does not survive an
@@ -39,13 +44,15 @@ export async function copyProjectFiles(
   // it is handed while create reads it off its own, and neither has any use for
   // the other fields here.
   project: Pick<WorktreeProject, "worktree_copy">,
-  projectRoot: string,
-  worktreePath: string,
+  /** The project's directory, which is where the entries are read from. */
+  sourceDir: string,
+  /** The matching directory inside the checkout, which is where they land. */
+  destDir: string,
 ): Promise<string[]> {
   const copied: string[] = [];
   for (const entry of parseCopyList(project.worktree_copy)) {
-    const from = safePath(projectRoot, entry);
-    const to = safePath(worktreePath, entry);
+    const from = safePath(sourceDir, entry);
+    const to = safePath(destDir, entry);
     if (!from || !to) {
       throw new WorktreeError("copy-failed", `worktree_copy entry escapes the project: ${entry}`);
     }

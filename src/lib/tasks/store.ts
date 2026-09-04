@@ -14,6 +14,7 @@ export interface NewTask {
   title_source?: TitleSource;
   worktree_path?: string | null;
   worktree_repo?: string | null;
+  worktree_subdir?: string | null;
   branch?: string | null;
   base_ref?: string | null;
   worktree_state?: WorktreeState;
@@ -41,8 +42,8 @@ export type TaskUpdate = Partial<Omit<TaskRow, "id">>;
 // the object may have come off the wire.
 const UPDATABLE_COLUMNS: ReadonlySet<string> = new Set([
   "project_id", "title", "title_source", "initial_prompt", "repo_root", "cwd",
-  "worktree_path", "worktree_repo", "branch", "base_ref", "worktree_state",
-  "wip_ref", "wip_at",
+  "worktree_path", "worktree_repo", "worktree_subdir", "branch", "base_ref",
+  "worktree_state", "wip_ref", "wip_at",
   "setup_duration_ms", "pinned", "agent_session_id", "transcript_path",
   "agent_state", "lifecycle", "last_message", "last_size_cols", "last_size_rows",
   "model", "permission_mode", "created_at", "last_active_at", "idle_since",
@@ -51,7 +52,8 @@ const UPDATABLE_COLUMNS: ReadonlySet<string> = new Set([
 
 const INSERT_COLUMNS = [
   "id", "project_id", "title", "title_source", "initial_prompt", "repo_root",
-  "cwd", "worktree_path", "worktree_repo", "branch", "base_ref", "worktree_state", "pinned",
+  "cwd", "worktree_path", "worktree_repo", "worktree_subdir", "branch", "base_ref",
+  "worktree_state", "pinned",
   "agent_session_id", "agent_state", "lifecycle", "model", "permission_mode",
   "created_at", "last_active_at",
 ] as const;
@@ -77,6 +79,7 @@ export class TaskStore {
       cwd: task.cwd,
       worktree_path: task.worktree_path ?? null,
       worktree_repo: task.worktree_repo ?? null,
+      worktree_subdir: task.worktree_subdir ?? null,
       branch: task.branch ?? null,
       base_ref: task.base_ref ?? null,
       worktree_state: task.worktree_state ?? "none",

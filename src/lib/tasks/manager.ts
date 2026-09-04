@@ -888,8 +888,11 @@ export class TaskManager {
       );
       // The whole point: the agent runs *in* its checkout, so everything that
       // reads the task's directory — the git routes, the file tree, the next
-      // resume — lands there rather than in the project's own tree.
-      cwd = worktree.worktreePath;
+      // resume — lands there rather than in the project's own tree. The
+      // checkout's *cwd*, not its root: a project pointing at `repo/frontend`
+      // gets `<worktree>/frontend`, which is the directory the user chose
+      // (TASK-65).
+      cwd = worktree.cwd;
     }
 
     // Guarded like the two steps after it, and for the same reason: from the
@@ -950,6 +953,10 @@ export class TaskManager {
               // has to ask the project where the checkout lives — a project the
               // task may outlive (TASK-64).
               worktree_repo: worktree.repoRoot,
+              // And where in it the task works, so a restore can put the agent
+              // back in the same directory without asking a project that may be
+              // gone or repointed by then (TASK-65).
+              worktree_subdir: worktree.subdir,
               branch: worktree.branch,
               base_ref: baseRef,
               worktree_state: "present" as const,
@@ -2815,6 +2822,10 @@ export class TaskManager {
         // project asks for today. Null once the project is gone, which is
         // right — there is no list to honour.
         worktreeCopy: project?.worktreeCopy ?? null,
+        // And where those entries are read from, which is the project's own
+        // directory rather than the repository root (TASK-65). Null with the
+        // list itself once the project is gone.
+        projectPath: project?.initialPath ? expandTilde(project.initialPath) : null,
       },
       {
         id: taskId,
@@ -2823,6 +2834,10 @@ export class TaskManager {
         // id-derived path answer with a different directory from the one it was
         // evicted from, and the restore would rebuild beside the work.
         worktreePath: row.worktree_path ?? worktreePathFor(row.project_id, taskId),
+        // From the row for the same reason, and read as `''` when it is not
+        // there: a task created before the column existed worked at the root of
+        // its checkout, which is what an empty offset says.
+        subdir: row.worktree_subdir ?? "",
       },
     );
     // Dropped along with the columns that record it, and not left as a spare
@@ -2839,8 +2854,10 @@ export class TaskManager {
       worktree_state: "present",
       worktree_path: restored.worktreePath,
       // The agent runs in its checkout, and a task restored after a `missing`
-      // may have been left pointing at a path that no longer existed.
-      cwd: restored.worktreePath,
+      // may have been left pointing at a path that no longer existed. The
+      // restore's cwd rather than the checkout's root, so a project pointing
+      // below the toplevel comes back where it was (TASK-65).
+      cwd: restored.cwd,
       // Only `stale` keeps them, because only `stale` is a decision anybody
       // owes. `applied` consumed the snapshot; `none` means git had no such ref
       // to begin with — a row still naming one there is a leftover, and leaving

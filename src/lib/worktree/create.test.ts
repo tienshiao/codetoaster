@@ -170,6 +170,55 @@ describe("createWorktree", () => {
     // A missing source is the ordinary case (a fresh clone with no .env), not
     // a broken project, so it is skipped rather than failing the create.
     expect(created.copied).toEqual([".env", ".config"]);
+    // A project pointing at the toplevel has no offset, so the agent works at
+    // the root of its checkout exactly as it always has.
+    expect(created.subdir).toBe("");
+    expect(created.cwd).toBe(created.worktreePath);
+  });
+
+  // A project's directory need not be the repository's toplevel — `repo/frontend`
+  // is a reasonable thing to point one at — while a worktree is a checkout of
+  // the whole repository. So everything about the checkout is offset by where
+  // the project sits: the agent's cwd, and both ends of the copy list (TASK-65).
+  test("works in, and copies into, the subdirectory the project points at", async () => {
+    const { root } = await tempRepo();
+    const sub = path.join(root, "sub");
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, "package.json"), "{}\n");
+    await git(root, "add", "-A");
+    await git(root, "commit", "-qm", "a project below the toplevel");
+    // Beside the project and *not* at the toplevel, which is where the copy
+    // used to look — and finding nothing there was silent.
+    fs.writeFileSync(path.join(sub, ".env"), "SECRET=1\n");
+    const p = project(sub, { worktree_copy: ".env\n" });
+
+    const created = await createWorktree(p, task("In a subdirectory"), "main");
+
+    expect(created.subdir).toBe("sub");
+    expect(created.cwd).toBe(path.join(created.worktreePath, "sub"));
+    expect(created.copied).toEqual([".env"]);
+    expect(fs.readFileSync(path.join(created.cwd, ".env"), "utf8")).toBe("SECRET=1\n");
+    expect(fs.existsSync(path.join(created.worktreePath, ".env"))).toBe(false);
+  });
+
+  // The offset is measured after resolving both sides, because git answers
+  // `--show-toplevel` with the real path while the project's directory is
+  // whatever the user typed. `os.tmpdir()` is behind a symlink on macOS, so
+  // comparing them unresolved would make every test here a project sitting
+  // outside its own repository.
+  test("measures the offset through symlinks on the way to the project", async () => {
+    const { root } = await tempRepo();
+    fs.mkdirSync(path.join(root, "sub"));
+    fs.writeFileSync(path.join(root, "sub", "package.json"), "{}\n");
+    await git(root, "add", "-A");
+    await git(root, "commit", "-qm", "a project below the toplevel");
+    const link = path.join(tempDir("codetoaster-link-"), "repo");
+    fs.symlinkSync(root, link);
+
+    const created = await createWorktree(
+      project(path.join(link, "sub")), task("Through a link"), "main");
+
+    expect(created.subdir).toBe("sub");
   });
 
   describe("failures carry a kind and git's own account of them", () => {

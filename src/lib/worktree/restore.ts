@@ -22,6 +22,10 @@ export type WipDisposition = "applied" | "none" | "stale";
 
 export interface RestoredWorktree {
   worktreePath: string;
+  /** Where the task's agent runs: the checkout, or the subdirectory of it the
+   * project points at (TASK-65). The same value the create recorded, rebuilt
+   * from the row rather than from the project — which may be gone. */
+  cwd: string;
   branch: string;
   wip: WipDisposition;
   /** The `worktree_copy` entries that were put back, for a caller reporting
@@ -87,6 +91,11 @@ export function restoreWorktree(
     /** The project's `worktree_copy` list, read now rather than remembered, so
      * a restore produces the checkout the project asks for today. */
     worktreeCopy: string | null;
+    /** The project's directory today, which is where the copied files are read
+     * from — the entries name paths relative to it, not to the toplevel
+     * (TASK-65). Null once the project is gone, which is also when there is no
+     * list left to honour. */
+    projectPath: string | null;
   },
   task: {
     id: string;
@@ -97,6 +106,12 @@ export function restoreWorktree(
      * directory from the one it was evicted from, so the restore would rebuild
      * beside the work rather than onto it. */
     worktreePath: string;
+    /** The project's offset below the toplevel as it was at create, `''` for a
+     * checkout the task works at the root of. From the row for the same reason
+     * the path is: the project that offset was measured against may have been
+     * deleted or repointed since, and the agent has to come back to the
+     * directory its transcript was filed under. */
+    subdir: string;
   },
 ): Promise<RestoredWorktree> {
   const repoRoot = repo.root;
@@ -136,7 +151,14 @@ export function restoreWorktree(
         );
       }
 
+      // What the create put the agent in, rebuilt from the row: the project may
+      // point somewhere else by now, or not exist at all, and the checkout has
+      // to come back the shape it was evicted in. Made if the branch does not
+      // carry it, the way the create makes it — a project directory holding
+      // only ignored files is not in git.
+      const cwd = path.join(worktreePath, task.subdir);
       try {
+        if (task.subdir) await fsp.mkdir(cwd, { recursive: true });
         // Before the snapshot, and that ordering is a decision rather than a
         // convenience. A `worktree_copy` entry is normally an ignored file the
         // snapshot could not carry — that is what the list is for — but nothing
@@ -144,16 +166,22 @@ export function restoreWorktree(
         // opinion about it. The snapshot is what the user was working on; the
         // copy is a template the project holds. Copying first lets
         // `read-tree --reset` overwrite it, so the user's work wins.
-        const copied = await copyProjectFiles(
-          { worktree_copy: repo.worktreeCopy }, repoRoot, worktreePath);
+        //
+        // From the project's directory as it stands today, which is also where
+        // the list itself is read from — a project with no directory left has
+        // neither, and nothing to copy.
+        const copied = repo.projectPath
+          ? await copyProjectFiles({ worktree_copy: repo.worktreeCopy }, repo.projectPath, cwd)
+          : [];
 
         const wip = await readWip(repoRoot, task.id);
-        if (!wip) return { worktreePath, branch: task.branch, wip: "none" as const, copied };
+        if (!wip) return { worktreePath, cwd, branch: task.branch, wip: "none" as const, copied };
 
         const { stdout } = await gitSpawn(worktreePath, ["rev-parse", "HEAD"]);
         if (stdout.trim() !== wip.parent) {
           return {
             worktreePath,
+            cwd,
             branch: task.branch,
             wip: "stale" as const,
             staleRef: wipRefFor(task.id),
@@ -162,7 +190,7 @@ export function restoreWorktree(
         }
 
         await applyWip(worktreePath, wipRefFor(task.id));
-        return { worktreePath, branch: task.branch, wip: "applied" as const, copied };
+        return { worktreePath, cwd, branch: task.branch, wip: "applied" as const, copied };
       } catch (e) {
         // Back out to nothing, the way a failed create does. The path is fixed
         // by the task's id and cannot be moved away from, so a half-restored
