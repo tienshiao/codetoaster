@@ -1,6 +1,8 @@
 import { resolveTaskRoot, getImageMimeType, IMAGE_MIME_TYPES, listGitFiles, safePath, buildFileListing } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
+import { extractFrontmatter } from "../lib/frontmatter";
 import type { FileTokens } from "../types/highlight";
+import type { Frontmatter, FrontmatterEntry, FrontmatterValue } from "../types/frontmatter";
 
 function fuzzyMatch(filePath: string, query: string): { score: number; indices: number[] } | null {
   const lowerPath = filePath.toLowerCase();
@@ -36,9 +38,66 @@ export function isBinaryContent(buffer: ArrayBuffer): boolean {
   return false;
 }
 
+// The client decides a file is markdown from getLanguageFromPath; the server
+// only needs the extension, and only to know whether a leading `---` block is
+// frontmatter or just a horizontal rule in some other language's file.
+const MARKDOWN_EXTENSIONS = [".md", ".markdown", ".mdx"];
+
+function isMarkdownPath(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return MARKDOWN_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+/** One frontmatter value, shaped for the header the client draws (TASK-87). */
+function shapeValue(value: unknown): FrontmatterValue {
+  if (typeof value === "string") return { kind: "text", text: value };
+  if (typeof value === "number" || typeof value === "boolean") {
+    return { kind: "scalar", text: String(value) };
+  }
+  // `assignee: []` and `priority:` are both "written, but says nothing", and a
+  // header that drew them as an empty cell would read as a rendering bug.
+  if (value === null || value === undefined) return { kind: "empty" };
+  if (Array.isArray(value)) {
+    if (value.length === 0) return { kind: "empty" };
+    if (value.every((v) => typeof v === "string" || typeof v === "number" || typeof v === "boolean")) {
+      return { kind: "list", items: value.map((v) => String(v)) };
+    }
+  }
+  return { kind: "block", yaml: Bun.YAML.stringify(value, null, 2).trimEnd() };
+}
+
+/**
+ * The file's frontmatter, or undefined when there is nothing to draw.
+ *
+ * Undefined for a block that will not parse or parses to something other than a
+ * mapping: the preview then shows the raw text, which is the honest answer for
+ * a file the user is mid-edit and the only one that cannot lose a line.
+ */
+function readFrontmatter(content: string, filePath: string): Frontmatter | undefined {
+  if (!isMarkdownPath(filePath)) return undefined;
+  const block = extractFrontmatter(content);
+  if (!block) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = Bun.YAML.parse(block.yaml);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+
+  // Object key order is the file's key order, which is the order a reader wrote
+  // and the order the header keeps.
+  const entries: FrontmatterEntry[] = Object.entries(parsed as Record<string, unknown>).map(
+    ([key, value]) => ({ key, value: shapeValue(value) }),
+  );
+  return { entries, lineCount: block.lineCount };
+}
+
 // Shared non-image body of the /file and git/file routes: binary detection,
-// text decode, per-line data, and server-side tree-sitter tokens (null => client
-// regex fallback; highlighting failure never breaks the response).
+// text decode, per-line data, server-side tree-sitter tokens (null => client
+// regex fallback; highlighting failure never breaks the response), and — for a
+// markdown file — its parsed frontmatter.
 export async function serializeFileContent(buffer: ArrayBuffer, filePath: string) {
   if (isBinaryContent(buffer)) {
     return { isBinary: true, isImage: false, size: buffer.byteLength };
@@ -55,6 +114,8 @@ export async function serializeFileContent(buffer: ArrayBuffer, filePath: string
     tokens = null;
   }
 
+  const frontmatter = readFrontmatter(content, filePath);
+
   return {
     lines: lineData,
     totalLines: lines.length,
@@ -62,6 +123,9 @@ export async function serializeFileContent(buffer: ArrayBuffer, filePath: string
     isImage: false,
     size: buffer.byteLength,
     tokens,
+    // Absent rather than null when there is none: the client's check is
+    // presence, and a null would have to be spelled out at every reader.
+    ...(frontmatter ? { frontmatter } : {}),
   };
 }
 

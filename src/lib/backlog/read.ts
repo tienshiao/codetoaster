@@ -5,6 +5,7 @@
 import { readdir } from "node:fs/promises";
 import * as path from "node:path";
 import type { BacklogTask, BacklogResponse } from "../../types/backlog";
+import { extractFrontmatter } from "../frontmatter";
 
 /** Backlog.md's own defaults, used when config.yml is silent or unreadable. */
 const DEFAULT_STATUSES = ["To Do", "In Progress", "Done"];
@@ -13,18 +14,6 @@ const DEFAULT_PREFIX = "task";
 /** The two directories that hold live tasks. `archive/` and `drafts/` are
  * deliberately absent: neither belongs on the board the client draws. */
 const TASK_DIRS = ["backlog/tasks", "backlog/completed"];
-
-function extractFrontmatter(content: string): string | null {
-  // A byte-order mark ahead of the opening `---` would otherwise read as "no
-  // frontmatter" and silently drop the task.
-  const body = content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
-  const lines = body.split("\n");
-  if (lines[0]?.trim() !== "---") return null;
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i]?.trim() === "---") return lines.slice(1, i).join("\n");
-  }
-  return null;
-}
 
 function asStringArray(value: unknown): string[] {
   // `assignee: '@tma'` and `assignee: ['@tma']` are both written in the wild,
@@ -43,12 +32,12 @@ function asStringArray(value: unknown): string[] {
  * failing the whole list.
  */
 export function parseTaskFile(content: string, filePath: string): BacklogTask | null {
-  const frontmatter = extractFrontmatter(content);
-  if (frontmatter === null) return null;
+  const block = extractFrontmatter(content);
+  if (block === null) return null;
 
   let parsed: unknown;
   try {
-    parsed = Bun.YAML.parse(frontmatter);
+    parsed = Bun.YAML.parse(block.yaml);
   } catch {
     return null;
   }

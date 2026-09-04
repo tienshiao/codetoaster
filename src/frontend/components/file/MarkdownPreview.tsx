@@ -3,6 +3,8 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Element } from "hast";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { FrontmatterHeader } from "./FrontmatterHeader";
+import type { Frontmatter } from "@/types/frontmatter";
 
 /** Source text of a ```mermaid fence, given the hast node of its <pre>. */
 function extractMermaidSource(node: Element | undefined): string | null {
@@ -29,16 +31,38 @@ const COMPONENTS: Components = {
 };
 
 /**
- * Rendered markdown body. Memoized on the source text so unrelated parent
- * re-renders (modifier held, scroll position) don't re-run the markdown
- * pipeline or remount the mermaid diagrams.
+ * Rendered markdown body, with the file's frontmatter above it when it has one.
+ * Memoized on the source text so unrelated parent re-renders (modifier held,
+ * scroll position) don't re-run the markdown pipeline or remount the mermaid
+ * diagrams.
+ *
+ * The header lives inside the `markdown-preview` wrapper rather than beside it
+ * (TASK-87): a nested value renders as a code block, and those rules are the
+ * preview's.
  */
-export const MarkdownPreview = memo(function MarkdownPreview({ source }: { source: string }) {
+export const MarkdownPreview = memo(function MarkdownPreview({
+  source,
+  frontmatter,
+}: {
+  source: string;
+  frontmatter?: Frontmatter;
+}) {
+  const body = (
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
+      {source}
+    </ReactMarkdown>
+  );
+
+  if (!frontmatter) {
+    return <div className="markdown-preview max-w-3xl px-6 py-4 text-sm">{body}</div>;
+  }
+
+  // Padding moves onto the two children so the header's closing rule is the
+  // only thing between them.
   return (
-    <div className="markdown-preview max-w-3xl px-6 py-4 text-sm">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
-        {source}
-      </ReactMarkdown>
+    <div className="markdown-preview text-sm">
+      <FrontmatterHeader entries={frontmatter.entries} />
+      <div className="max-w-3xl px-6 pb-4">{body}</div>
     </div>
   );
 });

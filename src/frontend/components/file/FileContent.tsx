@@ -70,13 +70,18 @@ export function FileContent({
     );
   }, [content, langConfig, showMarkdown]);
 
+  // The parsed frontmatter, only when the preview is the branch that renders:
+  // the source view shows the raw block, unchanged (TASK-87).
+  const frontmatter = showMarkdown && content && !content.isBinary ? content.frontmatter : undefined;
+
   // Joined source for the markdown preview, memoized so MarkdownPreview's memo
-  // actually holds across re-renders that don't change the file.
+  // actually holds across re-renders that don't change the file. The block's
+  // own lines come off the front — FrontmatterHeader draws them instead.
   const markdownSource = useMemo(
     () => (showMarkdown && content && !content.isBinary
-      ? content.lines.map((line) => line.content).join("\n")
+      ? content.lines.slice(frontmatter?.lineCount ?? 0).map((line) => line.content).join("\n")
       : ""),
-    [content, showMarkdown],
+    [content, showMarkdown, frontmatter],
   );
 
   // Restore scroll once the lines have rendered (content arrives async, and
@@ -175,7 +180,7 @@ export function FileContent({
         className="overflow-auto h-full"
         onScroll={(e) => onScrollTopChange?.(e.currentTarget.scrollTop)}
       >
-        <MarkdownPreview source={markdownSource} />
+        <MarkdownPreview source={markdownSource} frontmatter={frontmatter} />
       </div>
     );
   }
