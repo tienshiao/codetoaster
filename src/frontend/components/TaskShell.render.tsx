@@ -124,6 +124,7 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     lifecycle: "live",
     cwd: "/Users/someone/projects/app",
     worktreePath: null,
+    worktreeCwd: null,
     branch: null,
     lastMessage: null,
     clientCount: 0,
@@ -348,7 +349,9 @@ test("a dismissed WIP notice does not follow the user to the next task", () => {
  */
 test("the status bar drops a path that is only the task's own worktree", () => {
   const checkout = "/Users/someone/.codetoaster/worktrees/ct/4b55ec75-3bd6-4dbd-a2e1-937affffb044";
-  stubs.tasks = [task({ cwd: checkout, worktreePath: checkout, branch: "ct/thing" })];
+  stubs.tasks = [
+    task({ cwd: checkout, worktreePath: checkout, worktreeCwd: checkout, branch: "ct/thing" }),
+  ];
   renderShell();
 
   const status = screen.getByTestId("status-items").textContent ?? "";
@@ -376,6 +379,7 @@ test("an evicted task still says which branch it is on", () => {
       worktreeState: "evicted",
       cwd: checkout,
       worktreePath: checkout,
+      worktreeCwd: checkout,
       branch: "ct/thing",
       // Nothing measured, which is what an evicted checkout always looks like.
       worktree: null,
@@ -391,6 +395,7 @@ test("an agent that has left its own checkout gets its path back", () => {
     task({
       cwd: "/Users/someone/elsewhere",
       worktreePath: "/Users/someone/.codetoaster/worktrees/ct/4b55ec75",
+      worktreeCwd: "/Users/someone/.codetoaster/worktrees/ct/4b55ec75",
     }),
   ];
   renderShell();
@@ -403,4 +408,24 @@ test("a task with no checkout of its own always shows its path", () => {
   renderShell();
 
   expect(screen.getByTestId("status-items").textContent).toContain("projects/app");
+});
+
+/**
+ * A project pointing below its repository's toplevel (TASK-65), where comparing
+ * against the checkout's root instead of the agent's own directory gets the rule
+ * exactly backwards: the task sitting where it belongs would show the generated
+ * path forever, and the one that had wandered off to the checkout root would be
+ * the one that looked settled.
+ */
+test("a subdirectory project drops the path only where the agent belongs", () => {
+  const checkout = "/Users/someone/.codetoaster/worktrees/ct/4b55ec75";
+  const inSubdir = { worktreePath: checkout, worktreeCwd: `${checkout}/frontend` };
+  stubs.tasks = [task({ ...inSubdir, cwd: `${checkout}/frontend`, branch: "ct/thing" })];
+  const first = renderShell();
+  expect(screen.getByTestId("status-items").textContent).not.toContain("4b55ec75");
+  first.unmount();
+
+  stubs.tasks = [task({ ...inSubdir, cwd: checkout, branch: "ct/thing" })];
+  renderShell();
+  expect(screen.getByTestId("status-items").textContent).toContain("4b55ec75");
 });

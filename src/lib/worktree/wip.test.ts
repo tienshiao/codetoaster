@@ -46,6 +46,29 @@ async function dirtyTask(root: string) {
   return { project, task, created, at };
 }
 
+/** `restoreWorktree` as every test here calls it: the repository the task was
+ * branched from and the project's copy list, against the path, branch and
+ * offset the create recorded — which is exactly the shape the manager assembles
+ * from a row. Written once so a test says what it is *changing* about that. */
+function restore(
+  root: string,
+  project: { worktree_copy: string | null },
+  task: { id: string },
+  created: { branch: string; worktreePath: string; subdir: string },
+) {
+  return restoreWorktree(
+    { root, worktreeCopy: project.worktree_copy },
+    {
+      id: task.id,
+      branch: created.branch,
+      // From the row, which is the point: the project is not consulted for
+      // where the checkout goes or where the agent works inside it.
+      worktreePath: created.worktreePath,
+      subdir: created.subdir,
+    },
+  );
+}
+
 describe("snapshotWip", () => {
   // AC #1. The premise of evicting a dirty tree is that taking the snapshot
   // costs the user nothing — so the thing to assert is not what the ref says,
@@ -145,15 +168,7 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     await git(root, "worktree", "prune");
 
-    const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    );
+    const restored = await restore(root, project, task, created);
 
     expect(restored.wip).toBe("applied");
     expect(restored.worktreePath).toBe(created.worktreePath);
@@ -174,15 +189,7 @@ describe("restoreWorktree", () => {
 
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     await git(root, "worktree", "remove", "--force", created.worktreePath);
-    const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    );
+    const restored = await restore(root, project, task, created);
 
     expect(await status(restored.worktreePath)).toContain("?? untracked.txt");
     expect(fs.existsSync(path.join(restored.worktreePath, "ignored/build.out"))).toBe(false);
@@ -196,15 +203,7 @@ describe("restoreWorktree", () => {
     const created = await createWorktree(project, task, "main");
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
-    const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    );
+    const restored = await restore(root, project, task, created);
 
     expect(restored.wip).toBe("none");
     expect(restored.staleRef).toBeUndefined();
@@ -233,15 +232,7 @@ describe("restoreWorktree", () => {
     const newTip = await git(root, "rev-parse", "HEAD");
     await git(root, "checkout", "-q", "main");
 
-    const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    );
+    const restored = await restore(root, project, task, created);
 
     expect(restored.wip).toBe("stale");
     // Kept, not discarded: the choice is the user's, and nothing is lost while
@@ -268,15 +259,7 @@ describe("restoreWorktree", () => {
     await git(root, "commit", "-qm", "work done outside the task");
     await git(root, "checkout", "-q", "main");
 
-    const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    );
+    const restored = await restore(root, project, task, created);
     expect(restored.wip).toBe("stale");
     await applyWip(restored.worktreePath, restored.staleRef!);
 
@@ -293,15 +276,7 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     await git(root, "branch", "-D", created.branch);
 
-    const error = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    ).catch((e) => e);
+    const error = await restore(root, project, task, created).catch((e) => e);
 
     expect(error).toBeInstanceOf(WorktreeError);
     expect(error.kind).toBe("branch-missing");
@@ -325,15 +300,7 @@ describe("restoreWorktree", () => {
     await git(root, "worktree", "remove", "--force", created.worktreePath);
     await git(root, "checkout", "-q", created.branch);
 
-    const error = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    ).catch((e) => e);
+    const error = await restore(root, project, task, created).catch((e) => e);
 
     expect(error).toBeInstanceOf(WorktreeError);
     expect(error.kind).toBe("worktree-add-failed");
@@ -354,15 +321,7 @@ describe("restoreWorktree", () => {
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     fs.rmSync(created.worktreePath, { recursive: true, force: true });
 
-    const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    );
+    const restored = await restore(root, project, task, created);
 
     expect(restored.wip).toBe("applied");
     expect(fs.readFileSync(path.join(restored.worktreePath, "README.md"), "utf8")).toBe("dirty\n");
@@ -387,24 +346,16 @@ describe("restoreWorktree and the project's files", () => {
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
-    const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    );
+    const restored = await restore(root, project, task, created);
 
     expect(restored.copied).toEqual([".env"]);
     expect(fs.readFileSync(path.join(restored.worktreePath, ".env"), "utf8")).toBe("SECRET=1\n");
   });
 
   // The other half of TASK-65: a project below the toplevel is restored the way
-  // it was created — the files come out of the project's own directory as it
-  // stands today, and land in the matching subdirectory of the checkout, which
-  // is also where the agent goes back to.
+  // it was created — the files come out of the offset the row records, inside
+  // the repository the task was branched from, and land in the matching
+  // subdirectory of the checkout, which is also where the agent goes back to.
   test("puts a subdirectory project's files back beside it, not at the toplevel", async () => {
     const { root } = await tempRepo();
     const sub = path.join(root, "sub");
@@ -423,22 +374,45 @@ describe("restoreWorktree and the project's files", () => {
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
-    const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        // From the row, which is the whole point: the project is not consulted
-        // for where the checkout works, only for what to copy into it.
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    );
+    const restored = await restore(root, project, task, created);
 
     expect(restored.cwd).toBe(path.join(created.worktreePath, "sub"));
     expect(restored.copied).toEqual([".env"]);
     expect(fs.readFileSync(path.join(restored.cwd, ".env"), "utf8")).toBe("SECRET=1\n");
     expect(fs.existsSync(path.join(restored.worktreePath, ".env"))).toBe(false);
+  });
+
+  // Why the agent's directory is made *after* the snapshot is applied and not
+  // before it. `applyWip` runs `read-tree -u --reset`, which removes a tracked
+  // directory the snapshot recorded as deleted — so a cwd created up front is
+  // one the apply takes away again, and the spawn that follows the restore dies
+  // ENOENT on a path the restore had just promised. An empty directory is
+  // invisible to git, so putting it back after costs the user nothing.
+  test("remakes the agent's directory after a snapshot that deleted it", async () => {
+    const { root } = await tempRepo();
+    const sub = path.join(root, "sub");
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, "package.json"), "{}\n");
+    await git(root, "add", "-A");
+    await git(root, "commit", "-qm", "a project below the toplevel");
+    const project = tempProject(sub);
+    const task = tempTask("Deleted its own directory");
+    const created = await createWorktree(project, task, "main");
+
+    // What the agent does when its work is "move this package elsewhere": the
+    // directory it is standing in stops being tracked, and the snapshot says so.
+    fs.rmSync(created.cwd, { recursive: true, force: true });
+    await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
+    await git(root, "worktree", "remove", "--force", created.worktreePath);
+
+    const restored = await restore(root, project, task, created);
+
+    expect(restored.wip).toBe("applied");
+    expect(restored.cwd).toBe(path.join(created.worktreePath, "sub"));
+    expect(fs.existsSync(restored.cwd)).toBe(true);
+    // And the deletion itself survived, so the remade directory is empty rather
+    // than the snapshot having been quietly undone.
+    expect(await status(restored.worktreePath)).toEqual([" D sub/package.json"]);
   });
 
   // The ordering decision: a copy list may name a tracked path, and then the
@@ -454,15 +428,7 @@ describe("restoreWorktree and the project's files", () => {
     await snapshotWip({ id: task.id, worktreePath: created.worktreePath });
     await git(root, "worktree", "remove", "--force", created.worktreePath);
 
-    const restored = await restoreWorktree(
-      { root: root, worktreeCopy: project.worktree_copy, projectPath: project.initial_path },
-      {
-        id: task.id,
-        branch: created.branch,
-        worktreePath: created.worktreePath,
-        subdir: created.subdir,
-      },
-    );
+    const restored = await restore(root, project, task, created);
 
     expect(restored.wip).toBe("applied");
     expect(fs.readFileSync(path.join(restored.worktreePath, "README.md"), "utf8"))

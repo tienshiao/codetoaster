@@ -334,13 +334,20 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
           // bar carries them at all (TASK-71). The sidebar shows the branch
           // too, but the sidebar can be closed and the status bar cannot.
           //
-          // The path is left out when the task is sitting in the checkout we
-          // made for it, because that path is `~/.codetoaster/worktrees/<
-          // project>/<uuid>` — a generated location that says nothing the
-          // branch beside it does not say better, and spends the whole width of
-          // the bar saying it. What the comparison *does* catch is the two
-          // disagreeing: an agent that has cd'd out of its own checkout (§5.4)
-          // gets its path back, which is the case where a path is worth reading.
+          // The path is left out when the task is sitting where we put it,
+          // because that path is `~/.codetoaster/worktrees/<project>/<uuid>` —
+          // a generated location that says nothing the branch beside it does
+          // not say better, and spends the whole width of the bar saying it.
+          // What the comparison *does* catch is the two disagreeing: an agent
+          // that has cd'd out of its own checkout (§5.4) gets its path back,
+          // which is the case where a path is worth reading.
+          //
+          // Against `worktreeCwd` and not `worktreePath`: a project pointing
+          // below the toplevel puts the agent in a subdirectory of its checkout
+          // (TASK-65), so those two are only equal for a project at the root —
+          // and comparing the wrong one shows the generated path permanently
+          // for every other project, while hiding it in exactly the case worth
+          // reporting.
           //
           // Shortened for display, with the real one in its `title`, so nothing
           // elided is more than a hover away.
@@ -357,7 +364,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
           // spends most of its life in.
           items: selected
             ? [
-                ...(selected.cwd === selected.worktreePath
+                ...(selected.cwd === selected.worktreeCwd
                   ? []
                   : [
                       <span key="cwd" title={selected.cwd}>

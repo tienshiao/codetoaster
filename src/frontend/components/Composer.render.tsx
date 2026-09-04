@@ -289,6 +289,21 @@ describe("the project a group's + asked for", () => {
     expect(selectValue("model")).toBe("Sonnet");
   });
 
+  test("a changed ?project= moves the selection and nothing else", () => {
+    // Back and Forward. Every `+` pushes a history entry, so navigating across
+    // them changes this prop on a composer that is already mounted — and that
+    // is all that happens: no remount to re-read the seed, and no request in
+    // the store either.
+    const view = render(<Composer />);
+    type("ship it");
+    expect(selectValue("project")).toBe("general");
+
+    view.rerender(<Composer projectId="web" />);
+
+    expect(selectValue("project")).toBe("web");
+    expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe("ship it");
+  });
+
   test("arriving while the user is typing moves the selection and nothing else", () => {
     // The real shape of it: `/` is already showing, so pressing a group's `+`
     // is a request into a live composer rather than a new mount. The prompt is

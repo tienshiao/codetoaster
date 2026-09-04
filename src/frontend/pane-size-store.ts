@@ -4,14 +4,18 @@
 //
 // Per device and not per task, for the same reason as `explorer-store`: how
 // wide a column is is a property of the monitor it is being read on, not of the
-// work shown in it. One key holds all of them, so a new resizable pane costs an
-// id and nothing else — and so the whole record is validated in one pass rather
-// than each pane trusting its own slot.
+// work shown in it. Per device means across every tab open on it: a `storage`
+// event carries a width written in one tab into the others, so widths cross
+// tabs the way they cross reloads. One key holds all of them, so a new resizable
+// pane costs an id and nothing else — and so the whole record is validated in
+// one pass rather than each pane trusting its own slot.
 //
 // What is stored is what the user *asked for*, never what a narrow window could
 // afford at the time. `use-pane-width` clamps for the render and leaves the
 // stored number alone, so working on a laptop for an afternoon does not quietly
 // rewrite the widths set on the monitor.
+
+import { createKeyedListeners } from "./keyed-listeners";
 
 export const PANE_MIN_PX = 160;
 
@@ -93,13 +97,14 @@ export function loadPaneWidth(id: PaneId): number {
 // the second has to hear the first one's drag rather than find out on its next
 // mount (§TASK-73).
 //
-// Listeners are per pane id, as in `view-state-store`: dragging the sidebar
-// wakes the sidebar, not every file tree on screen.
+// Listeners are per pane id, through the same `keyed-listeners` registry
+// `view-state-store` keys per field: dragging the sidebar wakes the sidebar,
+// not every file tree on screen.
 
 type PaneListener = () => void;
 
 const live = new Map<PaneId, number>();
-const listeners = new Map<PaneId, Set<PaneListener>>();
+const listeners = createKeyedListeners<PaneId>();
 
 /**
  * The width `id` is at, seeded from storage the first time it is asked for.
@@ -111,7 +116,7 @@ const listeners = new Map<PaneId, Set<PaneListener>>();
 export function getPaneWidth(id: PaneId): number {
   const current = live.get(id);
   if (current !== undefined) return current;
-  const seeded = loadPaneWidths()[id] ?? PANE_DEFAULT_PX[id];
+  const seeded = loadPaneWidth(id);
   live.set(id, seeded);
   return seeded;
 }
@@ -125,34 +130,18 @@ export function getPaneWidth(id: PaneId): number {
 export function setPaneWidth(id: PaneId, px: number): void {
   if (getPaneWidth(id) === px) return;
   live.set(id, px);
-  const set = listeners.get(id);
-  if (!set || set.size === 0) return;
-  // Copied: a listener may unsubscribe (a pane unmounting) mid-walk.
-  for (const listener of [...set]) listener();
+  listeners.notify(id);
 }
 
 /** Hear about `id` changing. Returns the unsubscribe. */
 export function subscribePaneWidth(id: PaneId, listener: PaneListener): () => void {
-  let set = listeners.get(id);
-  if (!set) {
-    set = new Set();
-    listeners.set(id, set);
-  }
-  set.add(listener);
-  return () => {
-    const current = listeners.get(id);
-    if (!current) return;
-    current.delete(listener);
-    // Dropped when empty, so a pane closed for the session leaves no entry
-    // behind for the next `setPaneWidth` to walk.
-    if (current.size === 0) listeners.delete(id);
-  };
+  return listeners.subscribe(id, listener);
 }
 
 /** Test-only: how many hooks are listening to `id`, so an unmount that fails to
  * unsubscribe is a visible number rather than a slow leak. */
 export function paneListenerCount(id: PaneId): number {
-  return listeners.get(id)?.size ?? 0;
+  return listeners.count(id);
 }
 
 /** Test-only: forget the live widths and their subscribers. Clearing
@@ -179,9 +168,50 @@ export function savePaneWidth(id: PaneId, px: number): void {
   const store = storage();
   if (!store) return;
   try {
-    store.setItem(STORAGE_KEY, JSON.stringify({ ...loadPaneWidths(), [id]: px }));
+    const stored = loadPaneWidths();
+    // A click on a divider is a whole gesture — pointerdown, pointerup,
+    // `onResizeEnd` — with no move in it, and there are two dividers on screen.
+    // Nothing about the record would change, so the stringify, the write and
+    // the `storage` event it wakes every other tab with are all for nothing.
+    if (stored[id] === px) return;
+    store.setItem(STORAGE_KEY, JSON.stringify({ ...stored, [id]: px }));
   } catch {
     // A full or blocked quota costs the user their column widths on next load,
     // which is not worth failing a render over.
   }
+}
+
+// A width dragged in another tab reaches this one.
+//
+// Before the live map existed every mount re-read `localStorage`, so a second
+// tab picked up the first one's widths whenever a pane remounted. The map is
+// what makes two panes on one id agree, and it is also what makes an id, once
+// seeded, never read storage again — so without this the other tab's width
+// would not land until a reload.
+//
+// The event fires only in *other* documents than the one that wrote, which is
+// exactly the property that makes it useless to test in-process: nothing a test
+// can do to `localStorage` will produce it, so the listener is verified in a
+// browser or not at all. `setPaneWidth` no-ops on an unchanged width, so the
+// panes whose widths the other tab did not touch are not woken.
+//
+// Guarded on `window` and not on `localStorage`: the test stub is installed and
+// removed long after this module is evaluated, and a guard on it would be read
+// once, at import, against whatever happened to be there then.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    // `key === null` is a `clear()`, which names no key and drops ours with
+    // everything else — every pane goes back to its default.
+    if (e.key !== null && e.key !== STORAGE_KEY) return;
+    let widths: PaneWidths = {};
+    try {
+      widths = e.newValue ? revivePaneWidths(JSON.parse(e.newValue)) : {};
+    } catch {
+      // Someone else's build, or a hand-edited record. The defaults below are
+      // a better answer than leaving the panes on a width no longer stored.
+    }
+    for (const id of Object.keys(PANE_DEFAULT_PX) as PaneId[]) {
+      setPaneWidth(id, widths[id] ?? PANE_DEFAULT_PX[id]);
+    }
+  });
 }

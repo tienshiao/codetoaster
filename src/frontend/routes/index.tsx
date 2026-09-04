@@ -8,10 +8,12 @@ export const Route = createFileRoute("/")({
   // names no project is simply not honoured. So it is validated only as "a
   // string or absent" — whether it names a real project is the composer's
   // question, and its answer depends on a list that arrives over the socket
-  // rather than on the URL. It is read on arrival only: moving the selection of
-  // a composer already showing is `composer-request-store`'s job, since a press
-  // of the `+` for the project this param already names changes nothing here
-  // (TASK-82).
+  // rather than on the URL. The composer follows it for as long as it is
+  // mounted, because each `+` pushes a history entry and Back or Forward across
+  // them changes this param with nothing else happening. What it cannot express
+  // is a press of the `+` for the project it already names — that navigation
+  // goes to the address already showing — which is `composer-request-store`'s
+  // job (TASK-82).
   validateSearch: (search: Record<string, unknown>): { project?: string } => ({
     project: typeof search.project === "string" && search.project ? search.project : undefined,
   }),

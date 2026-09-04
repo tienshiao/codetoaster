@@ -5,6 +5,7 @@ import { WorktreeError } from "./errors";
 import { copyProjectFiles } from "./copy";
 import { discardCheckout } from "./evict";
 import { withRepoLock } from "./lock";
+import { worktreeCwd } from "./paths";
 import { assertPathFree, lockKeyFor } from "./repo";
 import { applyWip, readWip, wipRefFor } from "./wip";
 
@@ -51,6 +52,27 @@ async function assertBranch(repoRoot: string, branch: string): Promise<void> {
   }
 }
 
+/** What became of the task's snapshot: applied into the fresh checkout, absent,
+ * or kept back because the branch moved under it (the guard `restoreWorktree`
+ * describes).
+ *
+ * Its own function so the restore's last step — remaking the agent's directory
+ * — can run *after* it, which the ordering comment at the call site is about. */
+async function disposeWip(
+  repoRoot: string,
+  worktreePath: string,
+  taskId: string,
+): Promise<Pick<RestoredWorktree, "wip" | "staleRef">> {
+  const wip = await readWip(repoRoot, taskId);
+  if (!wip) return { wip: "none" };
+
+  const { stdout } = await gitSpawn(worktreePath, ["rev-parse", "HEAD"]);
+  if (stdout.trim() !== wip.parent) return { wip: "stale", staleRef: wipRefFor(taskId) };
+
+  await applyWip(worktreePath, wipRefFor(taskId));
+  return { wip: "applied" };
+}
+
 /** Put a task's checkout back, with whatever it was working on.
  *
  * The guard is the whole of the interesting part. Between the eviction and
@@ -73,7 +95,14 @@ async function assertBranch(repoRoot: string, branch: string): Promise<void> {
  *
  * The project's `worktree_copy` entries are put back too, because a restore
  * has to produce the checkout the project asked for and not merely the one git
- * can rebuild. `git add -A` honours `.gitignore`, so an ignored `.env` never
+ * can rebuild. They are read out of the task's own repository at the offset the
+ * row records — not out of the project's directory as it stands today, which is
+ * free to have been repointed at another repository since. Deriving both ends of
+ * the copy from the same two values means they agree by construction: whatever
+ * has happened to the project, a task's files come from the directory the task
+ * was branched from and land in the matching one inside its checkout.
+ *
+ * `git add -A` honours `.gitignore`, so an ignored `.env` never
  * reaches the snapshot in the first place — this and `setup_command` are the
  * only things that put it back, which is why §5.6 calls them load-bearing
  * rather than a convenience. Setup itself is the caller's: it runs in the
@@ -89,13 +118,9 @@ export function restoreWorktree(
      * looked up from a project the task may have outlived (TASK-64). */
     root: string;
     /** The project's `worktree_copy` list, read now rather than remembered, so
-     * a restore produces the checkout the project asks for today. */
+     * a restore produces the checkout the project asks for today. Null once the
+     * project is gone, which is also when there is nothing left to copy. */
     worktreeCopy: string | null;
-    /** The project's directory today, which is where the copied files are read
-     * from — the entries name paths relative to it, not to the toplevel
-     * (TASK-65). Null once the project is gone, which is also when there is no
-     * list left to honour. */
-    projectPath: string | null;
   },
   task: {
     id: string;
@@ -107,8 +132,10 @@ export function restoreWorktree(
      * beside the work rather than onto it. */
     worktreePath: string;
     /** The project's offset below the toplevel as it was at create, `''` for a
-     * checkout the task works at the root of. From the row for the same reason
-     * the path is: the project that offset was measured against may have been
+     * checkout the task works at the root of. Fixes both ends of the restore:
+     * the agent's directory inside the checkout, and the directory of `root`
+     * the copied files are read out of. From the row for the same reason the
+     * path is: the project that offset was measured against may have been
      * deleted or repointed since, and the agent has to come back to the
      * directory its transcript was filed under. */
     subdir: string;
@@ -153,12 +180,9 @@ export function restoreWorktree(
 
       // What the create put the agent in, rebuilt from the row: the project may
       // point somewhere else by now, or not exist at all, and the checkout has
-      // to come back the shape it was evicted in. Made if the branch does not
-      // carry it, the way the create makes it — a project directory holding
-      // only ignored files is not in git.
-      const cwd = path.join(worktreePath, task.subdir);
+      // to come back the shape it was evicted in.
+      const cwd = worktreeCwd(worktreePath, task.subdir);
       try {
-        if (task.subdir) await fsp.mkdir(cwd, { recursive: true });
         // Before the snapshot, and that ordering is a decision rather than a
         // convenience. A `worktree_copy` entry is normally an ignored file the
         // snapshot could not carry — that is what the list is for — but nothing
@@ -167,30 +191,31 @@ export function restoreWorktree(
         // copy is a template the project holds. Copying first lets
         // `read-tree --reset` overwrite it, so the user's work wins.
         //
-        // From the project's directory as it stands today, which is also where
-        // the list itself is read from — a project with no directory left has
-        // neither, and nothing to copy.
-        const copied = repo.projectPath
-          ? await copyProjectFiles({ worktree_copy: repo.worktreeCopy }, repo.projectPath, cwd)
-          : [];
+        // Out of the task's own repository at the offset its row records, which
+        // is the directory the create copied from and is unaffected by anything
+        // that has happened to the project since. No `mkdir` is owed first:
+        // `copyProjectFiles` makes each entry's parent as it goes.
+        const copied = await copyProjectFiles(
+          { worktree_copy: repo.worktreeCopy },
+          path.join(repoRoot, task.subdir),
+          cwd,
+        );
 
-        const wip = await readWip(repoRoot, task.id);
-        if (!wip) return { worktreePath, cwd, branch: task.branch, wip: "none" as const, copied };
+        const wip = await disposeWip(repoRoot, worktreePath, task.id);
 
-        const { stdout } = await gitSpawn(worktreePath, ["rev-parse", "HEAD"]);
-        if (stdout.trim() !== wip.parent) {
-          return {
-            worktreePath,
-            cwd,
-            branch: task.branch,
-            wip: "stale" as const,
-            staleRef: wipRefFor(task.id),
-            copied,
-          };
-        }
-
-        await applyWip(worktreePath, wipRefFor(task.id));
-        return { worktreePath, cwd, branch: task.branch, wip: "applied" as const, copied };
+        // Made last, and that has to be after the snapshot rather than before
+        // it: `applyWip` runs `read-tree -u --reset`, which prunes a tracked
+        // directory the snapshot recorded as deleted — so a `cwd` created up
+        // front is a `cwd` the apply can take away again, and the agent's spawn
+        // then fails ENOENT on a directory we had just made. Making it here
+        // costs nothing in the ordinary case (`mkdir -p` of what git checked
+        // out is a no-op) and is what makes the returned `cwd` true. An empty
+        // directory is invisible to git, so putting one back where the user
+        // deleted its contents changes no status and is strictly better than an
+        // agent that cannot start. The create makes it for the other reason: a
+        // project directory holding only ignored files is not in the branch.
+        await fsp.mkdir(cwd, { recursive: true });
+        return { worktreePath, cwd, branch: task.branch, copied, ...wip };
       } catch (e) {
         // Back out to nothing, the way a failed create does. The path is fixed
         // by the task's id and cannot be moved away from, so a half-restored

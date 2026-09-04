@@ -34,6 +34,7 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     lifecycle: "live",
     cwd: "/Users/someone/projects/website",
     worktreePath: null,
+    worktreeCwd: null,
     branch: null,
     lastMessage: null,
     clientCount: 0,

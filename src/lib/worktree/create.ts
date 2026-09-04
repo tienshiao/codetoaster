@@ -7,7 +7,7 @@ import { copyProjectFiles, type WorktreeProject } from "./copy";
 import { WorktreeError } from "./errors";
 import { discardCheckout } from "./evict";
 import { withRepoLock } from "./lock";
-import { worktreePathFor } from "./paths";
+import { assertSubdir, worktreeCwd, worktreePathFor } from "./paths";
 import { assertPathFree, lockKeyFor, repoRootOf } from "./repo";
 
 // Creating a task's worktree (docs/v2-architecture.md §5.6). The checkout is a
@@ -77,16 +77,12 @@ async function assertBaseRef(repoRoot: string, baseRef: string): Promise<void> {
  * project outside its own repository. `/tmp` on macOS is one, so this is the
  * ordinary case rather than an exotic one. */
 async function subdirOf(repoRoot: string, projectPath: string): Promise<string> {
-  const subdir = path.relative(await fsp.realpath(repoRoot), await fsp.realpath(projectPath));
-  // Not reachable through git — the toplevel is found *from* this directory, so
-  // it always contains it — but the value ends up joined onto a worktree path,
-  // and a `..` there would write outside the checkout entirely.
-  if (subdir.split(path.sep)[0] === "..") {
-    throw new WorktreeError(
-      "project-outside-repo",
-      `${projectPath} is not inside ${repoRoot}`,
-    );
-  }
+  const [realRoot, realProject] = await Promise.all([
+    fsp.realpath(repoRoot),
+    fsp.realpath(projectPath),
+  ]);
+  const subdir = path.relative(realRoot, realProject);
+  assertSubdir(subdir, projectPath, repoRoot);
   return subdir;
 }
 
@@ -103,63 +99,63 @@ async function subdirOf(repoRoot: string, projectPath: string): Promise<string> 
  * produces a worktree set up the way the project asked, or it produces none.
  * Undoing a partial one means `git worktree remove`, which mutates the same
  * worktree list, so the cleanup has to hold the lock the create did. */
-export function createWorktree(
+export async function createWorktree(
   project: WorktreeProject,
   task: WorktreeTask,
   baseRef: string,
 ): Promise<CreatedWorktree> {
-  return repoRootOf(project.initial_path).then(async (repoRoot) => {
-    const subdir = await subdirOf(repoRoot, project.initial_path);
-    return withRepoLock(await lockKeyFor(repoRoot), async () => {
-      const worktreePath = worktreePathFor(project.id, task.id);
-      await assertBaseRef(repoRoot, baseRef);
-      assertPathFree(worktreePath);
-      const branch = await allocateBranch(repoRoot, task);
+  const repoRoot = await repoRootOf(project.initial_path);
+  const subdir = await subdirOf(repoRoot, project.initial_path);
+  return withRepoLock(await lockKeyFor(repoRoot), async () => {
+    const worktreePath = worktreePathFor(project.id, task.id);
+    await assertBaseRef(repoRoot, baseRef);
+    assertPathFree(worktreePath);
+    const branch = await allocateBranch(repoRoot, task);
 
-      // git creates the leaf itself; the two levels above it are ours and are
-      // not there for the first task in a project.
-      await fsp.mkdir(path.dirname(worktreePath), { recursive: true });
-      // `--force` for one narrow case: a path git still has registered in
-      // `.git/worktrees` while the directory itself is gone — what an eviction
-      // that reclaimed the disk (§5.6), or a user with `rm -rf`, leaves
-      // behind. git refuses that outright and names `-f` as the remedy, and
-      // without it the task's path — fixed by its id, and unmovable
-      // (`paths.ts`) — would be poisoned for good. It relaxes nothing else
-      // here: the non-empty-directory case is `assertPathFree`'s and is
-      // already refused above, and `-b` still fails on a branch that exists
-      // whether or not `-f` is passed.
-      const add = await gitSpawn(
-        repoRoot,
-        ["worktree", "add", "--force", worktreePath, "-b", branch, baseRef],
-        { captureStderr: true },
+    // git creates the leaf itself; the two levels above it are ours and are
+    // not there for the first task in a project.
+    await fsp.mkdir(path.dirname(worktreePath), { recursive: true });
+    // `--force` for one narrow case: a path git still has registered in
+    // `.git/worktrees` while the directory itself is gone — what an eviction
+    // that reclaimed the disk (§5.6), or a user with `rm -rf`, leaves
+    // behind. git refuses that outright and names `-f` as the remedy, and
+    // without it the task's path — fixed by its id, and unmovable
+    // (`paths.ts`) — would be poisoned for good. It relaxes nothing else
+    // here: the non-empty-directory case is `assertPathFree`'s and is
+    // already refused above, and `-b` still fails on a branch that exists
+    // whether or not `-f` is passed.
+    const add = await gitSpawn(
+      repoRoot,
+      ["worktree", "add", "--force", worktreePath, "-b", branch, baseRef],
+      { captureStderr: true },
+    );
+    if (add.exitCode !== 0) {
+      throw new WorktreeError(
+        "worktree-add-failed",
+        `could not create a worktree for ${task.id}`,
+        add.stderr,
       );
-      if (add.exitCode !== 0) {
-        throw new WorktreeError(
-          "worktree-add-failed",
-          `could not create a worktree for ${task.id}`,
-          add.stderr,
-        );
-      }
+    }
 
-      // The subdirectory of the checkout matching the project's own directory:
-      // where the agent will run, and where its files go.
-      const cwd = path.join(worktreePath, subdir);
-      try {
-        // Created rather than assumed. git checks out what the branch tracks,
-        // and a project directory holding nothing but ignored files — a
-        // `frontend/` that is all `node_modules` and `.env` until setup runs —
-        // is not in the branch, so the agent would be spawned into a cwd that
-        // does not exist.
-        if (subdir) await fsp.mkdir(cwd, { recursive: true });
-        const copied = await copyProjectFiles(project, project.initial_path, cwd);
-        return { worktreePath, branch, repoRoot, subdir, cwd, copied };
-      } catch (e) {
-        // Back out to nothing rather than leaving a checkout the project's
-        // setup would run against a half-copied tree.
-        await discard(repoRoot, worktreePath, branch);
-        throw e;
-      }
-    });
+    // The subdirectory of the checkout matching the project's own directory:
+    // where the agent will run, and where its files go.
+    const cwd = worktreeCwd(worktreePath, subdir);
+    try {
+      // Created rather than assumed. git checks out what the branch tracks,
+      // and a project directory holding nothing but ignored files — a
+      // `frontend/` that is all `node_modules` and `.env` until setup runs —
+      // is not in the branch, so the agent would be spawned into a cwd that
+      // does not exist. Unconditional: `mkdir -p` of the checkout itself, which
+      // is what an empty offset asks for, is a no-op.
+      await fsp.mkdir(cwd, { recursive: true });
+      const copied = await copyProjectFiles(project, project.initial_path, cwd);
+      return { worktreePath, branch, repoRoot, subdir, cwd, copied };
+    } catch (e) {
+      // Back out to nothing rather than leaving a checkout the project's
+      // setup would run against a half-copied tree.
+      await discard(repoRoot, worktreePath, branch);
+      throw e;
+    }
   });
 }
 

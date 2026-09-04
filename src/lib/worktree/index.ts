@@ -10,7 +10,13 @@ export { withRepoLock } from "./lock";
 export { lockKeyFor, repoRootOf } from "./repo";
 export { restoreWorktree } from "./restore";
 export type { RestoredWorktree, WipDisposition } from "./restore";
-export { isWithinWorktreesRoot, setupStampPath, worktreePathFor, worktreesRoot } from "./paths";
+export {
+  isWithinWorktreesRoot,
+  setupStampPath,
+  worktreeCwd,
+  worktreePathFor,
+  worktreesRoot,
+} from "./paths";
 export { reconcileWorktrees } from "./reconcile";
 export type { ReconcileReport, UnclaimedWorktree } from "./reconcile";
 export { branchIsExpendable, branchStatus } from "./status";

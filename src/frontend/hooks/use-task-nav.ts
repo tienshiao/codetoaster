@@ -64,9 +64,11 @@ export function useOpenComposer(): (options?: { projectId?: string }) => void {
 
   return useCallback(
     (options = {}) => {
-      // Before the navigation, not after it: a composer already mounted at `/`
-      // is re-rendered by the navigation attempt, and the request is what that
-      // render has to read.
+      // Unconditionally, rather than inside the navigation's success branch
+      // below: the store's own notify is what moves a composer already mounted
+      // at `/`, so the request does not need the navigation to have landed —
+      // and a navigation that never settles at all (a history blocker leaves
+      // the promise pending) would swallow the press entirely.
       if (options.projectId) requestComposerProject(options.projectId);
       // Focus only once the navigation has landed, and only if it did: a
       // navigation that rejects — blocked, or redirected out from under this —

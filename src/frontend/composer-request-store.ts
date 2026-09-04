@@ -60,8 +60,12 @@ export function subscribeComposerRequest(listener: Listener): () => void {
 }
 
 /** Module state outlives a test, and a count carried into the next one is a
- * request nobody made. */
+ * request nobody made.
+ *
+ * Deliberately silent: every caller resets in a `beforeEach`, before anything
+ * is rendered, so there is nobody to tell — and notifying a live composer with
+ * a count that has just gone *backwards* is a code path whose safety would
+ * depend on what a test helper happened to reset to. */
 export function resetComposerRequest(): void {
   current = NONE;
-  notify();
 }

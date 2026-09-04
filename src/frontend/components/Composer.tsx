@@ -50,12 +50,22 @@ export interface ComposerProps {
  * falls through the same fallback a deleted project's id does and the composer
  * opens on the first one. The selection is not written back to it.
  *
- * Moving the selection of a composer that is *already* showing is a different
- * question and is answered by `composer-request-store`, not by this prop —
- * pressing a project group's `+` while `/?project=web` is the address changes
- * nothing about the address to react to. Whichever way the ask arrives, only
- * the selection moves: the prompt is the user's and may already have been typed
- * into, and it is the only copy of it.
+ * The prop keeps being followed after that mount, because it also *is* the
+ * address: every `+` pushes a history entry, so Back and Forward move between
+ * `/?project=web` and `/?project=general` — and a history navigation changes
+ * this prop with nothing else happening at all. A composer that only read it
+ * once would sit on the wrong project for the whole of that.
+ *
+ * `composer-request-store` answers the ask the address cannot express: a repeat
+ * of the project it already names. Pressing web's `+` at `/?project=web` is a
+ * navigation to the address already showing, so the prop does not move and only
+ * the store's count does. The two coexist — a first press moves both for the
+ * same id, which is two identical `setProjectId` calls — and a chip the user
+ * moved by hand is clobbered by neither, since neither the prop nor the count
+ * changes when nothing was pressed.
+ *
+ * Whichever way the ask arrives, only the selection moves: the prompt is the
+ * user's and may already have been typed into, and it is the only copy of it.
  */
 export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) {
   const { projects, createTask } = useTasks();
@@ -69,15 +79,33 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // The same "adjust state when a prop changes" as the seeding below, for the
-  // ask that arrives while this is mounted: `/` is already showing when a
-  // project group's `+` is pressed, so nothing remounts and the prop above has
-  // already been read. Keyed on the store's count rather than on the id it
-  // carries, because a press names a project the composer may well be showing
-  // already — the user having moved the chip by hand since — and comparing ids
-  // would read that as nothing having been asked for (TASK-82). Only the
-  // selection moves; the prompt is untouched, since the user can already be
-  // typing when the request arrives.
+  // Two "adjust state when a prop changes" branches, and they answer different
+  // questions.
+  //
+  // The first follows the address. `?project=` changing on a mounted composer
+  // is a history navigation — Back or Forward across the entries each `+`
+  // pushed, including Back to a plain `/` — and nothing else happens then: no
+  // remount to re-read the seed above, and no request in the store either.
+  const [lastRequested, setLastRequested] = useState(requestedProjectId ?? null);
+  if ((requestedProjectId ?? null) !== lastRequested) {
+    setLastRequested(requestedProjectId ?? null);
+    // Only when it names one. Back to `/` is the address dropping its
+    // preference, not an instruction to move the chip anywhere.
+    if (requestedProjectId) setProjectId(requestedProjectId);
+  }
+
+  // The second is for the ask the address cannot carry: a press of the `+` for
+  // the project `?project=` already names is a navigation to the address
+  // already showing, so the prop above is inert and the composer would see
+  // nothing (TASK-82). Keyed on the store's count and not on the id it carries,
+  // because that press names a project the composer may well be showing already
+  // — the user having moved the chip by hand since — and comparing ids would
+  // read it as nothing having been asked for.
+  //
+  // The two overlap harmlessly: a first press moves both for the same id, which
+  // is two identical `setProjectId` calls. Either way only the selection moves;
+  // the prompt is untouched, since the user can already be typing when the
+  // request arrives.
   const request = useSyncExternalStore(
     subscribeComposerRequest,
     getComposerRequest,

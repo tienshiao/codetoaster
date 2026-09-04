@@ -51,6 +51,24 @@ test("a width written after another hook read the record survives", () => {
   expect(loadPaneWidths()).toEqual({ sidebar: 320, explorer: 400 });
 });
 
+// A click on a divider is a whole gesture with no move in it, and it still ends
+// in `onResizeEnd`.
+test("persisting a width the record already has writes nothing", () => {
+  savePaneWidth("sidebar", 320);
+  let writes = 0;
+  const store = globalThis.localStorage;
+  const real = store.setItem.bind(store);
+  store.setItem = (key: string, value: string) => {
+    writes += 1;
+    real(key, value);
+  };
+
+  savePaneWidth("sidebar", 320);
+
+  expect(writes).toBe(0);
+  expect(loadPaneWidth("sidebar")).toBe(320);
+});
+
 // ── the live width, and who hears about it ──────────────────────────────────
 //
 // Two panes can be reading one id at once, so a drag has to reach the one the
@@ -92,27 +110,18 @@ test("setting the width a pane already has wakes nobody", () => {
   expect(woken).toBe(0);
 });
 
-// AC4. A closed pane leaves no entry for the next write to walk.
-test("unsubscribing drops the listener, and the set with the last of them", () => {
-  const off = subscribePaneWidth("sidebar", () => {});
-  const offToo = subscribePaneWidth("sidebar", () => {});
-  expect(paneListenerCount("sidebar")).toBe(2);
+// AC4. A closed pane leaves no entry for the next write to walk. The registry
+// mechanics — dropping the emptied key, walking a copy so a listener may
+// unsubscribe mid-notify — belong to `keyed-listeners` and are tested there;
+// what this asserts is that a pane's unsubscribe reaches it.
+test("unsubscribing stops a pane hearing about itself", () => {
+  let woken = 0;
+  const off = subscribePaneWidth("sidebar", () => woken++);
+  expect(paneListenerCount("sidebar")).toBe(1);
   off();
-  expect(paneListenerCount("sidebar")).toBe(1);
-  offToo();
   expect(paneListenerCount("sidebar")).toBe(0);
-  expect(() => setPaneWidth("sidebar", 400)).not.toThrow();
-});
-
-// The reason the walk is over a copy: a woken hook is free to unmount, and
-// unmounting is what unsubscribes.
-test("a listener that unsubscribes on being woken does not cost the next one", () => {
-  let second = 0;
-  const off = subscribePaneWidth("sidebar", () => off());
-  subscribePaneWidth("sidebar", () => second++);
-  setPaneWidth("sidebar", 320);
-  expect(second).toBe(1);
-  expect(paneListenerCount("sidebar")).toBe(1);
+  setPaneWidth("sidebar", 400);
+  expect(woken).toBe(0);
 });
 
 // So a width restored from anywhere but a drag still reaches the screen.

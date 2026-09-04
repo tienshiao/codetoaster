@@ -103,6 +103,7 @@ const task = (id: string): TaskInfo => ({
   agentState: "idle",
   cwd: "/Users/someone/projects/app",
   worktreePath: null,
+  worktreeCwd: null,
   branch: null,
   lastMessage: null,
   lifecycle: "live",

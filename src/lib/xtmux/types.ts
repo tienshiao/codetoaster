@@ -247,12 +247,22 @@ export interface TaskInfo {
    * own directory (§5.6). Remembered across an eviction, so it is where the
    * checkout *was* as much as where it is.
    *
-   * On the wire so a client can tell `cwd` apart from a generated location: a
-   * worktree path is `~/.codetoaster/worktrees/<project>/<uuid>`, which is not
-   * information — the branch beside it says everything that path would. What is
-   * worth saying is when the two disagree, because that is an agent that has
-   * cd'd out of its own checkout (§5.4). */
+   * On the wire so a client can tell a task with a checkout of ours from one
+   * running in the project's own directory. */
   worktreePath: string | null;
+  /** Where the task's agent belongs: its checkout joined with the project's
+   * offset below the repository's toplevel (TASK-65), and null for a task with
+   * no checkout at all.
+   *
+   * The value `cwd` is compared against, and the reason it is on the wire
+   * rather than composed in the client: a worktree path is
+   * `~/.codetoaster/worktrees/<project>/<uuid>`, which is not information — the
+   * branch beside it says everything that path would. What is worth saying is
+   * when the two disagree, because that is an agent that has cd'd out of where
+   * it was put (§5.4). Comparing against `worktreePath` instead answers that
+   * backwards for a project below the toplevel: the agent sitting exactly where
+   * it belongs looks like it has wandered off. */
+  worktreeCwd: string | null;
   /** The branch the task's checkout is on, or null for a task with no checkout
    * of its own.
    *

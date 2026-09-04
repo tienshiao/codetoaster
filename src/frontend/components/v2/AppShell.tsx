@@ -178,14 +178,20 @@ export interface AppShellProps {
  * on both — and a second copy is how one of them would miss it. Whole literal
  * strings, not a template: Tailwind finds classes by scanning source text, and
  * a name assembled at runtime generates no CSS and fails silently.
+ *
+ * The strip's own chrome is repeated into both entries rather than merged with
+ * them per render: this is a sidebar row, so the merge would run once per row
+ * per render for a string that was decided when the module loaded.
  */
 const REVEALED_BY = {
   row: cn(
+    "absolute right-1 flex items-center gap-0.5 rounded-md bg-sidebar",
     "top-1/2 -translate-y-1/2",
     "pointer-events-none group-hover/row:pointer-events-auto group-focus-within/row:pointer-events-auto",
     "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100",
   ),
   project: cn(
+    "absolute right-1 flex items-center gap-0.5 rounded-md bg-sidebar",
     "top-0 h-group",
     "pointer-events-none group-hover/project:pointer-events-auto group-focus-within/project:pointer-events-auto",
     "opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100",
@@ -194,9 +200,7 @@ const REVEALED_BY = {
 
 function RowActions({ group = "row", children }: { group?: keyof typeof REVEALED_BY; children: ReactNode }) {
   return (
-    <span className={cn("absolute right-1 flex items-center gap-0.5 rounded-md bg-sidebar", REVEALED_BY[group])}>
-      {children}
-    </span>
+    <span className={REVEALED_BY[group]}>{children}</span>
   );
 }
 

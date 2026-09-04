@@ -57,6 +57,7 @@ import {
   restoreWorktree,
   setupStampPath,
   snapshotWip,
+  worktreeCwd,
   worktreePathFor,
   wrapWithSetup,
   WorktreeError,
@@ -2822,10 +2823,6 @@ export class TaskManager {
         // project asks for today. Null once the project is gone, which is
         // right — there is no list to honour.
         worktreeCopy: project?.worktreeCopy ?? null,
-        // And where those entries are read from, which is the project's own
-        // directory rather than the repository root (TASK-65). Null with the
-        // list itself once the project is gone.
-        projectPath: project?.initialPath ? expandTilde(project.initialPath) : null,
       },
       {
         id: taskId,
@@ -3137,6 +3134,12 @@ export class TaskManager {
         && !this.archiving.has(row.id),
       cwd: row.cwd,
       worktreePath: row.worktree_path,
+      // Composed rather than stored: it is the checkout and the offset, both of
+      // which are already columns, and a third column agreeing with them is a
+      // third column that can disagree.
+      worktreeCwd: row.worktree_path
+        ? worktreeCwd(row.worktree_path, row.worktree_subdir ?? "")
+        : null,
       branch: row.branch,
       lastMessage: row.last_message,
       clientCount: pty?.getClientCount() ?? 0,

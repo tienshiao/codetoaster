@@ -23,6 +23,7 @@
 // prune effect exists to prevent. It is left out of `PERSISTED` rather than
 // filtered on the way out, so it cannot be added back by accident.
 
+import { createKeyedListeners } from "./keyed-listeners";
 import type { LineComment, HunkExpansionState } from "./types/diff";
 import type { FileInfo } from "./types/file";
 import type { GitViewMode } from "./types/git";
@@ -289,7 +290,7 @@ function viewKeyOf(slotKey: string): string {
 
 type ViewListener = () => void;
 
-const listeners = new Map<string, Set<ViewListener>>();
+const listeners = createKeyedListeners<string>();
 
 function fieldId(ref: ViewRef, field: string): string {
   return `${slotId(ref)}${SEP}${field}`;
@@ -300,26 +301,11 @@ export function subscribeViewField(
   field: string,
   listener: ViewListener,
 ): () => void {
-  const id = fieldId(ref, field);
-  let set = listeners.get(id);
-  if (!set) {
-    set = new Set();
-    listeners.set(id, set);
-  }
-  set.add(listener);
-  return () => {
-    const current = listeners.get(id);
-    if (!current) return;
-    current.delete(listener);
-    if (current.size === 0) listeners.delete(id);
-  };
+  return listeners.subscribe(fieldId(ref, field), listener);
 }
 
 function notifyViewField(ref: ViewRef, field: string): void {
-  const set = listeners.get(fieldId(ref, field));
-  if (!set || set.size === 0) return;
-  // Copied: a listener may unsubscribe (a pane unmounting) mid-walk.
-  for (const listener of [...set]) listener();
+  listeners.notify(fieldId(ref, field));
 }
 
 // ── the store ───────────────────────────────────────────────────────────────
