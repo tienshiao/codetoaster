@@ -1,11 +1,11 @@
 ---
 id: TASK-78
 title: Hover-revealed row actions are invisible but still clickable
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-01 17:57'
-updated_date: '2026-09-01 21:49'
+updated_date: '2026-09-04 20:34'
 labels:
   - frontend
   - ui
@@ -50,6 +50,10 @@ Note for whoever takes it: `RowActions`' doc comment already explains that opaci
 Verification (2026-09-01): bun run test:render green (20 files / 168 tests, incl. 24 in TaskSidebar.render.tsx); bunx tsc --noEmit exit 0. Authoritative CSS check per user's suggestion: bun run build:server, then grepped dist-executables/codetoaster — compiled Tailwind 4.2 output contains .pointer-events-auto{pointer-events:auto} and all four named-group rules: .group-hover\/project\/row\:pointer-events-auto {&:is(:where(.group\/project|row):hover *){@media (hover:hover){&{pointer-events:auto}}}} and the focus-within equivalents (not hover-gated, so keyboard reveal on touch-capable keyboards works too). bun test (unit) shows 276 fails, all 'Failed to open PTY' in lib\/xtmux PTY-spawn tests — sandbox environment limitation, unrelated to this change (CSS class strings + render test only).
 
 Regression check for the unit suite: 276 unit-test failures in this environment (all PTY-spawn / agent-transcript tests; 'Failed to open PTY' and EPERM on ~/.claude writes) are pre-existing — rerunning the same files with this task's diff stashed yields the identical 276-test failure set. No unit test imports AppShell or TaskSidebar. Render suite (the runner covering both changed frontend files) is fully green.
+
+Closed 2026-09-04 with AC #4 deliberately open: the touch affordance for both strips is TASK-33's on-device decision, and this fix (hidden implies non-interactive) holds under either outcome.
+
+Review (2026-09-04): the project strip now renders through RowActions (group="project"), with everything that differs between the two strips in one literal-string record (REVEALED_BY) so AC #4's touch affordance cannot land on one strip and miss the other. The doc comment's claim that a tap focuses the row's button and so reveals the strip via group-focus-within is true in Blink/Gecko but not WebKit (Safari never focuses a button on tap), so on iOS the strips are keyboard-only until TASK-33 decides the affordance; the comment now says so. Tailwind 4.2 ships pointer-coarse:/pointer-fine: variants, so an always-visible-on-touch answer is one variant away when TASK-33 picks. Same opacity-only pattern in v1 DiffFile.tsx:105/:426 still stands, out of scope.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -61,3 +65,9 @@ created: 2026-09-01 21:46
 Scope decision with user: fix applied now, AC #4 (the touch affordance for both strips) stays open and is deferred to TASK-33's on-device verdict — this fix is safe under either outcome (hidden implies non-interactive holds whether TASK-33 makes actions always visible or long-press). AC #2 is verified by mechanism here (hidden strip is no longer a hit target, so a tap on a project header's right end lands on the header button and collapses the group; render test asserts onToggle fires); the actual on-device tap is part of TASK-33's device pass. Out-of-scope flag, not fixed: v1 DiffFile.tsx (lines ~105 and ~426) has the same opacity-0-only pattern on its Add-comment / comment buttons — worth a task of its own if v1 gets another pass.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Paired pointer-events-none with opacity-0 on RowActions and the project group's strip, re-enabled in the same group-hover/group-focus-within variants, so a hidden strip is no longer a hit target and a tap on a project header's right end collapses the group. Portalled dialogs are outside both properties and unaffected. Verified with render tests in TaskSidebar.render.tsx and a grep of the compiled Tailwind output for the generated rules. AC #4 (touch affordance) is deferred to TASK-33. Same opacity-only pattern remains in v1 DiffFile.tsx, out of scope. Commit 68cf073.
+<!-- SECTION:FINAL_SUMMARY:END -->

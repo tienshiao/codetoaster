@@ -151,9 +151,13 @@ export interface AppShellProps {
  * nothing else, so a fully invisible button still catches the tap. Touch is
  * where that bites — `group-hover` compiles inside `@media (hover: hover)`, so
  * the first tap on a row arrives with the strip still unpainted and used to land
- * on a button nobody could see. The strip is not lost there: `group-focus-within`
- * is not hover-gated, and tapping the row's own button focuses it, so the strip
- * appears and a second tap can aim at it.
+ * on a button nobody could see. What touch gets instead is TASK-33's decision
+ * (TASK-78 AC #4): `group-focus-within` is not hover-gated, so a tap that
+ * focuses the row's button reveals the strip for a second tap — but WebKit
+ * does not focus a button on tap, so on iOS the strip is reachable only from a
+ * keyboard until that lands. Hidden-and-untappable is still the right interim:
+ * the alternative was a control nobody could see catching taps meant for the
+ * header.
  *
  * The background is the sidebar's own and not the row's, so the cluster reads
  * as a chip floating over the trailing `meta` column in every row state —
@@ -166,16 +170,31 @@ export interface AppShellProps {
  * place fades out the instant the pointer leaves the row — and, with
  * `pointer-events`, goes dead with it: a dialog that neither draws nor answers,
  * over an app the scrim has stopped shielding.
+ *
+ * Two strips carry this: a task row's, and a project group's, pinned to the
+ * header row rather than centred on a group whose height is however many tasks
+ * are in it. Everything that differs between them is keyed by the group that
+ * reveals them, in one place, because AC #4 is that the touch affordance lands
+ * on both — and a second copy is how one of them would miss it. Whole literal
+ * strings, not a template: Tailwind finds classes by scanning source text, and
+ * a name assembled at runtime generates no CSS and fails silently.
  */
-function RowActions({ children }: { children: ReactNode }) {
+const REVEALED_BY = {
+  row: cn(
+    "top-1/2 -translate-y-1/2",
+    "pointer-events-none group-hover/row:pointer-events-auto group-focus-within/row:pointer-events-auto",
+    "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100",
+  ),
+  project: cn(
+    "top-0 h-group",
+    "pointer-events-none group-hover/project:pointer-events-auto group-focus-within/project:pointer-events-auto",
+    "opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100",
+  ),
+} as const;
+
+function RowActions({ group = "row", children }: { group?: keyof typeof REVEALED_BY; children: ReactNode }) {
   return (
-    <span
-      className={cn(
-        "absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-sidebar",
-        "pointer-events-none group-hover/row:pointer-events-auto group-focus-within/row:pointer-events-auto",
-        "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100",
-      )}
-    >
+    <span className={cn("absolute right-1 flex items-center gap-0.5 rounded-md bg-sidebar", REVEALED_BY[group])}>
       {children}
     </span>
   );
@@ -462,22 +481,7 @@ export function AppShell({
                   >
                     <TaskRows tasks={group.tasks ?? []} />
                   </ProjectGroup>
-                  {group.actions && (
-                    // Pinned to the header row rather than centred on the
-                    // group, whose height is however many tasks are in it. The
-                    // opacity/pointer-events pair is the one `RowActions`
-                    // carries: hidden strips have no hit target, or on touch a
-                    // tap meant for the header lands on an invisible button.
-                    <span
-                      className={cn(
-                        "absolute top-0 right-1 flex h-group items-center gap-0.5 rounded-md bg-sidebar",
-                        "pointer-events-none group-hover/project:pointer-events-auto group-focus-within/project:pointer-events-auto",
-                        "opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100",
-                      )}
-                    >
-                      {group.actions}
-                    </span>
-                  )}
+                  {group.actions && <RowActions group="project">{group.actions}</RowActions>}
                 </div>
               ))
             ) : (
