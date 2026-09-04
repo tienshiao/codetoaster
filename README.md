@@ -35,10 +35,8 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 - Touch scrolling support for mobile
 
 ### Command Palette
-- Quick access via Cmd/Ctrl+Shift+P
-- Search sessions by name, title, or ID
-- Fuzzy symbol search ("Find Symbol…") — jump to any definition by name
-- Actions: new session, close session, rename session, toggle sidebar
+Not in the new shell yet. The v1 palette went with the rest of the v1 UI, and
+its replacement — tasks, open tabs, and the shortcuts above — is still to come.
 
 ### Customization
 - 100+ terminal color schemes with palette preview
@@ -107,17 +105,40 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 
 ### Keyboard Shortcuts
 
+Tabs, splits and groups are driven from a leader chord: press **Cmd+K**
+(**Ctrl+Shift+K** on Windows/Linux), release, then press the key below.
+
+| Action | Chord |
+|--------|-------|
+| Next tab | Cmd+K `]` |
+| Previous tab | Cmd+K `[` |
+| Go to tab 1–9 | Cmd+K `1`…`9` |
+| Close tab | Cmd+K `W` |
+| Split right | Cmd+K `\` |
+| Focus group left / right | Cmd+K `←` / `→` |
+| Focus the agent tab | Cmd+K `A` |
+| New shell | Cmd+K `` ` `` |
+
+A leader rather than the usual chords because both neighbours are occupied.
+Chrome owns every conventional next-tab chord on macOS (Cmd+1–9, Ctrl+Tab,
+Cmd+Shift+`[`/`]`, Cmd+Alt+arrows), and the agent below is a terminal, which
+wants nearly every bare Ctrl chord — Ctrl+F is forward-char, Ctrl+W is
+delete-word, Ctrl+K is kill-line. After the leader the whole keyboard is free,
+and nothing has been taken from either. The leader stays armed for three
+seconds; Escape cancels it.
+
+Chords act on the tab that is in front, and move the caret with them: the pane
+a chord lands on takes focus, so there is nothing to finish with the mouse.
+Every one of them is also on the tooltip of the control that does the same
+thing.
+
+Elsewhere:
+
 | Action | Mac | Windows/Linux |
 |--------|-----|---------------|
-| Command Palette | Cmd+Shift+P | Ctrl+Shift+P |
-| Next Tab/Session (MRU) | Cmd+` | Ctrl+` |
-| Previous Tab/Session (MRU) | Cmd+Shift+` | Ctrl+Shift+` |
-| Search Terminal | Cmd+F | Ctrl+F |
-| Find Next | Cmd+G | Ctrl+G |
-| Find Previous | Shift+Cmd+G | Shift+Ctrl+G |
-| Toggle Sidebar | Cmd+B | Ctrl+B |
-| Prev/Next File (Diff, Git changes) | Left/Right Arrow | Left/Right Arrow |
-| Go to Definition | Cmd+Click symbol | Ctrl+Click symbol |
+| Submit a prompt from the composer | Cmd+Enter | Ctrl+Enter |
+| Prev/Next file (diff, git changes) | Left/Right Arrow | Left/Right Arrow |
+| Go to definition | Cmd+Click symbol | Ctrl+Click symbol |
 
 ## Tech Stack
 
