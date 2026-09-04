@@ -13,6 +13,9 @@ export interface ShellPaneProps {
    * is the only thing that knows which of them this is. */
   ptyId: string;
   visible: boolean;
+  /** A rising number is the keyboard asking this terminal to take the caret
+   * (TASK-34), as on `AgentPane`. */
+  focusRequest?: number;
   onSearchOpen?: () => void;
   /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
    * A shell tab gets the same one the agent does: it runs the same CLI in the
@@ -41,9 +44,21 @@ export interface ShellPaneProps {
  * would take the exit code down with it, which is the one place the reason a
  * shell died is written.
  */
-export function ShellPane({ ptyId, visible, onSearchOpen, linkProvider }: ShellPaneProps) {
+export function ShellPane({
+  ptyId,
+  visible,
+  focusRequest = 0,
+  onSearchOpen,
+  linkProvider,
+}: ShellPaneProps) {
   const { attach, detach, resize, send, isConnected } = usePty();
   const terminalRef = useRef<TerminalHandle>(null);
+
+  // Zero is "not you": every pane but the one the layout points at holds it,
+  // so a pulse reaches exactly one terminal.
+  useEffect(() => {
+    if (focusRequest) terminalRef.current?.focus();
+  }, [focusRequest]);
   /** The last grid measured against a *visible* container; never fabricated. */
   const sizeRef = useRef<TerminalSize | null>(null);
 

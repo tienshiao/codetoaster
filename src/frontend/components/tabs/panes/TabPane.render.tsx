@@ -1,5 +1,6 @@
 import { test, expect, vi, beforeEach } from "vitest";
 import { act, render } from "@testing-library/react";
+import { forwardRef, useImperativeHandle } from "react";
 import type { ILink } from "@xterm/xterm";
 import type { TaskInfo } from "../../../../lib/xtmux/types";
 import type { BacklogResponse } from "../../../../types/backlog";
@@ -22,6 +23,8 @@ const stubs = vi.hoisted(() => ({
   backlog: undefined as BacklogResponse | undefined,
   /** Every `XTerminal` rendered, in order, with the props it was given. */
   terminals: [] as Array<Record<string, unknown>>,
+  /** One entry per `focus()` the pane asked its grid for. */
+  focuses: 0,
 }));
 
 vi.mock("@/frontend/TaskContext", () => ({
@@ -40,10 +43,29 @@ vi.mock("@/frontend/hooks/use-backlog", () => ({
   useBacklog: () => ({ data: stubs.backlog }),
 }));
 vi.mock("@/frontend/Terminal", () => ({
-  XTerminal: (props: Record<string, unknown>) => {
+  // Through `forwardRef` with a handle, because a pane reaches its grid by ref
+  // and a plain function stub silently drops it — leaving a focus test that
+  // passes for the wrong reason.
+  XTerminal: forwardRef((props: Record<string, unknown>, ref) => {
     stubs.terminals.push(props);
+    // The whole `TerminalHandle`, not only the method under test: the panes
+    // call `resetAttached` on attach and a partial handle turns a `?.` that
+    // used to be a harmless no-op into a TypeError.
+    useImperativeHandle(ref, () => ({
+      handleMessage: () => {},
+      send: () => {},
+      getSize: () => null,
+      resetAttached: () => {},
+      beginRestore: () => {},
+      paintSnapshot: () => {},
+      endRestore: () => {},
+      getSearchAddon: () => null,
+      focus: () => {
+        stubs.focuses += 1;
+      },
+    }));
     return null;
-  },
+  }),
 }));
 
 const { TabPane } = await import("./TabPane");
@@ -117,6 +139,7 @@ beforeEach(() => {
   stubs.tasks = [task()];
   stubs.backlog = undefined;
   stubs.terminals = [];
+  stubs.focuses = 0;
 });
 
 function renderPane(descriptor: TabState["descriptor"], onOpenTab = vi.fn()) {
@@ -172,4 +195,51 @@ test("a shell tab gets the same provider — it runs the same CLI", () => {
   const { props } = renderPane({ kind: "shell", ptyId: "pty-2" });
   expect(typeof props.linkProvider).toBe("function");
   expect(props.ptyId).toBe("pty-2");
+});
+
+// ── the caret follows a keyboard navigation (TASK-34) ───────────────────────
+
+/** Renders a pane and hands back a way to re-render it with a new request. */
+function renderFocusable(descriptor: TabState["descriptor"]) {
+  const draw = (focusRequest: number) => (
+    <TabPane
+      taskId={TASK_ID}
+      tab={tab(descriptor)}
+      visible
+      focusRequest={focusRequest}
+      onOpenTab={vi.fn()}
+      onSubmitReview={() => true}
+    />
+  );
+  const view = render(draw(0));
+  return (focusRequest: number) => act(() => view.rerender(draw(focusRequest)));
+}
+
+test("a rising focus request puts the caret in the agent's terminal", () => {
+  const pulse = renderFocusable({ kind: "agent" });
+  expect(stubs.focuses).toBe(0);
+  pulse(1);
+  expect(stubs.focuses).toBe(1);
+});
+
+test("a shell tab takes the caret the same way", () => {
+  const pulse = renderFocusable({ kind: "shell", ptyId: "pty-2" });
+  pulse(1);
+  expect(stubs.focuses).toBe(1);
+});
+
+test("the same pane can be asked twice — ⌘K ] round a two-tab strip", () => {
+  const pulse = renderFocusable({ kind: "agent" });
+  pulse(1);
+  pulse(2);
+  expect(stubs.focuses).toBe(2);
+});
+
+test("dropping to zero is a pane being told it is no longer the one in front", () => {
+  const pulse = renderFocusable({ kind: "agent" });
+  pulse(1);
+  pulse(0);
+  // The falling edge must not focus: that pane has just lost the caret to
+  // another, and taking it back is the bug.
+  expect(stubs.focuses).toBe(1);
 });

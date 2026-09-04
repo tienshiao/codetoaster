@@ -45,6 +45,11 @@ export interface AgentPaneProps {
    * nobody is looking at would otherwise hold the task's grid down to it.
    */
   visible: boolean;
+  /** A rising number is the keyboard asking this terminal to take the caret
+   * (TASK-34). Moving the layout's focus is not moving the browser's, and a
+   * chord that put this pane in front but left the caret elsewhere would be
+   * one the user has to finish with the mouse. */
+  focusRequest?: number;
   onSearchOpen?: () => void;
   onFileDrop?: (files: File[]) => void;
   /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
@@ -56,6 +61,7 @@ export interface AgentPaneProps {
 export function AgentPane({
   taskId,
   visible,
+  focusRequest = 0,
   onSearchOpen,
   onFileDrop,
   linkProvider,
@@ -75,6 +81,15 @@ export function AgentPane({
   const hasNotification = task?.hasNotification ?? false;
 
   const terminalRef = useRef<TerminalHandle>(null);
+
+  // Zero is "not you" — every pane but the one the layout points at holds it,
+  // so a pulse reaches exactly one terminal. Not folded into `visible`: that
+  // is per-group and true for both panes of a split, and it also turns over on
+  // a mouse click, which should go on doing what it always has.
+  useEffect(() => {
+    if (focusRequest) terminalRef.current?.focus();
+  }, [focusRequest]);
+
   const [phase, setPhase] = useState<ReopenPhase>("live");
   /**
    * Why the reopen failed, when there is a why.

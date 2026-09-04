@@ -55,6 +55,7 @@ interface Harness {
   layout: () => TaskLayout;
   newShell: ReturnType<typeof vi.fn>;
   closed: ReturnType<typeof vi.fn>;
+  focused: ReturnType<typeof vi.fn>;
   /** Keydowns seen by a listener *below* the hook's, on the bubble path. */
   reachedPane: KeyboardEvent[];
   press: (key: string, mods?: Partial<KeyboardEventInit>) => void;
@@ -68,6 +69,7 @@ function mount(initial: TaskLayout | null = threeTabs()): Harness {
   let layout = initial;
   const newShell = vi.fn();
   const closed = vi.fn();
+  const focused = vi.fn();
   const reachedPane: KeyboardEvent[] = [];
 
   // A stand-in for xterm's own handler: bound on an element, so it runs on the
@@ -85,6 +87,7 @@ function mount(initial: TaskLayout | null = threeTabs()): Harness {
       },
       onNewShell: newShell,
       onCloseTab: (tab: TabState) => closed(tab.key),
+      onFocusPane: focused,
     };
     useShellKeymap(options);
     return null;
@@ -96,6 +99,7 @@ function mount(initial: TaskLayout | null = threeTabs()): Harness {
     layout: () => layout!,
     newShell,
     closed,
+    focused,
     reachedPane,
     press: (key, mods = {}) => {
       // Dispatched on the pane so the event has a path to travel: capture at
@@ -272,4 +276,48 @@ test("the agent tab's key is the one the focus command looks for", () => {
   // key, and a renamed agent descriptor would leave ⌘K A silently doing
   // nothing.
   expect(tabKey({ kind: "agent" })).toBe("agent");
+});
+
+// ── the caret follows the chord ─────────────────────────────────────────────
+
+test("every navigation asks the pane it landed on for the caret", () => {
+  for (const key of ["]", "[", "2", "a"]) {
+    const h = mount();
+    chord(h, key);
+    expect(h.focused, `⌘K ${key}`).toHaveBeenCalledTimes(1);
+    h.unmount();
+  }
+});
+
+test("⌘K A asks for the caret even when the agent tab is already in front", () => {
+  // The commonest use of the chord: the user clicked into a file tree and
+  // wants to type at the agent again. Nothing about the layout changes.
+  const h = mount();
+  expect(focusedKey(h.layout())).toBe("agent");
+  chord(h, "a");
+  expect(h.focused).toHaveBeenCalledTimes(1);
+});
+
+test("a clamped group move does not yank the caret", () => {
+  // Already leftmost: the reduction returns the same layout, and pulling focus
+  // for a chord that did nothing would take it out of whatever the user was
+  // typing in.
+  const h = mount();
+  chord(h, "ArrowLeft");
+  expect(h.focused).not.toHaveBeenCalled();
+});
+
+test("a jump to a tab that is not there does not yank the caret either", () => {
+  const h = mount();
+  chord(h, "9");
+  expect(h.focused).not.toHaveBeenCalled();
+  expect(focusedKey(h.layout())).toBe("agent");
+});
+
+test("the commands that are not navigations leave the caret alone", () => {
+  const h = mount();
+  // A new shell focuses itself when it attaches; a close moves the layout but
+  // the pane that lands in front is not something the keyboard chose.
+  chord(h, "`");
+  expect(h.focused).not.toHaveBeenCalled();
 });

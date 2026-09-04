@@ -76,6 +76,16 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   // The shell's footer draws the Settings button; the dialog it opens is held
   // here, since it is the shell's chrome and belongs to no task.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /**
+   * Bumped when a keyboard command has moved which tab is in front, so the
+   * pane that is now there takes the caret (TASK-34).
+   *
+   * A counter passed down rather than a ref reached into: the pane that should
+   * answer is decided by the layout the same render commits, and the two have
+   * to arrive together — a pulse delivered before the layout moved would go to
+   * whichever pane was in front a moment ago.
+   */
+  const [focusRequest, setFocusRequest] = useState(0);
 
   /**
    * The layout as of the last commit *and* of any write already issued, plus
@@ -225,6 +235,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     onLayoutChange: applyLayout,
     onNewShell: taskId ? handleNewShell : undefined,
     onCloseTab: handleCloseTab,
+    onFocusPane: () => setFocusRequest((n) => n + 1),
   });
 
   /**
@@ -329,7 +340,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                   onNewShell={taskId ? handleNewShell : undefined}
                   onCloseTab={handleCloseTab}
                   leading={leading}
-                  renderPane={(tab, _group, visible) => (
+                  renderPane={(tab, group, visible) => (
                     // Keyed by task *and* tab. The tab key alone was not enough:
                     // every task's agent tab keys as "agent", so switching tasks
                     // handed the same React position the same key and the same
@@ -348,6 +359,13 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                       onOpenTab={handleOpenTab}
                       onSubmitReview={handleSubmitReview}
                       visible={visible}
+                      // `visible` is per-group and true for both panes of a
+                      // split, so it cannot say which one the caret belongs
+                      // to. The active group is the other half of that, and
+                      // every pane but one is handed 0.
+                      focusRequest={
+                        visible && group.id === layout.activeGroupId ? focusRequest : 0
+                      }
                     />
                   )}
                   />

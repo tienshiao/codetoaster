@@ -22,6 +22,15 @@ export interface TabPaneProps {
   /** False for a terminal tab that is mounted but not showing. `TabArea` keeps
    * those mounted; every other kind only renders while it is active. */
   visible: boolean;
+  /**
+   * A rising number means "you are in front now — take the caret" (TASK-34).
+   * Zero for every pane that is not the one the layout points at, so a pulse
+   * reaches exactly one.
+   *
+   * A counter rather than a boolean: the same pane can be asked twice in a
+   * row, by a `⌘K ]` that cycles a two-tab strip back round to it.
+   */
+  focusRequest?: number;
 }
 
 /**
@@ -32,7 +41,14 @@ export interface TabPaneProps {
  * point of keying `view-state-store` by tab: "which tab is this" and "whose
  * scroll offset is this" stop being two questions that can disagree.
  */
-export function TabPane({ taskId, tab, onOpenTab, onSubmitReview, visible }: TabPaneProps) {
+export function TabPane({
+  taskId,
+  tab,
+  onOpenTab,
+  onSubmitReview,
+  visible,
+  focusRequest = 0,
+}: TabPaneProps) {
   const view = useMemo(() => viewRef(taskId, tab.key), [taskId, tab.key]);
 
   // A preview open: clicking through a commit graph or a file tree replaces the
@@ -62,14 +78,26 @@ export function TabPane({ taskId, tab, onOpenTab, onSubmitReview, visible }: Tab
   const { descriptor } = tab;
   switch (descriptor.kind) {
     case "agent":
-      return <AgentPane taskId={taskId} visible={visible} linkProvider={linkProvider} />;
+      return (
+        <AgentPane
+          taskId={taskId}
+          visible={visible}
+          focusRequest={focusRequest}
+          linkProvider={linkProvider}
+        />
+      );
 
     case "shell":
       // A second PTY in the task, spawned at its cwd (§3). Named by the
       // descriptor rather than by the task, since a task has one agent and
       // however many of these.
       return (
-        <ShellPane ptyId={descriptor.ptyId} visible={visible} linkProvider={linkProvider} />
+        <ShellPane
+          ptyId={descriptor.ptyId}
+          visible={visible}
+          focusRequest={focusRequest}
+          linkProvider={linkProvider}
+        />
       );
 
     case "diffAll":

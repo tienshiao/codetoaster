@@ -34,6 +34,20 @@ export interface ShellKeymapOptions {
   /** The side effect the strip's X runs beside the layout change: closing a
    * shell tab is what kills its shell. */
   onCloseTab?: (tab: TabState) => void;
+  /**
+   * Asks whatever pane is now in front to take the caret.
+   *
+   * Moving the *layout's* focus and moving the browser's are two different
+   * things, and only the first is a reduction: `⌘K A` that put the agent tab
+   * in front but left the caret in a file tree would be a shortcut the user
+   * has to finish with the mouse.
+   *
+   * Raised only for the commands that navigate, and only by the keyboard —
+   * clicking a tab goes on doing what it has always done. A pulse rather than
+   * a target, because the pane that should take it is the one the layout says
+   * is in front, and the layout has just been told.
+   */
+  onFocusPane?: () => void;
 }
 
 /**
@@ -83,20 +97,35 @@ export function useShellKeymap(options: ShellKeymapOptions): void {
       const layout = read();
       if (!layout) return;
 
+      /** A navigation: apply it, and send the caret after it. Skipped when the
+       * reduction changed nothing, so a clamped `⌘K ←` at the leftmost group
+       * does not yank focus out of whatever the user was typing in. */
+      const navigate = (next: TaskLayout) => {
+        if (next === layout) return;
+        onLayoutChange(next);
+        optionsRef.current.onFocusPane?.();
+      };
+
       switch (command.command) {
         case "next-tab":
-          return onLayoutChange(cycleTab(layout, 1));
+          return navigate(cycleTab(layout, 1));
         case "prev-tab":
-          return onLayoutChange(cycleTab(layout, -1));
+          return navigate(cycleTab(layout, -1));
         case "jump-tab":
-          return command.index ? onLayoutChange(focusTabAt(layout, command.index)) : undefined;
+          return command.index ? navigate(focusTabAt(layout, command.index)) : undefined;
         case "focus-group-left":
-          return onLayoutChange(focusGroup(layout, -1));
+          return navigate(focusGroup(layout, -1));
         case "focus-group-right":
-          return onLayoutChange(focusGroup(layout, 1));
+          return navigate(focusGroup(layout, 1));
         case "focus-agent": {
           const agent = findAgentTab(layout);
-          return agent ? onLayoutChange(focusTab(layout, agent.id)) : undefined;
+          // Not through `navigate`: the agent tab can already be in front and
+          // merely not have the caret — the user clicked into the file tree
+          // and wants to get back — and that is the case the chord is most
+          // used for.
+          if (!agent) return;
+          onLayoutChange(focusTab(layout, agent.id));
+          return optionsRef.current.onFocusPane?.();
         }
         case "split": {
           // Asked rather than assumed: a terminal tab is never splittable, so
