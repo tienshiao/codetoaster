@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { IconButton } from "./IconButton";
+import { chordHint } from "@/frontend/keymap";
 import { cn } from "@/frontend/lib/utils";
 
 /** The §7.2 TabDescriptor kinds. */
@@ -152,6 +153,10 @@ export function Tab({
           type="button"
           data-tab-close=""
           aria-label={`Close ${label}`}
+          // Only on the active tab: the chord closes whatever is in front, so
+          // advertising it on a background tab would name a key that closes a
+          // different one.
+          title={active ? `Close ${label} (${chordHint("close-tab")})` : `Close ${label}`}
           onClick={closeTab}
           className="ml-0.5 flex-none cursor-pointer rounded-sm p-0.5 text-subtle-foreground hover:bg-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
         >
@@ -248,11 +253,23 @@ export function TabStrip({
           {actions ? (
             <>
               {onNewShell ? (
-                <IconButton icon={Plus} label="New shell" size="sm" onClick={onNewShell} />
+                <IconButton
+                  icon={Plus}
+                  label="New shell"
+                  // Where the shortcuts are found by someone who has not been
+                  // told there are any (TASK-34): on the control that does the
+                  // same thing.
+                  hint={chordHint("new-shell")}
+                  size="sm"
+                  onClick={onNewShell}
+                />
               ) : null}
               <IconButton
                 icon={Columns2}
                 label={splitDisabled ? "Split right (not available for terminals)" : "Split right"}
+                // Not on the disabled one: a chord advertised beside a control
+                // that will not act is a chord that appears broken.
+                hint={splitDisabled ? undefined : chordHint("split")}
                 size="sm"
                 disabled={splitDisabled}
                 onClick={onSplit}

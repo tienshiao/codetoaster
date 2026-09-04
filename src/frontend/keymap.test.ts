@@ -9,6 +9,7 @@ import {
   leaderCaps,
   chordCaps,
   capsFor,
+  chordHint,
   type KeyLike,
 } from "./keymap";
 
@@ -188,6 +189,17 @@ test("a chord prints leader-first, with letters capitalised and arrows drawn", (
 test("capsFor looks a chord up by id, and draws nothing for one that is gone", () => {
   expect(capsFor("new-shell", true)).toEqual(["⌘", "K", "`"]);
   expect(capsFor("no-such-command", true)).toEqual([]);
+});
+
+test("chordHint spells a chord out for a tooltip, which cannot hold caps", () => {
+  expect(chordHint("new-shell", true)).toBe("⌘K `");
+  expect(chordHint("split", true)).toBe("⌘K \\");
+  expect(chordHint("close-tab", false)).toBe("Ctrl+Shift+K W");
+});
+
+test("chordHint is empty for an id the table no longer has", () => {
+  // So a caller appends nothing rather than "(undefined)".
+  expect(chordHint("no-such-command", true)).toBe("");
 });
 
 // ── the leader state machine ────────────────────────────────────────────────

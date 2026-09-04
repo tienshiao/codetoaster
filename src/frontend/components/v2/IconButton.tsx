@@ -9,6 +9,10 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   icon: LucideIcon;
   /** Accessible name; also the tooltip. */
   label: string;
+  /** A keyboard chord, appended to the tooltip but not to the accessible name
+   * — a screen reader announcing "New shell ⌘K backtick" is reading punctuation
+   * aloud where a sighted user is reading a hint. */
+  hint?: string;
   size?: IconButtonSize;
   /** Latched on — a toggle that is currently engaged. Reads like hover. */
   active?: boolean;
@@ -27,6 +31,7 @@ const SIZES: Record<IconButtonSize, string> = {
 export function IconButton({
   icon: Icon,
   label,
+  hint,
   size = "md",
   active = false,
   disabled = false,
@@ -37,7 +42,7 @@ export function IconButton({
     <button
       type="button"
       aria-label={label}
-      title={label}
+      title={hint ? `${label} (${hint})` : label}
       disabled={disabled}
       className={cn(
         "grid flex-none cursor-pointer place-items-center rounded-md",

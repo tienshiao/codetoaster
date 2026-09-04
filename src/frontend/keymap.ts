@@ -275,6 +275,20 @@ export function chordCaps(command: ShellCommand, mac: boolean = isMac()): string
   return [...leaderCaps(mac), keyCap(command.key)];
 }
 
+/**
+ * The chord as one line of plain text, for a `title` tooltip — the shortcuts'
+ * way in for a user who has not read a list of them.
+ *
+ * Spelt out rather than drawn as caps because a tooltip is a string and cannot
+ * hold `KeyHint`'s markup. Empty when the id is not in the table, so a caller
+ * appends nothing rather than "(undefined)".
+ */
+export function chordHint(id: string, mac: boolean = isMac()): string {
+  const command = SHELL_COMMANDS.find((c) => c.id === id);
+  if (!command) return "";
+  return `${mac ? "⌘K" : "Ctrl+Shift+K"} ${keyCap(command.key)}`;
+}
+
 /** Looks up one command's caps by id, for a control that knows what it does
  * but not which row of the table says so. Empty when the id is not in the
  * table, so a stale caller draws nothing rather than throwing. */
