@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 00:03'
-updated_date: '2026-09-05 01:48'
+updated_date: '2026-09-05 02:29'
 labels:
   - frontend
 milestone: m-5
@@ -67,6 +67,20 @@ Decisions worth knowing:
 Verified in Chrome on :4599: the hint in the sidebar filter reads ⌘⇧P; at the composer the palette offers tasks + New task + the two toggles; on a task it lists Open tabs, Tasks (current marked), Actions with chords, Changes; 'keymap' finds changes and files with matched characters set apart; 'TASK-34' finds commits; New shell via the palette opens a shell tab; selecting the Agent tab lands the caret in xterm; Escape returns focus to xterm; a task row navigates; Archive opens the preview dialog; Toggle task list hides the sidebar and the strip's own button still brings it back.
 
 bun run test: 1173 unit across 72 files, 238 render across 26. tsc clean.
+
+Review follow-ups (/code-review --fix), four commits:
+- Host keyed by task, so a Close/Archive confirmation cannot outlive the task it was opened on.
+- History/Refs/Files groups built only while there is a query: react-query's cache (and keepPreviousData) survived the `enabled` gate.
+- Focus restored on unmount when nothing else took it — the ⌘⇧P toggle and focus-neutral selections used to leave the caret on body.
+- Palette's sidebar toggle shares the strip's mobile rule (close the Explorer first).
+- The focus pulse now reaches diff/file/commit/history panes through a focusable frame (use-focus-request.ts); only the focused strip names close/split chords.
+- commandAvailable() in layout-store is the one predicate for jump/split/close, used by the dispatcher and the palette alike.
+- ⇧⌘G in TerminalSearchBar matched raw 'g' and never fired; it binds with keymap's isSearchChord now.
+- bg-scrim token replaces three black literals.
+
+Not taken: the reviewer's claim that ⌘K W with ⌘ still held closes the browser tab — TASK-34 verified in Chrome that with the leader armed it does not. Also left as designed: the leader map staying live while the palette is open.
+
+After: 1177 unit, 239 render, tsc clean.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
