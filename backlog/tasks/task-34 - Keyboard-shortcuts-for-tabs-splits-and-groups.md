@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 00:03'
-updated_date: '2026-09-05 00:06'
+updated_date: '2026-09-05 00:22'
 labels:
   - frontend
 milestone: m-5
@@ -79,6 +79,13 @@ Verified in Chrome against a real instance on :4599, which is the half happy-dom
 - 'New shell (⌘K `)' is on the + button's title; Split carries none while disabled, as designed.
 
 Final: bun run test — 1140 unit across 71 files, 221 render across 25, all green. tsc --noEmit clean.
+
+Review follow-ups (2972a5f), two real bugs:
+
+1. keymap.ts — a second leader press cancelled the arm instead of renewing it. The code comment and the test's own name both said 're-arms'; only the assertions said otherwise, so the test locked the bug in. ⌘K ⌘K ] left the ] unarmed and typed it into the agent.
+2. TaskShell.tsx — the focus pulse was a monotonic counter delivered by position (visible && active group). A counter outlives the keystroke that raised it, so any later layout change that moved a terminal into the front slot re-delivered it: a tab click, ⌘K W closing the tab in front, §5.5's shell-tab prune, or a task switch remounting TabPane with the standing number. Filter the sidebar, click a task, keep typing — the characters went to the agent. Now addressed to the tab id the chord landed on (read off layoutRef, which applyLayout has already written), and the panes fire only on a rise from what they mounted with.
+
+bun run test after: 1141 unit, 222 render, tsc clean.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
