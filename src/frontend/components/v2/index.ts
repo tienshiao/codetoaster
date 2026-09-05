@@ -39,6 +39,9 @@ export type { SelectOption, SelectProps, SelectSize } from "./Select";
 export { Dialog } from "./Dialog";
 export type { DialogProps } from "./Dialog";
 
+export { CommandPalette } from "./CommandPalette";
+export type { CommandPaletteProps, PaletteGroup, PaletteItem } from "./CommandPalette";
+
 export { TaskRow } from "./TaskRow";
 export type { TaskRowProps, TaskRowWorktreeFacts } from "./TaskRow";
 
