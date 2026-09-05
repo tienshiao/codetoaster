@@ -176,6 +176,37 @@ export function ArchiveTaskDialog({
   );
 }
 
+/**
+ * The close confirmation, for a task whose agent is still working.
+ *
+ * Its own component for the same reason `ArchiveTaskDialog` is one: two
+ * surfaces ask the same question — the row's X and the command palette's Close
+ * task — and the wording of what closing costs must not drift between them.
+ */
+export function CloseTaskDialog({
+  open,
+  label,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  label: string;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog
+      open={open}
+      title="Close this task?"
+      description={`${label} is still working. Closing stops the agent; the task keeps its row and can be resumed.`}
+      confirmLabel="Close task"
+      confirmVariant="destructive"
+      onConfirm={onConfirm}
+      onClose={onClose}
+    />
+  );
+}
+
 interface TaskRowActionsProps {
   taskId: string;
   label: string;
@@ -262,12 +293,9 @@ export function TaskRowActions({
         />
       </Dialog>
 
-      <Dialog
+      <CloseTaskDialog
         open={confirmingClose}
-        title="Close this task?"
-        description={`${label} is still working. Closing stops the agent; the task keeps its row and can be resumed.`}
-        confirmLabel="Close task"
-        confirmVariant="destructive"
+        label={label}
         onConfirm={() => onClose(taskId)}
         onClose={() => setConfirmingClose(false)}
       />

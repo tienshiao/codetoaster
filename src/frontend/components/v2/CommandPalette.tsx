@@ -28,7 +28,10 @@ export interface PaletteItem {
   labelNode?: ReactNode;
 }
 
-export interface PaletteGroup {
+/** Generic in the row type, so a host whose rows carry more than the palette
+ * draws — an action to perform, say — gets that back from `onSelect` instead of
+ * having to look the row up again by id. */
+export interface PaletteGroup<T extends PaletteItem = PaletteItem> {
   id: string;
   /**
    * The section heading. Unique across the groups of one palette: cmdk derives
@@ -36,16 +39,16 @@ export interface PaletteGroup {
    * same thing are one section as far as re-ordering is concerned.
    */
   label: string;
-  items: PaletteItem[];
+  items: T[];
 }
 
-export interface CommandPaletteProps {
+export interface CommandPaletteProps<T extends PaletteItem = PaletteItem> {
   open: boolean;
   query: string;
   onQueryChange: (query: string) => void;
   placeholder?: string;
-  groups: PaletteGroup[];
-  onSelect: (item: PaletteItem) => void;
+  groups: PaletteGroup<T>[];
+  onSelect: (item: T) => void;
   /** Escape or the scrim. A selection does not call this — the host decides what follows a selection. */
   onDismiss: () => void;
   /** Shown as the empty state; default "No matches." */
@@ -89,7 +92,7 @@ function filterByKeywords(value: string, search: string, keywords?: string[]): n
  * top of the window rather than centred, because the list grows downwards and a
  * centred panel would walk up the screen as results arrive.
  */
-export function CommandPalette({
+export function CommandPalette<T extends PaletteItem = PaletteItem>({
   open,
   query,
   onQueryChange,
@@ -99,7 +102,7 @@ export function CommandPalette({
   onDismiss,
   emptyLabel = "No matches.",
   footer,
-}: CommandPaletteProps) {
+}: CommandPaletteProps<T>) {
   const input = useRef<HTMLInputElement>(null);
 
   // Through a ref, not a dependency: callers pass a closure literal, so
@@ -134,7 +137,7 @@ export function CommandPalette({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 grid place-items-start justify-items-center bg-[oklch(0_0_0/0.45)] p-4 pt-[12vh]"
+      className="fixed inset-0 z-50 grid place-items-start justify-items-center bg-scrim p-4 pt-[12vh]"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onDismiss();
       }}
@@ -206,7 +209,13 @@ export function CommandPalette({
   );
 }
 
-function Row({ item, onSelect }: { item: PaletteItem; onSelect: (item: PaletteItem) => void }) {
+function Row<T extends PaletteItem>({
+  item,
+  onSelect,
+}: {
+  item: T;
+  onSelect: (item: T) => void;
+}) {
   const Icon = item.icon;
   return (
     <Command.Item

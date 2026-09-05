@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { taskDisplayNames, taskStateOf, useTasks } from "@/frontend/TaskContext";
-import { ArchiveTaskDialog } from "@/frontend/components/TaskSidebar";
-import { CommandPalette, type PaletteGroup, type PaletteItem } from "@/frontend/components/v2/CommandPalette";
-import { Dialog } from "@/frontend/components/v2/Dialog";
+import { ArchiveTaskDialog, CloseTaskDialog } from "@/frontend/components/TaskSidebar";
+import { CommandPalette, type PaletteGroup } from "@/frontend/components/v2/CommandPalette";
 import { useFileSearch, type FileSearchResult } from "@/frontend/hooks/use-file-search";
 import { useGitLog } from "@/frontend/hooks/use-git-log";
 import { useGitRefs } from "@/frontend/hooks/use-git-refs";
@@ -59,16 +58,20 @@ export function CommandPaletteHost(props: CommandPaletteHostProps) {
   const { open, onOpenChange, taskId } = props;
   const { tasks, closeTask, resumeTask, archivePreview, archiveTask } = useTasks();
   const selected = tasks.find((t) => t.id === taskId) ?? null;
-  const label = useMemo(
-    () => (selected ? (taskDisplayNames(tasks).get(selected.id) ?? selected.title) : ""),
-    [tasks, selected],
-  );
 
   // The two confirmations outlive the palette: selecting Close or Archive shuts
   // it and opens the dialog, so their state cannot live inside the part that
   // unmounts when the palette closes.
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [archiving, setArchiving] = useState(false);
+
+  // Projected only while one of the two dialogs is on screen, since nothing
+  // else reads it: `taskDisplayNames` walks the whole list, and as a memo over
+  // `tasks` it re-ran on every activity delta for the life of the shell.
+  const label =
+    selected && (archiving || confirmingClose)
+      ? (taskDisplayNames(tasks).get(selected.id) ?? selected.title)
+      : "";
 
   const handleArchivePreview = useCallback(
     async (id: string) => {
@@ -110,12 +113,9 @@ export function CommandPaletteHost(props: CommandPaletteHostProps) {
         />
       )}
       {selected && (
-        <Dialog
+        <CloseTaskDialog
           open={confirmingClose}
-          title="Close this task?"
-          description={`${label} is still working. Closing stops the agent; the task keeps its row and can be resumed.`}
-          confirmLabel="Close task"
-          confirmVariant="destructive"
+          label={label}
           onConfirm={() => void closeTask(selected.id)}
           onClose={() => {
             setConfirmingClose(false);
@@ -159,12 +159,28 @@ function OpenPalette({
   const [query, setQuery] = useState("");
   const searching = query.trim().length > 0;
 
-  // Where the caret was when the palette opened, so a dismissal puts it back.
-  // Only a dismissal: a selection either moves focus itself (a tab, through the
-  // pulse) or leaves for somewhere the old element no longer means anything (a
-  // task jump, a close).
+  // Where the caret was when the palette opened, so closing puts it back —
+  // however the palette closed. Dismissing is not the only way out that leaves
+  // nothing focused: the ⌘⇧P toggle, and every selection whose action moves no
+  // focus (toggle-sidebar, split, close-tab, new-shell), all unmount the input
+  // and leave `document.activeElement` on `<body>`.
   const opener = useRef<HTMLElement | null>(
     typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
+  );
+
+  // Restored on unmount rather than in the dismiss handler, and only when
+  // nothing else has taken focus. That condition is what lets a selection that
+  // *does* move focus win: a tab pulse and a dialog both focus from an effect,
+  // and effects run after this cleanup in the same commit, so they land last.
+  useEffect(
+    () => () => {
+      const element = opener.current;
+      if (!element?.isConnected) return;
+      if (document.activeElement === null || document.activeElement === document.body) {
+        element.focus();
+      }
+    },
+    [],
   );
 
   const hasTask = taskId !== null;
@@ -186,12 +202,21 @@ function OpenPalette({
 
   const selectedTask = tasks.find((t) => t.id === taskId) ?? null;
 
-  const groups = useMemo((): { groups: PaletteGroup[]; entries: Map<string, PaletteEntry> } => {
+  const groups = useMemo((): PaletteGroup<PaletteEntry>[] => {
     const labels = taskDisplayNames(tasks);
     const projectNames = new Map(projects.map((p) => [p.id, p.name]));
-    const commits = log.data?.pages.flatMap((page) => page.commits) ?? [];
+    // `enabled: false` stops the fetch, not the cache: these keys are shared
+    // with the Explorer's History and Refs — and with this palette's own last
+    // search — so React Query hands back whatever was fetched before. The
+    // gating has to be repeated here or a hundred commits sit under the
+    // actions at an empty box, which is exactly what the gate was for.
+    const commits = searching ? (log.data?.pages.flatMap((page) => page.commits) ?? []) : [];
+    // Same shape, one query later: `keepPreviousData` holds the last search's
+    // hits at an empty box, and file rows are `forceMount`, so they would draw
+    // unfiltered and suppress the empty state with them.
+    const fileResults = debounced ? (files.data?.results ?? []) : [];
 
-    const built: { id: string; label: string; items: PaletteEntry[] }[] = [
+    return [
       { id: "tabs", label: "Open tabs", items: tabEntries(layout) },
       {
         id: "tasks",
@@ -210,21 +235,29 @@ function OpenPalette({
       },
       { id: "changes", label: "Changes", items: changeEntries(changes ?? []) },
       { id: "history", label: "History", items: commitEntries(commits, COMMIT_LIMIT) },
-      { id: "refs", label: "Refs", items: refEntries(refs.data) },
+      { id: "refs", label: "Refs", items: searching ? refEntries(refs.data) : [] },
       {
         id: "files",
         label: "Files",
-        items: fileEntries(files.data?.results ?? []).map((entry, i) => ({
+        items: fileEntries(fileResults).map((entry, i) => ({
           ...entry,
-          labelNode: <HighlightedPath {...files.data!.results[i]!} />,
+          labelNode: <HighlightedPath {...fileResults[i]!} />,
         })),
       },
     ];
-
-    const entries = new Map<string, PaletteEntry>();
-    for (const group of built) for (const item of group.items) entries.set(item.id, item);
-    return { groups: built, entries };
-  }, [tasks, projects, layout, taskId, selectedTask, changes, log.data, refs.data, files.data]);
+  }, [
+    tasks,
+    projects,
+    layout,
+    taskId,
+    selectedTask,
+    changes,
+    log.data,
+    refs.data,
+    files.data,
+    searching,
+    debounced,
+  ]);
 
   const perform = (action: PaletteAction) => {
     switch (action.type) {
@@ -253,18 +286,13 @@ function OpenPalette({
     }
   };
 
-  const handleSelect = (item: PaletteItem) => {
-    const entry = groups.entries.get(item.id);
+  // The row itself, not an id to look one up by: `Row` hands back the exact
+  // object it was given, so the action rides along with it.
+  const handleSelect = (entry: PaletteEntry) => {
     // Closed first, then acted on: an action that navigates or opens a dialog
     // should find the palette already gone rather than race its own unmount.
     onOpenChange(false);
-    if (entry) perform(entry.action);
-  };
-
-  const handleDismiss = () => {
-    onOpenChange(false);
-    const element = opener.current;
-    if (element && element.isConnected) element.focus();
+    perform(entry.action);
   };
 
   const footer: ReactNode =
@@ -276,9 +304,9 @@ function OpenPalette({
       query={query}
       onQueryChange={setQuery}
       placeholder={hasTask ? "Search tasks, tabs, files, actions…" : "Search tasks and actions…"}
-      groups={groups.groups}
+      groups={groups}
       onSelect={handleSelect}
-      onDismiss={handleDismiss}
+      onDismiss={() => onOpenChange(false)}
       footer={footer}
     />
   );

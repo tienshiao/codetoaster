@@ -10,6 +10,7 @@ import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { CommandPaletteHost } from "@/frontend/components/CommandPalette";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
+import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { useShellKeymap } from "@/frontend/hooks/use-shell-keymap";
 import { pathLabel } from "@/frontend/utils/path-label";
@@ -84,6 +85,18 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   // persisted: a task list hidden by a chord and still hidden after a reload
   // is the kind of state that has to be explained, and there is nowhere to.
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const isMobile = useIsMobile();
+  // Every way the sidebar opens goes through here — the strip's toggle and
+  // the palette's row alike. Below the breakpoint an open Explorer suppresses
+  // the sidebar (`AppShell`'s `showSidebar`), so opening one closes the other;
+  // `AppShell` applies the rule to its own button, but the palette's toggle
+  // writes the controlled prop from outside and would otherwise flip a flag
+  // nothing draws, leaving the button reading "Hide tasks" for a list that is
+  // not there.
+  const changeSidebarOpen = (next: boolean) => {
+    if (next && isMobile) explorerPanel.setOpen(false);
+    setSidebarOpen(next);
+  };
   /**
    * The last "take the caret" a keyboard command raised, and the tab it was
    * raised for (TASK-34).
@@ -344,7 +357,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         endpoint={loaded ? `:${location.port || "80"}` : "connecting…"}
         onOpenSettings={() => setSettingsOpen(true)}
         sidebarOpen={sidebarOpen}
-        onSidebarOpenChange={setSidebarOpen}
+        onSidebarOpenChange={changeSidebarOpen}
         tabArea={
           layout
             ? ({ leading }) => (
@@ -490,8 +503,15 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       {/* The same sibling, for the same reason. It is given the layout the
           render saw rather than the ref: a selection is one action from a
-          settled screen, not a chord typed into an in-flight commit. */}
+          settled screen, not a chord typed into an in-flight commit.
+
+          Keyed by task, because the host holds the two confirmations — Close
+          and Archive — and this shell does not remount when the route moves
+          between tasks. Unkeyed, a confirmation opened on one task would
+          still be standing when the URL named the next, and its Confirm would
+          act on whichever task was then selected. */}
       <CommandPaletteHost
+        key={taskId ?? "composer"}
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
         taskId={taskId}
@@ -500,7 +520,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         onFocusTab={pulseTab}
         onOpenTab={handleOpenTab}
         runCommand={keymap.run}
-        onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+        onToggleSidebar={() => changeSidebarOpen(!sidebarOpen)}
         onToggleExplorer={() => explorerPanel.setOpen(!explorerPanel.open)}
       />
     </>
