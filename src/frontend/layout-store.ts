@@ -11,6 +11,8 @@
 // three-way split. So it persists to localStorage keyed by task id, not to the
 // task row.
 
+import type { ShellCommand } from "@/frontend/keymap";
+
 /** §7.2. The one thing a tab can be. `diffAll` is the whole-working-tree diff;
  * `diff` is one file of it. */
 export type TabDescriptor =
@@ -479,6 +481,38 @@ export function focusGroup(layout: TaskLayout, delta: number): TaskLayout {
  * second, and `splitTab` refuses a terminal. */
 export function findAgentTab(layout: TaskLayout): TabState | null {
   return findByKey(layout, tabKey({ kind: "agent" }))?.tab ?? null;
+}
+
+/**
+ * Whether a leader command would do anything against this layout.
+ *
+ * One predicate for the two places that need it: the dispatcher, so a chord
+ * that cannot act is a no-op rather than a side effect with no reduction
+ * behind it, and the palette, so it lists no row that selecting would do
+ * nothing. Written once because the two drifted apart in review — a guard
+ * added to one side and not the other is a palette row that is dead, or a
+ * chord the palette hides while the keyboard still fires it.
+ *
+ * `jump-tab` names a position the group may not have; `split` is refused for
+ * a terminal; `close-tab` is refused for the agent tab, which is the task and
+ * closes only through the task list. Everything else is always available:
+ * `cycleTab` and `focusGroup` clamp or wrap on their own.
+ */
+export function commandAvailable(layout: TaskLayout, command: ShellCommand): boolean {
+  switch (command.command) {
+    case "jump-tab":
+      return command.index != null && command.index <= activeGroup(layout).tabs.length;
+    case "split": {
+      const tab = activeTab(layout);
+      return tab != null && canSplit(layout, tab.id);
+    }
+    case "close-tab": {
+      const tab = activeTab(layout);
+      return tab != null && tab.descriptor.kind !== "agent";
+    }
+    default:
+      return true;
+  }
 }
 
 /**

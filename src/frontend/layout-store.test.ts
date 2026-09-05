@@ -22,6 +22,7 @@ import {
   focusTabAt,
   focusGroup,
   findAgentTab,
+  commandAvailable,
   pruneShellTabs,
   reconcileShellTabs,
   reviveLayout,
@@ -31,6 +32,7 @@ import {
   retainLayouts,
 } from "./layout-store";
 import type { TabDescriptor, TabGroup, TaskLayout } from "./layout-store";
+import { SHELL_COMMANDS } from "./keymap";
 
 // ── descriptor factories ────────────────────────────────────────────────────
 
@@ -1320,4 +1322,49 @@ test("findAgentTab finds it from another group, which is the case that matters",
   // Focusing it brings its group back with it.
   const focused = focusTab(layout, agentTab!.id);
   expect(focused.activeGroupId).toBe(focused.groups[0]!.id);
+});
+
+// ── commandAvailable ────────────────────────────────────────────────────────
+//
+// The one predicate the dispatcher and the palette share, so what is asserted
+// here is what both of them do.
+
+const command = (id: string) => SHELL_COMMANDS.find((c) => c.id === id)!;
+
+test("commandAvailable: a jump names a position the active group has", () => {
+  // Three tabs in the active group: 1–3 live, 4 and up are dead.
+  const layout = twoGroups();
+  expect(commandAvailable(layout, command("jump-tab-1"))).toBe(true);
+  expect(commandAvailable(layout, command("jump-tab-3"))).toBe(true);
+  expect(commandAvailable(layout, command("jump-tab-4"))).toBe(false);
+  expect(commandAvailable(layout, command("jump-tab-9"))).toBe(false);
+  // Counted against the *active* group: the other one has a single tab.
+  const other = focusGroup(layout, 1);
+  expect(commandAvailable(other, command("jump-tab-1"))).toBe(true);
+  expect(commandAvailable(other, command("jump-tab-2"))).toBe(false);
+});
+
+test("commandAvailable: split and close are refused in front of the agent tab", () => {
+  const onAgent = twoGroups();
+  expect(activeTab(onAgent)?.key).toBe("agent");
+  expect(commandAvailable(onAgent, command("split"))).toBe(false);
+  expect(commandAvailable(onAgent, command("close-tab"))).toBe(false);
+
+  const onFile = focusTab(onAgent, idOf(onAgent, "file:a.ts"));
+  expect(commandAvailable(onFile, command("split"))).toBe(true);
+  expect(commandAvailable(onFile, command("close-tab"))).toBe(true);
+});
+
+test("commandAvailable: a shell tab closes but never splits", () => {
+  let layout = createLayout();
+  layout = openTab(layout, shell("pty-1"));
+  expect(commandAvailable(layout, command("split"))).toBe(false);
+  expect(commandAvailable(layout, command("close-tab"))).toBe(true);
+});
+
+test("commandAvailable: navigation is always on offer, clamping being its own business", () => {
+  const layout = createLayout();
+  for (const id of ["next-tab", "prev-tab", "focus-group-left", "focus-group-right", "focus-agent"]) {
+    expect(commandAvailable(layout, command(id))).toBe(true);
+  }
 });

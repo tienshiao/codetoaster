@@ -19,10 +19,8 @@ import {
 } from "lucide-react";
 import { SHELL_COMMANDS, chordCaps, type CommandId, type ShellCommand } from "@/frontend/keymap";
 import {
-  activeGroup,
-  activeTab,
   allTabs,
-  canSplit,
+  commandAvailable,
   type TabDescriptor,
   type TaskLayout,
 } from "@/frontend/layout-store";
@@ -253,18 +251,13 @@ export function actionEntries({ task, layout, mac = isMac() }: ActionEntryOption
   }
 
   if (layout) {
-    const group = activeGroup(layout);
-    const active = activeTab(layout);
     for (const command of SHELL_COMMANDS) {
       if (PLACED_BY_HAND.has(command.id)) continue;
-      // A chord that names a tab position the group does not have is dead; the
-      // table lists all nine because it is a flat table, and this is where the
-      // nine become however many there are.
-      if (command.index != null && command.index > group.tabs.length) continue;
-      if (command.command === "split" && !(active && canSplit(layout, active.id))) continue;
-      // `closeTab` refuses the agent tab outright, so offering Close tab in
-      // front of it would be offering a no-op.
-      if (command.command === "close-tab" && active?.descriptor.kind === "agent") continue;
+      // The dispatcher's own predicate, so a row here is a chord that fires:
+      // the table lists nine jump rows because it is a flat table, and this is
+      // where the nine become however many tabs there are, a Split on a
+      // terminal drops out, and so does Close tab in front of the agent.
+      if (!commandAvailable(layout, command)) continue;
       entries.push(commandEntry(command, mac));
     }
   }

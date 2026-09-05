@@ -48,15 +48,11 @@ export type CommandId =
   | "new-shell"
   | "palette";
 
-/** Heading a palette or a cheat sheet can group by. */
-export type CommandGroup = "Tabs" | "Groups" | "Task" | "View";
-
 export interface ShellCommand {
   /** Unique across the table; `jump-tab` is distinguished by `index`. */
   id: string;
   command: CommandId;
   label: string;
-  group: CommandGroup;
   /**
    * The key pressed after the leader, as `KeyboardEvent.key`. Letters are
    * stored lowercase and matched case-insensitively, so the chord still fires
@@ -85,34 +81,31 @@ const JUMP_COMMANDS: ShellCommand[] = Array.from({ length: 9 }, (_, i) => ({
   id: `jump-tab-${i + 1}`,
   command: "jump-tab" as const,
   label: `Go to tab ${i + 1}`,
-  group: "Tabs" as const,
   key: String(i + 1),
   index: i + 1,
 }));
 
 export const SHELL_COMMANDS: ShellCommand[] = [
-  { id: "next-tab", command: "next-tab", label: "Next tab", group: "Tabs", key: "]" },
-  { id: "prev-tab", command: "prev-tab", label: "Previous tab", group: "Tabs", key: "[" },
+  { id: "next-tab", command: "next-tab", label: "Next tab", key: "]" },
+  { id: "prev-tab", command: "prev-tab", label: "Previous tab", key: "[" },
   ...JUMP_COMMANDS,
-  { id: "close-tab", command: "close-tab", label: "Close tab", group: "Tabs", key: "w" },
-  { id: "split", command: "split", label: "Split tab", group: "Groups", key: "\\" },
+  { id: "close-tab", command: "close-tab", label: "Close tab", key: "w" },
+  { id: "split", command: "split", label: "Split tab", key: "\\" },
   {
     id: "focus-group-left",
     command: "focus-group-left",
     label: "Focus group left",
-    group: "Groups",
     key: "ArrowLeft",
   },
   {
     id: "focus-group-right",
     command: "focus-group-right",
     label: "Focus group right",
-    group: "Groups",
     key: "ArrowRight",
   },
-  { id: "focus-agent", command: "focus-agent", label: "Focus agent tab", group: "Task", key: "a" },
-  { id: "new-shell", command: "new-shell", label: "New shell", group: "Task", key: "`" },
-  { id: "palette", command: "palette", label: "Command palette", group: "View", key: "p", direct: true },
+  { id: "focus-agent", command: "focus-agent", label: "Focus agent tab", key: "a" },
+  { id: "new-shell", command: "new-shell", label: "New shell", key: "`" },
+  { id: "palette", command: "palette", label: "Command palette", key: "p", direct: true },
 ];
 
 /** Enough of a `KeyboardEvent` to match a chord, so the table can be tested
@@ -207,8 +200,14 @@ export function matchDirect(ev: KeyLike, mac: boolean = isMac()): ShellCommand |
  * bubble phase, which is after xterm's own handler on the textarea. The leader
  * map needs no entry because its listener runs on `window` in the *capture*
  * phase and stops propagation, so those keys never reach xterm at all.
+ *
+ * Exported because the search bar binds with this same predicate: what the
+ * terminal yields and what the bar acts on have to be one rule, or the chord is
+ * let through by one and matched by neither. They had already drifted — the bar
+ * tested a raw `e.key === "g"`, which with Shift held is `G`, so ⇧⌘G reached
+ * nobody while the tooltip advertised it.
  */
-function isSearchChord(ev: KeyLike): boolean {
+export function isSearchChord(ev: KeyLike): boolean {
   // ⌘G / ⇧⌘G — next and previous match, while the search bar is open.
   return normalizeKey(ev.key) === "g" && (ev.metaKey || ev.ctrlKey) && !ev.altKey;
 }
@@ -342,21 +341,31 @@ export function chordCaps(command: ShellCommand, mac: boolean = isMac()): string
   return [...leaderCaps(mac), keyCap(command.key)];
 }
 
+/** Caps as one tooltip string: `⌘K W`, `Ctrl+Shift+K W`, `⌘⇧P`, `Ctrl+Shift+P`.
+ * The leader's caps run together on a Mac and join with `+` elsewhere, which is
+ * how each platform writes its own chords; the second press follows a space. */
+function joinCaps(caps: string[], mac: boolean): string {
+  const named = caps.map((cap) => (mac ? cap : cap === "⇧" ? "Shift" : cap));
+  return mac ? named.join("") : named.join("+");
+}
+
 /**
  * The chord as one line of plain text, for a `title` tooltip — the shortcuts'
  * way in for a user who has not read a list of them.
  *
  * Spelt out rather than drawn as caps because a tooltip is a string and cannot
- * hold `KeyHint`'s markup. Empty when the id is not in the table, so a caller
- * appends nothing rather than "(undefined)".
+ * hold `KeyHint`'s markup — but spelt out *from* the caps, so the leader and the
+ * direct modifiers have one spelling here rather than a second set of literals
+ * to keep in step. Empty when the id is not in the table, so a caller appends
+ * nothing rather than "(undefined)".
  */
 export function chordHint(id: string, mac: boolean = isMac()): string {
   const command = SHELL_COMMANDS.find((c) => c.id === id);
   if (!command) return "";
   // A direct chord is one press, so its key joins the modifiers rather than
   // following them after the space that separates a leader from its second.
-  if (command.direct) return `${mac ? "⌘⇧" : "Ctrl+Shift+"}${keyCap(command.key)}`;
-  return `${mac ? "⌘K" : "Ctrl+Shift+K"} ${keyCap(command.key)}`;
+  if (command.direct) return joinCaps(chordCaps(command, mac), mac);
+  return `${joinCaps(leaderCaps(mac), mac)} ${keyCap(command.key)}`;
 }
 
 /** Looks up one command's caps by id, for a control that knows what it does

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { SearchAddon } from "@xterm/addon-search";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
+import { isSearchChord } from "@/frontend/keymap";
 
 const isMac = navigator.platform.startsWith("Mac");
 
@@ -55,10 +56,13 @@ export function TerminalSearchBar({ searchAddon, onClose }: TerminalSearchBarPro
     onClose();
   }, [searchAddon, onClose]);
 
-  // Global Cmd+G / Shift+Cmd+G for find next/previous
+  // Global Cmd+G / Shift+Cmd+G for find next/previous. Matched with the same
+  // predicate the terminal yields on, so the key it lets past is the key this
+  // binds — spelling it out here is how ⇧⌘G ended up reaching nobody, since
+  // with Shift held the browser reports `G`.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "g" && (e.metaKey || e.ctrlKey) && !e.altKey) {
+      if (isSearchChord(e)) {
         e.preventDefault();
         if (e.shiftKey) findPrevious();
         else findNext();

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef } from "react";
 import { stepKeymap, type ShellCommand } from "@/frontend/keymap";
 import {
   activeTab,
-  canSplit,
   closeTab,
+  commandAvailable,
   cycleTab,
   findAgentTab,
   focusGroup,
@@ -134,6 +134,10 @@ export function useShellKeymap(options: ShellKeymapOptions): ShellKeymap {
     }
     const layout = read();
     if (!layout) return;
+    // The same predicate the palette lists by, so a chord the palette would not
+    // offer is one the keyboard does not fire either — and the side effects
+    // below (killing a shell) never run for a reduction that will not happen.
+    if (!commandAvailable(layout, command)) return;
 
     /** A navigation: apply it, and send the caret after it. Skipped when the
      * reduction changed nothing, so a clamped `⌘K ←` at the leftmost group
@@ -150,7 +154,7 @@ export function useShellKeymap(options: ShellKeymapOptions): ShellKeymap {
       case "prev-tab":
         return navigate(cycleTab(layout, -1));
       case "jump-tab":
-        return command.index ? navigate(focusTabAt(layout, command.index)) : undefined;
+        return navigate(focusTabAt(layout, command.index!));
       case "focus-group-left":
         return navigate(focusGroup(layout, -1));
       case "focus-group-right":
@@ -165,23 +169,17 @@ export function useShellKeymap(options: ShellKeymapOptions): ShellKeymap {
         onLayoutChange(focusTab(layout, agent.id));
         return optionsRef.current.onFocusPane?.();
       }
-      case "split": {
-        // Asked rather than assumed: a terminal tab is never splittable, so
-        // on the agent tab — where the user spends most of their time — this
-        // chord does nothing, exactly as the strip's split control is absent
-        // there.
-        const tab = activeTab(layout);
-        return tab && canSplit(layout, tab.id)
-          ? onLayoutChange(splitTab(layout, tab.id))
-          : undefined;
-      }
+      case "split":
+        // A terminal is never splittable, and `commandAvailable` has said so:
+        // on the agent tab this chord does nothing, exactly as the strip's
+        // split control is absent there.
+        return onLayoutChange(splitTab(layout, activeTab(layout)!.id));
       case "close-tab": {
-        const tab = activeTab(layout);
-        // The agent tab is the task: closing it would mean killing the task,
-        // which is the task list's action. `closeTab` refuses it too, but
-        // the guard belongs here as well so the side effect below does not
-        // run for a close that will not happen.
-        if (!tab || tab.descriptor.kind === "agent") return;
+        // Never the agent tab — that is the task, and closing it is the task
+        // list's action. `commandAvailable` refused it above, which is what
+        // keeps the side effect here from running for a close that will not
+        // happen.
+        const tab = activeTab(layout)!;
         onCloseTab?.(tab);
         return onLayoutChange(closeTab(layout, tab.id));
       }
