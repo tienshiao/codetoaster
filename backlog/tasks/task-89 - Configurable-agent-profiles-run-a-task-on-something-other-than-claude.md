@@ -1,11 +1,11 @@
 ---
 id: TASK-89
 title: 'Configurable agent profiles: run a task on something other than claude'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-05 09:31'
-updated_date: '2026-09-05 21:09'
+updated_date: '2026-09-05 22:28'
 labels:
   - server
   - frontend
@@ -42,10 +42,22 @@ Split into subtasks if it grows: profile model and spawn templates; daemon confi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A profile registry with built-in 'claude' (today's exact argv, asserted by the existing spawn tests) and 'shell' profiles, loaded with user-defined profiles from daemon configuration and never from an HTTP body
-- [ ] #2 POST /api/tasks and the composer accept a profile name; projects carry a default profile; an unknown name is a 400
-- [ ] #3 A task on a profile without hooks shows busy/idle from the output heuristic, and one without resume support restarts its command on reopen with the card explaining why
-- [ ] #4 CODETOASTER_AGENT_BIN keeps working as the claude profile's binary override, so the test preload is unchanged
-- [ ] #5 A task created on the 'shell' profile spawns no agent, which the verify skill documents as the way to exercise the UI safely
-- [ ] #6 A built-in 'pi' profile: --session-id <id> for both start and resume, --model when set, no permission mode, the prompt behind --, asserted by a spawn test; a task on it resumes on reopen the way a claude task does, minus hook-driven state
+- [x] #1 A profile registry with built-in 'claude' (today's exact argv, asserted by the existing spawn tests) and 'shell' profiles, loaded with user-defined profiles from daemon configuration and never from an HTTP body
+- [x] #2 POST /api/tasks and the composer accept a profile name; projects carry a default profile; an unknown name is a 400
+- [x] #3 A task on a profile without hooks shows busy/idle from the output heuristic, and one without resume support restarts its command on reopen with the card explaining why
+- [x] #4 CODETOASTER_AGENT_BIN keeps working as the claude profile's binary override, so the test preload is unchanged
+- [x] #5 A task created on the 'shell' profile spawns no agent, which the verify skill documents as the way to exercise the UI safely
+- [x] #6 A built-in 'pi' profile: --session-id <id> for both start and resume, --model when set, no permission mode, the prompt behind --, asserted by a spawn test; a task on it resumes on reopen the way a claude task does, minus hook-driven state
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Delivered as four subtasks: 89.1 profile model and templates (be3b7a0), 89.2 registry, agent_profile column and spawning by profile (c3c7ab6), 89.3 project default, API field, composer control and a Radix Select fix (55cffc0), 89.4 degradation for hookless and non-resumable profiles. Design notes: capabilities are derived from the templates rather than declared; an unset placeholder drops its flag; profiles come only from ~/.codetoaster/profiles.json; the Claude-transcript resume rungs are claude's alone; restart is start without the prompt.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Tasks can run on an agent other than claude. A profile is a binary plus argv templates with derived capabilities; claude, shell and pi ship built in and users add or replace profiles in ~/.codetoaster/profiles.json, never over HTTP. Each task records its profile, projects carry a default, the composer and project dialog offer the registry, and the API names a profile by string. Hookless profiles report inferred state, non-resumable ones restart with the pane saying so, and the shell profile is the documented way to exercise the UI without spending tokens. Verified across the four subtasks with tsc, the full suites and a runtime check.
+<!-- SECTION:FINAL_SUMMARY:END -->

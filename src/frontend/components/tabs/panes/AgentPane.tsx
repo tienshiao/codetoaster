@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePty } from "@/frontend/PtyContext";
 import { useTasks } from "@/frontend/TaskContext";
@@ -8,8 +9,11 @@ import {
   type TerminalSize,
 } from "@/frontend/Terminal";
 import { Button } from "@/frontend/components/v2/Button";
+import { IconButton } from "@/frontend/components/v2/IconButton";
+import { Notice } from "@/frontend/components/v2/Notice";
 import { StatusDot } from "@/frontend/components/v2/StatusDot";
 import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
+import { useProfiles } from "@/frontend/hooks/use-profiles";
 import { useTerminalSearch } from "@/frontend/hooks/use-terminal-search";
 import { cn } from "@/frontend/lib/utils";
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -78,6 +82,9 @@ export function AgentPane({
 }: AgentPaneProps) {
   const { tasks, resumeTask } = useTasks();
   const { attach, detach, resize, send, isConnected } = usePty();
+  // Only for the label in the restart strip. The daemon's configuration, read
+  // once and cached forever, so this costs nothing per pane.
+  const { data: profiles } = useProfiles();
 
   const task = tasks.find((t) => t.id === taskId);
   const ptyId = task?.ptyId ?? null;
@@ -89,6 +96,25 @@ export function AgentPane({
   const restoringWorkspace =
     task?.worktreeState === "evicted" || task?.worktreeState === "missing";
   const hasNotification = task?.hasNotification ?? false;
+
+  /**
+   * The task whose restart strip the user has waved away.
+   *
+   * Keyed by task id rather than held as a bare boolean so a pane that is
+   * reused for another task — the tab bar does swap descriptors under one
+   * pane — does not carry the dismissal across to it. Component state, so a
+   * remount shows the strip again: it is a fact about the process, and coming
+   * back to a task that is still running a restarted command is a moment worth
+   * being told once more.
+   */
+  const [dismissedRestart, setDismissedRestart] = useState<string | null>(null);
+  // Only over a live terminal. A restarted task that has since been suspended
+  // is described by the overlay instead, and stacking the two would be two
+  // sentences about the same task at once.
+  const showRestarted =
+    (task?.restarted ?? false) && ptyId !== null && dismissedRestart !== taskId;
+  const profileLabel =
+    profiles?.find((profile) => profile.name === task?.profile)?.label ?? task?.profile ?? "";
 
   const terminalRef = useRef<TerminalHandle>(null);
   useFocusRequest(focusRequest, terminalRef);
@@ -277,43 +303,75 @@ export function AgentPane({
   const searchAddon = search.open ? terminalRef.current?.getSearchAddon() : null;
 
   return (
-    // `data-terminal-pane` marks this subtree as a terminal's, which is how a
-    // search bar tells "the caret is in another terminal" from "the caret is in
-    // no terminal at all" — see `TerminalSearchBar`.
-    <div ref={root} data-terminal-pane className="relative h-full">
-      <XTerminal
-        ref={terminalRef}
-        ptyId={ptyId}
-        onSizeChange={handleSizeChange}
-        // No `onReady`: the task snapshot is asked for by `TaskContext` on
-        // connect, not by a terminal going ready — v1 asked from here, which
-        // meant a route with no terminal ever got a list at all.
-        sendMessage={send}
-        onSearchOpen={search.openSearch}
-        searchOpen={search.open}
-        onFileDrop={onFileDrop}
-        onRestoreEnd={handleRestoreEnd}
-        linkProvider={linkProvider}
-      />
-      {searchAddon ? (
-        <TerminalSearchBar
-          searchAddon={searchAddon}
-          onClose={search.closeSearch}
-          activation={search.activation}
-          scope={root}
-          active={active}
-        />
+    <div className="flex h-full flex-col">
+      {showRestarted ? (
+        /**
+         * The conversation did not come back, said once and out of the way
+         * (TASK-89.4).
+         *
+         * A `Notice` here where the reopen overlay below is deliberately not
+         * one, and the difference is what each sits over. The overlay floats
+         * because it appears *during* a restore, on top of a snapshot the user
+         * came back to read: giving the terminal a different height right then
+         * would renegotiate the grid and rewrap that screen. This strip only
+         * ever appears over a live terminal whose process started moments ago
+         * with an empty screen, so taking a row of height costs nothing to
+         * reflow — and what it says is a state, not a transient: it is true for
+         * as long as this process runs, and the user is the one who decides it
+         * has been read.
+         */
+        <Notice
+          actions={
+            <IconButton
+              icon={X}
+              size="sm"
+              label="Dismiss"
+              onClick={() => setDismissedRestart(taskId)}
+            />
+          }
+        >
+          Restarted without its conversation — {profileLabel} can&apos;t resume.
+        </Notice>
       ) : null}
-      <Overlay
-        phase={phase}
-        failure={failure}
-        restoringWorkspace={restoringWorkspace}
-        // A suspended task with the phase already settled: it was suspended out
-        // from under the view, or a reopen failed and was dismissed. Either way
-        // the way back is a click, not something that happens on its own.
-        resting={suspended && phase === "live"}
-        onReopen={retry}
-      />
+      {/* `data-terminal-pane` marks this subtree as a terminal's, which is how a
+          search bar tells "the caret is in another terminal" from "the caret is
+          in no terminal at all" — see `TerminalSearchBar`. */}
+      <div ref={root} data-terminal-pane className="relative min-h-0 flex-1">
+        <XTerminal
+          ref={terminalRef}
+          ptyId={ptyId}
+          onSizeChange={handleSizeChange}
+          // No `onReady`: the task snapshot is asked for by `TaskContext` on
+          // connect, not by a terminal going ready — v1 asked from here, which
+          // meant a route with no terminal ever got a list at all.
+          sendMessage={send}
+          onSearchOpen={search.openSearch}
+          searchOpen={search.open}
+          onFileDrop={onFileDrop}
+          onRestoreEnd={handleRestoreEnd}
+          linkProvider={linkProvider}
+        />
+        {searchAddon ? (
+          <TerminalSearchBar
+            searchAddon={searchAddon}
+            onClose={search.closeSearch}
+            activation={search.activation}
+            scope={root}
+            active={active}
+          />
+        ) : null}
+        <Overlay
+          phase={phase}
+          failure={failure}
+          restoringWorkspace={restoringWorkspace}
+          // A suspended task with the phase already settled: it was suspended
+          // out from under the view, or a reopen failed and was dismissed.
+          // Either way the way back is a click, not something that happens on
+          // its own.
+          resting={suspended && phase === "live"}
+          onReopen={retry}
+        />
+      </div>
     </div>
   );
 }

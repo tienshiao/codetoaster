@@ -65,8 +65,20 @@ export type AgentTask = Pick<
  *  `continue` — whatever the most recent conversation in this directory is,
  *               for when the stored id is unusable. With worktree-per-task
  *               that directory holds exactly one conversation, which is what
- *               makes the fallback unambiguous rather than a guess. */
-export type AgentMode = "start" | "resume" | "continue";
+ *               makes the fallback unambiguous rather than a guess.
+ *  `restart`  — the `start` template again, for a profile that can do neither
+ *               of the two above (TASK-89.4). The command comes back in the
+ *               task's directory; the conversation does not, and the card says
+ *               so rather than pretending otherwise.
+ *
+ * Two things separate a restart from a start. The prompt is **not** replayed —
+ * the conversation it opened is gone, and submitting the task's first turn
+ * again on every reopen is precisely the bug the resume rule exists to prevent
+ * — and the row's session id is kept where the template names one, rather than
+ * minted afresh. Keeping it costs nothing for a profile that only labels its
+ * session with it, and for a pi-shaped profile (`--session-id <id>` creates the
+ * session if it is missing) it makes the restart a resume by other means. */
+export type AgentMode = "start" | "resume" | "continue" | "restart";
 
 export interface AgentCommandOptions {
   mode?: AgentMode;
@@ -102,7 +114,9 @@ export interface AgentCommandOptions {
 export function buildAgentCommand(task: AgentTask, options: AgentCommandOptions = {}): string[] {
   const mode = options.mode ?? "start";
   const profile = options.profile ?? claudeProfile();
-  const template = mode === "start" ? profile.start : profile[mode];
+  // `restart` renders `start` too — it *is* the start command, minus the
+  // prompt — so the two share a template and differ only in the values below.
+  const template = mode === "start" || mode === "restart" ? profile.start : profile[mode];
   // A profile with no `resume` cannot bring a conversation back, and one with
   // no `continue` has no directory-scoped fallback rung. Both are legitimate
   // shapes — the shell profile has neither — so the caller is told which
@@ -132,7 +146,10 @@ export function buildAgentCommand(task: AgentTask, options: AgentCommandOptions 
       // that opened it; submitting it again would replay the task's first turn
       // every time it came back. (`validateProfile` refuses a resume template
       // that names `{prompt}` for the same reason; this is the value side of
-      // the same rule.)
+      // the same rule.) A `restart` renders the same template as a start and is
+      // held to the rule anyway: the conversation is not coming back, but the
+      // user's opening ask was answered once already and re-submitting it on
+      // every reopen is the same replay by another door.
       prompt: mode === "start" ? task.initial_prompt : undefined,
       model: task.model,
       permission_mode: task.permission_mode,

@@ -332,3 +332,50 @@ describe("the shell profile's argv", () => {
       .toThrow(/profile "shell" cannot continue/);
   });
 });
+
+// What a profile that can do neither of the two above gets on reopen
+// (TASK-89.4): the start command again, in the task's own directory.
+describe("restarting", () => {
+  const full = agentTask({ initial_prompt: "go", model: "opus", permission_mode: "acceptEdits" });
+
+  test("the shell profile restarts as the bare shell", () => {
+    expect(buildAgentCommand(full, { profile: builtin("shell"), mode: "restart" }))
+      .toEqual(["/bin/zsh"]);
+  });
+
+  // The id is kept rather than minted, and for pi that makes the restart a
+  // resume by other means: `--session-id` opens the exact session, creating it
+  // only if it is missing. A profile that merely labels its session with the id
+  // loses nothing by being handed the same one.
+  test("keeps the row's session id where the template names one", () => {
+    expect(buildAgentCommand(full, { profile: builtin("pi"), mode: "restart" }))
+      .toEqual(["pi", "--session-id", SESSION, "--model", "opus"]);
+  });
+
+  // The whole difference from a start. The conversation that answered this
+  // prompt is not coming back, and submitting it again on every reopen would
+  // replay the task's first turn — the exact bug the resume rule prevents, one
+  // door along.
+  test("never replays the prompt, so no separator is left behind either", () => {
+    const argv = buildAgentCommand(full, { profile: builtin("pi"), mode: "restart" });
+    expect(argv).not.toContain("go");
+    expect(argv).not.toContain("--");
+  });
+
+  // A restart renders `start`, so a profile that *can* resume can still be
+  // asked for one — it simply is not what the ladder offers such a profile.
+  test("renders the start template, hooks and all, for a profile that has one", () => {
+    expect(buildAgentCommand(full, {
+      profile: claudeProfile(),
+      mode: "restart",
+      settingsPath: "/tmp/settings.json",
+      bin: "claude",
+    })).toEqual([
+      "claude",
+      "--session-id", SESSION,
+      "--settings", "/tmp/settings.json",
+      "--model", "opus",
+      "--permission-mode", "acceptEdits",
+    ]);
+  });
+});

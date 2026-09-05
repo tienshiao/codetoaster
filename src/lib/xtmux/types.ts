@@ -231,6 +231,31 @@ export interface TaskInfo {
    * bringing the conversation back. `'claude'` for every task created before
    * profiles existed, and for every one that named none. */
   profile: string;
+  /** Whether this task's profile takes our settings file, and so whether its
+   * agent can report hooks at all (TASK-89.4).
+   *
+   * False means `agentState` is TASK-12's heuristic — busy while the terminal
+   * is producing output, idle when it goes quiet — rather than the agent's own
+   * account of itself, and a client showing the state should say so. It is also
+   * why such a task never passes through `unknown`: the grace timer that ends
+   * there is only armed for a profile that could have answered it.
+   *
+   * Derived from the profile's templates rather than stored, so it is false for
+   * a profile the daemon's configuration no longer names. */
+  hooks: boolean;
+  /** Whether the process behind this task is a *restart* rather than a resume
+   * (TASK-89.4).
+   *
+   * True means the task was reopened on a profile that can neither resume a
+   * conversation by id nor continue the directory's last one, so its command
+   * was simply run again in its own directory: the terminal is live, the
+   * conversation is not, and the pane says so. False for every ordinary resume,
+   * including one whose ladder fell back to `--continue`.
+   *
+   * About the process and not the task, so it lives in the daemon's memory: a
+   * suspend, a close, a delete or a daemon restart ends the process this
+   * describes, and there is nothing left for it to be true of. */
+  restarted: boolean;
   lifecycle: Lifecycle;
   /** Where the task's checkout stands (§5.6). `none` for a task running in the
    * project's own directory; the other three are about a worktree we made.

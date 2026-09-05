@@ -23,6 +23,20 @@ export interface TaskRowWorktreeFacts {
 export interface TaskRowProps {
   title: string;
   state?: TaskState;
+  /**
+   * Whether the agent behind this task reports its own state (TASK-89.4).
+   *
+   * False means the dot is TASK-12's guess — busy while the terminal produces
+   * output, idle when it stops — because the task runs on a profile that never
+   * receives our hooks. The row still draws the same dot: the guess is usually
+   * right, and a second visual language for "probably busy" in a list of thirty
+   * would cost more than it explains. What changes is the dot's tooltip, which
+   * is where the qualification belongs — available on hover, absent from the
+   * scan.
+   *
+   * Defaults to true, which is what every claude task is.
+   */
+  hooks?: boolean;
   /** Second line: the last thing the agent said. */
   preview?: string;
   /** Trailing mono value — age, diff stat, whatever the list is sorted on. */
@@ -134,6 +148,7 @@ function WorktreeLine({ facts }: { facts: TaskRowWorktreeFacts }) {
 export function TaskRow({
   title,
   state = "idle",
+  hooks = true,
   preview,
   meta,
   selected = false,
@@ -183,7 +198,11 @@ export function TaskRow({
         className,
       )}
     >
-      <StatusDot state={state} className={stacked ? "mt-[5px]" : undefined} />
+      <StatusDot
+        state={state}
+        title={hooks ? undefined : `${state} · inferred from output`}
+        className={stacked ? "mt-[5px]" : undefined}
+      />
       <span className="flex min-w-0 flex-1 flex-col gap-px">
         <span
           className={cn(

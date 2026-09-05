@@ -32,6 +32,8 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     terminalTitle: "",
     agentState: "idle",
     profile: "claude",
+    hooks: true,
+    restarted: false,
     lifecycle: "live",
     cwd: "/Users/someone/projects/website",
     worktreePath: null,

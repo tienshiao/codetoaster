@@ -20,6 +20,7 @@ import type { TaskResult } from "../../../TaskContext";
 
 const stubs = vi.hoisted(() => ({
   tasks: [] as TaskInfo[],
+  profiles: undefined as Array<{ name: string; label: string }> | undefined,
   resumeTask: vi.fn<(id: string, options?: unknown, reporting?: unknown) => Promise<TaskResult<TaskInfo>>>(),
 }));
 
@@ -38,6 +39,13 @@ vi.mock("@/frontend/PtyContext", () => ({
 vi.mock("@/frontend/Terminal", () => ({
   XTerminal: () => null,
 }));
+// The pane reads one label out of the daemon's profile list. Mocked rather than
+// wrapped in a QueryClientProvider: the hook is a `useQuery` and the answer is
+// static configuration, so a provider here would buy a fetch stub and a cache
+// for one string.
+vi.mock("@/frontend/hooks/use-profiles", () => ({
+  useProfiles: () => ({ data: stubs.profiles }),
+}));
 
 const { AgentPane } = await import("./AgentPane");
 
@@ -54,6 +62,8 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     terminalTitle: "",
     agentState: "idle",
     profile: "claude",
+    hooks: true,
+    restarted: false,
     lifecycle: "suspended",
     cwd: "/Users/someone/projects/app",
     worktreePath: null,
@@ -78,6 +88,7 @@ beforeEach(() => {
   // with none is a normal answer and the phase goes on waiting for the PTY.
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 404 })));
   stubs.tasks = [task()];
+  stubs.profiles = undefined;
   stubs.resumeTask.mockReset();
 });
 
@@ -180,4 +191,73 @@ test("a task suspended out from under the view offers the way back", async () =>
 
   await screen.findByText("Suspended");
   expect(screen.getByRole("button", { name: "Reopen" })).toBeDefined();
+});
+
+/**
+ * The strip over a task that came back without its conversation (TASK-89.4).
+ *
+ * A profile that can neither resume by id nor continue the directory's last
+ * conversation gets its command run again instead, which from the outside looks
+ * exactly like a successful resume: a live terminal on a task that was
+ * suspended. The one thing separating them is this sentence, so what is pinned
+ * here is that it appears only when the server says the process is a restart —
+ * and that it can be waved away, since it is true for as long as that process
+ * runs and nobody needs telling twice.
+ */
+test("a restarted task says its conversation did not come back", async () => {
+  stubs.profiles = [{ name: "shell", label: "Shell (no agent)" }];
+  stubs.tasks = [
+    task({ lifecycle: "live", ptyId: "pty-1", profile: "shell", restarted: true, hooks: false }),
+  ];
+
+  await act(async () => {
+    render(<AgentPane taskId={TASK_ID} visible />);
+  });
+
+  // The profile's label, not its name: "shell" is what the API takes, and
+  // "Shell (no agent)" is what the user chose in the composer.
+  await screen.findByText(/Shell \(no agent\) can't resume/);
+});
+
+test("falls back to the profile's name before the daemon has answered", async () => {
+  // `useProfiles` resolves against the network, and this pane renders before it
+  // lands. The name is on the task itself, so there is always something to say.
+  stubs.profiles = undefined;
+  stubs.tasks = [
+    task({ lifecycle: "live", ptyId: "pty-1", profile: "shell", restarted: true, hooks: false }),
+  ];
+
+  await act(async () => {
+    render(<AgentPane taskId={TASK_ID} visible />);
+  });
+
+  await screen.findByText(/shell can't resume/);
+});
+
+test("an ordinary resume says nothing of the kind", async () => {
+  stubs.tasks = [task({ lifecycle: "live", ptyId: "pty-1", restarted: false })];
+
+  await act(async () => {
+    render(<AgentPane taskId={TASK_ID} visible />);
+  });
+
+  expect(screen.queryByText(/can't resume/)).toBeNull();
+});
+
+test("the strip can be dismissed", async () => {
+  stubs.profiles = [{ name: "shell", label: "Shell (no agent)" }];
+  stubs.tasks = [
+    task({ lifecycle: "live", ptyId: "pty-1", profile: "shell", restarted: true, hooks: false }),
+  ];
+
+  await act(async () => {
+    render(<AgentPane taskId={TASK_ID} visible />);
+  });
+  await screen.findByText(/can't resume/);
+
+  await act(async () => {
+    screen.getByRole("button", { name: "Dismiss" }).click();
+  });
+
+  expect(screen.queryByText(/can't resume/)).toBeNull();
 });

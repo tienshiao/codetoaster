@@ -102,6 +102,8 @@ const task = (id: string): TaskInfo => ({
   terminalTitle: "",
   agentState: "idle",
   profile: "claude",
+  hooks: true,
+  restarted: false,
   cwd: "/Users/someone/projects/app",
   worktreePath: null,
   worktreeCwd: null,

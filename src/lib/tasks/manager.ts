@@ -301,6 +301,19 @@ export class TaskManager {
   // a restart is not missing anything — and a resumed task genuinely is
   // unknown again until its agent reports in.
   private hookSeen: Set<string> = new Set();
+  /** Which tasks are running a *restart* rather than a resume (TASK-89.4).
+   *
+   * A restart is what a profile that can neither `--resume` nor `--continue`
+   * gets when its task is reopened: the same command, in the same directory,
+   * with no conversation behind it. The card has to be able to say so, because
+   * from the outside a restarted task and a resumed one look identical — a live
+   * terminal on a task that was suspended — and the difference is everything
+   * the user was in the middle of.
+   *
+   * In memory for the same reason `hookSeen` is: it describes the process
+   * running *now*, not the task. A daemon that restarted suspended every task
+   * it had, so there is no process left for this to be true of. */
+  private restarted: Set<string> = new Set();
   /** When each task's agent was last spawned, for turning the setup wrapper's
    * stamp into a duration. Not `created_at`: a restore (TASK-39) runs setup
    * again years after the row was written, and dating the reinstall from the
@@ -1083,7 +1096,17 @@ export class TaskManager {
     }
     this.spawnedAt.set(id, Date.now());
     this.adopt(pty, id);
-    this.armHookGrace(id);
+    // A fresh process on a fresh id: nothing about it is a restart, and an
+    // entry left by a task that held this id before it would say otherwise.
+    this.restarted.delete(id);
+    // The clock only makes sense for a profile that can send a hook (TASK-89.4).
+    // A hookless one never will, so the grace would do nothing but relabel a
+    // perfectly healthy task `unknown` the moment it elapsed. Without it the
+    // task's honest states are `starting`, then busy/idle as `inferState` reads
+    // them off the terminal from the first byte of output, then `exited` —
+    // TASK-12's degraded mode, which is what a profile with no `{settings}` was
+    // always going to live in.
+    if (capabilities.hooks) this.armHookGrace(id);
     this.placeInProject(id, projectId, options);
     // A new checkout is clean and its branch is at the base ref, so this
     // measures almost nothing — except the branch name, which is the one fact
@@ -1345,10 +1368,17 @@ export class TaskManager {
     // — a profile that cannot be pointed at one gets no directory — but the two
     // sets are cleared either way, since what they are about is the process
     // that is starting now.
+    //
+    // `require` and not `get`, even though a `profiles.json` edit can take a
+    // profile out from under a live row: `resumeLadder` answers such a row with
+    // an empty ladder, so the loop that calls this never runs a rung and this
+    // is unreachable for it. Throwing is also the right shape if it ever does
+    // become reachable — the ladder reads a throw from here as "the binary is
+    // unrunnable, no rung will do better" and stops, which is exactly true of a
+    // profile that does not exist.
     const profile = this.profiles.require(row.agent_profile);
-    const settingsPath = profileCapabilities(profile).hooks
-      ? await writeTaskSettings(row.id)
-      : undefined;
+    const capabilities = profileCapabilities(profile);
+    const settingsPath = capabilities.hooks ? await writeTaskSettings(row.id) : undefined;
     this.hookSeen.delete(row.id);
     this.compactTriggers.delete(row.id);
     const pty = this.ptys.spawn(
@@ -1371,7 +1401,9 @@ export class TaskManager {
       },
     );
     this.adopt(pty, row.id);
-    this.armHookGrace(row.id);
+    // Only for a profile that can actually send one — see `createTask`, where
+    // the same gate is applied for the same reason.
+    if (capabilities.hooks) this.armHookGrace(row.id);
     return pty;
   }
 
@@ -1383,7 +1415,15 @@ export class TaskManager {
    * `--resume` on an id with no conversation prints one line and exits 1
    * (verified). The cap resolves as success on purpose: an agent running with
    * hooks disabled reports nothing however well it is doing, and killing a
-   * working terminal because it was quiet would be the worse mistake. */
+   * working terminal because it was quiet would be the worse mistake.
+   *
+   * A hookless profile (TASK-89.4) therefore always settles on the cap, and
+   * output activity is deliberately *not* offered as a second observation for
+   * it. Output is not evidence of a working agent: the failure this exists to
+   * catch is a rung that prints one line of error and exits, so treating the
+   * first byte as success would declare exactly the doomed rung healthy and
+   * stop the ladder on it. Quiet-but-still-up remains the only honest reading
+   * we have for an agent that cannot speak for itself. */
   private awaitAgentStart(taskId: string, pty: Pty): Promise<boolean> {
     const capMs = this.startTimeoutMs;
     if (this.hookSeen.has(taskId)) return Promise.resolve(true);
@@ -1417,6 +1457,9 @@ export class TaskManager {
     this.hookSeen.delete(taskId);
     this.compactTriggers.delete(taskId);
     this.disarmHookGrace(taskId);
+    // Same reason as the two above: the flag is about the process, and the
+    // process is the one being taken back.
+    this.restarted.delete(taskId);
   }
 
   /** Reopen a suspended task (§4.3). Undefined when there is no such task.
@@ -1531,6 +1574,11 @@ export class TaskManager {
     options: { fresh?: boolean; cols?: number; rows?: number },
   ): Promise<TaskRow | undefined> {
     let row = initial;
+    // Whatever the last process was is over. Cleared here rather than only on
+    // the rung that succeeds, so a reopen that finds a resume rung this time —
+    // a profile the user has since given a `resume` template — stops claiming
+    // to be a restart.
+    this.restarted.delete(taskId);
 
     // The checkout comes back before the conversation does (§5.6). Eviction is
     // not a lifecycle state of its own — it is `worktree_state` on a suspended
@@ -1630,6 +1678,11 @@ export class TaskManager {
         return undefined;
       }
       if (started) {
+        // What the user is looking at is a new process with no conversation
+        // behind it, and only this loop knows which rung answered. Recorded
+        // before the broadcast, so the very first `TaskInfo` a client sees for
+        // the reopened task already carries it.
+        if (attempt.mode === "restart") this.restarted.add(taskId);
         this.store.update(taskId, { lifecycle: "live", last_active_at: Date.now() });
         // The in-memory grouping only ever held the tasks *this* run created,
         // and a task worth resuming is by definition one it did not. Without
@@ -1694,7 +1747,15 @@ export class TaskManager {
     if (fresh) return [{ mode: "start", mint: true }];
 
     const ladder: Array<{ mode: AgentMode; sessionId?: string; mint?: boolean }> = [];
-    const profile = this.profiles.require(row.agent_profile);
+    // `get`, not `require`. The row holds a profile *name*, and `profiles.json`
+    // is the user's file: one they edited between creating this task and
+    // reopening it can name a profile this daemon no longer has. There is
+    // nothing to render an argv through, so the ladder is empty — which
+    // `runResumeLadder` turns into `could_not_resume`, a card saying the task
+    // could not be brought back. A throw here would instead travel out of
+    // `resumeTask` to the route as a 500 on an ordinary click.
+    const profile = this.profiles.get(row.agent_profile);
+    if (!profile) return [];
     const capabilities = profileCapabilities(profile);
 
     // Every rung below the first is derived from Claude Code's own transcript
@@ -1706,16 +1767,19 @@ export class TaskManager {
     // stored id if it can resume by id, then its directory-scoped fallback if
     // it has one.
     //
-    // A profile with neither leaves an empty ladder, which falls through to
-    // `could_not_resume` — a card with a button rather than a lie about being
-    // live. TASK-89.4 turns that into a restart in the task's cwd with the card
-    // explaining that the conversation could not come back, which is the honest
-    // thing for a shell task and for any agent that cannot resume.
+    // A profile with neither gets a restart: the start command again, in the
+    // task's own directory, with no prompt and keeping the row's session id
+    // where the template names one (TASK-89.4). It is not a resume and is not
+    // dressed as one — `TaskInfo.restarted` says so and the agent pane prints
+    // the sentence — but it is a great deal better than a dead card for the two
+    // cases that reach it: a shell task, whose whole purpose is a terminal in
+    // that directory, and any agent whose conversations we have no way to name.
     if (profile.name !== DEFAULT_PROFILE) {
       if (capabilities.resume && row.agent_session_id) {
         ladder.push({ mode: "resume", sessionId: row.agent_session_id });
       }
       if (capabilities.continue) ladder.push({ mode: "continue" });
+      if (!capabilities.resume && !capabilities.continue) ladder.push({ mode: "restart" });
       return ladder;
     }
 
@@ -2272,6 +2336,9 @@ export class TaskManager {
     this.hookSeen.delete(taskId);
     this.compactTriggers.delete(taskId);
     this.cwdCheckedAt.delete(taskId);
+    // And the claim that the process now gone was a restart, which is about
+    // that process and not about the suspended task the next reopen judges.
+    this.restarted.delete(taskId);
     // Only the lifecycle. `agent_state` stays `idle`: that is what was true of
     // the agent when it was harvested and what the card should go on saying.
     // `reconcileOnBoot`'s `unknown` is the other case — a daemon that never
@@ -3015,6 +3082,7 @@ export class TaskManager {
     this.hookSeen.delete(taskId);
     this.compactTriggers.delete(taskId);
     this.cwdCheckedAt.delete(taskId);
+    this.restarted.delete(taskId);
     // Normally spent by the first hook. A task deleted before its agent ever
     // reported one never spends it, and without this the map keeps an entry
     // per such task for the life of the daemon.
@@ -3201,6 +3269,14 @@ export class TaskManager {
 
   // -------------------------------------------------------------- rendering
 
+  /** Whether a task on this profile can report hooks at all, for the wire.
+   * A name the registry does not answer to is `false`: there is no template to
+   * read, and a task on one cannot be spawned, let alone reported for. */
+  private profileHooks(name: string): boolean {
+    const profile = this.profiles.get(name);
+    return profile !== undefined && profileCapabilities(profile).hooks;
+  }
+
   taskInfo(taskId: string): TaskInfo | undefined {
     const row = this.store.get(taskId);
     if (!row) return undefined;
@@ -3215,6 +3291,13 @@ export class TaskManager {
       terminalTitle: pty?.title ?? "",
       agentState: row.agent_state,
       profile: row.agent_profile,
+      // Derived from the templates, not stored: `profileCapabilities` reads
+      // whether anything in the profile names `{settings}`, which is the whole
+      // of what "our hooks reach this agent" means. False for a profile the
+      // registry no longer answers to — nothing can be spawned for it, so
+      // nothing will report.
+      hooks: this.profileHooks(row.agent_profile),
+      restarted: this.restarted.has(taskId),
       lifecycle: row.lifecycle,
       worktreeState: row.worktree_state,
       // Null until measured, which a client must not read as "nothing to

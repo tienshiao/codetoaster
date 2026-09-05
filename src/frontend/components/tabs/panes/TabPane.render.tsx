@@ -75,6 +75,12 @@ vi.mock("@/frontend/PtyContext", () => ({
 vi.mock("@/frontend/hooks/use-backlog", () => ({
   useBacklog: () => ({ data: stubs.backlog }),
 }));
+// `AgentPane` reads the daemon's profile list for one label. It is a `useQuery`
+// and nothing here mounts a query client — the whole point of the mocks above
+// is that this file stands up terminal panes and nothing else.
+vi.mock("@/frontend/hooks/use-profiles", () => ({
+  useProfiles: () => ({ data: undefined }),
+}));
 // The one non-terminal pane rendered here, for the frame-focus test below. It
 // is a git query and a commit list, neither of which is the subject, and both
 // of which want a query client.
@@ -123,6 +129,8 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     terminalTitle: "",
     agentState: "idle",
     profile: "claude",
+    hooks: true,
+    restarted: false,
     lifecycle: "live",
     cwd: "/Users/someone/projects/app",
     worktreePath: null,

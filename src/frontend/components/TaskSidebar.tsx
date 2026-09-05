@@ -700,6 +700,10 @@ export function useTaskSidebar({
         id: task.id,
         title: label,
         state,
+        // Not on the archived branch above: that row's dot is `exited` because
+        // the task is archived, which is a fact about the lifecycle and not a
+        // guess about a process — nothing was inferred from any output.
+        hooks: task.hooks,
         preview: previewOf(task, label),
         meta: ago(task.lastActiveAt, now),
         selected: task.id === selectedTaskId,

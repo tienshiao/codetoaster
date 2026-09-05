@@ -7,6 +7,8 @@ import { applyMigrations } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import { taskDir } from "../agent/spawn";
+import { builtinProfiles, claudeProfile } from "../agent/profile";
+import { ProfileRegistry } from "../agent/profiles";
 import { projectsDirFor } from "../agent/transcripts";
 import { worktreePathFor } from "../worktree/paths";
 import { transitionFor, type HookPayload } from "../agent/hook-state";
@@ -308,6 +310,40 @@ describe("resuming a suspended task", () => {
     expect(resumed!.lifecycle).toBe("live");
     const modes = (await agent.settled(2)).map((argv) => argv.find((a) => a.startsWith("--resume") || a === "--continue"));
     expect(modes).toEqual(["--resume", "--continue"]);
+  });
+
+  // The same ladder against a `claude` the user replaced in `profiles.json`
+  // with one that has no `continue` template (TASK-89.4). The rungs are the
+  // templates' to give: a profile that cannot continue simply loses that rung,
+  // and the rest of the ladder is untouched.
+  //
+  // The failure this rules out is not a missing rung but a spurious one. Before
+  // the capabilities gated them, `--continue` was offered to anything named
+  // `claude` and reached `buildAgentCommand`, which throws "cannot continue" —
+  // and the ladder reads a throw from a spawn as "the binary is unrunnable, no
+  // rung will do better" and stops walking. So one absent template took every
+  // rung below it off too.
+  test("a claude replacement with no continue template simply skips that rung", async () => {
+    const { manager, store, agent } = newManager(["--resume"]);
+    // Everything the built-in has, minus the one template. `binEnv` comes with
+    // it, so the stand-in `newManager` just pointed CODETOASTER_AGENT_BIN at is
+    // still what runs.
+    const { continue: _noContinue, ...withoutContinue } = claudeProfile();
+    manager.setProfiles(new ProfileRegistry([...builtinProfiles(), withoutContinue]));
+    const row = suspendedTask(manager, store);
+    // Planted exactly as the test above plants them, so the only thing standing
+    // between this ladder and a `--continue` rung is the missing template.
+    plantTranscripts(row.cwd, ["stored-session-id"]);
+
+    const resumed = await manager.resumeTask(row.id);
+
+    const invocations = await agent.settled(1);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]).toContain("--resume");
+    expect(invocations.flat()).not.toContain("--continue");
+    // Nothing left to try, which is a card with a button — not a lie about
+    // being live, and not a 500 out of the route either.
+    expect(resumed!.agent_state).toBe("could_not_resume");
   });
 
   // A directory holding somebody else's newer conversation: neither the guess

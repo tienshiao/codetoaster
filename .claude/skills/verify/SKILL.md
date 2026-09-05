@@ -24,11 +24,22 @@ runs git and spawns a process, and every one of those wants a status code.
 ```sh
 # 201 with the task's info; the id it answers with is the one every route takes.
 curl -s -X POST http://localhost:4599/api/tasks \
-  -H 'Content-Type: application/json' -d '{"cols":120,"rows":30}'
+  -H 'Content-Type: application/json' -d '{"cols":120,"rows":30,"profile":"shell"}'
 # PATCH renames it, DELETE closes it, GET /api/tasks lists the live ones.
 curl -s -X PATCH http://localhost:4599/api/tasks/<task-id> \
   -H 'Content-Type: application/json' -d '{"title":"verify"}'
 ```
+
+**Always `"profile":"shell"` unless the change under test is about the agent.**
+The shell profile spawns the user's `$SHELL` in the task's directory and no
+agent at all, so the UI and the whole task lifecycle — create, attach, close,
+reopen, archive — can be driven without starting a real Claude Code session,
+leaving a transcript on disk, or spending tokens. Omitting the field runs
+`claude`, once per task created. Two things about a shell task read differently
+on purpose, and neither is a bug to chase: it never reports a hook, so its
+state is inferred from terminal output (the sidebar dot's tooltip says so), and
+it cannot resume, so reopening it after a close restarts a shell rather than
+bringing anything back — which the agent pane says in a strip above the grid.
 
 **The two ids are different things.** A task is the durable work and owns the
 row, the URL and every HTTP route; a PTY is a terminal it happens to be running

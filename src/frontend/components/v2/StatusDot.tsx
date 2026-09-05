@@ -8,6 +8,11 @@ export interface StatusDotProps {
   size?: number;
   /** Square (2px radius) instead of round — the diff/file-status marker. */
   square?: boolean;
+  /** What hovering the dot says, when the state's own name is not the whole
+   * truth: a task whose agent reports no hooks has a state that was *guessed*
+   * from its output, and the tooltip is where that fits (TASK-89.4). Defaults
+   * to the state. */
+  title?: string;
   className?: string;
 }
 
@@ -20,10 +25,16 @@ const FILLS: Record<TaskState, string> = {
   error: "bg-state-error",
 };
 
-export function StatusDot({ state = "idle", size = 7, square = false, className }: StatusDotProps) {
+export function StatusDot({
+  state = "idle",
+  size = 7,
+  square = false,
+  title,
+  className,
+}: StatusDotProps) {
   return (
     <span
-      title={state}
+      title={title ?? state}
       style={{ width: size, height: size }}
       className={cn(
         "inline-block flex-none",
