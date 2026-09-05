@@ -236,9 +236,16 @@ function OpenPalette({
     // gating has to be repeated here or a hundred commits sit under the
     // actions at an empty box, which is exactly what the gate was for.
     const commits = searching ? (log.data?.pages.flatMap((page) => page.commits) ?? []) : [];
-    // Same shape, one query later: `keepPreviousData` holds the last search's
-    // hits at an empty box, and file rows are `forceMount`, so they would draw
-    // unfiltered and suppress the empty state with them.
+    // Gated the same way, and for the same reason: `enabled: false` stops the
+    // fetch at an empty box but not the cache for the last query's key, so the
+    // previous search's hits are still there to be read. File rows are
+    // `forceMount` — they draw unfiltered and suppress the empty state with them
+    // — so an empty box has to mean an empty section explicitly.
+    //
+    // Stale rows never draw *during* a search either: the data is keyed on the
+    // query and `useFileSearch` keeps no placeholder, so a query in flight has
+    // nothing to hand back. The section is empty and the footer says "Searching
+    // files…".
     const fileResults = debounced ? (files.data?.results ?? []) : [];
 
     return [

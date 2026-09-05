@@ -28,6 +28,9 @@ import type { TabState } from "../../../layout-store";
  */
 let searchListener: ((e: { resultIndex: number; resultCount: number }) => void) | undefined;
 const MISS = { resultIndex: -1, resultCount: 0 };
+/** How many times a bar stepped the addon, per direction. Which bar answers a
+ * ⌘G is the whole question the chord tests at the bottom of this file ask. */
+const steps = { next: 0, previous: 0 };
 const searchAddon = {
   onDidChangeResults: (fn: (e: { resultIndex: number; resultCount: number }) => void) => {
     searchListener = fn;
@@ -38,9 +41,11 @@ const searchAddon = {
     };
   },
   findNext() {
+    steps.next += 1;
     searchListener?.(MISS);
   },
   findPrevious() {
+    steps.previous += 1;
     searchListener?.(MISS);
   },
   clearDecorations() {},
@@ -70,6 +75,10 @@ vi.mock("@/frontend/PtyContext", () => ({
 vi.mock("@/frontend/hooks/use-backlog", () => ({
   useBacklog: () => ({ data: stubs.backlog }),
 }));
+// The one non-terminal pane rendered here, for the frame-focus test below. It
+// is a git query and a commit list, neither of which is the subject, and both
+// of which want a query client.
+vi.mock("./HistoryPane", () => ({ HistoryPane: () => null }));
 vi.mock("@/frontend/Terminal", () => ({
   // Through `forwardRef` with a handle, because a pane reaches its grid by ref
   // and a plain function stub silently drops it — leaving a focus test that
@@ -275,15 +284,41 @@ test("dropping to zero is a pane being told it is no longer the one in front", (
   expect(stubs.focuses).toBe(1);
 });
 
-test("mounting with a request already standing is not a rise", () => {
-  // `TabPane` is keyed by task, so leaving a task and returning remounts the
-  // pane with whatever number the last chord left behind. Focusing on that
-  // would take the caret out of the sidebar filter the user clicked from.
+test("a pane that mounts holding a request was mounted by it, and takes the caret", () => {
+  // The shell clears a pulse after the commit it rose in (`TaskShell`), so a
+  // non-zero number on mount is never one left standing by an old chord — it
+  // is this commit's, and the pane it mounted is the one being addressed. A
+  // baseline taken at mount was what left `⌘K ]` onto a diff tab with the
+  // caret still in the PTY.
   const pulse = renderFocusable({ kind: "agent" }, 4);
-  expect(stubs.focuses).toBe(0);
-  // Still answers the next real one.
-  pulse(5);
   expect(stubs.focuses).toBe(1);
+  // Still answers the next one.
+  pulse(5);
+  expect(stubs.focuses).toBe(2);
+});
+
+test("a non-terminal pane mounted by a chord takes the caret in its frame", () => {
+  // `TabArea` mounts a diff or a history pane only while it is in front, so
+  // the chord that puts it there mounts it in the same commit the pulse
+  // rises in. The frame is what takes focus — DiffLayout's arrow keys stand
+  // down while a textarea has focus, and without this they kept going to the
+  // other group's terminal.
+  render(
+    <TabPane
+      taskId={TASK_ID}
+      tab={tab({ kind: "history" })}
+      visible
+      focusRequest={1}
+      onOpenTab={vi.fn()}
+      onSubmitReview={() => true}
+    />,
+  );
+  const frame = document.activeElement as HTMLElement | null;
+  expect(frame).not.toBeNull();
+  expect(frame).not.toBe(document.body);
+  expect(frame?.tabIndex).toBe(-1);
+  // The grid was not asked: the pulse went to the frame around the pane.
+  expect(stubs.focuses).toBe(0);
 });
 
 // ── search opens on a pulse and hands the caret back (TASK-58) ──────────────
@@ -348,14 +383,11 @@ test("closing the bar puts the caret back in the terminal", () => {
   expect(stubs.focuses).toBe(1);
 });
 
-test("mounting with a search request already standing is not a rise either", () => {
-  // Same rule as the focus pulse: `TabPane` is keyed by task, so returning to
-  // a task remounts the pane with whatever number was left standing — and a
-  // search bar opening on its own over a terminal is not what a click on a
-  // task row asked for.
+test("mounting with a search request is a rise too, by the same rule as focus", () => {
+  // The shell clears the search pulse after its commit exactly as it does the
+  // focus pulse, so a number on mount is this commit's and not one an old
+  // press left standing.
   const pane = renderSearchable({ kind: "agent" }, 3);
-  expect(pane.bar()).toBeNull();
-  pane.pulse(4);
   expect(pane.bar()).not.toBeNull();
 });
 
@@ -373,4 +405,113 @@ test("a query with no match says so, not nothing", () => {
   // them: the query itself is what has to re-render the span.
   pane.type("zzz");
   expect(pane.text("No results")).not.toBeNull();
+});
+
+// ── ⌘G steps the active pane's matches, from wherever the caret is ──────────
+
+/**
+ * The chord is platform-gated (`isSearchChord`), and happy DOM leaves
+ * `navigator.platform` as a bare "" — so without this every press below is a
+ * bare ⌘G on a machine the keymap thinks is not a Mac, and matches nothing.
+ */
+beforeEach(() => {
+  Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
+  steps.next = 0;
+  steps.previous = 0;
+});
+
+/**
+ * An agent pane with its bar already open — mounting with a request is a rise,
+ * as the test above pins — and its group's active flag set either way.
+ *
+ * With a query in the box, because the bar steps nothing without one: an empty
+ * field has no match to be next of. The search that typing itself kicks off is
+ * counted out again, so what the tests below count is the chord's doing alone.
+ */
+function renderWithBar(active: boolean) {
+  const view = render(
+    <TabPane
+      taskId={TASK_ID}
+      tab={tab({ kind: "agent" })}
+      visible
+      searchRequest={1}
+      active={active}
+      onOpenTab={vi.fn()}
+      onSubmitReview={() => true}
+    />,
+  );
+  const input = view.container.querySelector<HTMLInputElement>('[aria-label="Search terminal"]');
+  expect(input).not.toBeNull();
+  act(() => {
+    fireEvent.change(input!, { target: { value: "needle" } });
+  });
+  steps.next = 0;
+  steps.previous = 0;
+  return view;
+}
+
+/** A ⌘G as the browser reports it, from wherever the caret happens to be. */
+function pressStep(target: EventTarget) {
+  const event = new KeyboardEvent("keydown", {
+    key: "g",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  act(() => {
+    target.dispatchEvent(event);
+  });
+  return event;
+}
+
+test("⌘G from outside the pane steps the active pane's matches", () => {
+  renderWithBar(true);
+
+  // The Explorer, the tab strip, the body: anywhere that is not a terminal. The
+  // bar was bound to its pane's root, so the chord it advertises on its own
+  // buttons did nothing the moment the caret left the pane.
+  const event = pressStep(document.body);
+
+  expect(steps.next).toBe(1);
+  expect(event.defaultPrevented).toBe(true);
+});
+
+test("⌘G from outside the pane does nothing for an inactive pane", () => {
+  renderWithBar(false);
+
+  // The other half of listening on the document: a split with two bars open
+  // would otherwise step both terminals on one press, including the one the
+  // user is not looking at.
+  pressStep(document.body);
+
+  expect(steps.next).toBe(0);
+});
+
+test("⌘G with the caret in another terminal pane is that pane's", () => {
+  renderWithBar(true);
+
+  // Standing in for the other half of a split, which the bar recognises by the
+  // `data-terminal-pane` marker its own root carries: a press from in there
+  // belongs to that pane's bar, active group or not.
+  const other = document.createElement("div");
+  other.setAttribute("data-terminal-pane", "");
+  const textarea = document.createElement("textarea");
+  other.appendChild(textarea);
+  document.body.appendChild(other);
+
+  pressStep(textarea);
+  other.remove();
+
+  expect(steps.next).toBe(0);
+});
+
+test("the terminal is told whether a bar is up, so it yields ⌃G to nobody", () => {
+  // What the grid does with it is `terminalMustYield`'s: with no bar mounted the
+  // step chord is the PTY's — off a Mac it is readline's abort — and swallowing
+  // it for nobody was the bug.
+  const pane = renderSearchable({ kind: "agent" });
+  expect(stubs.terminals.at(-1)!.searchOpen).toBe(false);
+
+  pane.pulse(1);
+  expect(stubs.terminals.at(-1)!.searchOpen).toBe(true);
 });

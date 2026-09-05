@@ -110,9 +110,9 @@ test("the second press maps to its command", () => {
   expect(matchCommand(press("]"))?.command).toBe("next-tab");
   expect(matchCommand(press("["))?.command).toBe("prev-tab");
   expect(matchCommand(press("\\"))?.command).toBe("split");
-  expect(matchCommand(press("w"))?.command).toBe("close-tab");
+  expect(matchCommand(press("x"))?.command).toBe("close-tab");
   expect(matchCommand(press("a"))?.command).toBe("focus-agent");
-  expect(matchCommand(press("`"))?.command).toBe("new-shell");
+  expect(matchCommand(press("s"))?.command).toBe("new-shell");
   expect(matchCommand(press("ArrowLeft"))?.command).toBe("focus-group-left");
   expect(matchCommand(press("ArrowRight"))?.command).toBe("focus-group-right");
 });
@@ -128,7 +128,7 @@ test("the leader's modifier may still be held on the second press", () => {
 });
 
 test("Shift on the second press still matches — off a Mac the leader itself needs it", () => {
-  expect(matchCommand(press("W", { shiftKey: true }))?.command).toBe("close-tab");
+  expect(matchCommand(press("X", { shiftKey: true }))?.command).toBe("close-tab");
 });
 
 test("a held Shift folds punctuation back onto the cap the table names", () => {
@@ -137,7 +137,32 @@ test("a held Shift folds punctuation back onto the cap the table names", () => {
   expect(matchCommand(press("}", { ctrlKey: true, shiftKey: true }))?.command).toBe("next-tab");
   expect(matchCommand(press("{", { ctrlKey: true, shiftKey: true }))?.command).toBe("prev-tab");
   expect(matchCommand(press("|", { ctrlKey: true, shiftKey: true }))?.command).toBe("split");
-  expect(matchCommand(press("~", { ctrlKey: true, shiftKey: true }))?.command).toBe("new-shell");
+});
+
+test("a held Shift folds the digit row too, so ⌃⇧K 1 jumps off a Mac", () => {
+  // With Shift still down from the leader, `1` arrives as `!` — and every one
+  // of the nine jump chords was dead on the platform whose leader needs Shift.
+  expect(matchCommand(press("!", CTRL_SHIFT))).toMatchObject({ command: "jump-tab", index: 1 });
+  expect(matchCommand(press("(", CTRL_SHIFT))).toMatchObject({ command: "jump-tab", index: 9 });
+});
+
+test("a digit is read off the physical key when the event names one", () => {
+  // `!` on a US keyboard, `1` on a French one: `code` says which cap it was
+  // regardless of what Shift or the layout made of it.
+  expect(matchCommand(press("!", { ...CTRL_SHIFT, code: "Digit1" }))).toMatchObject({ index: 1 });
+  expect(matchCommand(press("&", { code: "Digit1" }))).toMatchObject({ index: 1 });
+  // And an ordinary digit under a ⌘ still means itself.
+  expect(matchCommand(press("4", { ...CMD, code: "Digit4" }))).toMatchObject({ index: 4 });
+});
+
+test("the second press is never one of the chords the browser will not give up", () => {
+  // Typed with the leader's modifier still held (see `matchCommand`), each
+  // second press is also ⌘key / ⌃⇧key — and Chrome closes the tab on ⌘W and
+  // ⌃⇧W, opens on ⌘T / ⌘N, quits on ⌘Q, and macOS cycles windows on ⌘`.
+  const reserved = new Set(["w", "t", "n", "q", "`"]);
+  for (const command of SHELL_COMMANDS) {
+    expect(reserved.has(command.key)).toBe(false);
+  }
 });
 
 test("⌥ on the second press matches nothing — that is the terminal's Meta", () => {
@@ -209,10 +234,19 @@ test("the terminal yields the palette's direct chord", () => {
   expect(terminalMustYield(press("P", CMD_SHIFT), false)).toBe(false);
 });
 
-test("the terminal yields ⌘G and ⇧⌘G, which the search bar hears after it", () => {
-  expect(terminalMustYield(press("g", CMD), true)).toBe(true);
-  expect(terminalMustYield(press("g", { metaKey: true, shiftKey: true }), true)).toBe(true);
-  expect(terminalMustYield(press("g", { ctrlKey: true }), false)).toBe(true);
+test("the terminal yields ⌘G and ⇧⌘G while its search bar is open, which hears them after it", () => {
+  expect(terminalMustYield(press("g", CMD), true, true)).toBe(true);
+  expect(terminalMustYield(press("g", { metaKey: true, shiftKey: true }), true, true)).toBe(true);
+  expect(terminalMustYield(press("g", { ctrlKey: true }), false, true)).toBe(true);
+});
+
+test("with no search bar open the step chord is the PTY's — off a Mac it is readline's ^G", () => {
+  // Nothing would act on it: the bar is the only listener, and it is not
+  // mounted. Yielding anyway swallowed the abort a reverse-i-search was
+  // waiting for.
+  expect(terminalMustYield(press("g", { ctrlKey: true }), false)).toBe(false);
+  expect(terminalMustYield(press("g", { ctrlKey: true }), false, false)).toBe(false);
+  expect(terminalMustYield(press("g", CMD), true)).toBe(false);
 });
 
 test("the terminal keeps ordinary typing, and the control keys a shell needs", () => {
@@ -253,15 +287,15 @@ test("a direct chord prints its own modifiers, with no leader in front", () => {
 });
 
 test("capsFor looks a chord up by id, and draws nothing for one that is gone", () => {
-  expect(capsFor("new-shell", true)).toEqual(["⌘", "K", "`"]);
+  expect(capsFor("new-shell", true)).toEqual(["⌘", "K", "S"]);
   expect(capsFor("palette", true)).toEqual(["⌘", "⇧", "P"]);
   expect(capsFor("no-such-command", true)).toEqual([]);
 });
 
 test("chordHint spells a chord out for a tooltip, which cannot hold caps", () => {
-  expect(chordHint("new-shell", true)).toBe("⌘K `");
+  expect(chordHint("new-shell", true)).toBe("⌘K S");
   expect(chordHint("split", true)).toBe("⌘K \\");
-  expect(chordHint("close-tab", false)).toBe("Ctrl+Shift+K W");
+  expect(chordHint("close-tab", false)).toBe("Ctrl+Shift+K X");
 });
 
 test("a direct chord spells out as one press, with no space in it", () => {
@@ -397,6 +431,35 @@ test("the machine runs on the non-Mac leader too", () => {
   const { results } = run([[press("k", CTRL_SHIFT)], [press("}", CTRL_SHIFT)]], false);
   expect(results[0]).toEqual({ kind: "armed" });
   expect(results[1]).toMatchObject({ kind: "command", command: { command: "next-tab" } });
+});
+
+test("with the leader armed and Shift still down, a digit jumps off a Mac", () => {
+  const { last } = run([[press("k", CTRL_SHIFT)], [press("!", CTRL_SHIFT)]], false);
+  expect(last).toMatchObject({ kind: "command", command: { command: "jump-tab", index: 1 } });
+});
+
+// ── a modal owns the keyboard ───────────────────────────────────────────────
+
+test("while a modal is up the leader does not arm, so its Escape reaches the dialog", () => {
+  const step = stepKeymap(null, press("k", CMD), 0, true, true);
+  expect(step.result).toEqual({ kind: "idle" });
+  expect(step.armedAt).toBeNull();
+  // And the Escape after it — the one a dialog listens for on the document,
+  // below the capture listener that was stopping it — is idle too.
+  const escape = stepKeymap(step.armedAt, press("Escape"), 1, true, true);
+  expect(escape.result).toEqual({ kind: "idle" });
+});
+
+test("a modal opening mid-chord drops the arm rather than eating the next key", () => {
+  const armed = stepKeymap(null, press("k", CMD), 0, true, false);
+  const inModal = stepKeymap(armed.armedAt, press("x", CMD), 1, true, true);
+  expect(inModal.result).toEqual({ kind: "idle" });
+  expect(inModal.armedAt).toBeNull();
+});
+
+test("the direct chord still fires in a modal — it is how the palette closes", () => {
+  const step = stepKeymap(null, press("P", CMD_SHIFT), 0, true, true);
+  expect(step.result).toMatchObject({ kind: "command", command: { command: "palette" } });
 });
 
 // ── the open-search chord (TASK-58) ─────────────────────────────────────────

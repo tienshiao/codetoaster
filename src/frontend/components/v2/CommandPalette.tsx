@@ -144,6 +144,10 @@ export function CommandPalette<T extends PaletteItem = PaletteItem>({
     >
       <Command
         role="dialog"
+        // The shell keymap stands down while any `aria-modal` surface exists,
+        // which is how an Escape after a stray ⌘K reaches the palette instead of
+        // being eaten by an armed leader (`use-shell-keymap`).
+        aria-modal="true"
         aria-label="Command palette"
         // Names the input, which is a combobox and would otherwise have none.
         // cmdk renders it as a visually hidden <label>.

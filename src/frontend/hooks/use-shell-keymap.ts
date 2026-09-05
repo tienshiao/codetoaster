@@ -69,6 +69,13 @@ export interface ShellKeymap {
   run: (command: ShellCommand) => void;
 }
 
+/** Whether a modal surface is up — see "…except a modal" below. Every v2
+ * modal declares `aria-modal`, which is the one attribute a modal has to carry
+ * for assistive technology anyway, so nothing has to register itself here. */
+function modalOpen(): boolean {
+  return document.querySelector('[aria-modal="true"]') !== null;
+}
+
 /**
  * Binds the leader map (TASK-34, `keymap.ts`) to the layout.
  *
@@ -90,6 +97,20 @@ export interface ShellKeymap {
  * map claims is only reachable *after* that press, and a keystroke that lands
  * mid-chord belonging to the chord rather than to the field is what a chord
  * is.
+ *
+ * ## …except a modal
+ *
+ * A `Dialog` or the palette is different from a text field: while one is up
+ * the keyboard is its, and the leader does not arm. It is the *consuming* that
+ * makes this necessary rather than the arming — every press after the leader is
+ * stopped here in the capture phase, and `Dialog` and `CommandPalette` listen
+ * for Escape on the document, which is *below* the window on the capture path.
+ * A stray ⌘K in a rename field followed by Escape left the dialog open, and the
+ * next character typed into the palette's query was eaten as a chord. Read off
+ * the DOM (`aria-modal`) rather than passed in, because the dialogs are mounted
+ * by the sidebar, the settings button and the Explorer, none of which this hook
+ * is told about — and a modal any of them forgot to declare is a modal Escape
+ * would not reach, which is the failure this guards against.
  */
 export function useShellKeymap(options: ShellKeymapOptions): ShellKeymap {
   // Read through a ref rather than named in the effect's deps: the handlers
@@ -194,7 +215,7 @@ export function useShellKeymap(options: ShellKeymapOptions): ShellKeymap {
 
   useEffect(() => {
     const onKeyDown = (ev: KeyboardEvent) => {
-      const step = stepKeymap(armedAtRef.current, ev, Date.now());
+      const step = stepKeymap(armedAtRef.current, ev, Date.now(), undefined, modalOpen());
       armedAtRef.current = step.armedAt;
       if (step.result.kind === "idle") return;
 

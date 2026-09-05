@@ -26,9 +26,12 @@ interface TerminalSearchBarProps {
   /** Rises on every open request; the input takes focus and selects on each
    * rise, so ⌘F while already open re-enters the field. */
   activation: number;
-  /** The element ⌘G / ⇧⌘G are listened on — the pane's root, so a split's two
-   * bars step their own matches and not each other's. */
+  /** This pane's root. ⌘G / ⇧⌘G are listened for on the document, and this is
+   * what says a press was typed *inside* this pane — see the effect below. */
   scope: RefObject<HTMLElement | null>;
+  /** Whether this pane's group is the layout's active one. It decides which bar
+   * answers a ⌘G pressed outside every terminal — see the effect below. */
+  active?: boolean;
 }
 
 export function TerminalSearchBar({
@@ -36,6 +39,7 @@ export function TerminalSearchBar({
   onClose,
   activation,
   scope,
+  active = false,
 }: TerminalSearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   // State rather than a ref, because the count span reads it. A first query
@@ -76,29 +80,41 @@ export function TerminalSearchBar({
     onClose();
   }, [searchAddon, onClose]);
 
-  // ⌘G / ⇧⌘G for next and previous match, bound to the *pane* rather than the
-  // document: a split has two of these, and on the document both would answer
-  // one press and step matches in a terminal the user is not looking at. Both
-  // the bar's input and xterm's textarea are inside the pane root, so the
-  // bubble phase reaches this from either — and xterm already lets the chord
-  // past (`terminalMustYield`).
+  // ⌘G / ⇧⌘G for next and previous match, heard on the document but answered by
+  // one bar.
+  //
+  // Bound on the pane root, the chord did nothing the moment the caret left the
+  // pane — clicking the Explorer, the tab strip, or anywhere in the body — while
+  // the bar went on advertising it on its own buttons. Bound on the document and
+  // nothing else, a split's two open bars would both answer one press and step
+  // matches in a terminal the user is not looking at.
+  //
+  // So the document hears it and two rules decide whose it is. If the press came
+  // from inside this pane it is this pane's, whatever else is open: that is the
+  // caret in this terminal or in this bar's own input. Otherwise — a press from
+  // outside every terminal, which is what `[data-terminal-pane]` marks — it
+  // belongs to the pane in the layout's active group, so exactly one bar answers
+  // and a press aimed at *another* terminal is left to that terminal's own bar.
   //
   // Matched with the same predicate the terminal yields on, so the key it lets
   // past is the key this binds — spelling it out here is how ⇧⌘G ended up
-  // reaching nobody, since with Shift held the browser reports `G`.
+  // reaching nobody, since with Shift held the browser reports `G`. Bubble phase
+  // for the same reason: xterm's handler runs first and lets the chord through
+  // (`terminalMustYield`).
   useEffect(() => {
-    const root = scope.current;
-    if (!root) return;
     const handler = (e: KeyboardEvent) => {
-      if (isSearchChord(e)) {
-        e.preventDefault();
-        if (e.shiftKey) findPrevious();
-        else findNext();
-      }
+      if (!isSearchChord(e)) return;
+      const target = e.target as Element | null;
+      const inside = scope.current?.contains(target as Node | null) ?? false;
+      const inAnotherTerminal = !inside && target?.closest?.("[data-terminal-pane]") != null;
+      if (!inside && (!active || inAnotherTerminal)) return;
+      e.preventDefault();
+      if (e.shiftKey) findPrevious();
+      else findNext();
     };
-    root.addEventListener("keydown", handler);
-    return () => root.removeEventListener("keydown", handler);
-  }, [scope, findNext, findPrevious]);
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [scope, active, findNext, findPrevious]);
 
   const hasQuery = query.length > 0;
 

@@ -1,5 +1,5 @@
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { BacklogResponse } from "@/types/backlog";
@@ -180,6 +180,70 @@ test("a repository with no backlog says so rather than showing an empty list", a
 
   // What shows for the frame before the shell falls back to Changes.
   expect(await screen.findByText("Not a Backlog.md repository.")).toBeTruthy();
+});
+
+// ── a poll that has stopped working ─────────────────────────────────────────
+
+/** The section with its query client to hand, so the poll can be made to run
+ * again here and now rather than three seconds from now. */
+function mountSectionWithClient() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(
+    <QueryClientProvider client={client}>
+      <BacklogSection
+        taskId="t1"
+        backlogTab="Open"
+        onBacklogTabChange={vi.fn()}
+        open={vi.fn()}
+        handlers={{ onClick: () => {}, onDoubleClick: () => {} }}
+      />
+    </QueryClientProvider>,
+  );
+  return { ...view, client };
+}
+
+/** Every request from here fails, the way a server that has gone away does. */
+function breakFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "backlog is unreadable" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        }),
+    ),
+  );
+}
+
+test("a poll that keeps failing says so above the list it could not refresh", async () => {
+  const { client } = mountSectionWithClient();
+  await screen.findByText("TASK-12");
+
+  breakFetch();
+  await act(async () => {
+    await client.refetchQueries();
+  });
+
+  // React Query keeps the last data through a failed refetch, so the error
+  // branch that replaces the section never fires again after one good load —
+  // and a list that has quietly stopped refreshing looks like a repository
+  // where nothing is happening.
+  expect(await screen.findByText(/Could not refresh: backlog is unreadable/)).toBeTruthy();
+  // Still readable underneath: it is the last true thing the section had.
+  expect(screen.getByText("TASK-12")).toBeTruthy();
+
+  // And the way back, which was unreachable while the note was.
+  const retry = screen.getByRole("button", { name: /Retry/ });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }),
+    ),
+  );
+  fireEvent.click(retry);
+  await waitFor(() => expect(screen.queryByText(/Could not refresh/)).toBeNull());
 });
 
 // ── the rail item ───────────────────────────────────────────────────────────

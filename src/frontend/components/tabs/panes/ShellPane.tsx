@@ -23,6 +23,9 @@ export interface ShellPaneProps {
    * search — the keyboard's ⌘F arrives by the other door, `onSearchOpen`
    * (TASK-58). */
   searchRequest?: number;
+  /** Whether this pane's group is the layout's active one, as on `AgentPane`:
+   * only its search bar answers a ⌘G typed outside every terminal. */
+  active?: boolean;
   /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
    * A shell tab gets the same one the agent does: it runs the same CLI in the
    * same repository, and prints the same ids. */
@@ -55,13 +58,14 @@ export function ShellPane({
   visible,
   focusRequest = 0,
   searchRequest = 0,
+  active = false,
   linkProvider,
 }: ShellPaneProps) {
   const { attach, detach, resize, send, isConnected } = usePty();
   const terminalRef = useRef<TerminalHandle>(null);
   useFocusRequest(focusRequest, terminalRef);
-  /** What the search bar's ⌘G listens on, so a split's two bars step their own
-   * matches — see `TerminalSearchBar`. */
+  /** How the search bar tells a ⌘G typed in this pane from one typed elsewhere,
+   * so a split's two bars step their own matches — see `TerminalSearchBar`. */
   const root = useRef<HTMLDivElement>(null);
   const search = useTerminalSearch(terminalRef, searchRequest);
   /** The last grid measured against a *visible* container; never fabricated. */
@@ -103,14 +107,18 @@ export function ShellPane({
 
   return (
     // Wrapped only so the search overlay has something to be positioned
-    // against, and so ⌘G has a root to be heard on that is this pane's alone.
-    <div ref={root} className="relative h-full">
+    // against, and so a ⌘G has a root to be measured against that is this pane's
+    // alone. `data-terminal-pane` marks the subtree as a terminal's, which is
+    // how a bar tells "the caret is in another terminal" from "the caret is in
+    // no terminal at all" — see `TerminalSearchBar`.
+    <div ref={root} data-terminal-pane className="relative h-full">
       <XTerminal
         ref={terminalRef}
         ptyId={ptyId}
         onSizeChange={handleSizeChange}
         sendMessage={send}
         onSearchOpen={search.openSearch}
+        searchOpen={search.open}
         linkProvider={linkProvider}
       />
       {searchAddon ? (
@@ -119,6 +127,7 @@ export function ShellPane({
           onClose={search.closeSearch}
           activation={search.activation}
           scope={root}
+          active={active}
         />
       ) : null}
     </div>

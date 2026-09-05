@@ -91,9 +91,9 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   }, [isMobile]);
   /** What the layout may become on this device — one group below the
    * breakpoint, since a split on a phone is two unreadable columns (§9). Read
-   * by `useTaskLayout`, which folds a stored split on the way in and every
-   * edit on the way out, and by the three doors that offer Split, so all of
-   * them read the same rule. */
+   * by `useTaskLayout`, which shows a stored split folded and keeps the split
+   * in storage, and by the three doors that offer Split, so all of them read
+   * the same rule. */
   const env = useMemo<LayoutEnv>(() => ({ singleGroup: isMobile }), [isMobile]);
   const explorerPanel = useExplorerPanel();
   const explorerSections = useExplorerRail(taskId, explorerPanel.section);
@@ -112,7 +112,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     : "Changes";
   // A real layout for the selected task, persisted per task id, and held to
   // the device's policy on both sides of the store.
-  const { layout, setLayout } = useTaskLayout(taskId, env);
+  const { layout, setLayout, editLayout } = useTaskLayout(taskId, env);
   // Wrapped rather than passed straight through: picking a row or pressing a
   // `+` is the sheet's job done, and on a phone the sheet is what the
   // destination is behind.
@@ -205,6 +205,19 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   const requestSearch = useCallback((tabId: string) => {
     setSearchPulse((prev) => ({ n: (prev?.n ?? 0) + 1, tabId }));
   }, []);
+  // A pulse lives for one commit. The pane it addresses answers in its own
+  // effect, which runs before this one (children first), and then the number
+  // comes down — so nothing is ever left *standing* for a pane mounted later
+  // by a click to mistake for a request. That is what lets `usePulse` treat a
+  // mount with a non-zero number as the rise it is: a chord onto a diff tab
+  // mounts that pane in the same commit the pulse rises in, and a pane that
+  // baselined itself to what it mounted with never took the caret.
+  useEffect(() => {
+    if (focusPulse) setFocusPulse(null);
+  }, [focusPulse]);
+  useEffect(() => {
+    if (searchPulse) setSearchPulse(null);
+  }, [searchPulse]);
 
   /**
    * The layout as of the last commit *and* of any write already issued, plus
@@ -218,9 +231,17 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
    * and nothing to reap it short of the task being suspended. Every write goes
    * through `applyLayout` so the ref is never behind one.
    *
-   * The ref takes what `setLayout` returns rather than what was handed in: on a
+   * The ref takes what the store returns rather than what was handed in: on a
    * phone the store folds a write to one group, and a ref holding the unfolded
    * layout would hand the next chord a split the screen does not show.
+   *
+   * Two doors, for the two kinds of write `useTaskLayout` distinguishes.
+   * `applyLayout` takes a layout `TabArea` or the keymap built from the one on
+   * screen; `reduceLayout` applies one of `layout-store`'s reductions to the
+   * layout in *storage*, which on a phone is the desktop's split rather than
+   * the fold — so the edits the shell makes of its own accord (a `?tab=` link,
+   * a dead shell tab, a file opened from the Explorer) leave the split as they
+   * found it.
    */
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
@@ -231,6 +252,12 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
       layoutRef.current = setLayout(next);
     },
     [setLayout],
+  );
+  const reduceLayout = useCallback(
+    (fn: (stored: TaskLayout) => TaskLayout) => {
+      layoutRef.current = editLayout(fn);
+    },
+    [editLayout],
   );
 
   // Only for the task header below — the sidebar projects its own labels. The
@@ -272,12 +299,14 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
       // Only the sheet's opens: a pane stepping a commit list previews on
       // purpose, and never has a sheet over it.
       const permanent = sheet === "explorer" && options?.preview;
-      applyLayout(openTab(layout, descriptor, permanent ? { ...options, preview: false } : options));
+      reduceLayout((current) =>
+        openTab(current, descriptor, permanent ? { ...options, preview: false } : options),
+      );
       // The Explorer opens tabs through here, and on a phone it is the sheet
       // sitting on top of the tab it just opened.
       dismissSheet();
     },
-    [layout, applyLayout, dismissSheet, sheet],
+    [layout, reduceLayout, dismissSheet, sheet],
   );
 
   // ── ?tab= ─────────────────────────────────────────────────────────────────
@@ -305,9 +334,9 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     // Deliberately permanent, not preview: following a link is the user asking
     // for that tab by name, and a preview tab would be replaced by their next
     // click in the Explorer.
-    if (descriptor) applyLayout(openTab(layout, descriptor));
+    if (descriptor) reduceLayout((current) => openTab(current, descriptor));
     onTabEnsured?.();
-  }, [pendingTab, taskId, layout, applyLayout, onTabEnsured]);
+  }, [pendingTab, taskId, layout, reduceLayout, onTabEnsured]);
 
   // Having a ptyId is not the same as having somewhere to write. A PTY whose
   // process exited on its own is never removed from PtyManager — only `kill`
@@ -337,13 +366,12 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     // names, so an abandoned shell would go on running in the task's directory
     // until the next suspend, with nothing on screen to close it. Killed here
     // instead, through the same door the close gesture uses.
-    const current = layoutRef.current;
-    if (!current || taskIdRef.current !== taskId) {
+    if (!layoutRef.current || taskIdRef.current !== taskId) {
       void closeShell(taskId, result.value.ptyId);
       return;
     }
-    applyLayout(openTab(current, { kind: "shell", ptyId: result.value.ptyId }));
-  }, [taskId, openShell, closeShell, applyLayout]);
+    reduceLayout((current) => openTab(current, { kind: "shell", ptyId: result.value.ptyId }));
+  }, [taskId, openShell, closeShell, reduceLayout]);
 
   // Closing a shell tab is what kills its shell. Only from the close gesture:
   // a shell tab dropped by the reconciliation below names a PTY that is already
@@ -359,7 +387,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
 
   // The keyboard's half of the tab strip (TASK-34). Mounted here because this
   // is where the three actions it drives already are, and given the same
-  // handlers the strip's own controls get — so ⌘K W kills a shell exactly as
+  // handlers the strip's own controls get — so ⌘K X kills a shell exactly as
   // the X does, rather than by a second path that could drift from it.
   const pulseTab = useCallback((tabId: string) => {
     setFocusPulse((prev) => ({ n: (prev?.n ?? 0) + 1, tabId }));
@@ -421,10 +449,16 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     if (!taskId || !layout || !lifecycle || !shellPtyIds) return;
     for (const ptyId of shellPtyIds) seenShellsRef.current.add(ptyId);
 
-    const pruned = reconcileShellTabs(layout, { lifecycle, shellPtyIds }, seenShellsRef.current);
-    if (pruned === layout) return;
-    const dropped = allTabs(layout).length - allTabs(pruned).length;
-    applyLayout(pruned);
+    // Over the stored layout, not the one on screen: on a phone the screen
+    // shows a fold of the desktop's split, and a prune written from the fold
+    // would persist the fold along with it.
+    let dropped = 0;
+    reduceLayout((current) => {
+      const pruned = reconcileShellTabs(current, { lifecycle, shellPtyIds }, seenShellsRef.current);
+      dropped = allTabs(current).length - allTabs(pruned).length;
+      return pruned;
+    });
+    if (dropped === 0) return;
     // Said out loud rather than done quietly: the user left a shell tab open
     // and it is not there any more, and a workspace that rearranges itself
     // without explanation reads as a bug.
@@ -438,7 +472,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
             "That shell is no longer running."
           : "Shells are not resumable, so they do not survive a task being suspended.",
     });
-  }, [taskId, layout, lifecycle, shellPtyIds, applyLayout]);
+  }, [taskId, layout, lifecycle, shellPtyIds, reduceLayout]);
 
   const handleSubmitReview = useCallback(
     (promptText: string): boolean => {
@@ -450,10 +484,10 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
       sendInput(ptyId, promptText);
       // The review has gone to the agent, so the agent is what the user wants
       // to be looking at.
-      applyLayout(openTab(layout, { kind: "agent" }));
+      reduceLayout((current) => openTab(current, { kind: "agent" }));
       return true;
     },
-    [canDeliver, ptyId, sendInput, layout, applyLayout],
+    [canDeliver, ptyId, sendInput, layout, reduceLayout],
   );
 
   return (
@@ -489,7 +523,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                   onSearchTab={(tab) => requestSearch(tab.id)}
                   env={env}
                   leading={leading}
-                  renderPane={(tab, _group, visible) => (
+                  renderPane={(tab, group, visible) => (
                     // Keyed by task *and* tab. The tab key alone was not enough:
                     // every task's agent tab keys as "agent", so switching tasks
                     // handed the same React position the same key and the same
@@ -508,6 +542,10 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                       onOpenTab={handleOpenTab}
                       onSubmitReview={handleSubmitReview}
                       visible={visible}
+                      // Whether this pane's group is the one the leader chords
+                      // act on — what a terminal's search bar answers ⌘G for
+                      // when the caret is nowhere near a terminal.
+                      active={group.id === layout.activeGroupId}
                       // Named, not inferred from what is in front: `visible` is
                       // per-group and true for both panes of a split, and even
                       // narrowed to the active group it turns over for reasons

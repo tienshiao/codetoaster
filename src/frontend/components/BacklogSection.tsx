@@ -53,11 +53,17 @@ export function BacklogSection({
   // through to claim the repository has no backlog at all.
   if (!data && !error) return <ExplorerLoading>Loading tasks…</ExplorerLoading>;
 
-  // Only when there is nothing to show instead. This polls every three seconds,
-  // so a single failed poll — a server restart, a laptop waking up — would
-  // otherwise replace a perfectly good list with an error box until the next one
-  // succeeds. React Query keeps the last data through a failed refetch; the
-  // list it holds is what the user was reading.
+  // The error *replaces* the section only when there is nothing to show instead.
+  // This polls every three seconds, so swapping a perfectly good list for an
+  // error box on a failed poll — a server restart, a laptop waking up — would
+  // take away what the user was reading. React Query keeps the last data
+  // through a failed refetch, and that list is still the best thing to show.
+  //
+  // With data in hand the failure is said in a line above it instead (below), so
+  // a poll that has stopped working is never silent: `retry: 1` on the client
+  // means `error` is already two consecutive failures rather than one blip, and
+  // a list that quietly stopped refreshing looks exactly like a repository
+  // where nothing is happening.
   if (error && !data) {
     return (
       <ExplorerError onRetry={() => refetch()}>
@@ -72,6 +78,14 @@ export function BacklogSection({
 
   return (
     <div className="flex h-full min-h-0 flex-col" {...handlers}>
+      {/* Above the tabs rather than over them: the list underneath is stale but
+          still readable, and the Retry is the only way back for a poll whose
+          failures the interval is not going to fix on its own. */}
+      {error ? (
+        <ExplorerError onRetry={() => refetch()}>
+          Could not refresh: {error instanceof Error ? error.message : String(error)}
+        </ExplorerError>
+      ) : null}
       <ExplorerTabs
         tabs={BACKLOG_TABS.map((label) => ({
           label,

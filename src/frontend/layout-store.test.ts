@@ -25,6 +25,7 @@ import {
   focusGroup,
   findAgentTab,
   commandAvailable,
+  differsOnlyInFocus,
   pruneShellTabs,
   reconcileShellTabs,
   reviveLayout,
@@ -1386,11 +1387,31 @@ test("commandAvailable: a shell tab closes but never splits", () => {
   expect(commandAvailable(layout, command("close-tab"))).toBe(true);
 });
 
-test("commandAvailable: navigation is always on offer, clamping being its own business", () => {
-  const layout = createLayout();
-  for (const id of ["next-tab", "prev-tab", "focus-group-left", "focus-group-right", "focus-agent"]) {
-    expect(commandAvailable(layout, command(id))).toBe(true);
+test("commandAvailable: navigation is offered only where there is somewhere to go", () => {
+  // One tab in one group: nothing to cycle to, no group beside this one. The
+  // rows would be dead, and a palette that lists a dead row teaches that
+  // selecting a row may be a no-op.
+  const alone = createLayout();
+  for (const id of ["next-tab", "prev-tab", "focus-group-left", "focus-group-right"]) {
+    expect(commandAvailable(alone, command(id))).toBe(false);
   }
+  // Focus agent alone is always on: it moves the caret even when the agent
+  // tab is already in front.
+  expect(commandAvailable(alone, command("focus-agent"))).toBe(true);
+
+  // A second tab makes the strip cyclable; a second group makes the moves
+  // real. Clamping at the edge is still their own business — both moves are
+  // on offer from either group.
+  const two = twoGroups();
+  for (const id of ["next-tab", "prev-tab", "focus-group-left", "focus-group-right"]) {
+    expect(commandAvailable(two, command(id))).toBe(true);
+  }
+  const right = focusGroup(two, 1);
+  expect(commandAvailable(right, command("focus-group-left"))).toBe(true);
+  expect(commandAvailable(right, command("focus-group-right"))).toBe(true);
+  // The right group holds one tab, so the strip there has nothing to cycle to
+  // even though the layout as a whole has four.
+  expect(commandAvailable(right, command("next-tab"))).toBe(false);
 });
 
 test("commandAvailable: split is refused outright on a one-group device", () => {
@@ -1471,8 +1492,63 @@ test("mergeGroups leaves focus on the surviving twin when the front tab was the 
   expect(findTab(merged, copyId)).toBeNull();
 });
 
+test("mergeGroups keeps the group holding the most terminals, agent or not", () => {
+  // [agent, diff] | [shell:1, shell:2] — two shells dragged to the right.
+  // `TabArea` keys each group's panes by group id, so the id that survives is
+  // the set of terminals that keep their PTY attachment: keeping the agent's
+  // here would remount two shells to save one.
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, diff("a.ts"));
+  layout = splitTab(layout, idOf(layout, "diff:a.ts"));
+  const right = layout.activeGroupId;
+  layout = openTab(layout, shell("1"), { groupId: right });
+  layout = openTab(layout, shell("2"), { groupId: right });
+  // The split's copy goes, so the right group is two shells and nothing else.
+  layout = closeTab(layout, layout.groups[1]!.tabs[0]!.id);
+  expect(keyGrid(layout)).toEqual([["agent", "diff:a.ts"], ["shell:1", "shell:2"]]);
+
+  const merged = mergeGroups(layout);
+
+  expect(merged.groups[0]!.id).toBe(right);
+  expect(keyGrid(merged)).toEqual([["agent", "diff:a.ts", "shell:1", "shell:2"]]);
+});
+
+test("mergeGroups breaks a tie on terminals in the agent's favour", () => {
+  // [agent, diff] | [shell:1] — one terminal each. The agent is the pane that
+  // costs the most to remount (a snapshot and a full restore), so its group
+  // wins the tie; and it is the leftmost, which is where a tie without an
+  // agent lands too.
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, diff("a.ts"));
+  layout = splitTab(layout, idOf(layout, "diff:a.ts"));
+  layout = openTab(layout, shell("1"), { groupId: layout.activeGroupId });
+  layout = closeTab(layout, layout.groups[1]!.tabs[0]!.id);
+  expect(keyGrid(layout)).toEqual([["agent", "diff:a.ts"], ["shell:1"]]);
+
+  expect(mergeGroups(layout).groups[0]!.id).toBe(layout.groups[0]!.id);
+});
+
 test("mergeGroups is the identity on a layout that already has one group", () => {
   const layout = openTab(createLayout(), diffAll);
   // The same reference, so the shell can compare and not write.
   expect(mergeGroups(layout)).toBe(layout);
+});
+
+// ── differsOnlyInFocus ──────────────────────────────────────────────────────
+
+test("differsOnlyInFocus: a focus change is one, and nothing else is", () => {
+  const layout = twoGroups();
+  const other = layout.groups[0]!.tabs[1]!;
+  expect(differsOnlyInFocus(layout, focusTab(layout, other.id))).toBe(true);
+  expect(differsOnlyInFocus(layout, focusGroup(layout, 1))).toBe(true);
+  expect(differsOnlyInFocus(layout, layout)).toBe(true);
+
+  expect(differsOnlyInFocus(layout, openTab(layout, file("z.ts")))).toBe(false);
+  expect(differsOnlyInFocus(layout, closeTab(layout, other.id))).toBe(false);
+  const preview = openTab(layout, file("p.ts"), { preview: true });
+  expect(differsOnlyInFocus(preview, pinTab(preview, activeTab(preview)!.id))).toBe(false);
+  // Same keys, different group shape: a split is not a focus.
+  expect(differsOnlyInFocus(layout, mergeGroups(layout))).toBe(false);
 });

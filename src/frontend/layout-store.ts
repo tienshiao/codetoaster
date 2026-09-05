@@ -405,15 +405,18 @@ export function splitTab(layout: TaskLayout, tabId: string): TaskLayout {
  * active tab to it: the copy that was in front can be exactly the duplicate
  * that got dropped.
  *
- * The merged group takes the id of the group holding the agent tab, not the
- * group in front. `TabArea` keys each group's subtree by its id and the
+ * The merged group takes the id of the group holding the most terminal tabs,
+ * not the group in front. `TabArea` keys each group's subtree by its id and the
  * terminal panes live inside it, so the id that survives decides which panes
- * survive: keeping the front group's would, for a layout stored right after a
- * split (`splitTab` leaves the new right-hand group in front), unmount every
- * terminal in the left one — dropping its PTY attachments and paying a full
- * `restore` for each — to keep a copy of a diff that the dedupe then drops
- * anyway. The agent tab is a terminal and cannot be split, so its group is
- * where the panes worth keeping are.
+ * survive: every terminal in the other groups is unmounted by the fold —
+ * dropping its PTY attachment and paying a full `restore` to come back — while
+ * a diff or a file is a query and a scroll offset, both persisted by tab key
+ * and cheap to rebuild. Keeping the front group's id would, for a layout stored
+ * right after a split (`splitTab` leaves the new right-hand group in front),
+ * remount the agent to keep a copy of a diff that the dedupe then drops anyway.
+ * Counting terminals rather than looking for the agent is what keeps a shell
+ * that was dragged into another group alive when that group has two of them
+ * and the agent's has one; a tie goes to the agent's group, then the leftmost.
  *
  * Returns the layout itself when there is nothing to merge, so a caller can
  * compare by identity and not write.
@@ -422,9 +425,12 @@ export function mergeGroups(layout: TaskLayout): TaskLayout {
   if (layout.groups.length < 2) return layout;
 
   const front = activeTab(layout);
-  const keeper =
-    layout.groups.find((g) => g.tabs.some((t) => t.descriptor.kind === "agent")) ??
-    layout.groups[0]!;
+  const terminals = (g: TabGroup) => g.tabs.filter((t) => isTerminalTab(t.descriptor)).length;
+  const hasAgent = (g: TabGroup) => g.tabs.some((t) => t.descriptor.kind === "agent");
+  const keeper = layout.groups.reduce((best, g) => {
+    const more = terminals(g) - terminals(best);
+    return more > 0 || (more === 0 && hasAgent(g) && !hasAgent(best)) ? g : best;
+  });
 
   const survivors = new Map<string, TabState>();
   for (const group of layout.groups) {
@@ -574,8 +580,12 @@ export function findAgentTab(layout: TaskLayout): TabState | null {
  * `jump-tab` names a position the group may not have; `split` is refused for
  * a terminal, and for every tab on a device that holds one group (`LayoutEnv`);
  * `close-tab` is refused for the agent tab, which is the task and closes only
- * through the task list. Everything else is always available: `cycleTab` and
- * `focusGroup` clamp or wrap on their own.
+ * through the task list. `next-tab` and `prev-tab` need a second tab to cycle
+ * to, and the group moves need a second group — `cycleTab` and `focusGroup`
+ * wrap and clamp on their own, but a wrap round a strip of one is a row that
+ * does nothing, and on a phone, which holds one group by policy, the two group
+ * rows would sit in every palette. `focus-agent` alone is always on: it moves
+ * the caret even when the agent tab is already in front.
  */
 export function commandAvailable(
   layout: TaskLayout,
@@ -585,6 +595,12 @@ export function commandAvailable(
   switch (command.command) {
     case "jump-tab":
       return command.index != null && command.index <= activeGroup(layout).tabs.length;
+    case "next-tab":
+    case "prev-tab":
+      return activeGroup(layout).tabs.length > 1;
+    case "focus-group-left":
+    case "focus-group-right":
+      return layout.groups.length > 1;
     case "split": {
       const tab = activeTab(layout);
       return tab != null && canSplit(layout, tab.id, env);
@@ -596,6 +612,29 @@ export function commandAvailable(
     default:
       return true;
   }
+}
+
+/**
+ * Whether two layouts hold the same tabs, in the same groups and order, and
+ * differ at most in which tab and group are in front.
+ *
+ * What `useTaskLayout` asks of a phone's edit before deciding how to store it:
+ * a tap on a tab is a change of focus, and a focus can be applied to the stored
+ * split by tab id — the fold keeps the surviving copies' ids — where storing
+ * the folded layout itself would replace the split with one group for good.
+ * Compared by id and `preview` because those are what a focus leaves alone;
+ * a pin, an open, a close or a drag all fail this and are stored as given.
+ */
+export function differsOnlyInFocus(a: TaskLayout, b: TaskLayout): boolean {
+  if (a.groups.length !== b.groups.length) return false;
+  return a.groups.every((group, i) => {
+    const other = b.groups[i]!;
+    if (group.id !== other.id || group.tabs.length !== other.tabs.length) return false;
+    return group.tabs.every((tab, j) => {
+      const twin = other.tabs[j]!;
+      return tab.id === twin.id && tab.preview === twin.preview;
+    });
+  });
 }
 
 /**

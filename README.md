@@ -166,11 +166,11 @@ Tabs, splits, and groups are driven from a leader chord: press **⌘K**
 | Next tab | ⌘K `]` |
 | Previous tab | ⌘K `[` |
 | Go to tab 1–9 | ⌘K `1`…`9` |
-| Close tab | ⌘K `W` |
+| Close tab | ⌘K `X` |
 | Split tab | ⌘K `\` |
 | Focus group left / right | ⌘K `←` / `→` |
 | Focus agent tab | ⌘K `A` |
-| New shell | ⌘K `` ` `` |
+| New shell | ⌘K `S` |
 
 A leader rather than the usual chords because both neighbours are occupied:
 Chrome owns every conventional next-tab chord on macOS, and the agent below is a

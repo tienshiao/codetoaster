@@ -85,11 +85,22 @@ const JUMP_COMMANDS: ShellCommand[] = Array.from({ length: 9 }, (_, i) => ({
   index: i + 1,
 }));
 
+/**
+ * The second press is typed with the leader's modifier still held (see
+ * `matchCommand`), so every key here is also the chord ⌘`key` on a Mac and
+ * ⌃⇧`key` elsewhere — and that chord must be one the browser lets a page
+ * cancel. The header above names the four Chrome will not: ⌘W closed the whole
+ * browser tab when Close tab was bound to `w`, and ⌘` is macOS's own
+ * cycle-windows key, resolved before the page ever sees a keydown, so New
+ * shell on a backtick left the user in another window with the leader still
+ * armed. `x` and `s` are tmux's kill-pane and a shell's initial, and neither
+ * ⌘X, ⌘S, ⌃⇧X nor ⌃⇧S is anything the browser keeps for itself.
+ */
 export const SHELL_COMMANDS: ShellCommand[] = [
   { id: "next-tab", command: "next-tab", label: "Next tab", key: "]" },
   { id: "prev-tab", command: "prev-tab", label: "Previous tab", key: "[" },
   ...JUMP_COMMANDS,
-  { id: "close-tab", command: "close-tab", label: "Close tab", key: "w" },
+  { id: "close-tab", command: "close-tab", label: "Close tab", key: "x" },
   { id: "split", command: "split", label: "Split tab", key: "\\" },
   {
     id: "focus-group-left",
@@ -104,7 +115,7 @@ export const SHELL_COMMANDS: ShellCommand[] = [
     key: "ArrowRight",
   },
   { id: "focus-agent", command: "focus-agent", label: "Focus agent tab", key: "a" },
-  { id: "new-shell", command: "new-shell", label: "New shell", key: "`" },
+  { id: "new-shell", command: "new-shell", label: "New shell", key: "s" },
   { id: "palette", command: "palette", label: "Command palette", key: "p", direct: true },
 ];
 
@@ -116,6 +127,10 @@ export interface KeyLike {
   ctrlKey: boolean;
   shiftKey: boolean;
   altKey: boolean;
+  /** `KeyboardEvent.code` — the physical key, which is how a digit is told
+   * apart from what Shift made of it. Optional so a test can press a key
+   * without naming a keyboard. */
+  code?: string;
 }
 
 /**
@@ -125,11 +140,36 @@ export interface KeyLike {
  * second press sends `}` where the table says `]` — so on the platform whose
  * leader needs Shift, every punctuation chord would be the one that does not
  * work.
+ *
+ * The digit row is here for the same hand: ⌃⇧K then `1` arrives as `!`, and
+ * without the fold all nine jump chords were dead on the one platform whose
+ * leader needs Shift. This spelling is the US layout's; `normalizeKey` prefers
+ * the physical key when the event carries one, which is layout-independent,
+ * and this map is what stands in when it does not.
  */
-const UNSHIFTED: Record<string, string> = { "}": "]", "{": "[", "|": "\\", "~": "`" };
+const UNSHIFTED: Record<string, string> = {
+  "}": "]",
+  "{": "[",
+  "|": "\\",
+  "!": "1",
+  "@": "2",
+  "#": "3",
+  $: "4",
+  "%": "5",
+  "^": "6",
+  "&": "7",
+  "*": "8",
+  "(": "9",
+  ")": "0",
+};
 
-/** Letters compare case-insensitively; `ArrowLeft` is already exact. */
-function normalizeKey(key: string): string {
+/** Letters compare case-insensitively; `ArrowLeft` is already exact. A digit
+ * is read off the physical key when there is one, so a held Shift — or a
+ * layout whose digits need Shift in the first place — still means the number
+ * printed on the cap. */
+function normalizeKey(key: string, code?: string): string {
+  const digit = code && /^Digit(\d)$/.exec(code);
+  if (digit) return digit[1]!;
   if (key.length !== 1) return key;
   const lower = key.toLowerCase();
   return UNSHIFTED[lower] ?? lower;
@@ -166,7 +206,7 @@ export function isLeader(ev: KeyLike, mac: boolean = isMac()): boolean {
  */
 export function matchCommand(ev: KeyLike): ShellCommand | null {
   if (ev.altKey) return null;
-  const key = normalizeKey(ev.key);
+  const key = normalizeKey(ev.key, ev.code);
   return SHELL_COMMANDS.find((c) => !c.direct && c.key === key) ?? null;
 }
 
@@ -196,8 +236,8 @@ export function matchDirect(ev: KeyLike, mac: boolean = isMac()): ShellCommand |
  * handlers run after the terminal's — so the terminal has to be told to let
  * them past rather than sending them to the PTY.
  *
- * Only search lives here: `TerminalSearchBar` listens on its pane's root in
- * the bubble phase, which is after xterm's own handler on the textarea. The
+ * Only search lives here: `TerminalSearchBar` listens on the document in the
+ * bubble phase, which is after xterm's own handler on the textarea. The
  * leader map needs no entry because its listener runs on `window` in the
  * *capture* phase and stops propagation, so those keys never reach xterm at
  * all.
@@ -248,9 +288,21 @@ export function isSearchOpenChord(ev: KeyLike, mac: boolean = isMac()): boolean 
  * A direct chord is here for the same disagreement, and the stray keystroke it
  * guards against is worse: ⌘⇧P reaching xterm sends a bare `P` to whatever the
  * agent is running.
+ *
+ * The step chord is yielded only while this terminal's search bar is open
+ * (`searchOpen`), because the bar is the only thing that would act on it. With
+ * no bar mounted an unconditional yield swallowed the key for nobody — and off
+ * a Mac the key is ⌃G, readline's abort and reverse-i-search's cancel, which
+ * the PTY was waiting for.
  */
-export function terminalMustYield(ev: KeyLike, mac: boolean = isMac()): boolean {
-  return isLeader(ev, mac) || matchDirect(ev, mac) !== null || isSearchChord(ev, mac);
+export function terminalMustYield(
+  ev: KeyLike,
+  mac: boolean = isMac(),
+  searchOpen: boolean = false,
+): boolean {
+  return (
+    isLeader(ev, mac) || matchDirect(ev, mac) !== null || (searchOpen && isSearchChord(ev, mac))
+  );
 }
 
 // ── the leader state machine ────────────────────────────────────────────────
@@ -293,14 +345,29 @@ function isModifierKey(key: string): boolean {
  * `armedAt` is when the leader was pressed, or null. Returned rather than
  * mutated so the caller can hold it in a ref and the rules can be tested
  * without a keyboard.
+ *
+ * `modal` is true while a modal surface — a `Dialog`, the palette — is up.
+ * The keyboard is the modal's then, and the leader does not arm: it consumes
+ * every press after it, and the Escape a dialog listens for on the document
+ * was arriving at a capture listener that had just been armed by a stray ⌘K
+ * and stopping there, with the dialog still open. A standing arm is dropped
+ * for the same reason. Direct chords still fire, because the palette is a
+ * modal and its own chord is how it toggles closed.
  */
 export function stepKeymap(
   armedAt: number | null,
   ev: KeyLike,
   now: number,
   mac: boolean = isMac(),
+  modal: boolean = false,
 ): { armedAt: number | null; result: KeymapResult } {
   if (isModifierKey(ev.key)) return { armedAt, result: { kind: "idle" } };
+
+  if (modal) {
+    const direct = matchDirect(ev, mac);
+    if (direct) return { armedAt: null, result: { kind: "command", command: direct } };
+    return { armedAt: null, result: { kind: "idle" } };
+  }
 
   const armed = armedAt !== null && now - armedAt <= LEADER_TIMEOUT_MS;
 
@@ -364,7 +431,7 @@ export function chordCaps(command: ShellCommand, mac: boolean = isMac()): string
   return [...leaderCaps(mac), keyCap(command.key)];
 }
 
-/** Caps as one tooltip string: `⌘K W`, `Ctrl+Shift+K W`, `⌘⇧P`, `Ctrl+Shift+P`.
+/** Caps as one tooltip string: `⌘K X`, `Ctrl+Shift+K X`, `⌘⇧P`, `Ctrl+Shift+P`.
  * The leader's caps run together on a Mac and join with `+` elsewhere, which is
  * how each platform writes its own chords; the second press follows a space. */
 function joinCaps(caps: string[], mac: boolean): string {

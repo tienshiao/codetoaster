@@ -41,6 +41,11 @@ export interface TabPaneProps {
    * terminal to open search (TASK-58), addressed by tab id exactly as
    * `focusRequest` is. Only the terminal kinds can answer one. */
   searchRequest?: number;
+  /** Whether this pane's group is the layout's active group — the one the
+   * leader chords act on. A terminal's search bar answers ⌘G on this when the
+   * caret is in no terminal at all (the Explorer, the strip), so a split's two
+   * bars still step one terminal's matches rather than both. */
+  active?: boolean;
 }
 
 /**
@@ -59,6 +64,7 @@ export function TabPane({
   visible,
   focusRequest = 0,
   searchRequest = 0,
+  active = false,
 }: TabPaneProps) {
   const view = useMemo(() => viewRef(taskId, tab.key), [taskId, tab.key]);
 
@@ -105,6 +111,7 @@ export function TabPane({
           visible={visible}
           focusRequest={focusRequest}
           searchRequest={searchRequest}
+          active={active}
           linkProvider={linkProvider}
         />
       );
@@ -119,6 +126,7 @@ export function TabPane({
           visible={visible}
           focusRequest={focusRequest}
           searchRequest={searchRequest}
+          active={active}
           linkProvider={linkProvider}
         />
       );

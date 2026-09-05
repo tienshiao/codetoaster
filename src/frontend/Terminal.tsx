@@ -17,6 +17,7 @@ import {
   type RestorePhase,
 } from "./utils/restore-phase";
 import { isSearchOpenChord, terminalMustYield } from "./keymap";
+import { isMac } from "./utils/platform";
 import { usePtyOptional } from "./PtyContext";
 import type { PtySink } from "./pty-router";
 import type { ClientMessage, ServerMessage } from "../lib/xtmux/types";
@@ -81,6 +82,11 @@ interface XTerminalProps {
   sendMessage: (msg: ClientMessage) => void;
   onFileDrop?: (files: File[]) => void;
   onSearchOpen?: () => void;
+  /** Whether this terminal's search bar is up. The step chord is yielded only
+   * while one is — nothing else acts on it, and off a Mac the chord is ⌃G,
+   * readline's abort, so swallowing it for nobody was the bug
+   * (`terminalMustYield`). */
+  searchOpen?: boolean;
   /** The read-only phase ending on its own: the resumed agent painted (or died
    * trying), so the grid is live again and the "resuming…" affordance has to
    * come down. The phase is left from inside `handleMessage`, which nothing
@@ -94,7 +100,17 @@ interface XTerminalProps {
 
 export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
   function XTerminal(
-    { ptyId, onSizeChange, onReady, sendMessage, onFileDrop, onSearchOpen, onRestoreEnd, linkProvider },
+    {
+      ptyId,
+      onSizeChange,
+      onReady,
+      sendMessage,
+      onFileDrop,
+      onSearchOpen,
+      searchOpen,
+      onRestoreEnd,
+      linkProvider,
+    },
     ref,
   ) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -133,12 +149,16 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
     const sendMessageRef = useRef(sendMessage);
     const onFileDropRef = useRef(onFileDrop);
     const onSearchOpenRef = useRef(onSearchOpen);
+    // Read from inside the key handler, which is installed once — so the prop
+    // has to arrive the way every callback here does.
+    const searchOpenRef = useRef(searchOpen);
     const onRestoreEndRef = useRef(onRestoreEnd);
     onReadyRef.current = onReady;
     onSizeChangeRef.current = onSizeChange;
     sendMessageRef.current = sendMessage;
     onFileDropRef.current = onFileDrop;
     onSearchOpenRef.current = onSearchOpen;
+    searchOpenRef.current = searchOpen;
     onRestoreEndRef.current = onRestoreEnd;
 
     // Fit and report the measured size, but only while the container is
@@ -434,8 +454,9 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         // that had not existed since TASK-28 — ⌘⇧P's command palette and ⌃`'s
         // tab switcher — while every shortcut added since would have meant a
         // fourth. The terminal should not have to know what the shortcuts are,
-        // only that a key is not its own.
-        if (terminalMustYield(ev)) return false;
+        // only that a key is not its own — and, for the step chord, whether
+        // there is a search bar up to be its own instead.
+        if (terminalMustYield(ev, isMac(), searchOpenRef.current)) return false;
         return true;
       });
 

@@ -202,9 +202,9 @@ test("⌘K A goes back to the agent", () => {
   expect(focusedKey(h.layout())).toBe("agent");
 });
 
-test("⌘K ` asks for a new shell", () => {
+test("⌘K S asks for a new shell", () => {
   const h = mount();
-  chord(h, "`");
+  chord(h, "s");
   expect(h.newShell).toHaveBeenCalledTimes(1);
 });
 
@@ -236,23 +236,67 @@ test("⌘K ← and ⌘K → move between groups", () => {
   expect(h.layout().activeGroupId).toBe(h.layout().groups[1]!.id);
 });
 
-test("⌘K W closes the tab and runs the side effect the X runs", () => {
+test("⌘K X closes the tab and runs the side effect the X runs", () => {
   const h = mount();
   chord(h, "2");
   h.rerender();
-  chord(h, "w");
+  chord(h, "x");
   expect(h.closed).toHaveBeenCalledWith("file:a.ts");
   expect(h.layout().groups[0]!.tabs.map((t) => t.key)).toEqual(["agent", "file:b.ts"]);
 });
 
-test("⌘K W on the agent tab closes nothing and kills nothing", () => {
+test("⌘K X on the agent tab closes nothing and kills nothing", () => {
   const h = mount();
   expect(focusedKey(h.layout())).toBe("agent");
-  chord(h, "w");
+  chord(h, "x");
   // The side effect matters as much as the layout here: firing it would ask
   // the server to close a PTY that is the task itself.
   expect(h.closed).not.toHaveBeenCalled();
   expect(h.layout().groups[0]!.tabs).toHaveLength(3);
+});
+
+// ── a modal owns the keyboard ───────────────────────────────────────────────
+
+test("with a dialog up, ⌘K does not arm and the Escape after it reaches the dialog", () => {
+  const h = mount();
+  // What `Dialog` and `CommandPalette` do: an `aria-modal` surface, and an
+  // Escape listener on the document — which sits below the window on the
+  // capture path, so a listener that stops the event there is one the dialog
+  // never hears from.
+  const dialog = document.createElement("div");
+  dialog.setAttribute("aria-modal", "true");
+  document.body.append(dialog);
+  const escapes = vi.fn();
+  const onKeyDown = (ev: KeyboardEvent) => {
+    if (ev.key === "Escape") escapes();
+  };
+  document.addEventListener("keydown", onKeyDown);
+  try {
+    h.press("k", { metaKey: true });
+    h.press("Escape");
+    expect(escapes).toHaveBeenCalledTimes(1);
+    // And the character after a stray leader is typed, not eaten as a chord.
+    h.press("k", { metaKey: true });
+    const x = h.press("x");
+    expect(x.defaultPrevented).toBe(false);
+    expect(h.closed).not.toHaveBeenCalled();
+  } finally {
+    document.removeEventListener("keydown", onKeyDown);
+    dialog.remove();
+  }
+});
+
+test("the palette's own chord still fires inside a modal, so it can close itself", () => {
+  const h = mount();
+  const dialog = document.createElement("div");
+  dialog.setAttribute("aria-modal", "true");
+  document.body.append(dialog);
+  try {
+    h.press("P", { metaKey: true, shiftKey: true });
+    expect(h.palette).toHaveBeenCalledTimes(1);
+  } finally {
+    dialog.remove();
+  }
 });
 
 // ── the direct chord ────────────────────────────────────────────────────────
@@ -342,7 +386,7 @@ test("a layout rewritten from outside the hook is the one the next chord moves",
 test("with no layout, only the shell command still works", () => {
   const h = mount(null);
   chord(h, "]");
-  chord(h, "`");
+  chord(h, "s");
   expect(h.newShell).toHaveBeenCalledTimes(1);
   // And the keys were still consumed — at the composer there is no pane
   // underneath that wants them.

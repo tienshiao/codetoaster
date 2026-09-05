@@ -57,6 +57,9 @@ export interface AgentPaneProps {
    * search — the keyboard's ⌘F arrives by the other door, `onSearchOpen`
    * (TASK-58). */
   searchRequest?: number;
+  /** Whether this pane's group is the layout's active one. Only its search bar
+   * answers a ⌘G typed outside every terminal — see `TerminalSearchBar`. */
+  active?: boolean;
   onFileDrop?: (files: File[]) => void;
   /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
    * This is the task's own terminal, so the ids the agent writes here are the
@@ -69,6 +72,7 @@ export function AgentPane({
   visible,
   focusRequest = 0,
   searchRequest = 0,
+  active = false,
   onFileDrop,
   linkProvider,
 }: AgentPaneProps) {
@@ -88,8 +92,8 @@ export function AgentPane({
 
   const terminalRef = useRef<TerminalHandle>(null);
   useFocusRequest(focusRequest, terminalRef);
-  /** What the search bar's ⌘G listens on, so a split's two bars step their own
-   * matches — see `TerminalSearchBar`. */
+  /** How the search bar tells a ⌘G typed in this pane from one typed elsewhere,
+   * so a split's two bars step their own matches — see `TerminalSearchBar`. */
   const root = useRef<HTMLDivElement>(null);
   const search = useTerminalSearch(terminalRef, searchRequest);
 
@@ -273,7 +277,10 @@ export function AgentPane({
   const searchAddon = search.open ? terminalRef.current?.getSearchAddon() : null;
 
   return (
-    <div ref={root} className="relative h-full">
+    // `data-terminal-pane` marks this subtree as a terminal's, which is how a
+    // search bar tells "the caret is in another terminal" from "the caret is in
+    // no terminal at all" — see `TerminalSearchBar`.
+    <div ref={root} data-terminal-pane className="relative h-full">
       <XTerminal
         ref={terminalRef}
         ptyId={ptyId}
@@ -283,6 +290,7 @@ export function AgentPane({
         // meant a route with no terminal ever got a list at all.
         sendMessage={send}
         onSearchOpen={search.openSearch}
+        searchOpen={search.open}
         onFileDrop={onFileDrop}
         onRestoreEnd={handleRestoreEnd}
         linkProvider={linkProvider}
@@ -293,6 +301,7 @@ export function AgentPane({
           onClose={search.closeSearch}
           activation={search.activation}
           scope={root}
+          active={active}
         />
       ) : null}
       <Overlay
