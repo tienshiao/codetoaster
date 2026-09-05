@@ -60,6 +60,12 @@ export interface CommandPaletteHostProps {
   /** Opens a tab permanently rather than as a preview: a row chosen by name
    * from a list is the user asking for that tab, like a `?tab=` link. */
   onOpenTab: (descriptor: TabDescriptor) => void;
+  /** The two navigations a row can make. Given by the shell rather than
+   * taken from `useOpenTask`/`useOpenComposer` here, so a row lands the user
+   * through the same door the sidebar's rows do — on a phone that door also
+   * shuts the sheet the palette was opened over. Absent, the hooks are used. */
+  onSelectTask?: (taskId: string) => void;
+  onNewTask?: () => void;
   /** `useShellKeymap`'s `run`, so a listed chord does exactly what the chord
    * does. */
   runCommand: (command: ShellCommand) => void;
@@ -160,6 +166,8 @@ function OpenPalette({
   onFocusTab,
   onSearchTab,
   onOpenTab,
+  onSelectTask,
+  onNewTask,
   runCommand,
   onToggleSidebar,
   onToggleExplorer,
@@ -168,8 +176,10 @@ function OpenPalette({
   onResumeTask,
 }: OpenPaletteProps) {
   const { tasks, projects } = useTasks();
-  const openTask = useOpenTask();
-  const openComposer = useOpenComposer();
+  const navigateToTask = useOpenTask();
+  const navigateToComposer = useOpenComposer();
+  const openTask = onSelectTask ?? navigateToTask;
+  const openComposer = onNewTask ?? navigateToComposer;
 
   const [query, setQuery] = useState("");
   const searching = query.trim().length > 0;

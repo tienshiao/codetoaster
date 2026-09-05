@@ -1414,12 +1414,32 @@ test("mergeGroups keeps every tab, left to right, in one group", () => {
   const merged = mergeGroups(layout);
 
   expect(keyGrid(merged)).toEqual([["agent", "file:a.ts", "commit:abc", "history"]]);
-  // The group the user was in keeps its identity, and takes the whole width.
-  expect(merged.groups[0]!.id).toBe(layout.activeGroupId);
-  expect(merged.activeGroupId).toBe(layout.activeGroupId);
+  // The agent's group keeps its identity, and takes the whole width.
+  expect(merged.groups[0]!.id).toBe(layout.groups[0]!.id);
+  expect(merged.activeGroupId).toBe(layout.groups[0]!.id);
   expect(merged.groups[0]!.flex).toBe(1);
   // The active tab was in the surviving group and stays in front.
   expect(activeTab(merged)?.key).toBe("agent");
+});
+
+test("mergeGroups keeps the agent's group, not the one in front", () => {
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, diff("a.ts"));
+  // `splitTab` leaves the new right-hand group in front, which is how a
+  // layout stored straight after a split arrives. The right group holds only
+  // the copy the dedupe drops, while the left holds the agent terminal —
+  // `TabArea` keys each group's panes by its id, so surviving under the right
+  // group's id would remount every terminal to keep nothing.
+  layout = splitTab(layout, idOf(layout, "diff:a.ts"));
+  const agentGroupId = layout.groups[0]!.id;
+  expect(layout.activeGroupId).not.toBe(agentGroupId);
+
+  const merged = mergeGroups(layout);
+
+  expect(merged.groups[0]!.id).toBe(agentGroupId);
+  expect(merged.activeGroupId).toBe(agentGroupId);
+  expect(keyGrid(merged)).toEqual([["agent", "diff:a.ts"]]);
 });
 
 test("mergeGroups drops a split's second copy rather than holding a key twice", () => {

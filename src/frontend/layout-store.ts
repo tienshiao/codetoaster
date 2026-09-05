@@ -405,14 +405,26 @@ export function splitTab(layout: TaskLayout, tabId: string): TaskLayout {
  * active tab to it: the copy that was in front can be exactly the duplicate
  * that got dropped.
  *
+ * The merged group takes the id of the group holding the agent tab, not the
+ * group in front. `TabArea` keys each group's subtree by its id and the
+ * terminal panes live inside it, so the id that survives decides which panes
+ * survive: keeping the front group's would, for a layout stored right after a
+ * split (`splitTab` leaves the new right-hand group in front), unmount every
+ * terminal in the left one — dropping its PTY attachments and paying a full
+ * `restore` for each — to keep a copy of a diff that the dedupe then drops
+ * anyway. The agent tab is a terminal and cannot be split, so its group is
+ * where the panes worth keeping are.
+ *
  * Returns the layout itself when there is nothing to merge, so a caller can
  * compare by identity and not write.
  */
 export function mergeGroups(layout: TaskLayout): TaskLayout {
   if (layout.groups.length < 2) return layout;
 
-  const source = activeGroup(layout);
-  const front = source.tabs.find((t) => t.id === source.activeTabId) ?? source.tabs[0] ?? null;
+  const front = activeTab(layout);
+  const keeper =
+    layout.groups.find((g) => g.tabs.some((t) => t.descriptor.kind === "agent")) ??
+    layout.groups[0]!;
 
   const survivors = new Map<string, TabState>();
   for (const group of layout.groups) {
@@ -424,9 +436,7 @@ export function mergeGroups(layout: TaskLayout): TaskLayout {
 
   // Its own id when it survived, the surviving twin's when it did not.
   const activeTabId = (front && survivors.get(front.key)?.id) ?? tabs[0]?.id ?? "";
-  // The active group's id, so a layout that is merged twice is stable and the
-  // group the user was in keeps its identity.
-  const group: TabGroup = { id: source.id, tabs, activeTabId, flex: 1 };
+  const group: TabGroup = { id: keeper.id, tabs, activeTabId, flex: 1 };
   return { groups: [group], activeGroupId: group.id };
 }
 

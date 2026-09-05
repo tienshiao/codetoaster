@@ -1,16 +1,29 @@
 import * as React from "react"
 
 /** Below this width the shell is a phone: one tab group, and both sidebars
- * float as sheets rather than holding a column (§9). */
-export const MOBILE_BREAKPOINT = 768
+ * float as sheets rather than holding a column (§9). In rem, because it is
+ * Tailwind's `md` (`--breakpoint-md: 48rem`), and the CSS beside a decision
+ * made here — `Composer`'s `p-3 md:p-6` — has to flip at the same width. */
+export const MOBILE_BREAKPOINT_REM = 48
 
-const QUERY = `(max-width: ${MOBILE_BREAKPOINT - 1}px)`
+/**
+ * The exact complement of Tailwind's `md:`, which is `(width >= 48rem)`.
+ * Written as a negation rather than a `max-width` so the boundary is the same
+ * strict one: `(max-width: 767px)` is `<= 767`, which leaves the sub-pixel
+ * band a zoomed viewport can land in answering "desktop" while the CSS says
+ * phone — and a px threshold drifts from a rem one the moment the root font
+ * size is not 16px. `not all and (...)` is CSS 2.1 syntax, so every
+ * `matchMedia` parses it; a malformed query would silently match nothing and
+ * pin this to false, which is why it is not built from anything else.
+ */
+const QUERY = `not all and (min-width: ${MOBILE_BREAKPOINT_REM}rem)`
 
-/** The answer the media query gives right now, or false where there is nothing
- * to ask — a server render, or a test runner with no `matchMedia`. */
-function matchesNow(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false
-  return window.matchMedia(QUERY).matches
+/** The media query list, or null where there is nothing to ask — a server
+ * render, or a test runner with no `matchMedia`. Not cached: a test swaps
+ * `matchMedia` between cases, and the list has to come from the current one. */
+function mediaQuery(): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null
+  return window.matchMedia(QUERY)
 }
 
 /**
@@ -26,11 +39,11 @@ function matchesNow(): boolean {
  * way, and would let the frame through in which a split is still offered.
  */
 export function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = React.useState(matchesNow)
+  const [isMobile, setIsMobile] = React.useState(() => mediaQuery()?.matches ?? false)
 
   React.useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return
-    const mql = window.matchMedia(QUERY)
+    const mql = mediaQuery()
+    if (!mql) return
     const onChange = () => setIsMobile(mql.matches)
     mql.addEventListener("change", onChange)
     // The viewport can have moved between the first render and this effect —

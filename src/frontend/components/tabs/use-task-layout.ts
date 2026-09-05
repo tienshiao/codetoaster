@@ -1,5 +1,11 @@
 import { useCallback, useState } from "react";
-import { loadLayout, saveLayout, type TaskLayout } from "@/frontend/layout-store";
+import {
+  loadLayout,
+  mergeGroups,
+  saveLayout,
+  type LayoutEnv,
+  type TaskLayout,
+} from "@/frontend/layout-store";
 import { retainViewStates } from "@/frontend/view-state-store";
 
 /** Every tab key the layout currently holds. A split puts one key in two
@@ -29,14 +35,36 @@ function liveKeys(layout: TaskLayout): Set<string> {
  * than waiting for an effect because it is idempotent — pruning the same
  * layout twice prunes nothing the second time — so a discarded render or
  * StrictMode's double invoke costs nothing and cannot prune the wrong task.
+ *
+ * The device's policy (`LayoutEnv`) is applied here, at the one boundary every
+ * layout crosses, rather than by an effect over the result. Under
+ * `singleGroup` a split stored from a wider screen is folded on the way in —
+ * during the same render that loads it, so a phone never paints two columns —
+ * and every write is folded on the way out, so an edit `TabArea` derived from
+ * the folded layout cannot bring the split back. Folding on both sides is what
+ * makes the projection safe: the round trip that would undo a read-side merge
+ * is closed at the write. And a visit that edits nothing writes nothing, so a
+ * desktop window dragged narrow for a moment does not have its split rewritten
+ * in storage; the first edit made while narrow is the one that persists the
+ * fold. `mergeGroups` is the identity on one group, so on a desktop none of
+ * this costs a comparison.
+ *
+ * `setLayout` returns the layout it committed — the folded one — so a caller
+ * keeping its own copy (`TaskShell`'s `layoutRef`) holds what the store holds.
  */
-export function useTaskLayout(taskId: string | null): {
+export function useTaskLayout(
+  taskId: string | null,
+  env: LayoutEnv = {},
+): {
   layout: TaskLayout | null;
-  setLayout: (next: TaskLayout) => void;
+  setLayout: (next: TaskLayout) => TaskLayout;
 } {
+  const single = env.singleGroup === true;
+  const fold = (layout: TaskLayout): TaskLayout => (single ? mergeGroups(layout) : layout);
+
   const load = (id: string | null): TaskLayout | null => {
     if (!id) return null;
-    const layout = loadLayout(id);
+    const layout = fold(loadLayout(id));
     retainViewStates(id, liveKeys(layout));
     return layout;
   };
@@ -48,19 +76,27 @@ export function useTaskLayout(taskId: string | null): {
 
   // React's own "adjust state when a prop changes" pattern: the set during
   // render is discarded and re-run before anything is committed, so nothing
-  // ever paints the previous task's tabs under the new task's name.
+  // ever paints the previous task's tabs under the new task's name — and, by
+  // the same pattern, a viewport that crosses below the breakpoint with a
+  // split on screen folds it before the next paint rather than after one.
+  // Neither branch runs twice: a loaded layout is already folded, and a folded
+  // one has one group.
   if (held.id !== taskId) {
     setHeld({ id: taskId, layout: load(taskId) });
+  } else if (single && held.layout && held.layout.groups.length > 1) {
+    setHeld({ id: taskId, layout: mergeGroups(held.layout) });
   }
 
   const setLayout = useCallback(
     (next: TaskLayout) => {
-      if (!taskId) return;
-      saveLayout(taskId, next);
-      retainViewStates(taskId, liveKeys(next));
-      setHeld({ id: taskId, layout: next });
+      const committed = single ? mergeGroups(next) : next;
+      if (!taskId) return committed;
+      saveLayout(taskId, committed);
+      retainViewStates(taskId, liveKeys(committed));
+      setHeld({ id: taskId, layout: committed });
+      return committed;
     },
-    [taskId],
+    [taskId, single],
   );
 
   return { layout: held.id === taskId ? held.layout : null, setLayout };
