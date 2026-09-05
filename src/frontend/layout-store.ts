@@ -347,6 +347,16 @@ export function canSplit(layout: TaskLayout, tabId: string): boolean {
   return found != null && !isTerminalTab(found.tab.descriptor);
 }
 
+/** Whether search can open over this tab — only a terminal has a grid to
+ * search. One predicate for the three places that ask (the strip's magnifier,
+ * the palette's row, and the palette's dispatch), for the reason
+ * `commandAvailable` gives: a guard on one side and not the other is a row
+ * that does nothing. */
+export function canSearch(layout: TaskLayout, tabId: string): boolean {
+  const found = findTab(layout, tabId);
+  return found != null && isTerminalTab(found.tab.descriptor);
+}
+
 /**
  * Show a tab in a new group beside its own. The original stays put — this is a
  * second view of the same content, which is why terminals are excluded.

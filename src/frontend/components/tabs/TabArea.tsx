@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  canSearch,
   canSplit,
   closeTab,
   focusTab,
@@ -74,6 +75,9 @@ export interface TabAreaProps {
    * tab either way.
    */
   onCloseTab?: (tab: TabState) => void;
+  /** Open search in this group's active terminal tab — the strip's magnifier.
+   * Absent where nothing can answer it. */
+  onSearchTab?: (tab: TabState) => void;
   className?: string;
 }
 
@@ -133,6 +137,7 @@ export function TabArea({
   onTabActions,
   onNewShell,
   onCloseTab,
+  onSearchTab,
   className,
 }: TabAreaProps) {
   const rowRef = useRef<HTMLDivElement>(null);
@@ -368,6 +373,10 @@ export function TabArea({
         const active = group.tabs.find((t) => t.id === group.activeTabId) ?? group.tabs[0] ?? null;
         const target = dropTarget?.groupId === group.id ? dropTarget.index : null;
         const splittable = active != null && canSplit(layout, active.id);
+        // The store's own predicate, so the magnifier and the palette's row
+        // agree on what can be searched. In front of anything else it greys out
+        // rather than vanishing, as Split does.
+        const searchable = active != null && canSearch(layout, active.id);
 
         const tabs: TabProps[] = group.tabs.map((tab, tabIndex) => {
           const shown = presentTab(tab.descriptor);
@@ -453,6 +462,8 @@ export function TabArea({
                 onSplit={
                   active && splittable ? () => onLayoutChange(splitTab(layout, active.id)) : undefined
                 }
+                onSearch={onSearchTab && active ? () => onSearchTab(active) : undefined}
+                searchDisabled={!searchable}
                 onTabActions={onTabActions ? () => onTabActions(group) : undefined}
                 onNewShell={onNewShell}
                 // A press anywhere on the strip — a tab, the empty stretch past

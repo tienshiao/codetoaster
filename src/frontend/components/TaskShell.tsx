@@ -115,6 +115,13 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
    * a non-zero number.
    */
   const [focusPulse, setFocusPulse] = useState<{ n: number; tabId: string } | null>(null);
+  /** The same shape, for search (TASK-58): the strip's magnifier and the
+   * palette's "Find in terminal" both reach a pane's search bar by addressing
+   * its tab id. Only the pane the number names ever sees a non-zero one. */
+  const [searchPulse, setSearchPulse] = useState<{ n: number; tabId: string } | null>(null);
+  const requestSearch = useCallback((tabId: string) => {
+    setSearchPulse((prev) => ({ n: (prev?.n ?? 0) + 1, tabId }));
+  }, []);
 
   /**
    * The layout as of the last commit *and* of any write already issued, plus
@@ -380,6 +387,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                   onLayoutChange={applyLayout}
                   onNewShell={taskId ? handleNewShell : undefined}
                   onCloseTab={handleCloseTab}
+                  onSearchTab={(tab) => requestSearch(tab.id)}
                   leading={leading}
                   renderPane={(tab, _group, visible) => (
                     // Keyed by task *and* tab. The tab key alone was not enough:
@@ -408,6 +416,11 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                       // ids are unique across the layout, so exactly one pane
                       // is handed a non-zero number and every other holds 0.
                       focusRequest={focusPulse?.tabId === tab.id ? focusPulse.n : 0}
+                      // Addressed by tab id for the same reason the focus
+                      // pulse is: a request latched to "whatever is in front"
+                      // would open search in a pane the user merely clicked
+                      // their way into later.
+                      searchRequest={searchPulse?.tabId === tab.id ? searchPulse.n : 0}
                     />
                   )}
                   />
@@ -518,6 +531,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         layout={layout}
         onLayoutChange={applyLayout}
         onFocusTab={pulseTab}
+        onSearchTab={requestSearch}
         onOpenTab={handleOpenTab}
         runCommand={keymap.run}
         onToggleSidebar={() => changeSidebarOpen(!sidebarOpen)}

@@ -8,7 +8,13 @@ import { useGitRefs } from "@/frontend/hooks/use-git-refs";
 import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
 import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import type { ShellCommand } from "@/frontend/keymap";
-import { focusTab, type TabDescriptor, type TaskLayout } from "@/frontend/layout-store";
+import {
+  activeTab,
+  canSearch,
+  focusTab,
+  type TabDescriptor,
+  type TaskLayout,
+} from "@/frontend/layout-store";
 import {
   actionEntries,
   changeEntries,
@@ -44,6 +50,9 @@ export interface CommandPaletteHostProps {
    * a tab chosen from the keyboard does not leave the caret in a closed
    * palette. */
   onFocusTab: (tabId: string) => void;
+  /** Asks the tab's pane to open its terminal search bar — the same pulse the
+   * strip's magnifier raises (TASK-58). */
+  onSearchTab: (tabId: string) => void;
   /** Opens a tab permanently rather than as a preview: a row chosen by name
    * from a list is the user asking for that tab, like a `?tab=` link. */
   onOpenTab: (descriptor: TabDescriptor) => void;
@@ -144,6 +153,7 @@ function OpenPalette({
   layout,
   onLayoutChange,
   onFocusTab,
+  onSearchTab,
   onOpenTab,
   runCommand,
   onToggleSidebar,
@@ -283,6 +293,15 @@ function OpenPalette({
         return onToggleSidebar();
       case "toggle-explorer":
         return onToggleExplorer();
+      case "search-terminal": {
+        // The row is only listed in front of a terminal, but the layout can
+        // have moved under an open palette — so both the tab and whether it
+        // can be searched are asked again rather than carried on the action. A
+        // pulse addressed to a diff tab is one no pane answers.
+        const tab = layout ? activeTab(layout) : null;
+        if (tab && canSearch(layout!, tab.id)) onSearchTab(tab.id);
+        return;
+      }
     }
   };
 

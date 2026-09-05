@@ -16,7 +16,7 @@ import {
   timeoutRestore,
   type RestorePhase,
 } from "./utils/restore-phase";
-import { terminalMustYield } from "./keymap";
+import { isSearchOpenChord, terminalMustYield } from "./keymap";
 import { usePtyOptional } from "./PtyContext";
 import type { PtySink } from "./pty-router";
 import type { ClientMessage, ServerMessage } from "../lib/xtmux/types";
@@ -421,7 +421,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
           }
           return false;
         }
-        if (ev.key === "f" && (ev.metaKey || ev.ctrlKey) && !ev.shiftKey && !ev.altKey) {
+        if (isSearchOpenChord(ev)) {
           if (ev.type === "keydown") {
             ev.preventDefault();
             onSearchOpenRef.current?.();

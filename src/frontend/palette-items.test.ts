@@ -194,6 +194,35 @@ describe("actions", () => {
     expect(mac.find((e) => e.id === "action:next-tab")!.keys).toEqual(["⌘", "K", "]"]);
     expect(other.find((e) => e.id === "action:next-tab")!.keys).toEqual(["Ctrl", "⇧", "K", "]"]);
   });
+
+  test("Find in terminal is offered in front of a terminal tab (TASK-58)", () => {
+    resetIdCounter();
+    // A fresh layout is the agent tab, which is a terminal and so has a grid
+    // to search.
+    const agentOnly = createLayout();
+    const entries = actionEntries({ task: task({ id: "a" }), layout: agentOnly, mac: true });
+
+    expect(ids(entries)).toContain("action:search-terminal");
+    expect(entries.find((e) => e.id === "action:search-terminal")!.keys).toEqual(["⌘", "F"]);
+  });
+
+  test("...and not in front of anything else, which has nothing to search", () => {
+    resetIdCounter();
+    // `openTab` focuses what it opens, so Changes is the active tab.
+    const withDiff = openTab(createLayout(), { kind: "diffAll" });
+
+    expect(ids(actionEntries({ task: task({ id: "a" }), layout: withDiff, mac: true }))).not.toContain(
+      "action:search-terminal",
+    );
+  });
+
+  test("the search row prints the platform's caps too", () => {
+    resetIdCounter();
+    const agentOnly = createLayout();
+    const other = actionEntries({ task: task({ id: "a" }), layout: agentOnly, mac: false });
+
+    expect(other.find((e) => e.id === "action:search-terminal")!.keys).toEqual(["Ctrl", "F"]);
+  });
 });
 
 describe("the working tree, git and files", () => {

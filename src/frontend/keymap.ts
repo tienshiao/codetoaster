@@ -196,20 +196,43 @@ export function matchDirect(ev: KeyLike, mac: boolean = isMac()): ShellCommand |
  * handlers run after the terminal's — so the terminal has to be told to let
  * them past rather than sending them to the PTY.
  *
- * Only search lives here: `TerminalSearchBar` listens on `document` in the
- * bubble phase, which is after xterm's own handler on the textarea. The leader
- * map needs no entry because its listener runs on `window` in the *capture*
- * phase and stops propagation, so those keys never reach xterm at all.
+ * Only search lives here: `TerminalSearchBar` listens on its pane's root in
+ * the bubble phase, which is after xterm's own handler on the textarea. The
+ * leader map needs no entry because its listener runs on `window` in the
+ * *capture* phase and stops propagation, so those keys never reach xterm at
+ * all.
  *
  * Exported because the search bar binds with this same predicate: what the
  * terminal yields and what the bar acts on have to be one rule, or the chord is
  * let through by one and matched by neither. They had already drifted — the bar
  * tested a raw `e.key === "g"`, which with Shift held is `G`, so ⇧⌘G reached
  * nobody while the tooltip advertised it.
+ *
+ * Gated per platform like `isLeader`, because on a Mac a bare ⌃G is readline's
+ * abort and belongs to the PTY — the module header above says a terminal wants
+ * nearly every bare Ctrl chord.
  */
-export function isSearchChord(ev: KeyLike): boolean {
+export function isSearchChord(ev: KeyLike, mac: boolean = isMac()): boolean {
   // ⌘G / ⇧⌘G — next and previous match, while the search bar is open.
-  return normalizeKey(ev.key) === "g" && (ev.metaKey || ev.ctrlKey) && !ev.altKey;
+  if (normalizeKey(ev.key) !== "g" || ev.altKey) return false;
+  return mac ? ev.metaKey && !ev.ctrlKey : ev.ctrlKey && !ev.metaKey;
+}
+
+/**
+ * ⌘F / Ctrl+F — opens search in the focused terminal.
+ *
+ * Handled by the terminal's own key handler rather than the leader map,
+ * because it only means anything with a terminal focused; a ⌘F in a diff pane
+ * stays the browser's. It is therefore not in `terminalMustYield` either — the
+ * terminal does not yield this one, it *answers* it.
+ *
+ * Gated per platform like `isLeader`, because on a Mac a bare ⌃F is readline's
+ * forward-char and belongs to the PTY — the module header above says a terminal
+ * wants nearly every bare Ctrl chord.
+ */
+export function isSearchOpenChord(ev: KeyLike, mac: boolean = isMac()): boolean {
+  if (normalizeKey(ev.key) !== "f" || ev.shiftKey || ev.altKey) return false;
+  return mac ? ev.metaKey && !ev.ctrlKey : ev.ctrlKey && !ev.metaKey;
 }
 
 /**
@@ -227,7 +250,7 @@ export function isSearchChord(ev: KeyLike): boolean {
  * agent is running.
  */
 export function terminalMustYield(ev: KeyLike, mac: boolean = isMac()): boolean {
-  return isLeader(ev, mac) || matchDirect(ev, mac) !== null || isSearchChord(ev);
+  return isLeader(ev, mac) || matchDirect(ev, mac) !== null || isSearchChord(ev, mac);
 }
 
 // ── the leader state machine ────────────────────────────────────────────────
@@ -366,6 +389,30 @@ export function chordHint(id: string, mac: boolean = isMac()): string {
   // following them after the space that separates a leader from its second.
   if (command.direct) return joinCaps(chordCaps(command, mac), mac);
   return `${joinCaps(leaderCaps(mac), mac)} ${keyCap(command.key)}`;
+}
+
+/** The same chord as caps for `KeyHint` / the palette. Spelt out here rather
+ * than in the table, because search is not a leader chord and has no row. */
+export function searchCaps(mac: boolean = isMac()): string[] {
+  return [mac ? "⌘" : "Ctrl", "F"];
+}
+
+/** The open-search chord as tooltip text: `⌘F` on a Mac, `Ctrl+F` elsewhere.
+ * Joined the same way `chordHint` joins a direct chord's caps. */
+export function searchHint(mac: boolean = isMac()): string {
+  return joinCaps(searchCaps(mac), mac);
+}
+
+/** The step-match chord's caps: ⌘G / Ctrl+G, and ⌘⇧G / Ctrl+Shift+G for the
+ * previous match. Modifier-first like `chordCaps`, so the bar's tooltips read
+ * the way the palette's rows do. */
+export function searchStepCaps(previous: boolean, mac: boolean = isMac()): string[] {
+  return [mac ? "⌘" : "Ctrl", ...(previous ? ["⇧"] : []), "G"];
+}
+
+/** The step chord as tooltip text, joined the way `searchHint` joins its own. */
+export function searchStepHint(previous: boolean, mac: boolean = isMac()): string {
+  return joinCaps(searchStepCaps(previous, mac), mac);
 }
 
 /** Looks up one command's caps by id, for a control that knows what it does

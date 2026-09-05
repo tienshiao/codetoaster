@@ -7,6 +7,8 @@ import {
   type TerminalSize,
 } from "@/frontend/Terminal";
 import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
+import { useTerminalSearch } from "@/frontend/hooks/use-terminal-search";
+import { TerminalSearchBar } from "./TerminalSearchBar";
 
 export interface ShellPaneProps {
   /** The PTY this tab was opened onto. Unlike the agent's, it is named by the
@@ -17,7 +19,10 @@ export interface ShellPaneProps {
   /** A rising number is the keyboard asking this terminal to take the caret
    * (TASK-34), as on `AgentPane`. */
   focusRequest?: number;
-  onSearchOpen?: () => void;
+  /** A rising number is the strip or the palette asking this pane to open
+   * search — the keyboard's ⌘F arrives by the other door, `onSearchOpen`
+   * (TASK-58). */
+  searchRequest?: number;
   /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
    * A shell tab gets the same one the agent does: it runs the same CLI in the
    * same repository, and prints the same ids. */
@@ -49,12 +54,16 @@ export function ShellPane({
   ptyId,
   visible,
   focusRequest = 0,
-  onSearchOpen,
+  searchRequest = 0,
   linkProvider,
 }: ShellPaneProps) {
   const { attach, detach, resize, send, isConnected } = usePty();
   const terminalRef = useRef<TerminalHandle>(null);
   useFocusRequest(focusRequest, terminalRef);
+  /** What the search bar's ⌘G listens on, so a split's two bars step their own
+   * matches — see `TerminalSearchBar`. */
+  const root = useRef<HTMLDivElement>(null);
+  const search = useTerminalSearch(terminalRef, searchRequest);
   /** The last grid measured against a *visible* container; never fabricated. */
   const sizeRef = useRef<TerminalSize | null>(null);
 
@@ -87,14 +96,31 @@ export function ShellPane({
     [ptyId, resize],
   );
 
+  // Read from the ref during render, which is only safe because `open` can
+  // become true no earlier than an event after mount — by then the terminal is
+  // there and its addon with it.
+  const searchAddon = search.open ? terminalRef.current?.getSearchAddon() : null;
+
   return (
-    <XTerminal
-      ref={terminalRef}
-      ptyId={ptyId}
-      onSizeChange={handleSizeChange}
-      sendMessage={send}
-      onSearchOpen={onSearchOpen}
-      linkProvider={linkProvider}
-    />
+    // Wrapped only so the search overlay has something to be positioned
+    // against, and so ⌘G has a root to be heard on that is this pane's alone.
+    <div ref={root} className="relative h-full">
+      <XTerminal
+        ref={terminalRef}
+        ptyId={ptyId}
+        onSizeChange={handleSizeChange}
+        sendMessage={send}
+        onSearchOpen={search.openSearch}
+        linkProvider={linkProvider}
+      />
+      {searchAddon ? (
+        <TerminalSearchBar
+          searchAddon={searchAddon}
+          onClose={search.closeSearch}
+          activation={search.activation}
+          scope={root}
+        />
+      ) : null}
+    </div>
   );
 }

@@ -10,7 +10,9 @@ import {
 import { Button } from "@/frontend/components/v2/Button";
 import { StatusDot } from "@/frontend/components/v2/StatusDot";
 import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
+import { useTerminalSearch } from "@/frontend/hooks/use-terminal-search";
 import { cn } from "@/frontend/lib/utils";
+import { TerminalSearchBar } from "./TerminalSearchBar";
 
 /**
  * The agent tab (§7.2): one terminal, bound to one task's PTY.
@@ -51,7 +53,10 @@ export interface AgentPaneProps {
    * chord that put this pane in front but left the caret elsewhere would be
    * one the user has to finish with the mouse. */
   focusRequest?: number;
-  onSearchOpen?: () => void;
+  /** A rising number is the strip or the palette asking this pane to open
+   * search — the keyboard's ⌘F arrives by the other door, `onSearchOpen`
+   * (TASK-58). */
+  searchRequest?: number;
   onFileDrop?: (files: File[]) => void;
   /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
    * This is the task's own terminal, so the ids the agent writes here are the
@@ -63,7 +68,7 @@ export function AgentPane({
   taskId,
   visible,
   focusRequest = 0,
-  onSearchOpen,
+  searchRequest = 0,
   onFileDrop,
   linkProvider,
 }: AgentPaneProps) {
@@ -83,6 +88,10 @@ export function AgentPane({
 
   const terminalRef = useRef<TerminalHandle>(null);
   useFocusRequest(focusRequest, terminalRef);
+  /** What the search bar's ⌘G listens on, so a split's two bars step their own
+   * matches — see `TerminalSearchBar`. */
+  const root = useRef<HTMLDivElement>(null);
+  const search = useTerminalSearch(terminalRef, searchRequest);
 
   const [phase, setPhase] = useState<ReopenPhase>("live");
   /**
@@ -258,8 +267,13 @@ export function AgentPane({
     void reopen();
   }, [reopen]);
 
+  // Read from the ref during render, which is only safe because `open` can
+  // become true no earlier than an event after mount — by then the terminal is
+  // there and its addon with it.
+  const searchAddon = search.open ? terminalRef.current?.getSearchAddon() : null;
+
   return (
-    <div className="relative h-full">
+    <div ref={root} className="relative h-full">
       <XTerminal
         ref={terminalRef}
         ptyId={ptyId}
@@ -268,11 +282,19 @@ export function AgentPane({
         // connect, not by a terminal going ready — v1 asked from here, which
         // meant a route with no terminal ever got a list at all.
         sendMessage={send}
-        onSearchOpen={onSearchOpen}
+        onSearchOpen={search.openSearch}
         onFileDrop={onFileDrop}
         onRestoreEnd={handleRestoreEnd}
         linkProvider={linkProvider}
       />
+      {searchAddon ? (
+        <TerminalSearchBar
+          searchAddon={searchAddon}
+          onClose={search.closeSearch}
+          activation={search.activation}
+          scope={root}
+        />
+      ) : null}
       <Overlay
         phase={phase}
         failure={failure}

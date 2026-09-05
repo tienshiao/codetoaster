@@ -9,13 +9,14 @@ import {
   GitCompare,
   Pin,
   Plus,
+  Search,
   Sparkles,
   Terminal,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { IconButton } from "./IconButton";
-import { chordHint } from "@/frontend/keymap";
+import { chordHint, searchHint } from "@/frontend/keymap";
 import { cn } from "@/frontend/lib/utils";
 
 /** The §7.2 TabDescriptor kinds. */
@@ -184,6 +185,14 @@ export interface TabStripProps {
   /** Terminal tabs are never splittable (§7.2), so the command greys out
    * rather than disappearing — a control that vanishes reads as a bug. */
   splitDisabled?: boolean;
+  /** Open search in this strip's active tab — the mouse's way into the
+   * terminal search bar (TASK-58). Absent on a strip with nothing behind it to
+   * answer, where the button would be chrome that does nothing. */
+  onSearch?: () => void;
+  /** Only a terminal has a grid to search, so the magnifier greys out in front
+   * of a diff or a file rather than disappearing — the same reason Split does,
+   * and the same rule: a control that vanishes reads as a bug. */
+  searchDisabled?: boolean;
   /** This strip's group is the one the leader chords act on — the layout's
    * active group. Defaults to true, for a lone strip. Only the chord hints read
    * it: a strip that is not focused still closes and splits by click, it just
@@ -214,6 +223,8 @@ export function TabStrip({
   actions = true,
   onSplit,
   splitDisabled = false,
+  onSearch,
+  searchDisabled = false,
   focused = true,
   onTabActions,
   onNewShell,
@@ -279,6 +290,21 @@ export function TabStrip({
                   hint={chordHint("new-shell")}
                   size="sm"
                   onClick={onNewShell}
+                />
+              ) : null}
+              {onSearch !== undefined ? (
+                <IconButton
+                  icon={Search}
+                  label={searchDisabled ? "Find (terminal tabs only)" : "Find in terminal"}
+                  // Not on the disabled one, and not on an unfocused group's:
+                  // ⌘F is answered by whichever terminal has the caret, so a
+                  // hint beside a control that will not act — or that would
+                  // search the group beside it — is a chord that appears
+                  // broken.
+                  hint={searchDisabled || !focused ? undefined : searchHint()}
+                  size="sm"
+                  disabled={searchDisabled}
+                  onClick={onSearch}
                 />
               ) : null}
               <IconButton

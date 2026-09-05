@@ -5,6 +5,11 @@ import {
   matchCommand,
   matchDirect,
   terminalMustYield,
+  isSearchChord,
+  isSearchOpenChord,
+  searchCaps,
+  searchHint,
+  searchStepHint,
   stepKeymap,
   LEADER_TIMEOUT_MS,
   leaderCaps,
@@ -392,4 +397,58 @@ test("the machine runs on the non-Mac leader too", () => {
   const { results } = run([[press("k", CTRL_SHIFT)], [press("}", CTRL_SHIFT)]], false);
   expect(results[0]).toEqual({ kind: "armed" });
   expect(results[1]).toMatchObject({ kind: "command", command: { command: "next-tab" } });
+});
+
+// ── the open-search chord (TASK-58) ─────────────────────────────────────────
+
+test("each platform's own modifier opens search, and only its own", () => {
+  expect(isSearchOpenChord(press("f", CMD), true)).toBe(true);
+  // ⌃F on a Mac is readline's forward-char, the PTY's.
+  expect(isSearchOpenChord(press("f", { ctrlKey: true }), true)).toBe(false);
+  expect(isSearchOpenChord(press("f", { ctrlKey: true }), false)).toBe(true);
+  expect(isSearchOpenChord(press("f", CMD), false)).toBe(false);
+});
+
+test("the step chord is gated the same way", () => {
+  expect(isSearchChord(press("g", CMD), true)).toBe(true);
+  // ⌃G on a Mac is readline's abort.
+  expect(isSearchChord(press("g", { ctrlKey: true }), true)).toBe(false);
+  expect(isSearchChord(press("g", { ctrlKey: true }), false)).toBe(true);
+  expect(isSearchChord(press("g", CMD), false)).toBe(false);
+});
+
+test("caps lock is not a modifier: `F` under ⌘ is still the chord", () => {
+  expect(isSearchOpenChord(press("F", CMD), true)).toBe(true);
+});
+
+test("⌘⇧F and ⌥⌘F are somebody else's", () => {
+  // ⇧ is the browser's own find-again in some builds, and ⌥ is how a terminal
+  // sends Meta — a user pressing it means the pane.
+  expect(isSearchOpenChord(press("F", CMD_SHIFT), true)).toBe(false);
+  expect(isSearchOpenChord(press("f", { metaKey: true, altKey: true }), true)).toBe(false);
+});
+
+test("a bare f is a bare f", () => {
+  expect(isSearchOpenChord(press("f"), true)).toBe(false);
+  expect(isSearchOpenChord(press("f"), false)).toBe(false);
+});
+
+test("the terminal does not yield ⌘F — it answers it", () => {
+  // The chord is handled inside xterm's own key handler, so it is deliberately
+  // not in the yield table.
+  expect(terminalMustYield(press("f", CMD), true)).toBe(false);
+});
+
+test("the chord prints per platform", () => {
+  expect(searchCaps(true)).toEqual(["⌘", "F"]);
+  expect(searchCaps(false)).toEqual(["Ctrl", "F"]);
+  expect(searchHint(true)).toBe("⌘F");
+  expect(searchHint(false)).toBe("Ctrl+F");
+});
+
+test("the step chord prints per platform, with ⇧ for the previous match", () => {
+  expect(searchStepHint(false, true)).toBe("⌘G");
+  expect(searchStepHint(true, true)).toBe("⌘⇧G");
+  expect(searchStepHint(false, false)).toBe("Ctrl+G");
+  expect(searchStepHint(true, false)).toBe("Ctrl+Shift+G");
 });

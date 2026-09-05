@@ -14,6 +14,7 @@ import {
   pinTab,
   closeTab,
   focusTab,
+  canSearch,
   canSplit,
   splitTab,
   moveTab,
@@ -607,6 +608,17 @@ test("canSplit refuses terminal tabs and unknown ids, and allows read-only ones"
   for (const key of ["diff:a.ts", "diffAll", "file:a.ts", "commit:abc", "history"]) {
     expect(canSplit(layout, idOf(layout, key))).toBe(true);
   }
+});
+
+test("canSearch allows terminal tabs only — a diff has no grid to search", () => {
+  let layout = createLayout();
+  layout = openTab(layout, shell("pty-1"));
+  layout = openTab(layout, diffAll);
+
+  expect(canSearch(layout, agentId(layout))).toBe(true);
+  expect(canSearch(layout, idOf(layout, "shell:pty-1"))).toBe(true);
+  expect(canSearch(layout, idOf(layout, "diffAll"))).toBe(false);
+  expect(canSearch(layout, "nope")).toBe(false);
 });
 
 test("splitTab refuses agent and shell tabs and unknown ids", () => {

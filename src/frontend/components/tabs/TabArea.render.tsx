@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
-import { test, expect } from "vitest";
+import { test, expect, vi } from "vitest";
 import { act, render } from "@testing-library/react";
-import { TabArea } from "./TabArea";
+import { TabArea, type TabAreaProps } from "./TabArea";
 import {
   createLayout,
+  focusTab,
   openTab,
   resetIdCounter,
   splitTab,
   type TaskLayout,
 } from "@/frontend/layout-store";
-import { chordHint } from "@/frontend/keymap";
+import { chordHint, searchHint } from "@/frontend/keymap";
 
 /**
  * The tab strip's gestures. A rendering test, so Vitest's, not `bun test`'s —
@@ -67,9 +68,13 @@ function pointer(type: string, x: number, id: number): PointerEvent {
   });
 }
 
-function Controlled({ initial }: { initial: TaskLayout }) {
+type ExtraProps = Omit<TabAreaProps, "layout" | "onLayoutChange" | "renderPane">;
+
+function Controlled({ initial, ...rest }: { initial: TaskLayout } & ExtraProps) {
   const [layout, setLayout] = useState(initial);
-  return <TabArea layout={layout} onLayoutChange={setLayout} renderPane={() => null} />;
+  return (
+    <TabArea layout={layout} onLayoutChange={setLayout} renderPane={() => null} {...rest} />
+  );
 }
 
 function mountArea() {
@@ -406,4 +411,60 @@ test("a read-only tab is unmounted when it stops showing", () => {
   // rebuild and both already persisted by tab key. Keeping every pane alive
   // would be the expensive half of the bargain with none of the benefit.
   expect(area.unmounts).toEqual(["diffAll"]);
+});
+
+/**
+ * The strip's magnifier (TASK-58, AC #2): search without the keyboard.
+ *
+ * Only a terminal has a grid to search, so in front of anything else the
+ * button greys out rather than vanishing — the same rule Split follows, and
+ * the same reason: a control that disappears reads as a bug.
+ */
+function findButton(container: HTMLElement): HTMLButtonElement | null {
+  return container.querySelector<HTMLButtonElement>(
+    '[aria-label="Find in terminal"], [aria-label="Find (terminal tabs only)"]',
+  );
+}
+
+test("the magnifier is greyed out in front of a tab with no grid", () => {
+  resetIdCounter();
+  // `openTab` focuses what it opens, so Changes is the active tab.
+  const layout = openTab(createLayout(), { kind: "diffAll" });
+
+  const view = render(<Controlled initial={layout} onSearchTab={vi.fn()} />);
+  const button = findButton(view.container)!;
+
+  expect(button.getAttribute("aria-label")).toBe("Find (terminal tabs only)");
+  expect(button.disabled).toBe(true);
+  // And it names no chord: ⌘F beside a control that will not act is a chord
+  // that appears broken.
+  expect(button.getAttribute("title")).toBe("Find (terminal tabs only)");
+});
+
+test("in front of a terminal it acts, and says which key does the same", () => {
+  resetIdCounter();
+  let layout = createLayout(); // the agent tab
+  layout = openTab(layout, { kind: "diffAll" });
+  const agent = layout.groups[0]!.tabs[0]!;
+  layout = focusTab(layout, agent.id);
+
+  const onSearchTab = vi.fn();
+  const view = render(<Controlled initial={layout} onSearchTab={onSearchTab} />);
+  const button = findButton(view.container)!;
+
+  expect(button.disabled).toBe(false);
+  expect(button.getAttribute("title")).toBe(`Find in terminal (${searchHint()})`);
+
+  act(() => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+
+  // The group's *active* tab, which is what the bar would open over.
+  expect(onSearchTab).toHaveBeenCalledWith(expect.objectContaining({ id: agent.id }));
+});
+
+test("a strip with nobody to answer draws no magnifier at all", () => {
+  resetIdCounter();
+  const view = render(<Controlled initial={createLayout()} />);
+  expect(findButton(view.container)).toBeNull();
 });

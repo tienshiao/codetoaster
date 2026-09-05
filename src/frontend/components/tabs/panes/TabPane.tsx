@@ -37,6 +37,10 @@ export interface TabPaneProps {
    * row, by a `⌘K ]` that cycles a two-tab strip back round to it.
    */
   focusRequest?: number;
+  /** A rising number is the strip's magnifier or the palette asking this tab's
+   * terminal to open search (TASK-58), addressed by tab id exactly as
+   * `focusRequest` is. Only the terminal kinds can answer one. */
+  searchRequest?: number;
 }
 
 /**
@@ -54,6 +58,7 @@ export function TabPane({
   onSubmitReview,
   visible,
   focusRequest = 0,
+  searchRequest = 0,
 }: TabPaneProps) {
   const view = useMemo(() => viewRef(taskId, tab.key), [taskId, tab.key]);
 
@@ -99,6 +104,7 @@ export function TabPane({
           taskId={taskId}
           visible={visible}
           focusRequest={focusRequest}
+          searchRequest={searchRequest}
           linkProvider={linkProvider}
         />
       );
@@ -112,6 +118,7 @@ export function TabPane({
           ptyId={descriptor.ptyId}
           visible={visible}
           focusRequest={focusRequest}
+          searchRequest={searchRequest}
           linkProvider={linkProvider}
         />
       );

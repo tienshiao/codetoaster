@@ -1,5 +1,5 @@
 import { test, expect, vi, beforeEach } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { forwardRef, useImperativeHandle } from "react";
 import type { ILink } from "@xterm/xterm";
 import type { TaskInfo } from "../../../../lib/xtmux/types";
@@ -17,6 +17,34 @@ import type { TabState } from "../../../layout-store";
  * permanent tab. The matcher's own rules are in `backlog-links.test.ts`, where
  * they need no DOM at all.
  */
+
+/**
+ * Enough of `SearchAddon` for the bar to mount against.
+ *
+ * It holds its listener and answers a search with a miss, because that is the
+ * case the bar got wrong: `-1 / 0` is what it starts at, so a query matching
+ * nothing changes no result state at all and only the query itself can make the
+ * count say so.
+ */
+let searchListener: ((e: { resultIndex: number; resultCount: number }) => void) | undefined;
+const MISS = { resultIndex: -1, resultCount: 0 };
+const searchAddon = {
+  onDidChangeResults: (fn: (e: { resultIndex: number; resultCount: number }) => void) => {
+    searchListener = fn;
+    return {
+      dispose() {
+        searchListener = undefined;
+      },
+    };
+  },
+  findNext() {
+    searchListener?.(MISS);
+  },
+  findPrevious() {
+    searchListener?.(MISS);
+  },
+  clearDecorations() {},
+} as unknown as import("@xterm/addon-search").SearchAddon;
 
 const stubs = vi.hoisted(() => ({
   tasks: [] as TaskInfo[],
@@ -59,7 +87,9 @@ vi.mock("@/frontend/Terminal", () => ({
       beginRestore: () => {},
       paintSnapshot: () => {},
       endRestore: () => {},
-      getSearchAddon: () => null,
+      // A stand-in for xterm's search addon: the bar only ever subscribes and
+      // calls these, and a real one needs a grid happy-dom cannot give it.
+      getSearchAddon: () => searchAddon,
       focus: () => {
         stubs.focuses += 1;
       },
@@ -140,6 +170,7 @@ beforeEach(() => {
   stubs.backlog = undefined;
   stubs.terminals = [];
   stubs.focuses = 0;
+  searchListener = undefined;
 });
 
 function renderPane(descriptor: TabState["descriptor"], onOpenTab = vi.fn()) {
@@ -253,4 +284,93 @@ test("mounting with a request already standing is not a rise", () => {
   // Still answers the next real one.
   pulse(5);
   expect(stubs.focuses).toBe(1);
+});
+
+// ── search opens on a pulse and hands the caret back (TASK-58) ──────────────
+
+/** Renders a pane and hands back a way to re-render it with a new search
+ * request — `renderFocusable`'s twin, for the other pulse. */
+function renderSearchable(descriptor: TabState["descriptor"], initial = 0) {
+  const draw = (searchRequest: number) => (
+    <TabPane
+      taskId={TASK_ID}
+      tab={tab(descriptor)}
+      visible
+      searchRequest={searchRequest}
+      onOpenTab={vi.fn()}
+      onSubmitReview={() => true}
+    />
+  );
+  const view = render(draw(initial));
+  return {
+    pulse: (searchRequest: number) => act(() => view.rerender(draw(searchRequest))),
+    bar: () => view.container.querySelector('[role="search"]'),
+    type: (value: string) =>
+      act(() => {
+        fireEvent.change(
+          view.container.querySelector<HTMLInputElement>('[aria-label="Search terminal"]')!,
+          { target: { value } },
+        );
+      }),
+    text: (value: string) => view.queryByText(value),
+    close: () =>
+      act(() => {
+        view.container
+          .querySelector<HTMLElement>('[aria-label="Close search"]')!
+          .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      }),
+  };
+}
+
+test("a rising search request opens the bar over the agent's terminal", () => {
+  const pane = renderSearchable({ kind: "agent" });
+  expect(pane.bar()).toBeNull();
+  pane.pulse(1);
+  expect(pane.bar()).not.toBeNull();
+});
+
+test("a shell tab gets its own bar the same way", () => {
+  const pane = renderSearchable({ kind: "shell", ptyId: "pty-2" });
+  pane.pulse(1);
+  expect(pane.bar()).not.toBeNull();
+});
+
+test("closing the bar puts the caret back in the terminal", () => {
+  const pane = renderSearchable({ kind: "agent" });
+  pane.pulse(1);
+  expect(stubs.focuses).toBe(0);
+
+  pane.close();
+
+  // AC #3: the bar goes, and the grid — not `<body>` — is what has focus after
+  // it, so the next keystroke reaches the PTY the user never left.
+  expect(pane.bar()).toBeNull();
+  expect(stubs.focuses).toBe(1);
+});
+
+test("mounting with a search request already standing is not a rise either", () => {
+  // Same rule as the focus pulse: `TabPane` is keyed by task, so returning to
+  // a task remounts the pane with whatever number was left standing — and a
+  // search bar opening on its own over a terminal is not what a click on a
+  // task row asked for.
+  const pane = renderSearchable({ kind: "agent" }, 3);
+  expect(pane.bar()).toBeNull();
+  pane.pulse(4);
+  expect(pane.bar()).not.toBeNull();
+});
+
+test("dropping to zero is another pane being addressed, not this one closing", () => {
+  const pane = renderSearchable({ kind: "agent" });
+  pane.pulse(1);
+  pane.pulse(0);
+  expect(pane.bar()).not.toBeNull();
+});
+
+test("a query with no match says so, not nothing", () => {
+  const pane = renderSearchable({ kind: "agent" });
+  pane.pulse(1);
+  // `-1 / 0` is where the counts already stood, so the miss changes none of
+  // them: the query itself is what has to re-render the span.
+  pane.type("zzz");
+  expect(pane.text("No results")).not.toBeNull();
 });

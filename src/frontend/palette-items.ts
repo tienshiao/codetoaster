@@ -10,6 +10,7 @@ import {
   PanelRight,
   Plus,
   RotateCcw,
+  Search,
   Sparkles,
   Tag,
   Terminal,
@@ -17,9 +18,17 @@ import {
   GitBranch,
   type LucideIcon,
 } from "lucide-react";
-import { SHELL_COMMANDS, chordCaps, type CommandId, type ShellCommand } from "@/frontend/keymap";
 import {
+  SHELL_COMMANDS,
+  chordCaps,
+  searchCaps,
+  type CommandId,
+  type ShellCommand,
+} from "@/frontend/keymap";
+import {
+  activeTab,
   allTabs,
+  canSearch,
   commandAvailable,
   type TabDescriptor,
   type TaskLayout,
@@ -64,7 +73,9 @@ export type PaletteAction =
   | { type: "resume-task" }
   | { type: "archive-task" }
   | { type: "toggle-sidebar" }
-  | { type: "toggle-explorer" };
+  | { type: "toggle-explorer" }
+  /** Opens the search bar in the active tab's terminal (TASK-58). */
+  | { type: "search-terminal" };
 
 export type PaletteEntry = PaletteItem & { action: PaletteAction };
 
@@ -260,6 +271,22 @@ export function actionEntries({ task, layout, mac = isMac() }: ActionEntryOption
       if (!commandAvailable(layout, command)) continue;
       entries.push(commandEntry(command, mac));
     }
+  }
+
+  // Not in `SHELL_COMMANDS`, because ⌘F is not a leader chord and belongs to
+  // whichever terminal has the caret rather than to the shell's map — but
+  // listed here anyway, because the palette is where a user finds out a chord
+  // exists at all. Offered only in front of a terminal: there is nothing for it
+  // to search otherwise, and a row that does nothing teaches that rows may.
+  const front = layout ? activeTab(layout) : null;
+  if (front && canSearch(layout!, front.id)) {
+    entries.push({
+      id: "action:search-terminal",
+      label: "Find in terminal",
+      icon: Search,
+      keys: searchCaps(mac),
+      action: { type: "search-terminal" },
+    });
   }
 
   entries.push({
