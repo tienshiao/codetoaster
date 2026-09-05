@@ -160,6 +160,21 @@ Elsewhere:
 - **Styling:** `bun-plugin-tailwind`, Radix UI, Lucide icons
 - **Build:** `@tanstack/router-cli` (`tsr`) for route generation
 
+## Upgrading from v1
+
+The database at `~/.codetoaster/data.db` carries over. On the first v2 start it
+is migrated in place: every project keeps its name, path and order, and gains
+the per-project task defaults (worktrees off, base ref, model and permission
+mode unset, so a new task follows HEAD and Claude Code's own defaults until you
+change them in the project's settings). The migration runs once and needs
+nothing from you.
+
+v1 sessions are not carried over. They were live shell processes with no state
+on disk, and v2 has no equivalent for a bare session: every task is an agent
+task, and plain shells exist only as extra tabs inside one. Anything you were
+running in a v1 session is gone once the v1 daemon stops, so finish or note it
+before upgrading.
+
 ## Getting Started
 
 ```bash

@@ -142,6 +142,35 @@ describe("upgrade from v1", () => {
     });
   }
 
+  // TASK-36: a v1 user's projects have to come up usable on the first v2 boot,
+  // and without anyone editing them. Every default is the "unset" value —
+  // NULL hands model, permission mode and base ref to the agent and to
+  // `createTask`, which reads a NULL base ref as HEAD *at task time*. That is
+  // deliberately not the branch the repo had checked out when the migration
+  // ran: a name stored then would go stale, and a v1 `initial_path` may be
+  // `~`-prefixed or not a repository at all.
+  test("a v1 project gets the task defaults filled, and only once", () => {
+    const db = new Database(":memory:");
+    seedV1Database(db, { droppedColor: true });
+    applyMigrations(db);
+
+    const web = db.query("SELECT * FROM projects WHERE id = 'web'").get() as any;
+    expect(web.worktree_default).toBe(0);
+    expect(web.default_base_ref).toBeNull();
+    expect(web.default_model).toBeNull();
+    expect(web.default_permission_mode).toBeNull();
+    expect(web.setup_command).toBeNull();
+    expect(web.worktree_copy).toBeNull();
+
+    // A project configured after the upgrade must not be reset by a later
+    // boot: the migration is on record, so applyMigrations skips it.
+    db.run("UPDATE projects SET worktree_default = 1, default_model = 'opus' WHERE id = 'web'");
+    expect(appliedMigrations(db)).toContain("004_project_task_defaults");
+    applyMigrations(db);
+    const after = db.query("SELECT worktree_default, default_model FROM projects WHERE id = 'web'").get();
+    expect(after).toEqual({ worktree_default: 1, default_model: "opus" });
+  });
+
   test("re-running the migrations changes nothing", () => {
     const db = new Database(":memory:");
     seedV1Database(db, { droppedColor: true });
