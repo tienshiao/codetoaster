@@ -2,6 +2,13 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { TaskRow } from "../db";
+import {
+  claudeProfile,
+  isPlaceholder,
+  renderTemplate,
+  resolveBin,
+  type AgentProfile,
+} from "./profile";
 
 /** Where a task keeps the files that belong to it rather than to its
  * checkout: the injected settings.json (TASK-9) and the scrollback snapshot
@@ -71,57 +78,67 @@ export interface AgentCommandOptions {
    * is no file to point at: `--settings` on a missing path fails the start,
    * and TASK-9 is what writes one. */
   settingsPath?: string;
-  /** The agent binary. Falls back to `$CODETOASTER_AGENT_BIN`, then `claude`
-   * — the env var is how a test run stands something harmless in for a real
-   * agent, and how a user whose `claude` is not on the daemon's PATH names
-   * it. */
+  /** The agent binary, overriding everything the profile says — including its
+   * `binEnv`. What a caller with an exact path in hand passes. */
   bin?: string;
+  /** Which agent to run. Defaults to the built-in `claude` profile, whose
+   * templates are today's argv, so a caller that names nothing is unchanged
+   * (TASK-89.1). */
+  profile?: AgentProfile;
 }
 
-// Building the `claude` invocation for a task (docs/v2-architecture.md §4.1).
-// Everything here is a pure function of the row: no filesystem, no spawn, no
-// database — which is what lets the argv be asserted directly, and lets the
-// resume path reuse the builder without inheriting a start path's side
-// effects.
+// Building the agent invocation for a task (docs/v2-architecture.md §4.1).
+// Everything here is a pure function of the row and the profile: no filesystem,
+// no spawn, no database — which is what lets the argv be asserted directly, and
+// lets the resume path reuse the builder without inheriting a start path's side
+// effects. What each flag is and why it sits where it does now lives with the
+// template in `profile.ts`; this function only turns a mode and a row into
+// values for it.
 export function buildAgentCommand(task: AgentTask, options: AgentCommandOptions = {}): string[] {
   const mode = options.mode ?? "start";
+  const profile = options.profile ?? claudeProfile();
+  const template = mode === "start" ? profile.start : profile[mode];
+  // A profile with no `resume` cannot bring a conversation back, and one with
+  // no `continue` has no directory-scoped fallback rung. Both are legitimate
+  // shapes — the shell profile has neither — so the caller is told which
+  // profile could not do what it was asked, rather than silently getting a
+  // fresh start it did not ask for.
+  if (template === undefined) {
+    throw new Error(`profile ${JSON.stringify(profile.name)} cannot ${mode}`);
+  }
+
   const sessionId = options.sessionId ?? task.agent_session_id;
-  // `continue` names no conversation — that is the whole point of it. The
-  // other two do, and reaching them without one means the caller skipped
-  // allocating it: the task would be unresumable the moment it started, and
-  // the symptom surfaces days later as a resume that finds nothing.
-  if (mode !== "continue" && !sessionId) {
+  // Only when the template actually wants one. `continue` names no
+  // conversation — that is the whole point of it — and neither does a profile
+  // that has no notion of a session id. Where the template does name one,
+  // reaching here without it means the caller skipped allocating it: the task
+  // would be unresumable the moment it started, and the symptom surfaces days
+  // later as a resume that finds nothing.
+  if (template.some((token) => isPlaceholder(token) === "session_id") && !sessionId) {
     throw new Error(`Cannot ${mode} an agent for a task with no agent_session_id`);
   }
 
-  const bin = options.bin ?? (process.env.CODETOASTER_AGENT_BIN || "claude");
-  const command = [bin];
-  // We choose the conversation id up front so we know what to resume before
-  // the process exists (§4.1). Resuming asks for that same id back, and a
-  // resume keeps it (verified), so the row needs no update on the normal path.
-  if (mode === "start") command.push("--session-id", sessionId!);
-  else if (mode === "resume") command.push("--resume", sessionId!);
-  else command.push("--continue");
-  if (options.settingsPath) command.push("--settings", options.settingsPath);
-  if (task.model) command.push("--model", task.model);
-  if (task.permission_mode) command.push("--permission-mode", task.permission_mode);
-  // Positional, and last: this starts an interactive session with the prompt
-  // already submitted. It travels in argv rather than being written into the
-  // PTY afterwards, so newlines and quotes need no escaping and there is no
-  // race against the agent's startup paint. A task created with nothing to
-  // say — the v1 "New Session" button, until the composer lands (TASK-24) —
-  // gets no positional at all, which is a plain interactive start.
-  //
-  // Behind `--`, because the agent's argv parser is option-first: a prompt
-  // that opens with a dash ("--- notes", "-v2 approach") is otherwise read as
-  // a flag and the agent exits with `unknown option` before the task has drawn
-  // a single character. Argv needs no quoting, but it does need the separator.
-  //
-  // Only on a fresh start. A resumed conversation already holds the prompt
-  // that opened it; submitting it again would replay the task's first turn
-  // every time it came back.
-  if (mode === "start" && task.initial_prompt) command.push("--", task.initial_prompt);
-  return command;
+  const bin = options.bin ?? resolveBin(profile);
+  return [
+    bin,
+    ...renderTemplate(template, {
+      session_id: sessionId,
+      // Only on a fresh start. A resumed conversation already holds the prompt
+      // that opened it; submitting it again would replay the task's first turn
+      // every time it came back. (`validateProfile` refuses a resume template
+      // that names `{prompt}` for the same reason; this is the value side of
+      // the same rule.)
+      prompt: mode === "start" ? task.initial_prompt : undefined,
+      model: task.model,
+      permission_mode: task.permission_mode,
+      // Left out while there is no file to point at: `--settings` on a missing
+      // path fails the start, and the unset placeholder takes its flag with it.
+      settings: options.settingsPath,
+      // `cwd` is not on `AgentTask` — the worktree path lives on the row the
+      // manager holds, and TASK-89.2 is where it starts supplying it.
+      cwd: undefined,
+    }),
+  ];
 }
 
 /** Env vars Claude Code sets in the processes it spawns, which a child of ours

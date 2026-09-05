@@ -1,10 +1,11 @@
 ---
 id: TASK-89
 title: 'Configurable agent profiles: run a task on something other than claude'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-05 09:31'
-updated_date: '2026-09-05 09:49'
+updated_date: '2026-09-05 21:09'
 labels:
   - server
   - frontend
