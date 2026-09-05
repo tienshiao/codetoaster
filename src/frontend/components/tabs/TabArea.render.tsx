@@ -2,7 +2,14 @@ import { useEffect, useState } from "react";
 import { test, expect } from "vitest";
 import { act, render } from "@testing-library/react";
 import { TabArea } from "./TabArea";
-import { createLayout, openTab, resetIdCounter, type TaskLayout } from "@/frontend/layout-store";
+import {
+  createLayout,
+  openTab,
+  resetIdCounter,
+  splitTab,
+  type TaskLayout,
+} from "@/frontend/layout-store";
+import { chordHint } from "@/frontend/keymap";
 
 /**
  * The tab strip's gestures. A rendering test, so Vitest's, not `bun test`'s —
@@ -264,6 +271,42 @@ test("a component unmounted mid-drag leaves no proxy on the page", () => {
 
   expect(proxyEl()).toBeNull();
   expect(document.body.dataset.dragging).toBeUndefined();
+});
+
+/**
+ * The chord hints, which belong to the *layout's* active group rather than to
+ * each group's own front tab.
+ *
+ * `⌘K W` closes what is in front of the focused group, so a second group's front
+ * tab naming it would be advertising a key that closes somebody else's tab —
+ * exactly what the hint is there to avoid.
+ */
+test("only the focused group's front tab names the close chord", () => {
+  resetIdCounter();
+  let layout = createLayout(); // the agent tab
+  layout = openTab(layout, { kind: "diffAll" });
+  // Splitting makes the new group the active one, so the hints must move to it.
+  const active = layout.groups[0]!.activeTabId!;
+  layout = splitTab(layout, active);
+
+  const view = render(<Controlled initial={layout} />);
+  const columns = Array.from(view.container.querySelectorAll<HTMLElement>("[data-tab-column]"));
+  expect(columns).toHaveLength(2);
+
+  const closeTitles = (column: HTMLElement) =>
+    Array.from(column.querySelectorAll<HTMLElement>("[data-tab-close]")).map((el) =>
+      el.getAttribute("title"),
+    );
+  const hint = chordHint("close-tab");
+
+  expect(closeTitles(columns[1]!)).toContain(`Close Changes (${hint})`);
+  expect(closeTitles(columns[0]!).join(" ")).not.toContain(hint);
+
+  // Same rule for the Split button: named once, on the group the chord splits.
+  const splitTitle = (column: HTMLElement) =>
+    column.querySelector<HTMLElement>('[aria-label^="Split right"]')?.getAttribute("title");
+  expect(splitTitle(columns[1]!)).toBe(`Split right (${chordHint("split")})`);
+  expect(splitTitle(columns[0]!)).toBe("Split right");
 });
 
 /**

@@ -48,6 +48,9 @@ export interface TabProps {
   /** Native tooltip. A basename is ambiguous across directories and the strip
    * has no room to say which one this is. */
   title?: string;
+  /** The chord that closes this tab, appended to the close control's tooltip;
+   * set only for the tab the chord would actually close. */
+  closeHint?: string;
   className?: string;
 
   // ── drag ──
@@ -81,6 +84,7 @@ export function Tab({
   onClose,
   onDoubleClick,
   title,
+  closeHint,
   className,
   tabId,
   onPointerDown,
@@ -153,10 +157,10 @@ export function Tab({
           type="button"
           data-tab-close=""
           aria-label={`Close ${label}`}
-          // Only on the active tab: the chord closes whatever is in front, so
-          // advertising it on a background tab would name a key that closes a
-          // different one.
-          title={active ? `Close ${label} (${chordHint("close-tab")})` : `Close ${label}`}
+          // The chord is named only where the strip says it applies — see
+          // `closeHint`. A tab that is not the one the key would close
+          // advertises nothing.
+          title={closeHint ? `Close ${label} (${closeHint})` : `Close ${label}`}
           onClick={closeTab}
           className="ml-0.5 flex-none cursor-pointer rounded-sm p-0.5 text-subtle-foreground hover:bg-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
         >
@@ -180,6 +184,11 @@ export interface TabStripProps {
   /** Terminal tabs are never splittable (§7.2), so the command greys out
    * rather than disappearing — a control that vanishes reads as a bug. */
   splitDisabled?: boolean;
+  /** This strip's group is the one the leader chords act on — the layout's
+   * active group. Defaults to true, for a lone strip. Only the chord hints read
+   * it: a strip that is not focused still closes and splits by click, it just
+   * does not name a key that would act on a different group. */
+  focused?: boolean;
   onTabActions?: () => void;
   /** Open a plain shell in this task as a new tab (§3). Absent on a strip that
    * has no task behind it — a design-system preview, say — where the button
@@ -205,6 +214,7 @@ export function TabStrip({
   actions = true,
   onSplit,
   splitDisabled = false,
+  focused = true,
   onTabActions,
   onNewShell,
   groupId,
@@ -245,7 +255,14 @@ export function TabStrip({
         className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {tabs.map((t, i) => (
-          <Tab key={t.tabId ?? i} {...t} />
+          <Tab
+            key={t.tabId ?? i}
+            {...t}
+            // The chord closes what is in front of the *focused* group, so only
+            // that group's front tab may name it. Otherwise the hint would point
+            // at a key that closes a tab in the group beside it.
+            closeHint={focused && t.active ? chordHint("close-tab") : undefined}
+          />
         ))}
       </div>
       {actions || trailing ? (
@@ -267,9 +284,11 @@ export function TabStrip({
               <IconButton
                 icon={Columns2}
                 label={splitDisabled ? "Split right (not available for terminals)" : "Split right"}
-                // Not on the disabled one: a chord advertised beside a control
-                // that will not act is a chord that appears broken.
-                hint={splitDisabled ? undefined : chordHint("split")}
+                // Not on the disabled one, and not on an unfocused group's: a
+                // chord advertised beside a control that will not act — or that
+                // would split the other group's tab — is a chord that appears
+                // broken.
+                hint={splitDisabled || !focused ? undefined : chordHint("split")}
                 size="sm"
                 disabled={splitDisabled}
                 onClick={onSplit}

@@ -447,6 +447,9 @@ export function TabArea({
                 tabs={tabs}
                 leading={groupIndex === 0 ? leading : undefined}
                 splitDisabled={!splittable}
+                // The leader chords act on the active group, so only its strip
+                // names them.
+                focused={group.id === layout.activeGroupId}
                 onSplit={
                   active && splittable ? () => onLayoutChange(splitTab(layout, active.id)) : undefined
                 }

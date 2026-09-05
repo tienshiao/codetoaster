@@ -1,8 +1,14 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { DiffView } from "@/frontend/DiffView";
 import { useBacklogLinkProvider } from "@/frontend/hooks/use-backlog-links";
+import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
 import { viewRef } from "@/frontend/view-state-store";
-import type { OpenOptions, TabDescriptor, TabState } from "@/frontend/layout-store";
+import {
+  isTerminalTab,
+  type OpenOptions,
+  type TabDescriptor,
+  type TabState,
+} from "@/frontend/layout-store";
 import { AgentPane } from "./AgentPane";
 import { CommitPane } from "./CommitPane";
 import { DiffFilePane } from "./DiffFilePane";
@@ -75,6 +81,16 @@ export function TabPane({
   // Undefined outside a Backlog.md repository, which registers nothing.
   const linkProvider = useBacklogLinkProvider(taskId, visible, onOpenTab);
 
+  // Where the caret lands for a pane that has no terminal to hand it to. A
+  // chord onto a diff or a file must still take focus *from* somewhere: in a
+  // split the other group's terminal keeps the caret otherwise, and every key
+  // meant for this pane — DiffLayout's arrows, which stand down while a
+  // textarea has focus — is typed into that PTY instead. The wrapper is
+  // focusable but not tabbable, so the Tab key's order is what it was.
+  // Unused by the terminal kinds, which pass the pulse to their grid.
+  const frame = useRef<HTMLDivElement>(null);
+  useFocusRequest(isTerminalTab(tab.descriptor) ? 0 : focusRequest, frame);
+
   const { descriptor } = tab;
   switch (descriptor.kind) {
     case "agent":
@@ -105,37 +121,59 @@ export function TabPane({
       // already takes a task and a submit, and already addresses the `diffAll`
       // and `review` slots itself, so a wrapper would be a layer that forwards
       // two props.
-      return <DiffView taskId={taskId} onSubmit={onSubmitReview} onOpenFile={openFile} />;
+      return (
+        <Frame ref={frame}>
+          <DiffView taskId={taskId} onSubmit={onSubmitReview} onOpenFile={openFile} />
+        </Frame>
+      );
 
     case "diff":
       return (
-        <DiffFilePane taskId={taskId} view={view} path={descriptor.path} onOpenFile={openFile} />
+        <Frame ref={frame}>
+          <DiffFilePane taskId={taskId} view={view} path={descriptor.path} onOpenFile={openFile} />
+        </Frame>
       );
 
     case "file":
       return (
-        <FilePane
-          taskId={taskId}
-          view={view}
-          path={descriptor.path}
-          line={descriptor.line}
-          onOpenFile={openFile}
-        />
+        <Frame ref={frame}>
+          <FilePane
+            taskId={taskId}
+            view={view}
+            path={descriptor.path}
+            line={descriptor.line}
+            onOpenFile={openFile}
+          />
+        </Frame>
       );
 
     case "commit":
       return (
-        <CommitPane taskId={taskId} view={view} sha={descriptor.sha} onOpenCommit={openCommit} />
+        <Frame ref={frame}>
+          <CommitPane taskId={taskId} view={view} sha={descriptor.sha} onOpenCommit={openCommit} />
+        </Frame>
       );
 
     case "history":
       return (
-        <HistoryPane
-          taskId={taskId}
-          view={view}
-          onOpenCommit={openCommit}
-          onOpenChanges={openChanges}
-        />
+        <Frame ref={frame}>
+          <HistoryPane
+            taskId={taskId}
+            view={view}
+            onOpenCommit={openCommit}
+            onOpenChanges={openChanges}
+          />
+        </Frame>
       );
   }
+}
+
+/** The focusable box around a non-terminal pane — see `frame` above. Full
+ * height, so the pane's own `h-full` root is measured against what it was. */
+function Frame({ ref, children }: { ref: RefObject<HTMLDivElement | null>; children: ReactNode }) {
+  return (
+    <div ref={ref} tabIndex={-1} className="h-full outline-none">
+      {children}
+    </div>
+  );
 }

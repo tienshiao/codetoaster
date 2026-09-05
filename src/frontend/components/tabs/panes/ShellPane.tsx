@@ -6,6 +6,7 @@ import {
   type TerminalLinkProviderFactory,
   type TerminalSize,
 } from "@/frontend/Terminal";
+import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
 
 export interface ShellPaneProps {
   /** The PTY this tab was opened onto. Unlike the agent's, it is named by the
@@ -53,15 +54,7 @@ export function ShellPane({
 }: ShellPaneProps) {
   const { attach, detach, resize, send, isConnected } = usePty();
   const terminalRef = useRef<TerminalHandle>(null);
-
-  // Zero is "not you": every pane the pulse is not addressed to holds it, so a
-  // pulse reaches exactly one terminal — and only on a rise from what this pane
-  // mounted with, as on `AgentPane`.
-  const seenFocusRequest = useRef(focusRequest);
-  useEffect(() => {
-    if (focusRequest && focusRequest !== seenFocusRequest.current) terminalRef.current?.focus();
-    seenFocusRequest.current = focusRequest;
-  }, [focusRequest]);
+  useFocusRequest(focusRequest, terminalRef);
   /** The last grid measured against a *visible* container; never fabricated. */
   const sizeRef = useRef<TerminalSize | null>(null);
 
