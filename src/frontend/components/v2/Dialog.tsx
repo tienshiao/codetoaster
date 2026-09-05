@@ -94,10 +94,12 @@ export function Dialog({
   };
 
   return createPortal(
-    // The scrim matches AppShell's mobile overlay rather than introducing a
-    // second black — it is a shadow over the app, not a palette colour.
+    // One `--scrim` token behind all three modal surfaces — this, the command
+    // palette and AppShell's mobile overlay — rather than three blacks that
+    // have to be kept equal by hand. It is a shadow over the app, not a
+    // palette colour, so it does not change with the theme.
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-[oklch(0_0_0/0.45)] p-4"
+      className="fixed inset-0 z-50 grid place-items-center bg-scrim p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

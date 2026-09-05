@@ -156,6 +156,7 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-scrim: var(--scrim);
   --color-pane: var(--pane);
   --color-chrome: var(--chrome);
   --color-muted: var(--muted);
@@ -280,6 +281,9 @@
   --ct-blue-500-ch:   0.623 0.188 260;
   --ct-green-500-ch:  0.660 0.150 150;
   --ct-red-500-ch:    0.620 0.190 22;
+  /* Not a palette step — pure black, and only ever seen through an alpha: the
+     scrim is a shadow over the app in both themes, not a colour. */
+  --ct-black-ch:      0 0 0;
 
   --ct-slate-25:   oklch(0.990 0.002 258);
   --ct-slate-50:   oklch(0.976 0.003 258);
@@ -443,6 +447,10 @@
   --accent: oklch(var(--ct-blue-500-ch) / 0.08);
   --accent-foreground: var(--ct-slate-900);
   --hover: oklch(var(--ct-slate-1000-ch) / 0.05);
+  /* One scrim for every modal surface — Dialog, the command palette and the
+     shell's mobile overlay. Unchanged in dark: it is a shadow over whatever is
+     underneath, so it does not follow the theme. */
+  --scrim: oklch(var(--ct-black-ch) / 0.45);
   --selected: oklch(var(--ct-blue-500-ch) / 0.11);
   --selected-border: oklch(var(--ct-blue-500-ch) / 0.35);
   --selected-foreground: var(--ct-slate-900);

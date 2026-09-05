@@ -311,6 +311,27 @@ export function SectionLabel({ children, className }: { children: ReactNode; cla
 }
 
 /**
+ * Controlled when the prop is given, internal state otherwise; either way the
+ * change callback fires, so a caller can persist a panel it does not own.
+ *
+ * One helper for the two panels, because they had the same five lines twice
+ * and a fix to one of them would only ever have been made to one of them.
+ */
+function useControllableOpen(
+  prop: boolean | undefined,
+  onChange: ((open: boolean) => void) | undefined,
+  defaultOpen: boolean,
+): [boolean, (next: boolean) => void] {
+  const [uncontrolled, setUncontrolled] = useState(defaultOpen);
+  const open = prop ?? uncontrolled;
+  const setOpen = (next: boolean) => {
+    if (prop === undefined) setUncontrolled(next);
+    onChange?.(next);
+  };
+  return [open, setOpen];
+}
+
+/**
  * The v2 three-column shell (§7.1): task list left, tabbed main area centre,
  * Explorer right. Chrome heights come from the token layer rather than from
  * literals precisely so the three columns line up without measuring each
@@ -352,18 +373,16 @@ export function AppShell({
   defaultExplorerOpen = true,
   className,
 }: AppShellProps) {
-  const [uncontrolledSidebarOpen, setUncontrolledSidebarOpen] = useState(defaultSidebarOpen);
-  const sidebarOpen = sidebarOpenProp ?? uncontrolledSidebarOpen;
-  const setSidebarOpen = (next: boolean) => {
-    if (sidebarOpenProp === undefined) setUncontrolledSidebarOpen(next);
-    onSidebarOpenChange?.(next);
-  };
-  const [uncontrolledExplorerOpen, setUncontrolledExplorerOpen] = useState(defaultExplorerOpen);
-  const explorerOpen = explorerOpenProp ?? uncontrolledExplorerOpen;
-  const setExplorerOpen = (next: boolean) => {
-    if (explorerOpenProp === undefined) setUncontrolledExplorerOpen(next);
-    onExplorerOpenChange?.(next);
-  };
+  const [sidebarOpen, setSidebarOpen] = useControllableOpen(
+    sidebarOpenProp,
+    onSidebarOpenChange,
+    defaultSidebarOpen,
+  );
+  const [explorerOpen, setExplorerOpen] = useControllableOpen(
+    explorerOpenProp,
+    onExplorerOpenChange,
+    defaultExplorerOpen,
+  );
   const isMobile = useIsMobile();
 
   const sidebarWidth = usePaneWidth("sidebar", "left");
@@ -617,7 +636,7 @@ export function AppShell({
         <button
           type="button"
           aria-label="Close panel"
-          className="absolute inset-0 z-10 bg-[oklch(0_0_0/0.45)]"
+          className="absolute inset-0 z-10 bg-scrim"
           onClick={() => {
             setSidebarOpen(false);
             setExplorerOpen(false);
