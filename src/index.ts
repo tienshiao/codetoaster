@@ -1,4 +1,7 @@
 import { parseArgs } from "util";
+// A leaf module with no imports of its own, so the hook fast path below pays
+// nothing for it.
+import { resolveDuration } from "./cli/duration";
 
 (async () => {
   const { values, positionals } = parseArgs({
@@ -8,6 +11,8 @@ import { parseArgs } from "util";
       host: { type: "string" },
       "allowed-host": { type: "string", multiple: true },
       db: { type: "string" },
+      "harvest-after": { type: "string" },
+      "evict-after": { type: "string" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -71,13 +76,35 @@ import { parseArgs } from "util";
     ? values["allowed-host"].filter((name): name is string => typeof name === "string")
     : undefined;
 
+  // Resolved here, before the switch, so a bad duration is a message and an
+  // exit rather than a daemon: `start` detaches a child that would inherit the
+  // argv and fail the same way in a log file nobody is reading, and the user
+  // would see only "not responding".
+  let harvestAfterMs: number | undefined;
+  let evictAfterMs: number | undefined;
+  try {
+    harvestAfterMs = resolveDuration(values["harvest-after"], process.env.CODETOASTER_HARVEST_AFTER, {
+      flag: "--harvest-after",
+      env: "CODETOASTER_HARVEST_AFTER",
+    });
+    evictAfterMs = resolveDuration(values["evict-after"], process.env.CODETOASTER_EVICT_AFTER, {
+      flag: "--evict-after",
+      env: "CODETOASTER_EVICT_AFTER",
+    });
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+
+  const daemonOptions = { port, dbPath, hostname, allowedHosts, harvestAfterMs, evictAfterMs };
+
   switch (command) {
     case "":
-      await cmdStart(port, dbPath, hostname, allowedHosts);
+      await cmdStart(daemonOptions);
       break;
     case "foreground":
     case "fg":
-      await cmdForeground(port, dbPath, hostname, allowedHosts);
+      await cmdForeground(daemonOptions);
       break;
     case "list":
     case "ls":

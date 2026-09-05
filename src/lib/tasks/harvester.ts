@@ -115,6 +115,18 @@ export class Harvester {
     this.evictAfterMs = ms;
   }
 
+  /** The idle timeout in force, whether it was configured or defaulted. Read
+   * by the daemon on the way up so what it logs is what the harvester will
+   * actually use rather than what it was asked for. */
+  get harvestAfter(): number {
+    return this.harvestAfterMs;
+  }
+
+  /** The base eviction grace in force, before `graceFor` scales it. */
+  get evictAfter(): number {
+    return this.evictAfterMs;
+  }
+
   start(): void {
     if (this.timer) return;
     const timer = setInterval(() => {

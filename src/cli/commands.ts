@@ -10,6 +10,7 @@ import {
   listAllInstances,
   daemonBaseUrl,
 } from "./daemon";
+import type { DaemonOptions } from "./daemon";
 import { formatTable, formatAge, formatSessionId } from "./format";
 import { startServer, reachableOrigin } from "../server";
 
@@ -49,7 +50,8 @@ async function isOriginReachable(origin: string): Promise<boolean> {
   }
 }
 
-export async function cmdStart(port: number, dbPath?: string, hostname?: string, allowedHosts?: string[]): Promise<void> {
+export async function cmdStart(options: DaemonOptions): Promise<void> {
+  const port = options.port;
   const pidInfo = readPidFile(port);
   if (pidInfo && isProcessRunning(pidInfo.pid)) {
     if (await isDaemonReachable(port)) {
@@ -63,7 +65,7 @@ export async function cmdStart(port: number, dbPath?: string, hostname?: string,
     removePidFile(port);
   }
 
-  const daemonPid = spawnDaemon(port, dbPath, hostname, allowedHosts);
+  const daemonPid = spawnDaemon(options);
 
   // Found by pid, not by the port that was asked for. `--port 0` means "you
   // decide", and the kernel decides inside the child: it binds, then writes its
@@ -130,8 +132,9 @@ export async function cmdStart(port: number, dbPath?: string, hostname?: string,
   process.exit(1);
 }
 
-export async function cmdForeground(port: number, dbPath?: string, hostname?: string, allowedHosts?: string[]): Promise<void> {
-  const server = startServer({ port, dbPath, hostname, allowedHosts });
+export async function cmdForeground(options: DaemonOptions): Promise<void> {
+  const { port, hostname } = options;
+  const server = startServer(options);
   // The origin goes in the pid file because the daemon is the only party that
   // knows it: `--port 0` resolves late, and `--host` decides whether loopback
   // is reachable at all. Everything else — the CLI on this machine, and the
@@ -385,6 +388,10 @@ Options:
   --db <path>     Database path (default: ~/.codetoaster/data.db)
   --host <addr>   Address to bind (default: 127.0.0.1; widen at your own risk)
   --allowed-host <name>  Extra host name the UI may be reached by (repeatable)
+  --harvest-after <dur>  Suspend an idle task after this long
+                         (default: 30m; 0 disables; env CODETOASTER_HARVEST_AFTER)
+  --evict-after <dur>    Drop a suspended task's checkout after this long
+                         (default: 7d; 0 disables; env CODETOASTER_EVICT_AFTER)
   --version       Show version
   --help          Show this help message`);
 }

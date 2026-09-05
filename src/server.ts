@@ -8,6 +8,7 @@ import { Harvester } from "./lib/tasks/harvester";
 import type { WebSocketData } from "./lib/xtmux/types";
 import { handleClientMessage } from "./lib/xtmux/client-messages";
 import { removePidFile } from "./cli/daemon";
+import { formatDuration } from "./cli/duration";
 import { taskRoutes } from "./api/tasks";
 import { hookRoutes } from "./api/hooks";
 import { diffRoutes } from "./api/diff";
@@ -53,6 +54,13 @@ export function reachableOrigin(hostname: string | undefined, port: number): str
   return `http://${bracketed}:${port}`;
 }
 
+/** A harvester window as a line of log. `0` is not a duration a reader should
+ * have to interpret — it is the tier being switched off — so it is said that
+ * way rather than printed as a number. */
+function describeWindow(ms: number): string {
+  return ms <= 0 ? "disabled" : formatDuration(ms);
+}
+
 export interface ServerOptions {
   port?: number;
   dbPath?: string;
@@ -64,6 +72,16 @@ export interface ServerOptions {
    * repointed. Needed when the bind is a wildcard and the user browses to a
    * name: `--host 0.0.0.0` says "be reachable", not which name to expect. */
   allowedHosts?: string[];
+  /** How long a task may sit idle before it is harvested, and how long a
+   * suspended task keeps its checkout (§5.5, §5.6). `undefined` leaves the
+   * harvester on its own defaults; `0` turns that tier off.
+   *
+   * Per daemon rather than per project, because both guards are about this
+   * machine — its memory and its disk — rather than about any one repository.
+   * A laptop with 16GB and a build server with 256 want different numbers for
+   * the same set of projects. */
+  harvestAfterMs?: number;
+  evictAfterMs?: number;
 }
 
 export function startServer(options?: ServerOptions) {
@@ -110,10 +128,26 @@ export function startServer(options?: ServerOptions) {
   });
   // After the reconciliation, so the first tick walks what is actually running
   // rather than the rows the previous daemon left behind — every one of which
-  // is live, idle-looking and long past any timeout. On its own default of
-  // thirty minutes (§5.5), which it can be now that a suspended task shows in
-  // the sidebar and comes back on a click.
+  // is live, idle-looking and long past any timeout. On its own defaults of
+  // thirty minutes and seven days (§5.5, §5.6) unless the daemon was told
+  // otherwise, which it can be now that a suspended task shows in the sidebar
+  // and comes back on a click.
   const harvester = new Harvester(taskManager);
+  // Before `start()`, so the first tick already has the configured windows: a
+  // sweep that ran on the defaults and then had them changed underneath it
+  // could suspend a task the user had just bought another two hours for.
+  if (options?.harvestAfterMs !== undefined) harvester.setHarvestAfter(options.harvestAfterMs);
+  if (options?.evictAfterMs !== undefined) harvester.setEvictAfter(options.evictAfterMs);
+  // Logged only when something was overridden, and both values together: what a
+  // user checking their launchd unit needs is confirmation that the daemon read
+  // what they wrote, and the other tier's number is the context that makes it
+  // legible. Silent on the defaults, because they are documented.
+  if (options?.harvestAfterMs !== undefined || options?.evictAfterMs !== undefined) {
+    console.log(
+      `Harvest after ${describeWindow(harvester.harvestAfter)}, ` +
+        `evict after ${describeWindow(harvester.evictAfter)}`,
+    );
+  }
   harvester.start();
 
   // Read lazily, not computed here: `--port 0` means the real port does not

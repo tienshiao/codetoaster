@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { formatDuration } from "./duration";
+import type { ServerOptions } from "../server";
 
 const CONFIG_DIR = path.join(os.homedir(), ".codetoaster");
 const LOG_FILE = path.join(CONFIG_DIR, "codetoaster.log");
@@ -91,10 +93,58 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
+/** Everything the daemon needs to be told, in one object rather than in a
+ * growing row of positionals. The port is the one thing always known — the CLI
+ * has a default for it — and the rest is `ServerOptions` because the background
+ * daemon is a foreground server with a detach in front of it: anything the
+ * server can be configured with has to survive the respawn, or `start` and
+ * `foreground` quietly mean different things. */
+export type DaemonOptions = ServerOptions & { port: number };
+
+/** The daemon's own argv, after `foreground`. Pure and exported because it is
+ * the whole of the respawn contract: every option that reaches `startServer`
+ * directly under `foreground` has to be re-spelled here to reach it under
+ * `start`, and a flag forgotten in this list is a setting that silently works
+ * in the foreground and is lost in the background. */
+export function daemonArgs(options: DaemonOptions): string[] {
+  const args: string[] = [];
+
+  if (options.port !== 4000) {
+    args.push("--port", String(options.port));
+  }
+
+  if (options.dbPath) {
+    args.push("--db", options.dbPath);
+  }
+
+  // Passed through, so a daemon started in the background binds what the user
+  // asked for rather than quietly falling back to loopback.
+  if (options.hostname) {
+    args.push("--host", options.hostname);
+  }
+
+  for (const name of options.allowedHosts ?? []) {
+    args.push("--allowed-host", name);
+  }
+
+  // Tested against `undefined` rather than for truthiness: `0` is a real value
+  // here — it is how a tier is turned off — and a falsy check would drop it,
+  // handing the child the thirty-minute default the user had just disabled.
+  if (options.harvestAfterMs !== undefined) {
+    args.push("--harvest-after", formatDuration(options.harvestAfterMs));
+  }
+
+  if (options.evictAfterMs !== undefined) {
+    args.push("--evict-after", formatDuration(options.evictAfterMs));
+  }
+
+  return args;
+}
+
 /** Starts the daemon and returns its pid — the only handle on it that exists
  * before it has bound a port, and therefore the only way to find it again, or
  * to clean it up if it never comes up. */
-export function spawnDaemon(port: number, dbPath?: string, hostname?: string, allowedHosts?: string[]): number {
+export function spawnDaemon(options: DaemonOptions): number {
   ensureConfigDir();
 
   // Build the command to run the server in foreground mode.
@@ -104,23 +154,7 @@ export function spawnDaemon(port: number, dbPath?: string, hostname?: string, al
     ? [process.execPath, "foreground"]
     : [process.execPath, Bun.main, "foreground"];
 
-  if (port !== 4000) {
-    cmd.push("--port", String(port));
-  }
-
-  if (dbPath) {
-    cmd.push("--db", dbPath);
-  }
-
-  // Passed through, so a daemon started in the background binds what the user
-  // asked for rather than quietly falling back to loopback.
-  if (hostname) {
-    cmd.push("--host", hostname);
-  }
-
-  for (const name of allowedHosts ?? []) {
-    cmd.push("--allowed-host", name);
-  }
+  cmd.push(...daemonArgs(options));
 
   const logFd = fs.openSync(LOG_FILE, "a");
 

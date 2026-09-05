@@ -1,9 +1,11 @@
 ---
 id: TASK-88
 title: Make harvest_after and the eviction grace configurable
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-05 09:31'
+updated_date: '2026-09-05 20:34'
 labels:
   - server
   - cli
@@ -31,8 +33,30 @@ Update the README's 'Neither is configurable yet' paragraph and the usage text i
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 codetoaster --harvest-after <duration> and --evict-after <duration> are accepted by both the daemon and foreground commands, parse m/h/d suffixes and 0, and reject anything else with a clear message
-- [ ] #2 CODETOASTER_HARVEST_AFTER and CODETOASTER_EVICT_AFTER are honoured when the flag is absent, and the flag wins when both are set
-- [ ] #3 The parsed values reach Harvester.setHarvestAfter / setEvictAfter before the first tick, with a unit test on the duration parser and one on the wiring
-- [ ] #4 cmdHelp lists both flags and the README's Harvesting and eviction section documents them instead of saying they are not configurable
+- [x] #1 codetoaster --harvest-after <duration> and --evict-after <duration> are accepted by both the daemon and foreground commands, parse m/h/d suffixes and 0, and reject anything else with a clear message
+- [x] #2 CODETOASTER_HARVEST_AFTER and CODETOASTER_EVICT_AFTER are honoured when the flag is absent, and the flag wins when both are set
+- [x] #3 The parsed values reach Harvester.setHarvestAfter / setEvictAfter before the first tick, with a unit test on the duration parser and one on the wiring
+- [x] #4 cmdHelp lists both flags and the README's Harvesting and eviction section documents them instead of saying they are not configurable
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. src/cli/duration.ts: parseDuration (0 or an integer with an m/h/d suffix, anything else is an error naming the accepted forms), formatDuration (the canonical Nm/Nh/Nd/0 spelling so the daemon argv round-trips exactly), resolveDuration(flag, env, names) where the flag wins and a flag given no value is an error. duration.test.ts covers all three.
+2. Options object instead of a fifth and sixth positional: ServerOptions gains harvestAfterMs and evictAfterMs; cmdStart, cmdForeground and spawnDaemon take one DaemonOptions (ServerOptions with port required); index.ts resolves both durations once, flag over CODETOASTER_HARVEST_AFTER / CODETOASTER_EVICT_AFTER, and exits 1 with the message on a bad one before anything is spawned.
+3. spawnDaemon's flag list is extracted to a pure daemonArgs(options) that passes --harvest-after / --evict-after through formatDuration, unit-tested.
+4. server.ts applies setHarvestAfter / setEvictAfter before harvester.start() and logs the effective values when either is overridden; Harvester gets read-only getters for both. start.test.ts gains the wiring tests against the real CLI: foreground --port 0 with both flags logs the values; env alone is honoured; the flag beats the env; a bad value exits 1 naming the flag or variable.
+5. cmdHelp and README (Options table and the Harvesting and eviction section) document both flags and both variables; tsc and bun run test clean.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Landed as planned. duration.ts holds the parser (0, or an integer with m/h/d), the canonical formatter the daemon argv round-trips through, and resolveDuration (flag over env; a flag with no value and an empty env are handled). cmdStart/cmdForeground/spawnDaemon take one DaemonOptions object; daemonArgs is the pure respawn list. server.ts applies both setters before the first tick and logs the effective pair when either was given. Deviations from the plan: daemonArgs tests live in duration.test.ts, and help/README use two lines per flag. Validation: tsc clean; bun run test:unit 1241 pass / 0 fail (+32); test:render 268 pass.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+harvest_after and the eviction grace are configurable per daemon: --harvest-after and --evict-after (0, or an integer with m/h/d) on both start and foreground, with CODETOASTER_HARVEST_AFTER / CODETOASTER_EVICT_AFTER as fallbacks; the flag wins, a bad value exits 1 naming its source before any daemon is spawned, and the background daemon re-spells the values onto its child's argv. The server applies both to the harvester before its first tick and logs the effective pair. cmdHelp and the README document both. Verified with duration and daemonArgs unit tests, five end-to-end CLI tests, tsc, and the full suite.
+<!-- SECTION:FINAL_SUMMARY:END -->

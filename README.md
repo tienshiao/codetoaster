@@ -278,6 +278,10 @@ Options:
   --db <path>     Database path (default: ~/.codetoaster/data.db)
   --host <addr>   Address to bind (default: 127.0.0.1; widen at your own risk)
   --allowed-host <name>  Extra host name the UI may be reached by (repeatable)
+  --harvest-after <dur>  Suspend an idle task after this long
+                         (default: 30m; 0 disables; env CODETOASTER_HARVEST_AFTER)
+  --evict-after <dur>    Drop a suspended task's checkout after this long
+                         (default: 7d; 0 disables; env CODETOASTER_EVICT_AFTER)
   --version       Show version
   --help          Show this help message
 ```
@@ -341,9 +345,28 @@ tab has a foreground process, and it has been idle longer than `harvest_after`.
   in 200ms is reclaimed long before one that re-runs a 90-second install. Pinned
   tasks are exempt.
 
-**Neither is configurable yet.** There is no flag, environment variable, or
-settings control for `harvest_after` or the eviction grace — the defaults above
-are what you get. Manual close and manual archive are the escape hatches.
+Both windows are settable on the daemon:
+
+```bash
+codetoaster --harvest-after 2h --evict-after 30d
+codetoaster --harvest-after 0            # never harvest; eviction still runs
+CODETOASTER_HARVEST_AFTER=2h codetoaster # for a launchd or systemd unit
+```
+
+A duration is a whole number with an `m`, `h`, or `d` suffix — `45m`, `2h`,
+`30d` — or a bare `0`, which turns that tier off. Nothing else is accepted:
+`90s` and `1.5h` are errors naming the flag or the variable, and the daemon
+exits rather than starting on a value it had to guess at. Each setting reads
+`--harvest-after` / `--evict-after` first and
+`CODETOASTER_HARVEST_AFTER` / `CODETOASTER_EVICT_AFTER` after, so a unit file
+can carry the machine's standing policy and a flag can override it for one run.
+Both work on `foreground` as well, and the background daemon passes them to the
+server it spawns.
+
+The values are **per daemon, not per project**: both guards are about this
+machine's memory and disk, and a laptop and a build server want different
+numbers for the same set of repositories. There is no settings-UI control for
+either yet; manual close and manual archive remain the escape hatches.
 
 ### Never start the daemon from inside a Claude Code session
 
