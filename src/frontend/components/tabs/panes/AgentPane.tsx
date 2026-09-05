@@ -82,12 +82,19 @@ export function AgentPane({
 
   const terminalRef = useRef<TerminalHandle>(null);
 
-  // Zero is "not you" — every pane but the one the layout points at holds it,
-  // so a pulse reaches exactly one terminal. Not folded into `visible`: that
-  // is per-group and true for both panes of a split, and it also turns over on
-  // a mouse click, which should go on doing what it always has.
+  // Zero is "not you" — every pane the pulse is not addressed to holds it, so a
+  // pulse reaches exactly one terminal. Not folded into `visible`: that is
+  // per-group and true for both panes of a split, and it also turns over on a
+  // mouse click, which should go on doing what it always has.
+  //
+  // Only on a *rise*, measured from what this pane mounted with: `TabPane` is
+  // keyed by task, so leaving a task and coming back remounts this component
+  // with whatever number was standing, and focusing on that would take the
+  // caret out of the sidebar's filter on the click that selected the task.
+  const seenFocusRequest = useRef(focusRequest);
   useEffect(() => {
-    if (focusRequest) terminalRef.current?.focus();
+    if (focusRequest && focusRequest !== seenFocusRequest.current) terminalRef.current?.focus();
+    seenFocusRequest.current = focusRequest;
   }, [focusRequest]);
 
   const [phase, setPhase] = useState<ReopenPhase>("live");

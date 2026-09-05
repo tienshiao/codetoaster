@@ -14,6 +14,7 @@ import { useShellKeymap } from "@/frontend/hooks/use-shell-keymap";
 import { pathLabel } from "@/frontend/utils/path-label";
 import { TabArea, TabPane, useTaskLayout } from "@/frontend/components/tabs";
 import {
+  activeTab,
   allTabs,
   descriptorFromKey,
   openTab,
@@ -77,15 +78,23 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   // here, since it is the shell's chrome and belongs to no task.
   const [settingsOpen, setSettingsOpen] = useState(false);
   /**
-   * Bumped when a keyboard command has moved which tab is in front, so the
-   * pane that is now there takes the caret (TASK-34).
+   * The last "take the caret" a keyboard command raised, and the tab it was
+   * raised for (TASK-34).
    *
    * A counter passed down rather than a ref reached into: the pane that should
    * answer is decided by the layout the same render commits, and the two have
    * to arrive together — a pulse delivered before the layout moved would go to
    * whichever pane was in front a moment ago.
+   *
+   * Addressed to a *tab id* rather than to "whichever pane is in front now",
+   * which is the same counter but latched: the pulse outlives the keystroke, so
+   * every later layout change that moved a terminal into the front position —
+   * a click on its tab, the tab in front being closed, §5.5's shell-tab prune —
+   * would hand that pane the standing pulse and pull the caret out of whatever
+   * the user was typing in. Only the tab the chord actually landed on ever sees
+   * a non-zero number.
    */
-  const [focusRequest, setFocusRequest] = useState(0);
+  const [focusPulse, setFocusPulse] = useState<{ n: number; tabId: string } | null>(null);
 
   /**
    * The layout as of the last commit *and* of any write already issued, plus
@@ -235,7 +244,14 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     onLayoutChange: applyLayout,
     onNewShell: taskId ? handleNewShell : undefined,
     onCloseTab: handleCloseTab,
-    onFocusPane: () => setFocusRequest((n) => n + 1),
+    // Read off the ref for the same reason the layout is: `applyLayout` has
+    // already written it, so the tab this names is the one the chord landed on
+    // rather than the one that was in front before it.
+    onFocusPane: () => {
+      const tab = layoutRef.current ? activeTab(layoutRef.current) : null;
+      if (!tab) return;
+      setFocusPulse((prev) => ({ n: (prev?.n ?? 0) + 1, tabId: tab.id }));
+    },
   });
 
   /**
@@ -340,7 +356,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                   onNewShell={taskId ? handleNewShell : undefined}
                   onCloseTab={handleCloseTab}
                   leading={leading}
-                  renderPane={(tab, group, visible) => (
+                  renderPane={(tab, _group, visible) => (
                     // Keyed by task *and* tab. The tab key alone was not enough:
                     // every task's agent tab keys as "agent", so switching tasks
                     // handed the same React position the same key and the same
@@ -359,13 +375,14 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                       onOpenTab={handleOpenTab}
                       onSubmitReview={handleSubmitReview}
                       visible={visible}
-                      // `visible` is per-group and true for both panes of a
-                      // split, so it cannot say which one the caret belongs
-                      // to. The active group is the other half of that, and
-                      // every pane but one is handed 0.
-                      focusRequest={
-                        visible && group.id === layout.activeGroupId ? focusRequest : 0
-                      }
+                      // Named, not inferred from what is in front: `visible` is
+                      // per-group and true for both panes of a split, and even
+                      // narrowed to the active group it turns over for reasons
+                      // that are not the keyboard — a click, a close, a prune —
+                      // each of which would re-deliver the standing pulse. Tab
+                      // ids are unique across the layout, so exactly one pane
+                      // is handed a non-zero number and every other holds 0.
+                      focusRequest={focusPulse?.tabId === tab.id ? focusPulse.n : 0}
                     />
                   )}
                   />

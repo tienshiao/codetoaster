@@ -200,7 +200,7 @@ test("a shell tab gets the same provider — it runs the same CLI", () => {
 // ── the caret follows a keyboard navigation (TASK-34) ───────────────────────
 
 /** Renders a pane and hands back a way to re-render it with a new request. */
-function renderFocusable(descriptor: TabState["descriptor"]) {
+function renderFocusable(descriptor: TabState["descriptor"], initial = 0) {
   const draw = (focusRequest: number) => (
     <TabPane
       taskId={TASK_ID}
@@ -211,7 +211,7 @@ function renderFocusable(descriptor: TabState["descriptor"]) {
       onSubmitReview={() => true}
     />
   );
-  const view = render(draw(0));
+  const view = render(draw(initial));
   return (focusRequest: number) => act(() => view.rerender(draw(focusRequest)));
 }
 
@@ -241,5 +241,16 @@ test("dropping to zero is a pane being told it is no longer the one in front", (
   pulse(0);
   // The falling edge must not focus: that pane has just lost the caret to
   // another, and taking it back is the bug.
+  expect(stubs.focuses).toBe(1);
+});
+
+test("mounting with a request already standing is not a rise", () => {
+  // `TabPane` is keyed by task, so leaving a task and returning remounts the
+  // pane with whatever number the last chord left behind. Focusing on that
+  // would take the caret out of the sidebar filter the user clicked from.
+  const pulse = renderFocusable({ kind: "agent" }, 4);
+  expect(stubs.focuses).toBe(0);
+  // Still answers the next real one.
+  pulse(5);
   expect(stubs.focuses).toBe(1);
 });

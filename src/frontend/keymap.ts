@@ -241,6 +241,13 @@ export function stepKeymap(
     // keystroke doing two things.
     if (ev.key === "Escape") return { armedAt: null, result: { kind: "cancelled" } };
 
+    // The leader again, before its own chord: re-arm rather than spend the arm
+    // on a key that is in no row. A hand that hesitates types `⌘K ⌘K ]`, and
+    // cancelling on the second press would leave the `]` unarmed — falling
+    // through to the pane and typing a bracket into the agent, which is the one
+    // thing the map exists to prevent.
+    if (isLeader(ev, mac)) return { armedAt: now, result: { kind: "armed" } };
+
     const command = matchCommand(ev);
     if (command) return { armedAt: null, result: { kind: "command", command } };
 
@@ -250,8 +257,7 @@ export function stepKeymap(
     return { armedAt: null, result: { kind: "cancelled" } };
   }
 
-  // Not armed, or armed too long ago to still mean anything. A second leader
-  // press re-arms rather than being read as the first chord's second key.
+  // Not armed, or armed too long ago to still mean anything.
   if (isLeader(ev, mac)) return { armedAt: now, result: { kind: "armed" } };
   return { armedAt: null, result: { kind: "idle" } };
 }

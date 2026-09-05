@@ -275,11 +275,20 @@ test("a second leader press re-arms rather than being read as a second key", () 
     [press("k", CMD), 0],
     [press("k", CMD), 10],
   ]);
-  // The first is armed; the second is not a command (`k` is in no row), so it
-  // cancels — and then arms again, so the chord the user is halfway through
-  // still works.
-  expect(results[1]).toEqual({ kind: "cancelled" });
-  expect(armedAt).toBeNull();
+  // Both are the leader, so the second re-arms from its own moment rather than
+  // spending the arm on a key that is in no row. Cancelling it would leave the
+  // chord's real second press unarmed — a `]` typed into the agent.
+  expect(results[1]).toEqual({ kind: "armed" });
+  expect(armedAt).toBe(10);
+});
+
+test("a re-arm restarts the timeout, so ⌘K ⌘K ] still fires", () => {
+  const { last } = run([
+    [press("k", CMD), 0],
+    [press("k", CMD), LEADER_TIMEOUT_MS],
+    [press("]", CMD), LEADER_TIMEOUT_MS * 2],
+  ]);
+  expect(last).toMatchObject({ kind: "command", command: { command: "next-tab" } });
 });
 
 test("an expired leader followed by the leader arms again", () => {
