@@ -339,10 +339,29 @@ export function focusTab(layout: TaskLayout, tabId: string): TaskLayout {
   return { ...replaceGroup(layout, group.id, group), activeGroupId: group.id };
 }
 
+/**
+ * The device's policy on what the layout may become.
+ *
+ * Below the mobile breakpoint the main area holds one group
+ * (docs/v2-architecture.md §9, risk 6): a split on a phone is two unreadable
+ * columns. Under `singleGroup`, Split is refused by every door — the strip's
+ * button, the leader chord and the palette's row — and `mergeGroups` folds a
+ * layout stored from a wider screen back into one group.
+ *
+ * A parameter rather than a module-level flag because none of this file knows
+ * what a viewport is: the shell measures the device and passes the answer down,
+ * and every rule stays a pure function of its inputs.
+ */
+export interface LayoutEnv {
+  singleGroup?: boolean;
+}
+
 /** Whether Split is offered for a tab. Terminal tabs are never splittable: a
  * second view of a live PTY is a second stream to keep in sync, and when a user
- * wants another terminal they open one. */
-export function canSplit(layout: TaskLayout, tabId: string): boolean {
+ * wants another terminal they open one. Nothing is splittable under
+ * `singleGroup` — see `LayoutEnv`. */
+export function canSplit(layout: TaskLayout, tabId: string, env: LayoutEnv = {}): boolean {
+  if (env.singleGroup) return false;
   const found = findTab(layout, tabId);
   return found != null && !isTerminalTab(found.tab.descriptor);
 }
@@ -370,6 +389,45 @@ export function splitTab(layout: TaskLayout, tabId: string): TaskLayout {
   const groups = [...layout.groups];
   groups.splice(found.groupIndex + 1, 0, group);
   return { groups, activeGroupId: group.id };
+}
+
+/**
+ * Fold every group into one — what a stored split becomes on a phone.
+ *
+ * The inverse of `splitTab` in effect but not in shape: it collapses however
+ * many groups there are, in one step, because what it is given is a layout
+ * written on a wider screen rather than a split just made.
+ *
+ * Tabs keep their left-to-right order, deduplicated by `key`: the two halves of
+ * a split are the same descriptor twice, and one group may not hold a key
+ * twice — that is `moveTab`'s invariant and `reviveLayout` refuses a stored
+ * layout that breaks it. The first occurrence survives, and focus follows the
+ * active tab to it: the copy that was in front can be exactly the duplicate
+ * that got dropped.
+ *
+ * Returns the layout itself when there is nothing to merge, so a caller can
+ * compare by identity and not write.
+ */
+export function mergeGroups(layout: TaskLayout): TaskLayout {
+  if (layout.groups.length < 2) return layout;
+
+  const source = activeGroup(layout);
+  const front = source.tabs.find((t) => t.id === source.activeTabId) ?? source.tabs[0] ?? null;
+
+  const survivors = new Map<string, TabState>();
+  for (const group of layout.groups) {
+    for (const tab of group.tabs) {
+      if (!survivors.has(tab.key)) survivors.set(tab.key, tab);
+    }
+  }
+  const tabs = [...survivors.values()];
+
+  // Its own id when it survived, the surviving twin's when it did not.
+  const activeTabId = (front && survivors.get(front.key)?.id) ?? tabs[0]?.id ?? "";
+  // The active group's id, so a layout that is merged twice is stable and the
+  // group the user was in keeps its identity.
+  const group: TabGroup = { id: source.id, tabs, activeTabId, flex: 1 };
+  return { groups: [group], activeGroupId: group.id };
 }
 
 /**
@@ -504,17 +562,22 @@ export function findAgentTab(layout: TaskLayout): TabState | null {
  * chord the palette hides while the keyboard still fires it.
  *
  * `jump-tab` names a position the group may not have; `split` is refused for
- * a terminal; `close-tab` is refused for the agent tab, which is the task and
- * closes only through the task list. Everything else is always available:
- * `cycleTab` and `focusGroup` clamp or wrap on their own.
+ * a terminal, and for every tab on a device that holds one group (`LayoutEnv`);
+ * `close-tab` is refused for the agent tab, which is the task and closes only
+ * through the task list. Everything else is always available: `cycleTab` and
+ * `focusGroup` clamp or wrap on their own.
  */
-export function commandAvailable(layout: TaskLayout, command: ShellCommand): boolean {
+export function commandAvailable(
+  layout: TaskLayout,
+  command: ShellCommand,
+  env: LayoutEnv = {},
+): boolean {
   switch (command.command) {
     case "jump-tab":
       return command.index != null && command.index <= activeGroup(layout).tabs.length;
     case "split": {
       const tab = activeTab(layout);
-      return tab != null && canSplit(layout, tab.id);
+      return tab != null && canSplit(layout, tab.id, env);
     }
     case "close-tab": {
       const tab = activeTab(layout);

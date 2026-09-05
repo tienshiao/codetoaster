@@ -19,8 +19,10 @@ import {
   activeTab,
   allTabs,
   descriptorFromKey,
+  mergeGroups,
   openTab,
   reconcileShellTabs,
+  type LayoutEnv,
   type OpenOptions,
   type TabDescriptor,
   type TabState,
@@ -54,6 +56,33 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   const { tasks, loaded, home, openShell, closeShell, setViewedTask } = useTasks();
   const openTask = useOpenTask();
   const openComposer = useOpenComposer();
+  const isMobile = useIsMobile();
+  /**
+   * Which sidebar is floating over the main area, on a phone (TASK-33).
+   *
+   * One piece of transient state for both, because below the breakpoint
+   * `AppShell` draws them as sheets over a scrim and only one may be up at a
+   * time — a rule that is far easier to keep as "which one" than as two
+   * booleans that have to be talked out of being true together.
+   *
+   * Transient in the literal sense: it starts null on every load, because
+   * whichever sheet was open would be covering the terminal or the composer the
+   * user came to the page for. And it is deliberately not the persisted
+   * Explorer flag, so a phone visit does not close the Explorer on the user's
+   * desktop.
+   */
+  const [sheet, setSheet] = useState<"tasks" | "explorer" | null>(null);
+  /**
+   * Shut whichever sheet is up, because the thing it was opened to do has been
+   * done: a task picked, a composer opened, a file opened from the Explorer.
+   * The sheet covers the main area, so leaving it up would hide the very thing
+   * the press just navigated to.
+   *
+   * Unguarded by `isMobile` and safe to be: on a desktop nothing ever sets
+   * this, so writing null is the value it already holds and React bails out of
+   * the render.
+   */
+  const dismissSheet = useCallback(() => setSheet(null), []);
   const explorerPanel = useExplorerPanel();
   const explorerSections = useExplorerRail(taskId, explorerPanel.section);
   // The Explorer's section is per device and the Backlog one only exists for a
@@ -71,10 +100,27 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     : "Changes";
   // A real layout for the selected task, persisted per task id.
   const { layout, setLayout } = useTaskLayout(taskId);
+  // Wrapped rather than passed straight through: picking a row or pressing a
+  // `+` is the sheet's job done, and on a phone the sheet is what the
+  // destination is behind.
+  const selectTask = useCallback(
+    (id: string) => {
+      openTask(id);
+      dismissSheet();
+    },
+    [openTask, dismissSheet],
+  );
+  const newTask = useCallback(
+    (options?: { projectId?: string }) => {
+      openComposer(options);
+      dismissSheet();
+    },
+    [openComposer, dismissSheet],
+  );
   const sidebar = useTaskSidebar({
     selectedTaskId: taskId,
-    onSelectTask: openTask,
-    onNewTask: openComposer,
+    onSelectTask: selectTask,
+    onNewTask: newTask,
   });
   // The shell's footer draws the Settings button; the dialog it opens is held
   // here, since it is the shell's chrome and belongs to no task.
@@ -85,18 +131,42 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   // persisted: a task list hidden by a chord and still hidden after a reload
   // is the kind of state that has to be explained, and there is nowhere to.
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const isMobile = useIsMobile();
-  // Every way the sidebar opens goes through here — the strip's toggle and
-  // the palette's row alike. Below the breakpoint an open Explorer suppresses
-  // the sidebar (`AppShell`'s `showSidebar`), so opening one closes the other;
-  // `AppShell` applies the rule to its own button, but the palette's toggle
-  // writes the controlled prop from outside and would otherwise flip a flag
-  // nothing draws, leaving the button reading "Hide tasks" for a list that is
-  // not there.
-  const changeSidebarOpen = (next: boolean) => {
-    if (next && isMobile) explorerPanel.setOpen(false);
-    setSidebarOpen(next);
-  };
+  /**
+   * Every way either sidebar opens or closes goes through these two — the
+   * strip's toggles, the Explorer's rail, and the palette's rows alike — so
+   * the two devices' rules are stated once rather than at each door.
+   *
+   * On a desktop a sidebar is a column, and each keeps the state it always
+   * had: the task list's is held here (not persisted — a list hidden by a
+   * chord and still hidden after a reload is state with nowhere to explain
+   * itself), the Explorer's in `explorerPanel`, which writes through to
+   * localStorage.
+   *
+   * On a phone both are sheets over the main area, and the two collapse into
+   * `sheet`: opening one closes the other because only one can be up, and
+   * neither touches the persisted flag, so the Explorer the user has open on
+   * their desktop is still open when they go back to it.
+   */
+  const changeSidebarOpen = useCallback(
+    (next: boolean) => {
+      if (isMobile) setSheet(next ? "tasks" : null);
+      else setSidebarOpen(next);
+    },
+    [isMobile],
+  );
+  const setExplorerPanelOpen = explorerPanel.setOpen;
+  const changeExplorerOpen = useCallback(
+    (next: boolean) => {
+      if (isMobile) setSheet(next ? "explorer" : null);
+      else setExplorerPanelOpen(next);
+    },
+    [isMobile, setExplorerPanelOpen],
+  );
+  /** What the layout may become on this device — one group below the
+   * breakpoint, since a split on a phone is two unreadable columns (§9). Given
+   * to the three doors that offer Split and to the merge below, so all four
+   * read the same rule. */
+  const env = useMemo<LayoutEnv>(() => ({ singleGroup: isMobile }), [isMobile]);
   /**
    * The last "take the caret" a keyboard command raised, and the tab it was
    * raised for (TASK-34).
@@ -178,9 +248,28 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     (descriptor: TabDescriptor, options?: OpenOptions) => {
       if (!layout) return;
       applyLayout(openTab(layout, descriptor, options));
+      // The Explorer opens tabs through here, and on a phone it is the sheet
+      // sitting on top of the tab it just opened.
+      dismissSheet();
     },
-    [layout, applyLayout],
+    [layout, applyLayout, dismissSheet],
   );
+
+  /**
+   * A split stored from a wider screen, folded back into one group on a phone
+   * (§9, risk 6).
+   *
+   * Persisted rather than projected at render. Every edit `TabArea` sends back
+   * is derived from the layout it was handed, so a merge applied only on the
+   * way *in* would be undone by the first close or drag that came back out —
+   * and the round trip would have to be re-merged on every render besides. A
+   * split is not precious state to spend that on: the store already prunes
+   * layouts, and rebuilding one on a desktop is one press of the Split button.
+   */
+  useEffect(() => {
+    if (!isMobile || !layout || layout.groups.length < 2) return;
+    applyLayout(mergeGroups(layout));
+  }, [isMobile, layout, applyLayout]);
 
   // ── ?tab= ─────────────────────────────────────────────────────────────────
   // Guarded by what was ensured rather than left to run again: `setLayout` and
@@ -271,6 +360,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     // before `setLayout`, so two chords inside one commit still compose. The
     // comment on `layoutRef` above is about the same hazard.
     layout: () => layoutRef.current,
+    env,
     onLayoutChange: applyLayout,
     onNewShell: taskId ? handleNewShell : undefined,
     onCloseTab: handleCloseTab,
@@ -363,7 +453,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         {...sidebar}
         endpoint={loaded ? `:${location.port || "80"}` : "connecting…"}
         onOpenSettings={() => setSettingsOpen(true)}
-        sidebarOpen={sidebarOpen}
+        sidebarOpen={isMobile ? sheet === "tasks" : sidebarOpen}
         onSidebarOpenChange={changeSidebarOpen}
         tabArea={
           layout
@@ -388,6 +478,7 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                   onNewShell={taskId ? handleNewShell : undefined}
                   onCloseTab={handleCloseTab}
                   onSearchTab={(tab) => requestSearch(tab.id)}
+                  env={env}
                   leading={leading}
                   renderPane={(tab, _group, visible) => (
                     // Keyed by task *and* tab. The tab key alone was not enough:
@@ -481,8 +572,8 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         explorerSections={explorerSections}
         explorerTab={explorerSection}
         onExplorerTabChange={explorerPanel.setSection}
-        explorerOpen={explorerPanel.open}
-        onExplorerOpenChange={explorerPanel.setOpen}
+        explorerOpen={isMobile ? sheet === "explorer" : explorerPanel.open}
+        onExplorerOpenChange={changeExplorerOpen}
         explorer={
           <Explorer
             taskId={taskId}
@@ -529,13 +620,20 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         onOpenChange={setPaletteOpen}
         taskId={taskId}
         layout={layout}
+        env={env}
         onLayoutChange={applyLayout}
         onFocusTab={pulseTab}
         onSearchTab={requestSearch}
         onOpenTab={handleOpenTab}
         runCommand={keymap.run}
-        onToggleSidebar={() => changeSidebarOpen(!sidebarOpen)}
-        onToggleExplorer={() => explorerPanel.setOpen(!explorerPanel.open)}
+        // Through the same two setters the visible toggles use, and negating
+        // what is actually on screen: on a phone that is the sheet, not the
+        // desktop flags, so the palette's row does not flip a value nothing is
+        // drawing from.
+        onToggleSidebar={() => changeSidebarOpen(isMobile ? sheet !== "tasks" : !sidebarOpen)}
+        onToggleExplorer={() =>
+          changeExplorerOpen(isMobile ? sheet !== "explorer" : !explorerPanel.open)
+        }
       />
     </>
   );

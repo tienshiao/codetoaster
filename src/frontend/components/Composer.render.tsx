@@ -1,4 +1,4 @@
-import { test, expect, describe, vi, beforeEach } from "vitest";
+import { test, expect, describe, vi, afterEach, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { chooseOption, selectValue } from "../../../test/v2-select";
 import {
@@ -37,6 +37,8 @@ vi.mock("@/frontend/hooks/use-task-nav", async (importOriginal) => ({
 }));
 
 const { Composer } = await import("./Composer");
+// The real constant, through the mock above, which spreads the real module.
+const { COMPOSER_PROMPT_ID } = await import("@/frontend/hooks/use-task-nav");
 
 function project(id: string, overrides: Partial<ProjectInfo> = {}): ProjectInfo {
   return {
@@ -341,5 +343,70 @@ describe("the project a group's + asked for", () => {
     render(<Composer projectId="nope" />);
 
     expect(selectValue("project")).toBe("general");
+  });
+});
+
+/**
+ * Where the caret goes on mount (TASK-79).
+ *
+ * The viewport is stubbed per test rather than left to happy-dom's default,
+ * because the whole question is what `useIsMobile` answers *on the first
+ * render*: an `autoFocus` decided a frame late has already popped the phone's
+ * soft keyboard.
+ */
+describe("the caret on a phone", () => {
+  /** A `matchMedia` that answers one way for every query. Written out in full
+   * because `useIsMobile` subscribes to the list it gets back, and a stub
+   * missing `addEventListener` throws on mount rather than reporting a width. */
+  function stubViewport(matches: boolean) {
+    vi.stubGlobal("matchMedia", (media: string) => ({
+      matches,
+      media,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      onchange: null,
+      dispatchEvent: () => false,
+    }));
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function promptBox(): HTMLTextAreaElement {
+    return screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+  }
+
+  test("on a desktop the caret is in the prompt as soon as it mounts", () => {
+    stubViewport(false);
+    render(<Composer />);
+
+    // Arriving at `/` on a desktop means the user is about to type.
+    expect(document.activeElement).toBe(promptBox());
+  });
+
+  test("on a phone nothing is focused, so the soft keyboard stays down", () => {
+    stubViewport(true);
+    render(<Composer />);
+
+    // `autoFocus` fires on every mount of `/` — the initial load, a redirect
+    // from a dead task URL — and each one would cover a third of the viewport
+    // with a keyboard the user never asked for.
+    expect(document.activeElement).not.toBe(promptBox());
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  test("the deliberate press still lands on a phone", () => {
+    stubViewport(true);
+    render(<Composer />);
+
+    // Exactly what `useOpenComposer` does once its navigation settles: the box
+    // is addressed by id precisely so the New task button can reach it whether
+    // or not `/` remounted.
+    document.getElementById(COMPOSER_PROMPT_ID)?.focus();
+
+    expect(document.activeElement).toBe(promptBox());
   });
 });

@@ -10,6 +10,7 @@ import {
   focusTab,
   focusTabAt,
   splitTab,
+  type LayoutEnv,
   type TabState,
   type TaskLayout,
 } from "@/frontend/layout-store";
@@ -28,6 +29,10 @@ export interface ShellKeymapOptions {
    * Null at the composer, where there is no task and so no tabs to move.
    */
   layout: () => TaskLayout | null;
+  /** The shell's device policy — see `LayoutEnv`. Read through the same options
+   * ref the handlers are, so a chord fired the moment the viewport crosses the
+   * breakpoint is judged against the device as it is now. */
+  env?: LayoutEnv;
   onLayoutChange: (next: TaskLayout) => void;
   /** Spawns a shell and opens its tab — the same door as the strip's `+`. */
   onNewShell?: () => void;
@@ -114,6 +119,7 @@ export function useShellKeymap(options: ShellKeymapOptions): ShellKeymap {
   const run = useCallback((command: ShellCommand) => {
     const {
       layout: read,
+      env,
       onLayoutChange,
       onNewShell,
       onCloseTab,
@@ -137,7 +143,7 @@ export function useShellKeymap(options: ShellKeymapOptions): ShellKeymap {
     // The same predicate the palette lists by, so a chord the palette would not
     // offer is one the keyboard does not fire either — and the side effects
     // below (killing a shell) never run for a reduction that will not happen.
-    if (!commandAvailable(layout, command)) return;
+    if (!commandAvailable(layout, command, env)) return;
 
     /** A navigation: apply it, and send the caret after it. Skipped when the
      * reduction changed nothing, so a clamped `⌘K ←` at the leftmost group

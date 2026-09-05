@@ -5,6 +5,7 @@ import {
   getComposerRequest,
   subscribeComposerRequest,
 } from "@/frontend/composer-request-store";
+import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { COMPOSER_PROMPT_ID, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { Button } from "@/frontend/components/v2/Button";
 import { Checkbox } from "@/frontend/components/v2/Checkbox";
@@ -70,6 +71,7 @@ export interface ComposerProps {
 export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) {
   const { projects, createTask } = useTasks();
   const openTask = useOpenTask();
+  const isMobile = useIsMobile();
 
   const [prompt, setPrompt] = useState("");
   const [projectId, setProjectId] = useState(requestedProjectId ?? "");
@@ -219,15 +221,21 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   );
 
   return (
-    <div className="grid h-full place-items-center overflow-auto p-6">
+    <div className="grid h-full place-items-center overflow-auto p-3 md:p-6">
       <div className="flex w-full max-w-[720px] flex-col gap-2.5">
         <Textarea
-          // Addressed by id, and focused on mount: arriving at `/` — by the
-          // sidebar's New task button or by any other route — means the user
-          // is about to type. `useOpenComposer` focuses it by that id for the
-          // case where `/` is already showing and this never remounts.
+          // Addressed by id, and focused on mount — on a desktop. Arriving at
+          // `/` there means the user is about to type, so the caret is placed.
+          //
+          // On a phone it is not (TASK-79). `autoFocus` fires on *every* mount
+          // of `/` — the initial load, the redirect from a dead task URL — and
+          // each one pops the soft keyboard over a third of the viewport
+          // before the user has asked to type. So the caret is placed only by
+          // `useOpenComposer`, which focuses this box by its id on the
+          // deliberate press, and which is what covers the case where `/` is
+          // already showing and this never remounts.
           id={COMPOSER_PROMPT_ID}
-          autoFocus
+          autoFocus={!isMobile}
           rows={5}
           value={prompt}
           placeholder="What should the agent do?"
@@ -285,7 +293,10 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
                 {error}
               </span>
             ) : null}
-            <KeyHint keys={["⌘", "⏎"]} />
+            {/* Hidden on a touch keyboard: a chord hint there describes keys
+                that are not on it. On a pointer-coarse device the button
+                beside it is the whole story. */}
+            <KeyHint keys={["⌘", "⏎"]} className="pointer-coarse:hidden" />
             <Button
               variant="primary"
               size="lg"

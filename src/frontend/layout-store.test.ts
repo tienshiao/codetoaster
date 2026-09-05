@@ -17,6 +17,7 @@ import {
   canSearch,
   canSplit,
   splitTab,
+  mergeGroups,
   moveTab,
   setGroupFlex,
   cycleTab,
@@ -608,6 +609,17 @@ test("canSplit refuses terminal tabs and unknown ids, and allows read-only ones"
   for (const key of ["diff:a.ts", "diffAll", "file:a.ts", "commit:abc", "history"]) {
     expect(canSplit(layout, idOf(layout, key))).toBe(true);
   }
+});
+
+test("canSplit refuses everything on a device that holds one group", () => {
+  // A tab that is splittable by every other rule: the phone's policy is the
+  // only thing standing between it and a second column (§9, risk 6).
+  const layout = openTab(createLayout(), diff("a.ts"));
+  const tabId = idOf(layout, "diff:a.ts");
+
+  expect(canSplit(layout, tabId)).toBe(true);
+  expect(canSplit(layout, tabId, {})).toBe(true);
+  expect(canSplit(layout, tabId, { singleGroup: true })).toBe(false);
 });
 
 test("canSearch allows terminal tabs only — a diff has no grid to search", () => {
@@ -1379,4 +1391,68 @@ test("commandAvailable: navigation is always on offer, clamping being its own bu
   for (const id of ["next-tab", "prev-tab", "focus-group-left", "focus-group-right", "focus-agent"]) {
     expect(commandAvailable(layout, command(id))).toBe(true);
   }
+});
+
+test("commandAvailable: split is refused outright on a one-group device", () => {
+  // In front of a tab that would otherwise split, so what is being measured is
+  // the device policy and not the tab kind. Both doors read this predicate, so
+  // the chord goes quiet and the palette lists no row for it.
+  const layout = openTab(createLayout(), diff("a.ts"));
+  expect(activeTab(layout)?.key).toBe("diff:a.ts");
+
+  expect(commandAvailable(layout, command("split"))).toBe(true);
+  expect(commandAvailable(layout, command("split"), { singleGroup: true })).toBe(false);
+  // And nothing else is touched by it: the phone still closes and navigates.
+  expect(commandAvailable(layout, command("close-tab"), { singleGroup: true })).toBe(true);
+  expect(commandAvailable(layout, command("next-tab"), { singleGroup: true })).toBe(true);
+});
+
+// ── mergeGroups ─────────────────────────────────────────────────────────────
+
+test("mergeGroups keeps every tab, left to right, in one group", () => {
+  const layout = twoGroups();
+  const merged = mergeGroups(layout);
+
+  expect(keyGrid(merged)).toEqual([["agent", "file:a.ts", "commit:abc", "history"]]);
+  // The group the user was in keeps its identity, and takes the whole width.
+  expect(merged.groups[0]!.id).toBe(layout.activeGroupId);
+  expect(merged.activeGroupId).toBe(layout.activeGroupId);
+  expect(merged.groups[0]!.flex).toBe(1);
+  // The active tab was in the surviving group and stays in front.
+  expect(activeTab(merged)?.key).toBe("agent");
+});
+
+test("mergeGroups drops a split's second copy rather than holding a key twice", () => {
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, diff("a.ts"));
+  layout = splitTab(layout, idOf(layout, "diff:a.ts"));
+
+  const merged = mergeGroups(layout);
+
+  // One group may not hold a key twice — `moveTab` refuses it and
+  // `reviveLayout` treats a stored one as corrupt.
+  expect(keyGrid(merged)).toEqual([["agent", "diff:a.ts"]]);
+});
+
+test("mergeGroups leaves focus on the surviving twin when the front tab was the copy", () => {
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, diff("a.ts"));
+  // `splitTab` focuses the copy, so the tab in front is precisely the one the
+  // dedupe drops. Focus has to land on the original, not on whatever is first.
+  layout = splitTab(layout, idOf(layout, "diff:a.ts"));
+  const copyId = activeTab(layout)!.id;
+
+  const merged = mergeGroups(layout);
+
+  expect(activeTab(merged)?.key).toBe("diff:a.ts");
+  expect(activeTab(merged)?.id).not.toBe(copyId);
+  expect(findTab(merged, copyId)).toBeNull();
+});
+
+test("mergeGroups is the identity on a layout that already has one group", () => {
+  const layout = openTab(createLayout(), diffAll);
+  // The same reference, so the shell can compare and not write.
+  expect(mergeGroups(layout)).toBe(layout);
 });

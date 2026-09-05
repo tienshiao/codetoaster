@@ -307,18 +307,26 @@ export function TabStrip({
                   onClick={onSearch}
                 />
               ) : null}
-              <IconButton
-                icon={Columns2}
-                label={splitDisabled ? "Split right (not available for terminals)" : "Split right"}
-                // Not on the disabled one, and not on an unfocused group's: a
-                // chord advertised beside a control that will not act — or that
-                // would split the other group's tab — is a chord that appears
-                // broken.
-                hint={splitDisabled || !focused ? undefined : chordHint("split")}
-                size="sm"
-                disabled={splitDisabled}
-                onClick={onSplit}
-              />
+              {/* Absent rather than disabled when nothing can answer it, the
+                  same rule the magnifier above follows: `splitDisabled` says
+                  "not this tab", which switching tabs fixes, while no handler
+                  at all is a shell that does not split — a phone, or a preview
+                  strip — where the button would be permanent chrome that never
+                  acts. */}
+              {onSplit !== undefined ? (
+                <IconButton
+                  icon={Columns2}
+                  label={splitDisabled ? "Split right (not available for terminals)" : "Split right"}
+                  // Not on the disabled one, and not on an unfocused group's: a
+                  // chord advertised beside a control that will not act — or that
+                  // would split the other group's tab — is a chord that appears
+                  // broken.
+                  hint={splitDisabled || !focused ? undefined : chordHint("split")}
+                  size="sm"
+                  disabled={splitDisabled}
+                  onClick={onSplit}
+                />
+              ) : null}
               <IconButton icon={EllipsisVertical} label="Tab actions" size="sm" onClick={onTabActions} />
             </>
           ) : null}

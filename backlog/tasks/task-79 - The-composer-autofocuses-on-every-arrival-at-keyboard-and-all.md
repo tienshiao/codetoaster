@@ -1,9 +1,11 @@
 ---
 id: TASK-79
 title: 'The composer autofocuses on every arrival at /, keyboard and all'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-01 17:57'
+updated_date: '2026-09-05 07:24'
 labels:
   - frontend
   - mobile
@@ -34,8 +36,26 @@ One shape worth considering: keep `autoFocus` above the mobile breakpoint and dr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Loading / directly on a phone does not raise the soft keyboard
-- [ ] #2 Being redirected to / from a task that no longer exists does not raise the soft keyboard
-- [ ] #3 Pressing New task (header + or a project group's +) still lands with the caret in the prompt, on both desktop and touch
-- [ ] #4 A rendering test distinguishes an incidental mount of / from an arrival via useOpenComposer
+- [x] #1 Loading / directly on a phone does not raise the soft keyboard
+- [x] #2 Being redirected to / from a task that no longer exists does not raise the soft keyboard
+- [x] #3 Pressing New task (header + or a project group's +) still lands with the caret in the prompt, on both desktop and touch
+- [x] #4 A rendering test distinguishes an incidental mount of / from an arrival via useOpenComposer
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Folded into TASK-33: Composer's autoFocus becomes autoFocus={!isMobile}, with useIsMobile made synchronous so the first render on a phone already knows. useOpenComposer's explicit focus by id covers the deliberate press on both platforms. A Composer render test stubs matchMedia both ways and asserts where the caret lands.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified in Chrome at 500px: loading / leaves focus on body; a dead task URL redirects to / with focus on body; the sidebar's + lands the caret in the prompt. Composer.render.tsx stubs matchMedia both ways.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+autoFocus is now autoFocus={!isMobile}, with useIsMobile seeded synchronously from matchMedia so the first render on a phone already knows. Deliberate presses still land through useOpenComposer's focus by id. Render tests cover desktop focus, mobile non-focus, and the explicit focus on mobile.
+<!-- SECTION:FINAL_SUMMARY:END -->

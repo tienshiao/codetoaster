@@ -12,6 +12,7 @@ import {
   activeTab,
   canSearch,
   focusTab,
+  type LayoutEnv,
   type TabDescriptor,
   type TaskLayout,
 } from "@/frontend/layout-store";
@@ -45,6 +46,9 @@ export interface CommandPaletteHostProps {
   /** The task on screen, or null at the composer. */
   taskId: string | null;
   layout: TaskLayout | null;
+  /** The shell's device policy — see `LayoutEnv`. Forwarded to `actionEntries`
+   * so the palette lists no row the chord behind it would refuse. */
+  env?: LayoutEnv;
   onLayoutChange: (next: TaskLayout) => void;
   /** Asks the pane for a tab to take the caret — the shell's focus pulse — so
    * a tab chosen from the keyboard does not leave the caret in a closed
@@ -151,6 +155,7 @@ function OpenPalette({
   onOpenChange,
   taskId,
   layout,
+  env,
   onLayoutChange,
   onFocusTab,
   onSearchTab,
@@ -241,7 +246,7 @@ function OpenPalette({
       {
         id: "actions",
         label: "Actions",
-        items: actionEntries({ task: selectedTask, layout }),
+        items: actionEntries({ task: selectedTask, layout, env }),
       },
       { id: "changes", label: "Changes", items: changeEntries(changes ?? []) },
       { id: "history", label: "History", items: commitEntries(commits, COMMIT_LIMIT) },
@@ -259,6 +264,7 @@ function OpenPalette({
     tasks,
     projects,
     layout,
+    env,
     taskId,
     selectedTask,
     changes,

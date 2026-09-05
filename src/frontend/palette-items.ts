@@ -30,6 +30,7 @@ import {
   allTabs,
   canSearch,
   commandAvailable,
+  type LayoutEnv,
   type TabDescriptor,
   type TaskLayout,
 } from "@/frontend/layout-store";
@@ -196,6 +197,10 @@ export interface ActionEntryOptions {
   task: Pick<TaskInfo, "lifecycle" | "agentState"> | null;
   /** Its tab layout, or null when there is no task to have one. */
   layout: TaskLayout | null;
+  /** The shell's device policy — see `LayoutEnv`. The palette lists by the
+   * dispatcher's predicate, so it has to be judged against the same device the
+   * chord would be. */
+  env?: LayoutEnv;
   /**
    * Which caps the chords print on. Defaults to the platform, and the default
    * is a parameter rather than a call inside `chordCaps` for the reason
@@ -216,7 +221,12 @@ export interface ActionEntryOptions {
  * terminal are all commands that would do nothing, and a palette that lists
  * them teaches that selecting a row may be a no-op.
  */
-export function actionEntries({ task, layout, mac = isMac() }: ActionEntryOptions): PaletteEntry[] {
+export function actionEntries({
+  task,
+  layout,
+  env,
+  mac = isMac(),
+}: ActionEntryOptions): PaletteEntry[] {
   const entries: PaletteEntry[] = [];
 
   entries.push({
@@ -267,8 +277,9 @@ export function actionEntries({ task, layout, mac = isMac() }: ActionEntryOption
       // The dispatcher's own predicate, so a row here is a chord that fires:
       // the table lists nine jump rows because it is a flat table, and this is
       // where the nine become however many tabs there are, a Split on a
-      // terminal drops out, and so does Close tab in front of the agent.
-      if (!commandAvailable(layout, command)) continue;
+      // terminal drops out — as does Split altogether on a phone, which holds
+      // one group — and so does Close tab in front of the agent.
+      if (!commandAvailable(layout, command, env)) continue;
       entries.push(commandEntry(command, mac));
     }
   }

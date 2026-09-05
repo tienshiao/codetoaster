@@ -160,6 +160,21 @@ describe("actions", () => {
     );
   });
 
+  test("split drops out entirely on a device that holds one group", () => {
+    resetIdCounter();
+    // A tab the palette would otherwise list Split for, so what this measures
+    // is the device and not the tab kind (§9, risk 6).
+    const layout = openTab(createLayout(), { kind: "diffAll" });
+    const listed = (env?: { singleGroup?: boolean }) =>
+      ids(actionEntries({ task: task({ id: "a" }), layout, env, mac: true }));
+
+    expect(listed()).toContain("action:split");
+    expect(listed({ singleGroup: true })).not.toContain("action:split");
+    // Only that row: the phone still lists the rest of the map.
+    expect(listed({ singleGroup: true })).toContain("action:close-tab");
+    expect(listed({ singleGroup: true })).toContain("action:next-tab");
+  });
+
   test("close-tab is not offered in front of the agent tab", () => {
     resetIdCounter();
     const agentOnly = createLayout();

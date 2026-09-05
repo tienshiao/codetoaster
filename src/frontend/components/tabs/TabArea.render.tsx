@@ -468,3 +468,24 @@ test("a strip with nobody to answer draws no magnifier at all", () => {
   const view = render(<Controlled initial={createLayout()} />);
   expect(findButton(view.container)).toBeNull();
 });
+
+/**
+ * The phone's one group (TASK-33, §9 risk 6).
+ *
+ * Split goes away entirely rather than greying out, which is the opposite of
+ * what the magnifier above does — and deliberately: a disabled control says
+ * "not this tab", which switching tabs answers, while on a phone there is no
+ * tab that would ever enable it.
+ */
+test("Split is off the strip under a single-group env, and on it without one", () => {
+  resetIdCounter();
+  // A tab that splits by every other rule, so what is measured is the device.
+  const layout = openTab(createLayout(), { kind: "diff", path: "src/a.ts" });
+
+  const phone = render(<Controlled initial={layout} env={{ singleGroup: true }} />);
+  expect(phone.queryByLabelText(/^Split right/)).toBeNull();
+  phone.unmount();
+
+  const desktop = render(<Controlled initial={layout} />);
+  expect(desktop.getByLabelText("Split right")).not.toBeNull();
+});

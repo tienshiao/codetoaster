@@ -19,6 +19,7 @@ import {
   pinTab,
   setGroupFlex,
   splitTab,
+  type LayoutEnv,
   type TabGroup,
   type TabState,
   type TaskLayout,
@@ -78,6 +79,9 @@ export interface TabAreaProps {
   /** Open search in this group's active terminal tab — the strip's magnifier.
    * Absent where nothing can answer it. */
   onSearchTab?: (tab: TabState) => void;
+  /** The shell's device policy — see `LayoutEnv`. Absent is a desktop: every
+   * rule at its default. */
+  env?: LayoutEnv;
   className?: string;
 }
 
@@ -138,6 +142,7 @@ export function TabArea({
   onNewShell,
   onCloseTab,
   onSearchTab,
+  env,
   className,
 }: TabAreaProps) {
   const rowRef = useRef<HTMLDivElement>(null);
@@ -372,7 +377,7 @@ export function TabArea({
       {layout.groups.map((group, groupIndex) => {
         const active = group.tabs.find((t) => t.id === group.activeTabId) ?? group.tabs[0] ?? null;
         const target = dropTarget?.groupId === group.id ? dropTarget.index : null;
-        const splittable = active != null && canSplit(layout, active.id);
+        const splittable = active != null && canSplit(layout, active.id, env);
         // The store's own predicate, so the magnifier and the palette's row
         // agree on what can be searched. In front of anything else it greys out
         // rather than vanishing, as Split does.
@@ -459,8 +464,15 @@ export function TabArea({
                 // The leader chords act on the active group, so only its strip
                 // names them.
                 focused={group.id === layout.activeGroupId}
+                // Withheld entirely on a device that holds one group, which is
+                // what takes the button off the strip rather than greying it:
+                // a control that can never act *on this device* is noise,
+                // whereas the grey says "not this tab" and is answered by
+                // switching to another one.
                 onSplit={
-                  active && splittable ? () => onLayoutChange(splitTab(layout, active.id)) : undefined
+                  env?.singleGroup || !active
+                    ? undefined
+                    : () => onLayoutChange(splitTab(layout, active.id))
                 }
                 onSearch={onSearchTab && active ? () => onSearchTab(active) : undefined}
                 searchDisabled={!searchable}
