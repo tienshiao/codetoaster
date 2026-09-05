@@ -280,7 +280,7 @@ Options:
   --allowed-host <name>  Extra host name the UI may be reached by (repeatable)
   --harvest-after <dur>  Suspend an idle task after this long
                          (default: 30m; 0 disables; env CODETOASTER_HARVEST_AFTER)
-  --evict-after <dur>    Drop a suspended task's checkout after this long
+  --evict-after <dur>    Base grace before a suspended checkout is dropped
                          (default: 7d; 0 disables; env CODETOASTER_EVICT_AFTER)
   --version       Show version
   --help          Show this help message
@@ -361,7 +361,10 @@ exits rather than starting on a value it had to guess at. Each setting reads
 `CODETOASTER_HARVEST_AFTER` / `CODETOASTER_EVICT_AFTER` after, so a unit file
 can carry the machine's standing policy and a flag can override it for one run.
 Both work on `foreground` as well, and the background daemon passes them to the
-server it spawns.
+server it spawns. Turning both off also parks the harvester's tick entirely, and
+with it the periodic refresh of each task's ahead/behind/dirty facts — a commit
+made from your own terminal will not show on the card until the task is next
+resumed or its agent next stops.
 
 The values are **per daemon, not per project**: both guards are about this
 machine's memory and disk, and a laptop and a build server want different

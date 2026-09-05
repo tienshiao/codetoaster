@@ -415,6 +415,17 @@ describe("the timeout setting", () => {
     stillRunning(manager, store, younger);
   });
 
+  test("one window given at construction leaves the other on its default", () => {
+    // The daemon passes both keys through whether or not either flag was
+    // given, so an `undefined` has to mean "the default" rather than "off" —
+    // which is what `0` means, and is exactly the value the other tier is set
+    // to here. No manager: this is only about the two numbers.
+    const harvester = new Harvester({} as TaskManager, { harvestAfterMs: 0 });
+
+    expect(harvester.harvestAfter).toBe(0);
+    expect(harvester.evictAfter).toBe(SEVEN_DAYS_MS);
+  });
+
   test("a longer timeout keeps a task the default would have taken", async () => {
     const { manager, store, harvester } = newManager();
     const id = await harvestableTask(manager, store);

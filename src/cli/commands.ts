@@ -56,6 +56,20 @@ export async function cmdStart(options: DaemonOptions): Promise<void> {
   if (pidInfo && isProcessRunning(pidInfo.pid)) {
     if (await isDaemonReachable(port)) {
       console.log(`Already running (pid ${pidInfo.pid}, port ${port})`);
+      // The daemon was configured when it was spawned; a flag on a later
+      // `start` reaches nothing. Said only when one was given, so the plain
+      // `codetoaster` a user runs to check on things stays one line.
+      if (
+        options.dbPath ||
+        options.hostname ||
+        options.allowedHosts?.length ||
+        options.harvestAfterMs !== undefined ||
+        options.evictAfterMs !== undefined
+      ) {
+        console.log(
+          "  Flags other than --port apply only to a new daemon; `codetoaster stop` first to restart with them.",
+        );
+      }
       return;
     }
     // Stale — process exists but not responding
@@ -390,7 +404,7 @@ Options:
   --allowed-host <name>  Extra host name the UI may be reached by (repeatable)
   --harvest-after <dur>  Suspend an idle task after this long
                          (default: 30m; 0 disables; env CODETOASTER_HARVEST_AFTER)
-  --evict-after <dur>    Drop a suspended task's checkout after this long
+  --evict-after <dur>    Base grace before a suspended checkout is dropped
                          (default: 7d; 0 disables; env CODETOASTER_EVICT_AFTER)
   --version       Show version
   --help          Show this help message`);

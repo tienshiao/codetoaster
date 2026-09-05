@@ -132,12 +132,10 @@ export function startServer(options?: ServerOptions) {
   // thirty minutes and seven days (§5.5, §5.6) unless the daemon was told
   // otherwise, which it can be now that a suspended task shows in the sidebar
   // and comes back on a click.
-  const harvester = new Harvester(taskManager);
-  // Before `start()`, so the first tick already has the configured windows: a
-  // sweep that ran on the defaults and then had them changed underneath it
-  // could suspend a task the user had just bought another two hours for.
-  if (options?.harvestAfterMs !== undefined) harvester.setHarvestAfter(options.harvestAfterMs);
-  if (options?.evictAfterMs !== undefined) harvester.setEvictAfter(options.evictAfterMs);
+  const harvester = new Harvester(taskManager, {
+    harvestAfterMs: options?.harvestAfterMs,
+    evictAfterMs: options?.evictAfterMs,
+  });
   // Logged only when something was overridden, and both values together: what a
   // user checking their launchd unit needs is confirmation that the daemon read
   // what they wrote, and the other tier's number is the context that makes it

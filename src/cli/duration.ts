@@ -16,9 +16,12 @@ const DURATION_RE = /^(\d+)([mhd])$/;
 
 const UNITS: Record<string, number> = { m: MINUTE_MS, h: HOUR_MS, d: DAY_MS };
 
-function rejection(text: string): Error {
+/** The parse error, prefixed with the name of whatever carried the value —
+ * without it the message names neither the flag nor the variable, and a user
+ * with both set has nothing to go on. */
+function rejection(text: string, name?: string): Error {
   return new Error(
-    `expected a duration like 30m, 2h or 7d, or 0 to disable; got ${JSON.stringify(text)}`,
+    `${name ? `${name}: ` : ""}expected a duration like 30m, 2h or 7d, or 0 to disable; got ${JSON.stringify(text)}`,
   );
 }
 
@@ -28,19 +31,30 @@ function rejection(text: string): Error {
  * about the unit than a shorthand worth guessing at, and `--harvest-after 10`
  * meaning ten of something unstated is exactly the guess that would silently
  * suspend a user's tasks ten times too soon. */
-export function parseDuration(text: string): number {
+export function parseDuration(text: string, name?: string): number {
   const trimmed = text.trim();
   // The one duration with no unit, because zero minutes and zero days are the
   // same instruction: don't run this tier at all.
   if (trimmed === "0") return 0;
   const match = DURATION_RE.exec(trimmed);
-  if (!match) throw rejection(text);
+  if (!match) throw rejection(text, name);
   const value = Number(match[1]);
   // `0m` and friends are rejected rather than folded into the disabling `0`:
   // one spelling for "off" is what keeps the help text and the round trip
   // honest.
-  if (!(value > 0)) throw rejection(text);
-  return value * UNITS[match[2]!]!;
+  if (!(value > 0)) throw rejection(text, name);
+  const ms = value * UNITS[match[2]!]!;
+  // A digit string long enough overflows Number to Infinity, or lands past
+  // 2^53 where it is no longer the number that was typed. `formatDuration`
+  // would then print "Infinitym" or exponent notation, which the respawned
+  // child refuses — the one way a value accepted here could still fail in the
+  // log rather than at the prompt.
+  if (!Number.isSafeInteger(ms)) {
+    throw new Error(
+      `${name ? `${name}: ` : ""}${JSON.stringify(text)} is too long a duration to represent`,
+    );
+  }
+  return ms;
 }
 
 /** The canonical spelling of a duration, such that `parseDuration` reads it
@@ -80,21 +94,10 @@ export function resolveDuration(
 ): number | undefined {
   if (flag !== undefined) {
     if (typeof flag !== "string") throw new Error(`${names.flag} needs a value`);
-    return parse(flag, names.flag);
+    return parseDuration(flag, names.flag);
   }
   // An empty variable is how a shell spells "not set" when a unit file exports
   // it unconditionally, so it reads as absent rather than as a bad duration.
-  if (env !== undefined && env.trim() !== "") return parse(env, names.env);
+  if (env !== undefined && env.trim() !== "") return parseDuration(env, names.env);
   return undefined;
-}
-
-/** The parse error, said again with the name of whatever carried the value —
- * without it the message names neither the flag nor the variable, and a user
- * with both set has nothing to go on. */
-function parse(text: string, name: string): number {
-  try {
-    return parseDuration(text);
-  } catch (e) {
-    throw new Error(`${name}: ${(e as Error).message}`);
-  }
 }

@@ -30,6 +30,19 @@ describe("parseDuration", () => {
   test("the message says what was given as well as what was wanted", () => {
     expect(() => parseDuration("90s")).toThrow(/got "90s"/);
   });
+
+  // A number too big to be a number: `formatDuration` would print "Infinitym"
+  // or exponent notation onto the child's argv, and the child would refuse it
+  // in a log file rather than at the prompt where the user is standing.
+  test("a duration too long to represent is refused here, not in the daemon's log", () => {
+    expect(() => parseDuration("9".repeat(400) + "d")).toThrow(/too long/);
+    expect(() => parseDuration("10000000000000000d")).toThrow(/too long/);
+  });
+
+  test("an absurd but representable duration is still a duration", () => {
+    const ms = parseDuration("100000000d");
+    expect(formatDuration(ms)).toBe("100000000d");
+  });
 });
 
 describe("formatDuration", () => {
@@ -100,8 +113,10 @@ describe("resolveDuration", () => {
 // child's argv, so anything missing here is a setting that works in the
 // foreground and is silently lost in the background.
 describe("daemonArgs", () => {
-  test("nothing but the default port produces no flags", () => {
-    expect(daemonArgs({ port: 4000 })).toEqual([]);
+  test("the port is always spelled, even at its default", () => {
+    // Left off, the child would resolve it again from an inherited PORT and
+    // bind somewhere other than what the parent reported.
+    expect(daemonArgs({ port: 4000 })).toEqual(["--port", "4000"]);
   });
 
   test("every option is passed through", () => {
@@ -129,6 +144,7 @@ describe("daemonArgs", () => {
     // The falsy-check bug: `0` dropped here would hand the child the default
     // the user had just turned off.
     expect(daemonArgs({ port: 4000, harvestAfterMs: 0, evictAfterMs: 0 })).toEqual([
+      "--port", "4000",
       "--harvest-after", "0",
       "--evict-after", "0",
     ]);

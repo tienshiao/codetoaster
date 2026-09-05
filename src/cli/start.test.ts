@@ -33,6 +33,16 @@ afterEach(() => {
   for (const home of homes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
 });
 
+/** The child's environment: the runner's own, minus the two duration
+ * variables the README tells users to export — a developer following it
+ * would otherwise see `evict after 30d` in a test expecting the default. */
+function childEnv(home: string, env: Record<string, string>): Record<string, string | undefined> {
+  const base: Record<string, string | undefined> = { ...process.env, HOME: home };
+  delete base.CODETOASTER_HARVEST_AFTER;
+  delete base.CODETOASTER_EVICT_AFTER;
+  return { ...base, ...env };
+}
+
 /** `start` as its own process, with a HOME of its own so the pid files it
  * writes — the thing under test — land somewhere disposable rather than in the
  * user's real ~/.codetoaster. The daemon it spawns inherits the env, so it
@@ -45,7 +55,7 @@ async function runStart(args: string[], env: Record<string, string> = {}): Promi
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, HOME: home, ...env },
+    env: childEnv(home, env),
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -73,31 +83,37 @@ async function runForeground(args: string[], expected: RegExp, env: Record<strin
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, HOME: home, ...env },
+      env: childEnv(home, env),
     },
   );
   // Recorded before the first read: an assertion that throws below must still
   // leave the sweep something to kill.
   started.push(proc.pid);
 
+  // One timer for the whole read rather than a race per chunk. The server
+  // binds, migrates and reconciles before it logs anything, and a loaded CI
+  // machine is slower at all three than a laptop, so the budget is generous —
+  // and on the deadline the child is killed, which ends the stream and lets the
+  // loop below fall out. The flag is what tells a timeout from a crash: either
+  // way the stream ended, and only the flag says which.
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { proc.kill(); } catch {}
+  }, 15_000);
   const decoder = new TextDecoder();
-  const reader = proc.stdout.getReader();
   let seen = "";
-  // The server binds, migrates and reconciles before it logs anything, and a
-  // loaded CI machine is slower at all three than a laptop.
-  const deadline = Date.now() + 15_000;
   try {
-    while (!expected.test(seen)) {
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${expected}; saw:\n${seen}`);
-      const chunk = await Promise.race([
-        reader.read(),
-        Bun.sleep(deadline - Date.now()).then(() => ({ done: true, value: undefined }) as const),
-      ]);
-      if (chunk.done) throw new Error(`stdout ended before ${expected}; saw:\n${seen}`);
-      seen += decoder.decode(chunk.value, { stream: true });
+    // Cast because the DOM lib's `ReadableStream` carries no async iterator,
+    // while Bun's — the one actually here — does.
+    for await (const chunk of proc.stdout as unknown as AsyncIterable<Uint8Array>) {
+      seen += decoder.decode(chunk, { stream: true });
+      if (expected.test(seen)) break;
     }
+    if (timedOut) throw new Error(`timed out waiting for ${expected}; saw:\n${seen}`);
+    if (!expected.test(seen)) throw new Error(`stdout ended before ${expected}; saw:\n${seen}`);
   } finally {
-    reader.cancel().catch(() => {});
+    clearTimeout(timer);
     try { proc.kill(); } catch {}
     await proc.exited;
   }

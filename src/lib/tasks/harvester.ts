@@ -55,6 +55,17 @@ export function graceFor(baseMs: number, setupDurationMs: number | null): number
   return baseMs * scale;
 }
 
+/** Both windows at construction, so the policy and the timer are never
+ * separable: a harvester exists on the numbers it was handed, and nothing has
+ * to remember to call a setter before `start()`. The setters remain for
+ * changing a window on a harvester that is already running. */
+export interface HarvesterOptions {
+  /** §5.5's idle timeout; `undefined` is the default, `0` off. */
+  harvestAfterMs?: number;
+  /** §5.6's base eviction grace; `undefined` is the default, `0` off. */
+  evictAfterMs?: number;
+}
+
 // The harvester (docs/v2-architecture.md §5.5, §5.6). It decides *whether* a
 // task should be harvested and nothing else — the harvesting itself is
 // `TaskManager.harvestTask` and `TaskManager.evictTask`, and `closeTask`
@@ -82,8 +93,8 @@ export function graceFor(baseMs: number, setupDurationMs: number | null): number
 // establish reads as a reason to leave the task alone.
 export class Harvester {
   private timer?: Timer;
-  private harvestAfterMs = DEFAULT_HARVEST_AFTER_MS;
-  private evictAfterMs = DEFAULT_EVICT_AFTER_MS;
+  private harvestAfterMs: number;
+  private evictAfterMs: number;
   // The tick still running, if there is one. The last guard spawns a `ps` per
   // terminal and waits up to two seconds for each, so a daemon with enough live
   // tasks can take longer than one interval to walk them — and two ticks over
@@ -97,7 +108,13 @@ export class Harvester {
   // ever clears one.
   private inFlight?: Promise<void>;
 
-  constructor(private manager: TaskManager) {}
+  constructor(
+    private manager: TaskManager,
+    options: HarvesterOptions = {},
+  ) {
+    this.harvestAfterMs = options.harvestAfterMs ?? DEFAULT_HARVEST_AFTER_MS;
+    this.evictAfterMs = options.evictAfterMs ?? DEFAULT_EVICT_AFTER_MS;
+  }
 
   /** How long a task has to have been idle before it is harvested. `0` — or
    * anything negative — turns the harvester off outright: the interval stays

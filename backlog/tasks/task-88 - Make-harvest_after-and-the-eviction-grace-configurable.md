@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-05 09:31'
-updated_date: '2026-09-05 20:34'
+updated_date: '2026-09-05 20:58'
 labels:
   - server
   - cli
@@ -53,6 +53,8 @@ Update the README's 'Neither is configurable yet' paragraph and the usage text i
 
 <!-- SECTION:NOTES:BEGIN -->
 Landed as planned. duration.ts holds the parser (0, or an integer with m/h/d), the canonical formatter the daemon argv round-trips through, and resolveDuration (flag over env; a flag with no value and an empty env are handled). cmdStart/cmdForeground/spawnDaemon take one DaemonOptions object; daemonArgs is the pure respawn list. server.ts applies both setters before the first tick and logs the effective pair when either was given. Deviations from the plan: daemonArgs tests live in duration.test.ts, and help/README use two lines per flag. Validation: tsc clean; bun run test:unit 1241 pass / 0 fail (+32); test:render 268 pass.
+
+Review pass (recall, --fix): durations now resolve only for start/foreground so a bad env var no longer breaks stop/list/help; daemonArgs always spells --port so an inherited PORT cannot redirect the respawn; parseDuration rejects values past the safe-integer range (Infinity/exponent round-trip); Harvester takes both windows as constructor options; cmdStart notes when flags are ignored on an already-running daemon; help/README say 'base grace' for --evict-after and document that both-off also parks the worktree-status refresh; start.test.ts scrubs the two env vars from the child and uses one timer instead of a race per chunk. tsc clean; 1244 unit / 268 render pass.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

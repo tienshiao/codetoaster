@@ -109,9 +109,10 @@ export type DaemonOptions = ServerOptions & { port: number };
 export function daemonArgs(options: DaemonOptions): string[] {
   const args: string[] = [];
 
-  if (options.port !== 4000) {
-    args.push("--port", String(options.port));
-  }
+  // Always spelled, even at the default: the child would otherwise recompute
+  // the port from an inherited PORT environment variable and bind somewhere
+  // other than what the parent resolved and reported.
+  args.push("--port", String(options.port));
 
   if (options.dbPath) {
     args.push("--db", options.dbPath);

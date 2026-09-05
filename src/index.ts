@@ -2,6 +2,8 @@ import { parseArgs } from "util";
 // A leaf module with no imports of its own, so the hook fast path below pays
 // nothing for it.
 import { resolveDuration } from "./cli/duration";
+// Erased at compile time, so it costs the hook fast path nothing at all.
+import type { DaemonOptions } from "./cli/daemon";
 
 (async () => {
   const { values, positionals } = parseArgs({
@@ -76,35 +78,42 @@ import { resolveDuration } from "./cli/duration";
     ? values["allowed-host"].filter((name): name is string => typeof name === "string")
     : undefined;
 
-  // Resolved here, before the switch, so a bad duration is a message and an
-  // exit rather than a daemon: `start` detaches a child that would inherit the
-  // argv and fail the same way in a log file nobody is reading, and the user
-  // would see only "not responding".
-  let harvestAfterMs: number | undefined;
-  let evictAfterMs: number | undefined;
-  try {
-    harvestAfterMs = resolveDuration(values["harvest-after"], process.env.CODETOASTER_HARVEST_AFTER, {
-      flag: "--harvest-after",
-      env: "CODETOASTER_HARVEST_AFTER",
-    });
-    evictAfterMs = resolveDuration(values["evict-after"], process.env.CODETOASTER_EVICT_AFTER, {
-      flag: "--evict-after",
-      env: "CODETOASTER_EVICT_AFTER",
-    });
-  } catch (e) {
-    console.error((e as Error).message);
-    process.exit(1);
+  // Built only by the two commands that start a server, so a bad duration in
+  // the environment cannot take `stop` or `list` down with it — a unit file
+  // that exports CODETOASTER_HARVEST_AFTER wrongly must still let the user stop
+  // the daemon it started. Resolved before anything is spawned, so a bad value
+  // is a message and an exit rather than a detached child failing the same way
+  // into a log file nobody is reading.
+  function daemonOptions(): DaemonOptions {
+    try {
+      return {
+        port,
+        dbPath,
+        hostname,
+        allowedHosts,
+        harvestAfterMs: resolveDuration(
+          values["harvest-after"],
+          process.env.CODETOASTER_HARVEST_AFTER,
+          { flag: "--harvest-after", env: "CODETOASTER_HARVEST_AFTER" },
+        ),
+        evictAfterMs: resolveDuration(values["evict-after"], process.env.CODETOASTER_EVICT_AFTER, {
+          flag: "--evict-after",
+          env: "CODETOASTER_EVICT_AFTER",
+        }),
+      };
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exit(1);
+    }
   }
-
-  const daemonOptions = { port, dbPath, hostname, allowedHosts, harvestAfterMs, evictAfterMs };
 
   switch (command) {
     case "":
-      await cmdStart(daemonOptions);
+      await cmdStart(daemonOptions());
       break;
     case "foreground":
     case "fg":
-      await cmdForeground(daemonOptions);
+      await cmdForeground(daemonOptions());
       break;
     case "list":
     case "ls":
