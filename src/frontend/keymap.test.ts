@@ -3,6 +3,7 @@ import {
   SHELL_COMMANDS,
   isLeader,
   matchCommand,
+  matchDirect,
   terminalMustYield,
   stepKeymap,
   LEADER_TIMEOUT_MS,
@@ -19,6 +20,8 @@ function press(key: string, mods: Partial<Omit<KeyLike, "key">> = {}): KeyLike {
 
 const CMD = { metaKey: true };
 const CTRL_SHIFT = { ctrlKey: true, shiftKey: true };
+/** The direct modifiers, per platform. With ⇧ held the browser reports `P`. */
+const CMD_SHIFT = { metaKey: true, shiftKey: true };
 
 // ── the table ───────────────────────────────────────────────────────────────
 
@@ -51,6 +54,7 @@ test("the table covers every shortcut the task asks for", () => {
       "focus-group-right",
       "focus-agent",
       "new-shell",
+      "palette",
     ]),
   );
 });
@@ -142,11 +146,62 @@ test("a key the table does not name matches nothing", () => {
   expect(matchCommand(press("0"))).toBeNull();
 });
 
+test("a direct row is not reachable through the leader", () => {
+  // ⌘K then `p` is a cancelled chord, not the palette: the palette's binding is
+  // its own chord, and a second entrance would have the leader claiming a
+  // letter nothing lists after it.
+  expect(matchCommand(press("p"))).toBeNull();
+  expect(matchCommand(press("p", CMD))).toBeNull();
+});
+
+// ── the direct chords ───────────────────────────────────────────────────────
+
+test("⌘⇧P is the palette on a Mac and ⌃⇧P elsewhere", () => {
+  expect(matchDirect(press("P", CMD_SHIFT), true)?.command).toBe("palette");
+  expect(matchDirect(press("P", CTRL_SHIFT), false)?.command).toBe("palette");
+});
+
+test("each platform's direct chord is not the other's", () => {
+  // ⌃⇧P on a Mac is nothing of ours — the leader there is ⌘-based, and a Mac
+  // user pressing ⌃⇧ means the terminal.
+  expect(matchDirect(press("P", CTRL_SHIFT), true)).toBeNull();
+  expect(matchDirect(press("P", CMD_SHIFT), false)).toBeNull();
+});
+
+test("⌘P without Shift is the browser's print, and stays it", () => {
+  expect(matchDirect(press("p", CMD), true)).toBeNull();
+  expect(matchDirect(press("p", { ctrlKey: true }), false)).toBeNull();
+});
+
+test("⌥ disqualifies a direct chord — that is the terminal's Meta", () => {
+  expect(matchDirect(press("P", { ...CMD_SHIFT, altKey: true }), true)).toBeNull();
+  expect(matchDirect(press("P", { ...CTRL_SHIFT, altKey: true }), false)).toBeNull();
+});
+
+test("a spare modifier under the chord means it belongs to somebody else", () => {
+  // Nothing here is armed, so unlike the leader's second press there is no
+  // reason to be forgiving about what else is held down.
+  expect(matchDirect(press("P", { ...CMD_SHIFT, ctrlKey: true }), true)).toBeNull();
+  expect(matchDirect(press("P", { ...CTRL_SHIFT, metaKey: true }), false)).toBeNull();
+});
+
+test("a leader row is not reachable as a direct chord", () => {
+  expect(matchDirect(press("]", CMD_SHIFT), true)).toBeNull();
+  expect(matchDirect(press("A", CMD_SHIFT), true)).toBeNull();
+});
+
 // ── what the terminal must not swallow ──────────────────────────────────────
 
 test("the terminal yields the leader", () => {
   expect(terminalMustYield(press("k", CMD), true)).toBe(true);
   expect(terminalMustYield(press("k", CTRL_SHIFT), false)).toBe(true);
+});
+
+test("the terminal yields the palette's direct chord", () => {
+  // Reaching xterm, ⌘⇧P is a bare `P` typed into whatever the agent is running.
+  expect(terminalMustYield(press("P", CMD_SHIFT), true)).toBe(true);
+  expect(terminalMustYield(press("P", CTRL_SHIFT), false)).toBe(true);
+  expect(terminalMustYield(press("P", CMD_SHIFT), false)).toBe(false);
 });
 
 test("the terminal yields ⌘G and ⇧⌘G, which the search bar hears after it", () => {
@@ -186,8 +241,15 @@ test("a chord prints leader-first, with letters capitalised and arrows drawn", (
   expect(chordCaps(left, false)).toEqual(["Ctrl", "⇧", "K", "←"]);
 });
 
+test("a direct chord prints its own modifiers, with no leader in front", () => {
+  const palette = SHELL_COMMANDS.find((c) => c.id === "palette")!;
+  expect(chordCaps(palette, true)).toEqual(["⌘", "⇧", "P"]);
+  expect(chordCaps(palette, false)).toEqual(["Ctrl", "⇧", "P"]);
+});
+
 test("capsFor looks a chord up by id, and draws nothing for one that is gone", () => {
   expect(capsFor("new-shell", true)).toEqual(["⌘", "K", "`"]);
+  expect(capsFor("palette", true)).toEqual(["⌘", "⇧", "P"]);
   expect(capsFor("no-such-command", true)).toEqual([]);
 });
 
@@ -195,6 +257,11 @@ test("chordHint spells a chord out for a tooltip, which cannot hold caps", () =>
   expect(chordHint("new-shell", true)).toBe("⌘K `");
   expect(chordHint("split", true)).toBe("⌘K \\");
   expect(chordHint("close-tab", false)).toBe("Ctrl+Shift+K W");
+});
+
+test("a direct chord spells out as one press, with no space in it", () => {
+  expect(chordHint("palette", true)).toBe("⌘⇧P");
+  expect(chordHint("palette", false)).toBe("Ctrl+Shift+P");
 });
 
 test("chordHint is empty for an id the table no longer has", () => {
@@ -298,6 +365,27 @@ test("an expired leader followed by the leader arms again", () => {
   ]);
   expect(results[1]).toEqual({ kind: "armed" });
   expect(armedAt).toBe(LEADER_TIMEOUT_MS + 1);
+});
+
+test("a direct chord fires from cold, and leaves the leader disarmed", () => {
+  const mac = run([[press("P", CMD_SHIFT)]]);
+  expect(mac.last).toMatchObject({ kind: "command", command: { command: "palette" } });
+  expect(mac.armedAt).toBeNull();
+
+  const other = run([[press("P", CTRL_SHIFT)]], false);
+  expect(other.last).toMatchObject({ kind: "command", command: { command: "palette" } });
+});
+
+test("an armed leader owns the keyboard, so `p` after it is cancelled", () => {
+  expect(run([[press("k", CMD)], [press("p", CMD)]]).last).toEqual({ kind: "cancelled" });
+});
+
+test("even the direct chord itself is cancelled while the leader is armed", () => {
+  // One entrance, and it is the one that is not mid-chord: a ⌘⇧P that meant the
+  // palette here would make the arm a state whose effect the user cannot see.
+  const { last, armedAt } = run([[press("k", CMD)], [press("P", CMD_SHIFT)]]);
+  expect(last).toEqual({ kind: "cancelled" });
+  expect(armedAt).toBeNull();
 });
 
 test("the machine runs on the non-Mac leader too", () => {

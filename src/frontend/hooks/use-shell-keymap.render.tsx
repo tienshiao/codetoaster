@@ -1,6 +1,7 @@
 import { test, expect, beforeEach, vi } from "vitest";
 import { render } from "@testing-library/react";
-import { useShellKeymap, type ShellKeymapOptions } from "./use-shell-keymap";
+import { useShellKeymap, type ShellKeymap, type ShellKeymapOptions } from "./use-shell-keymap";
+import { SHELL_COMMANDS, type ShellCommand } from "@/frontend/keymap";
 import {
   activeGroup,
   activeTab,
@@ -56,9 +57,13 @@ interface Harness {
   newShell: ReturnType<typeof vi.fn>;
   closed: ReturnType<typeof vi.fn>;
   focused: ReturnType<typeof vi.fn>;
+  palette: ReturnType<typeof vi.fn>;
+  /** The dispatcher the hook returns — the palette's way in. */
+  run: (command: ShellCommand) => void;
   /** Keydowns seen by a listener *below* the hook's, on the bubble path. */
   reachedPane: KeyboardEvent[];
-  press: (key: string, mods?: Partial<KeyboardEventInit>) => void;
+  /** Returns the event it dispatched, for a test that asks what was done to it. */
+  press: (key: string, mods?: Partial<KeyboardEventInit>) => KeyboardEvent;
   rerender: () => void;
   unmount: () => void;
   /** Rewrite the layout the way something other than the hook would. */
@@ -70,7 +75,11 @@ function mount(initial: TaskLayout | null = threeTabs()): Harness {
   const newShell = vi.fn();
   const closed = vi.fn();
   const focused = vi.fn();
+  const palette = vi.fn();
   const reachedPane: KeyboardEvent[] = [];
+  // Written on every render and read at call time, so a test always dispatches
+  // through the dispatcher the latest render handed out rather than the mount's.
+  let dispatch: ShellKeymap["run"] | null = null;
 
   // A stand-in for xterm's own handler: bound on an element, so it runs on the
   // bubble path after a window-capture listener has had its say. If the hook
@@ -88,8 +97,9 @@ function mount(initial: TaskLayout | null = threeTabs()): Harness {
       onNewShell: newShell,
       onCloseTab: (tab: TabState) => closed(tab.key),
       onFocusPane: focused,
+      onTogglePalette: palette,
     };
-    useShellKeymap(options);
+    dispatch = useShellKeymap(options).run;
     return null;
   }
 
@@ -100,12 +110,18 @@ function mount(initial: TaskLayout | null = threeTabs()): Harness {
     newShell,
     closed,
     focused,
+    palette,
+    run: (command) => dispatch!(command),
     reachedPane,
     press: (key, mods = {}) => {
       // Dispatched on the pane so the event has a path to travel: capture at
       // the window first, then the pane's own listener — the same two steps a
-      // keystroke in a terminal takes.
-      pane.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...mods }));
+      // keystroke in a terminal takes. `cancelable`, because a real keydown is
+      // and `preventDefault` on one that is not leaves `defaultPrevented` false
+      // — which would make every assertion about consuming a key vacuous.
+      const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...mods });
+      pane.dispatchEvent(ev);
+      return ev;
     },
     rerender: () => view.rerender(<Harness />),
     unmount: () => view.unmount(),
@@ -119,6 +135,11 @@ function mount(initial: TaskLayout | null = threeTabs()): Harness {
 function chord(h: Harness, key: string): void {
   h.press("k", { metaKey: true });
   h.press(key, { metaKey: true });
+}
+
+/** One row of the table, by id, for a test that dispatches without a keyboard. */
+function command(id: string): ShellCommand {
+  return SHELL_COMMANDS.find((c) => c.id === id)!;
 }
 
 // ── the listener ────────────────────────────────────────────────────────────
@@ -232,6 +253,63 @@ test("⌘K W on the agent tab closes nothing and kills nothing", () => {
   // the server to close a PTY that is the task itself.
   expect(h.closed).not.toHaveBeenCalled();
   expect(h.layout().groups[0]!.tabs).toHaveLength(3);
+});
+
+// ── the direct chord ────────────────────────────────────────────────────────
+
+test("⌘⇧P opens the palette, and is consumed on the way", () => {
+  const h = mount();
+  // `P`, because the browser reports the shifted cap — and with no leader in
+  // front of it, so a single press.
+  const ev = h.press("P", { metaKey: true, shiftKey: true });
+  expect(h.palette).toHaveBeenCalledTimes(1);
+  expect(h.reachedPane).toEqual([]);
+  // Stopped *and* prevented: stopping alone would still leave the browser free
+  // to act on the key.
+  expect(ev.defaultPrevented).toBe(true);
+});
+
+test("⌘K then P is a cancelled chord, not the palette", () => {
+  // The palette has one entrance, and an armed leader owns the keyboard.
+  const h = mount();
+  h.press("k", { metaKey: true });
+  h.press("p");
+  expect(h.palette).not.toHaveBeenCalled();
+  expect(h.reachedPane).toEqual([]);
+});
+
+test("the palette opens at the composer too, where there is no layout", () => {
+  const h = mount(null);
+  h.press("P", { metaKey: true, shiftKey: true });
+  expect(h.palette).toHaveBeenCalledTimes(1);
+});
+
+// ── the dispatcher the palette runs through ─────────────────────────────────
+
+test("run() does what the chord does, so the palette cannot drift from it", () => {
+  const h = mount();
+  h.run(command("next-tab"));
+  expect(focusedKey(h.layout())).toBe("file:a.ts");
+  // Including the parts that are not the reduction: a navigation raised from
+  // the palette still sends the caret after it.
+  expect(h.focused).toHaveBeenCalledTimes(1);
+});
+
+test("run() reads the layout at call time, like the keydown path", () => {
+  const h = mount();
+  chord(h, "]");
+  // No render in between, so a captured layout would put both moves on the
+  // same starting point.
+  h.run(command("next-tab"));
+  expect(focusedKey(h.layout())).toBe("file:b.ts");
+});
+
+test("run() reaches the commands that need no layout", () => {
+  const h = mount(null);
+  h.run(command("palette"));
+  h.run(command("new-shell"));
+  expect(h.palette).toHaveBeenCalledTimes(1);
+  expect(h.newShell).toHaveBeenCalledTimes(1);
 });
 
 // ── staying current ─────────────────────────────────────────────────────────

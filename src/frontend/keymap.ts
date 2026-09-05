@@ -19,6 +19,10 @@
  * before the shell sees it. After the leader the whole keyboard is free, which
  * is also why there is room for `⌘K 1`‑`9` without an argument about it.
  *
+ * One row is not behind the leader: the palette, `⌘⇧P` / `⌃⇧P`. It is the
+ * thing that *lists* the leader's chords, so a user who does not know the
+ * leader could not reach it. See `direct` below.
+ *
  * ## Why a table
  *
  * Every consumer reads this one list: the dispatcher runs the commands, the
@@ -41,10 +45,11 @@ export type CommandId =
   | "focus-agent"
   | "focus-group-left"
   | "focus-group-right"
-  | "new-shell";
+  | "new-shell"
+  | "palette";
 
 /** Heading a palette or a cheat sheet can group by. */
-export type CommandGroup = "Tabs" | "Groups" | "Task";
+export type CommandGroup = "Tabs" | "Groups" | "Task" | "View";
 
 export interface ShellCommand {
   /** Unique across the table; `jump-tab` is distinguished by `index`. */
@@ -60,6 +65,18 @@ export interface ShellCommand {
   key: string;
   /** Which tab `jump-tab` means, 1-based. Absent for every other command. */
   index?: number;
+  /**
+   * Fires on its own chord — ⌘⇧`key` on macOS, ⌃⇧`key` elsewhere — instead of
+   * after the leader. Absent, and so false, for every other row.
+   *
+   * Only the palette is direct, and for two reasons. It is the most-used
+   * command in the table, and it is the one that *lists* the leader chords: put
+   * it behind the leader and the only way to find out the leader exists is to
+   * already know it. It is also the one chord v1 already had, so the muscle
+   * memory is there, and Chrome binds nothing to ⌘⇧P — so unlike every other
+   * conventional chord, taking it costs the browser nothing.
+   */
+  direct?: boolean;
 }
 
 /** `⌘K 1` … `⌘K 9`. Nine entries rather than one parameterised row, so the
@@ -95,6 +112,7 @@ export const SHELL_COMMANDS: ShellCommand[] = [
   },
   { id: "focus-agent", command: "focus-agent", label: "Focus agent tab", group: "Task", key: "a" },
   { id: "new-shell", command: "new-shell", label: "New shell", group: "Task", key: "`" },
+  { id: "palette", command: "palette", label: "Command palette", group: "View", key: "p", direct: true },
 ];
 
 /** Enough of a `KeyboardEvent` to match a chord, so the table can be tested
@@ -147,11 +165,37 @@ export function isLeader(ev: KeyLike, mac: boolean = isMac()): boolean {
  * reason, and matters more — the non-Mac leader *is* ⌃⇧K, so a held Shift is
  * the normal case there rather than the sloppy one. Alt is not, because ⌥ is
  * how a terminal sends Meta, and a user pressing it means the pane.
+ *
+ * Direct rows are skipped: their chord is their whole binding, so after the
+ * leader a `p` is bound to nothing and gets cancelled like any other unbound
+ * key. Letting it through would give one command two entrances and make the
+ * leader quietly claim a letter that no cheat sheet lists after it.
  */
 export function matchCommand(ev: KeyLike): ShellCommand | null {
   if (ev.altKey) return null;
   const key = normalizeKey(ev.key);
-  return SHELL_COMMANDS.find((c) => c.key === key) ?? null;
+  return SHELL_COMMANDS.find((c) => !c.direct && c.key === key) ?? null;
+}
+
+/**
+ * The command a press means on its own, with no leader before it.
+ *
+ * The modifiers have to be exactly the platform's — ⌘⇧ on a Mac, ⌃⇧ elsewhere
+ * — rather than merely present the way `matchCommand` tolerates them. There is
+ * no armed leader here saying the keyboard belongs to the shell, so anything
+ * extra under the chord is somebody else's: ⌥ is the terminal's Meta, and a ⌃
+ * held under ⌘⇧P is a chord this table does not own.
+ *
+ * With Shift down `ev.key` arrives as `P`, which `normalizeKey` folds back onto
+ * the lowercase cap the table stores.
+ */
+export function matchDirect(ev: KeyLike, mac: boolean = isMac()): ShellCommand | null {
+  const modifiers = mac
+    ? ev.metaKey && ev.shiftKey && !ev.ctrlKey && !ev.altKey
+    : ev.ctrlKey && ev.shiftKey && !ev.metaKey && !ev.altKey;
+  if (!modifiers) return null;
+  const key = normalizeKey(ev.key);
+  return SHELL_COMMANDS.find((c) => c.direct && c.key === key) ?? null;
 }
 
 /**
@@ -178,9 +222,13 @@ function isSearchChord(ev: KeyLike): boolean {
  * listener not yet bound on the first paint — the failure this way round is a
  * shortcut that does not fire. The other way round, a bare `k` is typed into
  * the agent.
+ *
+ * A direct chord is here for the same disagreement, and the stray keystroke it
+ * guards against is worse: ⌘⇧P reaching xterm sends a bare `P` to whatever the
+ * agent is running.
  */
 export function terminalMustYield(ev: KeyLike, mac: boolean = isMac()): boolean {
-  return isLeader(ev, mac) || isSearchChord(ev);
+  return isLeader(ev, mac) || matchDirect(ev, mac) !== null || isSearchChord(ev);
 }
 
 // ── the leader state machine ────────────────────────────────────────────────
@@ -248,6 +296,10 @@ export function stepKeymap(
     // thing the map exists to prevent.
     if (isLeader(ev, mac)) return { armedAt: now, result: { kind: "armed" } };
 
+    // `matchDirect` is deliberately not consulted while armed: an armed leader
+    // owns the keyboard, so ⌘K ⌘⇧P is a cancelled chord rather than the
+    // palette. A chord that meant one thing alone and the same thing mid-chord
+    // would make the arm a state the user cannot see and cannot rely on.
     const command = matchCommand(ev);
     if (command) return { armedAt: null, result: { kind: "command", command } };
 
@@ -258,6 +310,12 @@ export function stepKeymap(
   }
 
   // Not armed, or armed too long ago to still mean anything.
+  //
+  // The direct chords come first because they are not part of the map's state
+  // at all: one fires and leaves the leader exactly as it found it, disarmed.
+  const direct = matchDirect(ev, mac);
+  if (direct) return { armedAt: null, result: { kind: "command", command: direct } };
+
   if (isLeader(ev, mac)) return { armedAt: now, result: { kind: "armed" } };
   return { armedAt: null, result: { kind: "idle" } };
 }
@@ -276,8 +334,11 @@ function keyCap(key: string): string {
   return key.length === 1 ? key.toUpperCase() : key;
 }
 
-/** The whole chord's caps, leader first — what `KeyHint` draws on a control. */
+/** The whole chord's caps, leader first — what `KeyHint` draws on a control.
+ * A direct row prints its own modifiers instead, since there is no leader in
+ * front of it to draw. */
 export function chordCaps(command: ShellCommand, mac: boolean = isMac()): string[] {
+  if (command.direct) return [mac ? "⌘" : "Ctrl", "⇧", keyCap(command.key)];
   return [...leaderCaps(mac), keyCap(command.key)];
 }
 
@@ -292,6 +353,9 @@ export function chordCaps(command: ShellCommand, mac: boolean = isMac()): string
 export function chordHint(id: string, mac: boolean = isMac()): string {
   const command = SHELL_COMMANDS.find((c) => c.id === id);
   if (!command) return "";
+  // A direct chord is one press, so its key joins the modifiers rather than
+  // following them after the space that separates a leader from its second.
+  if (command.direct) return `${mac ? "⌘⇧" : "Ctrl+Shift+"}${keyCap(command.key)}`;
   return `${mac ? "⌘K" : "Ctrl+Shift+K"} ${keyCap(command.key)}`;
 }
 

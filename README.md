@@ -105,6 +105,13 @@ its replacement — tasks, open tabs, and the shortcuts above — is still to co
 
 ### Keyboard Shortcuts
 
+| Action | Mac | Windows/Linux |
+|--------|-----|---------------|
+| Command palette | Cmd+Shift+P | Ctrl+Shift+P |
+
+The palette is the one shortcut that is not behind the leader below, because it
+is what lists the leader's chords — and runs them.
+
 Tabs, splits and groups are driven from a leader chord: press **Cmd+K**
 (**Ctrl+Shift+K** on Windows/Linux), release, then press the key below.
 
