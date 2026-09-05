@@ -149,6 +149,52 @@ test("Escape closes the popup without closing the dialog holding it", () => {
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
+test("a value set after mount survives, inside a dialog's form", () => {
+  // Radix renders a hidden native `<select>` when it is inside a `<form>` —
+  // which every `Dialog` body is — and fires a `change` from an effect on every
+  // programmatic value change. Its `<option>`s come from the mounted items,
+  // which live in the portal and do not exist while the popup is closed, so
+  // that event reports `""` and Radix hands it back as a value change: the
+  // control takes back what it was just given, one frame later.
+  //
+  // Invisible until a value arrived *after* the first render, which is what a
+  // fetched option list does (TASK-89.3).
+  // The options and the value land together, which is the shape of it: the
+  // list is what the value was derived from, so neither exists before it.
+  function Late() {
+    const [loaded, setLoaded] = useState(false);
+    const [value, setValue] = useState("");
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            setLoaded(true);
+            setValue("opus");
+          }}
+        >
+          load
+        </button>
+        <Select
+          label="model"
+          options={loaded ? OPTIONS : OPTIONS.slice(0, 1)}
+          value={value}
+          onValueChange={setValue}
+        />
+      </>
+    );
+  }
+
+  render(
+    <Dialog open title="Settings" onClose={vi.fn()}>
+      <Late />
+    </Dialog>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "load" }));
+
+  expect(selectValue("model")).toBe("Opus");
+});
+
 test("a disabled chip does not open", () => {
   render(
     <Select

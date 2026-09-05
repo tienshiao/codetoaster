@@ -1,5 +1,6 @@
 import { taskManager } from "../lib/tasks/manager";
 import type { CreateTaskOptions } from "../lib/tasks/manager";
+import { UnknownProfileError } from "../lib/agent/profiles";
 import { readSnapshot } from "../lib/tasks/snapshot";
 import { WorktreeError } from "../lib/worktree";
 
@@ -87,6 +88,13 @@ export const taskRoutes = {
         title: optionalString(body.title),
         model: optionalString(body.model),
         permissionMode: optionalString(body.permissionMode),
+        // Which agent to run this on: a *name* in the daemon's registry and
+        // never a command (TASK-89). Absent means the project's
+        // `default_profile`, and absent again means `claude` — resolved in
+        // `createTask`, so this route, the CLI and the composer agree. An
+        // unknown name is a 400 below rather than a silent fall back to
+        // claude: a caller that asked for something else must not get one.
+        profile: optionalString(body.profile),
         afterTaskId: optionalString(body.afterTaskId),
         // What the worktree branches from (§5.6). Absent means the project's
         // `default_base_ref`, and absent again means HEAD — resolved in
@@ -157,6 +165,12 @@ export const taskRoutes = {
           rows: rows ?? undefined,
         });
       } catch (e: any) {
+        // A profile nothing answers to is the caller's typo, and the cheapest
+        // failure there is: `createTask` checks the name before it makes a
+        // worktree or a row, so there is nothing to have left behind. First,
+        // because it is the one failure below that is unambiguously about the
+        // request rather than about the machine.
+        if (e instanceof UnknownProfileError) return badRequest(e.message);
         // Spawning is the interesting failure: a $SHELL that is no longer on
         // PATH throws out of Bun.spawn, and the caller deserves to know that
         // rather than watching a session never appear. Creating the worktree

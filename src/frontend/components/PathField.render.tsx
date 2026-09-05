@@ -48,8 +48,14 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string) => {
-      const path = new URL(input, "http://localhost").searchParams.get("path") ?? "";
-      return new Response(JSON.stringify(answer(path)), {
+      const url = new URL(input, "http://localhost");
+      // The dialog around this field also asks which agents the daemon has
+      // (TASK-89.3). Answered rather than left to fall through, because a
+      // directory listing handed to that query is not a list and the composer
+      // helper it feeds would throw on it — a stub that answers every route
+      // the same way is a stub that lies to all but one of them.
+      const body = url.pathname === "/api/profiles" ? [] : answer(url.searchParams.get("path") ?? "");
+      return new Response(JSON.stringify(body), {
         headers: { "content-type": "application/json" },
       });
     }),

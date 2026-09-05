@@ -18,6 +18,16 @@ import type { BranchStatus } from "../worktree/status";
 export interface ProjectSettings {
   defaultModel: string | null;
   defaultPermissionMode: string | null;
+  /** Which agent this project's tasks run on: a *name* in the daemon's profile
+   * registry, never a command (TASK-89). Null is unset and resolves to
+   * `claude`, which is the one place a null here does not hand the choice back
+   * to the agent — there is no such thing as a task running on nothing.
+   *
+   * Refused rather than stored when the registry does not hold the name: a
+   * project whose default names a profile this daemon has never heard of would
+   * fail every create started in it, at the point where the user has already
+   * typed a prompt. */
+  defaultProfile: string | null;
   /** What a new worktree branches from. Null means the project's HEAD, which
    * is what `git worktree add` does when told nothing. */
   defaultBaseRef: string | null;

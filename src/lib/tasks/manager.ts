@@ -22,8 +22,8 @@ import * as db from "../db";
 import type { ProjectRow, TaskRow } from "../db";
 import { TaskStore } from "./store";
 import { buildAgentCommand, removeTaskDir, taskDir, taskEnv, type AgentMode } from "../agent/spawn";
-import { builtinProfiles, profileCapabilities } from "../agent/profile";
-import { DEFAULT_PROFILE, ProfileRegistry } from "../agent/profiles";
+import { builtinProfiles, profileCapabilities, type AgentProfile } from "../agent/profile";
+import { DEFAULT_PROFILE, ProfileRegistry, UnknownProfileError } from "../agent/profiles";
 import {
   canResumeSessionId,
   continueIsSafe,
@@ -108,6 +108,7 @@ function generalProject(): ProjectInfo {
 const UNSET_PROJECT_SETTINGS: ProjectSettings = {
   defaultModel: null,
   defaultPermissionMode: null,
+  defaultProfile: null,
   defaultBaseRef: null,
   setupCommand: null,
   worktreeCopy: null,
@@ -121,6 +122,7 @@ function projectSettingsOf(row: ProjectRow): ProjectSettings {
   return {
     defaultModel: row.default_model,
     defaultPermissionMode: row.default_permission_mode,
+    defaultProfile: row.default_profile,
     defaultBaseRef: row.default_base_ref,
     setupCommand: row.setup_command,
     worktreeCopy: row.worktree_copy,
@@ -157,6 +159,11 @@ function normalizeSettingsPatch(patch: Partial<ProjectSettings>): Partial<Projec
   if (patch.defaultPermissionMode !== undefined) {
     next.defaultPermissionMode = text(patch.defaultPermissionMode);
   }
+  // Normalized like the rest — blank is unset, which is how the dialog's empty
+  // choice arrives. Whether the name is one this daemon knows is *not* asked
+  // here: this function has no registry, and the answer belongs where the
+  // failure can be reported, which is the two writers below.
+  if (patch.defaultProfile !== undefined) next.defaultProfile = text(patch.defaultProfile);
   if (patch.defaultBaseRef !== undefined) next.defaultBaseRef = text(patch.defaultBaseRef);
   if (patch.setupCommand !== undefined) next.setupCommand = text(patch.setupCommand);
   // Blank-as-a-whole is unset here too, but the entries inside are left alone:
@@ -174,6 +181,7 @@ function settingsColumns(patch: Partial<ProjectSettings>): Partial<ProjectRow> {
   if ("defaultPermissionMode" in patch) {
     columns.default_permission_mode = patch.defaultPermissionMode;
   }
+  if ("defaultProfile" in patch) columns.default_profile = patch.defaultProfile;
   if ("defaultBaseRef" in patch) columns.default_base_ref = patch.defaultBaseRef;
   if ("setupCommand" in patch) columns.setup_command = patch.setupCommand;
   if ("worktreeCopy" in patch) columns.worktree_copy = patch.worktreeCopy;
@@ -836,7 +844,15 @@ export class TaskManager {
     // and the cheapest possible failure for it is one with nothing behind it
     // yet: no checkout added, no branch named, no row holding an id that can
     // never be issued again.
-    const profile = this.profiles.require(options.profile ?? DEFAULT_PROFILE);
+    //
+    // Three rungs, the same shape and for the same reason as the model below:
+    // what the request named, else what the project it *joins* decided, else
+    // `claude`. Read off `project` and not off `options.projectId`, so a create
+    // that names no project — the API and CLI shape — still inherits from the
+    // project it lands in (TASK-89.3).
+    const profile = this.profiles.require(
+      options.profile ?? project?.defaultProfile ?? DEFAULT_PROFILE,
+    );
     const capabilities = profileCapabilities(profile);
 
     // Inherit cwd from afterTaskId's terminal, or from the project's initialPath
@@ -3352,6 +3368,33 @@ export class TaskManager {
     }
   }
 
+  /** What this daemon can run a task on, in the order the composer offers it:
+   * the built-ins, then anything `profiles.json` added (TASK-89.2). The client
+   * renders from this rather than from a list of its own, so a user-defined
+   * profile is choosable without a rebuild — and a build that dropped one
+   * cannot go on offering it. */
+  listProfiles(): AgentProfile[] {
+    return this.profiles.list();
+  }
+
+  /** A default profile is refused before it is stored, never after.
+   *
+   * The failure a project's default causes is not the project's: it is every
+   * `createTask` started in it, where `profiles.require` throws at a point the
+   * user has already typed a prompt and pressed Start. Checked at the write —
+   * the one moment a name arrives from a client — the mistake is reported to
+   * the person who made it, while a project that was configured before a
+   * `profiles.json` edit removed the profile keeps its column and fails
+   * honestly at the create. Nothing rewrites a stored value behind the user.
+   *
+   * Only a non-null one: null is unset and resolves to `claude`, and `claude`
+   * is a name a registry can never be without. */
+  private checkDefaultProfile(patch: Partial<ProjectSettings>): void {
+    const name = patch.defaultProfile;
+    if (typeof name !== "string") return;
+    if (!this.profiles.get(name)) throw new UnknownProfileError(name);
+  }
+
   /** Add a project, with whatever it starts out deciding for its tasks.
    *
    * `settings` is optional and normalized exactly as `updateProject` does it,
@@ -3372,6 +3415,7 @@ export class TaskManager {
       throw new Error(`Project "${id}" already exists`);
     }
     const patch = settings ? normalizeSettingsPatch(settings) : {};
+    this.checkDefaultProfile(patch);
     db.createProject(
       {
         id,
@@ -3408,6 +3452,7 @@ export class TaskManager {
     const project = this.projects.find((p) => p.id === id);
     if (!project) return false;
     const patch = settings ? normalizeSettingsPatch(settings) : {};
+    this.checkDefaultProfile(patch);
     db.updateProject(
       id,
       { name, initial_path: initialPath, ...settingsColumns(patch) },

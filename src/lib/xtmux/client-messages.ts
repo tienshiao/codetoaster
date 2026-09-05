@@ -138,14 +138,23 @@ export function handleClientMessage(
     }
 
     case "updateProject": {
-      const updated = manager.updateProject(
-        parsed.id,
-        parsed.name,
-        parsed.initialPath,
-        parsed.settings,
-      );
-      if (!updated) {
-        sendError(ws, `Project "${parsed.id}" not found`);
+      // Guarded like `createProject` above, and now for the same reason: a
+      // settings patch can be refused as well as ignored (an unknown default
+      // profile, TASK-89.3), and an unhandled throw out of a message handler
+      // takes the whole frame with it — the client would see the dialog close
+      // on a save that never happened and no error at all.
+      try {
+        const updated = manager.updateProject(
+          parsed.id,
+          parsed.name,
+          parsed.initialPath,
+          parsed.settings,
+        );
+        if (!updated) {
+          sendError(ws, `Project "${parsed.id}" not found`);
+        }
+      } catch (e: any) {
+        sendError(ws, e.message);
       }
       break;
     }

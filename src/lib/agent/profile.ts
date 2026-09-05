@@ -36,6 +36,17 @@
  * test can hand it one.
  */
 
+/** The profile a task gets when nothing — not the request, not the project —
+ * names one: today's behaviour.
+ *
+ * Here rather than in `profiles.ts`, which is where the registry lives and
+ * where this used to be, for the reason `naming.ts` is import-free: this file
+ * touches no filesystem, so the frontend can share the constant, and the
+ * composer works out which controls to disable against the same name the
+ * server resolves against. `profiles.ts` re-exports it, so every existing
+ * importer is unchanged. */
+export const DEFAULT_PROFILE = "claude";
+
 export const PLACEHOLDERS = [
   "session_id",
   "prompt",

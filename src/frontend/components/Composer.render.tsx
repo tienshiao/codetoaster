@@ -1,6 +1,9 @@
 import { test, expect, describe, vi, afterEach, beforeEach } from "vitest";
+import type { ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { chooseOption, selectValue } from "../../../test/v2-select";
+import type { ProfileSummary } from "../hooks/use-profiles";
 import {
   requestComposerProject,
   resetComposerRequest,
@@ -47,6 +50,7 @@ function project(id: string, overrides: Partial<ProjectInfo> = {}): ProjectInfo 
     initialPath: "",
     taskIds: [],
     defaultModel: null,
+    defaultProfile: null,
     defaultPermissionMode: null,
     defaultBaseRef: null,
     setupCommand: null,
@@ -58,6 +62,25 @@ function project(id: string, overrides: Partial<ProjectInfo> = {}): ProjectInfo 
 
 const created = { id: "task-1" } as TaskInfo;
 
+/** A profile row as `GET /api/profiles` answers it. Only `model` varies here —
+ * it is the one capability the composer renders anything from — so the rest is
+ * spelled once rather than at three call sites. */
+function profile(name: string, label: string, model: boolean): ProfileSummary {
+  return {
+    name,
+    label,
+    capabilities: {
+      sessionId: model, resume: model, continue: model,
+      hooks: false, model, permissionMode: false, prompt: model,
+    },
+  };
+}
+
+/** The daemon's real built-ins, which is what the composer offers. `shell` is
+ * the one that takes no model — the profile that runs a plain shell and is
+ * passed nothing at all — so it is what the disabled-control tests use. */
+let profiles: ProfileSummary[];
+
 beforeEach(() => {
   // Module state, so a request made by one test is one the next would open on.
   resetComposerRequest();
@@ -65,7 +88,37 @@ beforeEach(() => {
   stubs.createTask.mockReset();
   stubs.createTask.mockResolvedValue({ ok: true, value: created });
   stubs.openTask.mockReset();
+  profiles = [
+    profile("claude", "Claude Code", true),
+    profile("shell", "Shell (no agent)", false),
+    profile("pi", "pi", true),
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify(profiles), {
+          headers: { "content-type": "application/json" },
+        }),
+    ),
+  );
 });
+
+afterEach(() => vi.unstubAllGlobals());
+
+/** The composer under a query client, because the agent list is fetched.
+ *
+ * As a `wrapper` rather than a wrapping element, so `rerender` keeps the
+ * provider — the `?project=` tests re-render the composer in place and would
+ * otherwise remount it without one.
+ */
+function mount(node: ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const Wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return render(node, { wrapper: Wrapper });
+}
 
 function type(text: string) {
   const box = screen.getByLabelText("Prompt");
@@ -91,7 +144,7 @@ function submitKey(target: Element, key: Record<string, boolean> = { metaKey: tr
 }
 
 test("⌘⏎ starts the task and opens its agent tab", async () => {
-  render(<Composer />);
+  mount(<Composer />);
   submitKey(type("ship it"));
 
   await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
@@ -100,8 +153,9 @@ test("⌘⏎ starts the task and opens its agent tab", async () => {
     projectId: "general",
     // The model select was not touched and the project's column is unset, so
     // nothing about the model goes on the wire and the server resolves it from
-    // the project.
+    // the project. The agent select says the same thing the same way.
     model: undefined,
+    profile: undefined,
     // The grid the agent is spawned at, so its first paint is not laid out for
     // the 80×24 fallback and reflowed on the first attach.
     cols: 120,
@@ -131,7 +185,7 @@ describe("the worktree options", () => {
   }
 
   test("is off, and unusable, for a project with no directory", () => {
-    render(<Composer />);
+    mount(<Composer />);
 
     // Disabled rather than absent, so the options row does not reflow as the
     // project selection moves between one kind of project and the other.
@@ -147,7 +201,7 @@ describe("the worktree options", () => {
 
   test("starts where the project's default puts it", () => {
     withRepo({ worktreeDefault: true, defaultBaseRef: "release" });
-    render(<Composer />);
+    mount(<Composer />);
 
     expect(worktreeBox().checked).toBe(true);
     // Seeded during the render that moves the selection, not in an effect —
@@ -157,7 +211,7 @@ describe("the worktree options", () => {
 
   test("sends nothing when it agrees with the project", async () => {
     withRepo({ worktreeDefault: true, defaultBaseRef: "release" });
-    render(<Composer />);
+    mount(<Composer />);
     submitKey(type("inherit it"));
 
     await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
@@ -170,7 +224,7 @@ describe("the worktree options", () => {
 
   test("sends the override when it disagrees", async () => {
     withRepo({ worktreeDefault: false });
-    render(<Composer />);
+    mount(<Composer />);
     fireEvent.click(worktreeBox());
     submitKey(type("branch it"));
 
@@ -180,7 +234,7 @@ describe("the worktree options", () => {
 
   test("the base ref appears with the worktree and not without it", async () => {
     withRepo({ worktreeDefault: false });
-    render(<Composer />);
+    mount(<Composer />);
 
     // It decides nothing on its own: a task in the project's own checkout is
     // on whatever branch the user left it on.
@@ -195,7 +249,7 @@ describe("the worktree options", () => {
 
   test("a blank base ref is no override, not a ref called nothing", async () => {
     withRepo({ worktreeDefault: true });
-    render(<Composer />);
+    mount(<Composer />);
     fireEvent.change(screen.getByLabelText("Base ref"), { target: { value: "   " } });
     submitKey(type("default base"));
 
@@ -207,13 +261,13 @@ describe("the worktree options", () => {
 });
 
 test("Ctrl+⏎ is the same binding", async () => {
-  render(<Composer />);
+  mount(<Composer />);
   submitKey(type("ship it"), { ctrlKey: true });
   await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
 });
 
 test("a whitespace-only prompt is not a task", async () => {
-  render(<Composer />);
+  mount(<Composer />);
   const box = type("   \n  ");
 
   // Both halves: the button says so, and the keystroke that bypasses the button
@@ -229,7 +283,7 @@ test("a failed create keeps the prompt and says why", async () => {
     ok: false,
     error: { status: 500, message: "spawn ENOENT" },
   });
-  render(<Composer />);
+  mount(<Composer />);
   submitKey(type("ship it"));
 
   expect((await screen.findByRole("alert")).textContent).toBe("spawn ENOENT");
@@ -244,7 +298,7 @@ test("what the select shows is what gets sent", async () => {
   // The project's own column is seeded into the select rather than left as
   // "Project default", so the user can see what they are about to run.
   stubs.projects = [project("general", { defaultModel: "opus" })];
-  render(<Composer />);
+  mount(<Composer />);
 
   expect(selectValue("model")).toBe("Opus");
   chooseOption("model", "Fable");
@@ -255,12 +309,122 @@ test("what the select shows is what gets sent", async () => {
   expect(stubs.createTask.mock.calls[0]![0]).toMatchObject({ model: "fable" });
 });
 
+/**
+ * Choosing the agent (TASK-89.3).
+ *
+ * The list is fetched, so every assertion here is about a control that renders
+ * once before the answer exists and again after — which is the whole reason
+ * the agent has a seeding key of its own.
+ */
+describe("the agent select", () => {
+  test("seeds from the project's default once the list arrives", async () => {
+    stubs.projects = [project("general", { defaultProfile: "pi" })];
+    mount(<Composer />);
+
+    // The frame before the fetch lands: "pi" is not an option yet, so the
+    // control shows the only thing it honestly can.
+    expect(selectValue("agent")).toBe("Project default");
+    // And it corrects itself rather than staying wrong, which a seed keyed
+    // only on the project selection would not have done — nothing about the
+    // selection changed when the answer came back.
+    await waitFor(() => expect(selectValue("agent")).toBe("pi"));
+  });
+
+  test("changing project re-seeds it from the project it moved to", async () => {
+    stubs.projects = [
+      project("general", { defaultProfile: "pi" }),
+      project("web", { defaultProfile: "shell" }),
+    ];
+    mount(<Composer />);
+    await waitFor(() => expect(selectValue("agent")).toBe("pi"));
+
+    chooseOption("project", "web");
+
+    // Not carried across: the choice belonged to the project it was read from.
+    expect(selectValue("agent")).toBe("Shell (no agent)");
+  });
+
+  test("an untouched select on a project that decided nothing sends nothing", async () => {
+    // The default fixtures have no `default_profile`, so the control is on the
+    // unset choice and stays there — and an absent field is what lets the
+    // server resolve it, which is what gives the API and the CLI the same
+    // answer for free.
+    mount(<Composer />);
+    submitKey(type("ship it"));
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    expect(stubs.createTask.mock.calls[0]![0]).toMatchObject({ profile: undefined });
+  });
+
+  test("a chosen agent is sent by name", async () => {
+    // Seeded from a project that names one, which is also the only
+    // deterministic signal that the fetched list has landed: the control
+    // cannot show a label the list does not hold.
+    stubs.projects = [project("general", { defaultProfile: "claude" })];
+    mount(<Composer />);
+    await waitFor(() => expect(selectValue("agent")).toBe("Claude Code"));
+
+    chooseOption("agent", "pi");
+    submitKey(type("ship it"));
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    // A name, never a command: the templates stay in the daemon's
+    // configuration and only the name goes over the wire (TASK-42).
+    expect(stubs.createTask.mock.calls[0]![0]).toMatchObject({ profile: "pi" });
+  });
+
+  test("an agent that takes no model disables the model select", async () => {
+    stubs.projects = [project("general", { defaultProfile: "claude" })];
+    mount(<Composer />);
+    await waitFor(() => expect(selectValue("agent")).toBe("Claude Code"));
+
+    // Nothing is disabled for claude, which takes one.
+    const model = () => screen.getByRole("combobox", { name: "model" }) as HTMLButtonElement;
+    expect(model().disabled).toBe(false);
+
+    // The shell profile is passed nothing at all — no prompt, no model — so a
+    // model chosen beside it would be silently dropped at the spawn. Disabled
+    // rather than hidden, so the row does not reflow.
+    chooseOption("agent", "Shell (no agent)");
+    expect(model().disabled).toBe(true);
+    expect(model().title).toBe("This agent takes no model");
+
+    chooseOption("agent", "pi");
+    expect(model().disabled).toBe(false);
+  });
+
+  test("the project's default decides it too, not just an explicit choice", async () => {
+    // The effective profile is what the *server* will resolve to, so a project
+    // defaulting to the shell disables the model with the select still on
+    // "Project default".
+    stubs.projects = [project("general", { defaultProfile: "shell" })];
+    mount(<Composer />);
+
+    await waitFor(() =>
+      expect((screen.getByRole("combobox", { name: "model" }) as HTMLButtonElement).disabled)
+        .toBe(true),
+    );
+  });
+
+  test("nothing is disabled while the list has not arrived", () => {
+    stubs.projects = [project("general", { defaultProfile: "shell" })];
+    mount(<Composer />);
+
+    // "We have not been told yet" is not "this agent takes no model": a
+    // control greyed out on a guess is worse than one that lets the server
+    // give the real answer.
+    expect((screen.getByRole("combobox", { name: "model" }) as HTMLButtonElement).disabled)
+      .toBe(false);
+    expect(selectValue("agent")).toBe("Project default");
+  });
+});
+
 test("the composer never sends a permission mode", async () => {
   // TASK-80: the mode chip is gone, and with it any `--permission-mode` this
   // surface could put on the agent's argv. The field, the column and the
   // server's resolution of them all stay — the API and the CLI still set one.
   stubs.projects = [project("general", { defaultPermissionMode: "plan" })];
-  render(<Composer />);
+  mount(<Composer />);
 
   expect(screen.queryByRole("combobox", { name: "mode" })).toBeNull();
   submitKey(type("ship it"));
@@ -271,7 +435,7 @@ test("the composer never sends a permission mode", async () => {
 
 test("changing project re-seeds the model from the project it moved to", () => {
   stubs.projects = [project("general", { defaultModel: "opus" }), project("web")];
-  render(<Composer />);
+  mount(<Composer />);
   expect(selectValue("model")).toBe("Opus");
 
   chooseOption("project", "web");
@@ -285,7 +449,7 @@ describe("the project a group's + asked for", () => {
     // defaults come with it, since the seeding is keyed off the selection and
     // this moved the selection.
     stubs.projects = [project("general"), project("web", { defaultModel: "sonnet" })];
-    render(<Composer projectId="web" />);
+    mount(<Composer projectId="web" />);
 
     expect(selectValue("project")).toBe("web");
     expect(selectValue("model")).toBe("Sonnet");
@@ -296,7 +460,7 @@ describe("the project a group's + asked for", () => {
     // them changes this prop on a composer that is already mounted — and that
     // is all that happens: no remount to re-read the seed, and no request in
     // the store either.
-    const view = render(<Composer />);
+    const view = mount(<Composer />);
     type("ship it");
     expect(selectValue("project")).toBe("general");
 
@@ -310,7 +474,7 @@ describe("the project a group's + asked for", () => {
     // The real shape of it: `/` is already showing, so pressing a group's `+`
     // is a request into a live composer rather than a new mount. The prompt is
     // the user's and the only copy of it.
-    render(<Composer />);
+    mount(<Composer />);
     type("ship it");
     expect(selectValue("project")).toBe("general");
 
@@ -325,7 +489,7 @@ describe("the project a group's + asked for", () => {
     // general by hand, then web's `+` pressed again. The navigation behind that
     // press goes to the address already showing and so changes nothing, which
     // is why the request is counted rather than compared by id.
-    render(<Composer projectId="web" />);
+    mount(<Composer projectId="web" />);
     chooseOption("project", "general");
     type("ship it");
     expect(selectValue("project")).toBe("general");
@@ -340,7 +504,7 @@ describe("the project a group's + asked for", () => {
     // A preference, not an address: a stale link or a project deleted on
     // another client leaves the composer on the first project rather than on
     // nothing at all.
-    render(<Composer projectId="nope" />);
+    mount(<Composer projectId="nope" />);
 
     expect(selectValue("project")).toBe("general");
   });
@@ -381,7 +545,7 @@ describe("the caret on a phone", () => {
 
   test("on a desktop the caret is in the prompt as soon as it mounts", () => {
     stubViewport(false);
-    render(<Composer />);
+    mount(<Composer />);
 
     // Arriving at `/` on a desktop means the user is about to type.
     expect(document.activeElement).toBe(promptBox());
@@ -389,7 +553,7 @@ describe("the caret on a phone", () => {
 
   test("on a phone nothing is focused, so the soft keyboard stays down", () => {
     stubViewport(true);
-    render(<Composer />);
+    mount(<Composer />);
 
     // `autoFocus` fires on every mount of `/` — the initial load, a redirect
     // from a dead task URL — and each one would cover a third of the viewport
@@ -400,7 +564,7 @@ describe("the caret on a phone", () => {
 
   test("the deliberate press still lands on a phone", () => {
     stubViewport(true);
-    render(<Composer />);
+    mount(<Composer />);
 
     // Exactly what `useOpenComposer` does once its navigation settles: the box
     // is addressed by id precisely so the New task button can reach it whether

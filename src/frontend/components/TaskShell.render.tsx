@@ -1,5 +1,6 @@
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { TaskInfo } from "../../lib/xtmux/types";
 import { clearLayout, loadLayout, openTab, saveLayout } from "../layout-store";
@@ -111,15 +112,26 @@ vi.mock("@/frontend/components/tabs/panes", () => ({ TabPane: () => null }));
 const { TaskShell } = await import("./TaskShell");
 const { TerminalThemeProvider } = await import("../hooks/use-terminal-theme");
 
-/** The shell under the one provider it genuinely needs: the settings dialog
- * reads the terminal theme, and this file renders the real dialog rather than a
- * stub precisely so it can see whether it mounts at all. */
-function renderShell(taskId: string | null = TASK_ID) {
-  return render(
-    <TerminalThemeProvider>
-      <TaskShell taskId={taskId} />
-    </TerminalThemeProvider>,
+/** One client for the file: the profile list is fetched once and shared, and a
+ * client per render would refetch it on every remount for no gain. */
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+/** The shell under the two providers it genuinely needs: the settings dialog
+ * reads the terminal theme — this file renders the real dialog rather than a
+ * stub precisely so it can see whether it mounts at all — and the status bar
+ * asks which agent the task runs on (TASK-89.3).
+ *
+ * As a `wrapper`, so the re-renders below keep both without restating them. */
+function Providers({ children }: { children: ReactNode }) {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TerminalThemeProvider>{children}</TerminalThemeProvider>
+    </QueryClientProvider>
   );
+}
+
+function renderShell(taskId: string | null = TASK_ID) {
+  return render(<TaskShell taskId={taskId} />, { wrapper: Providers });
 }
 
 const TASK_ID = "task-1";
@@ -269,11 +281,7 @@ test("a shell tab this client just opened survives a delta that predates it", as
   // The stale delta lands.
   stubs.tasks = [task({ lifecycle: "live", shellPtyIds: [] })];
   await act(async () => {
-    rerender(
-      <TerminalThemeProvider>
-        <TaskShell taskId={TASK_ID} />
-      </TerminalThemeProvider>,
-    );
+    rerender(<TaskShell taskId={TASK_ID} />);
   });
 
   expect(storedShells()).toEqual(["pty-a"]);
@@ -307,11 +315,7 @@ test("a shell answered after the user left the task is killed, not abandoned", a
   fireEvent.click(screen.getByLabelText("New shell"));
 
   // The user moves to another task under the round trip.
-  rerender(
-    <TerminalThemeProvider>
-      <TaskShell taskId="another-task" />
-    </TerminalThemeProvider>,
-  );
+  rerender(<TaskShell taskId="another-task" />);
   await act(async () => {
     answers[0]!({ ok: true, value: { ptyId: "pty-orphan" } });
   });
@@ -340,11 +344,7 @@ test("a dismissed WIP notice does not follow the user to the next task", () => {
   fireEvent.click(screen.getByRole("button", { name: "Later" }));
   expect(screen.queryByRole("status")).toBeNull();
 
-  rerender(
-    <TerminalThemeProvider>
-      <TaskShell taskId="task-2" />
-    </TerminalThemeProvider>,
-  );
+  rerender(<TaskShell taskId="task-2" />);
 
   // The second task has said nothing about its own snapshot, so it still asks.
   expect(screen.queryByRole("status")).not.toBeNull();

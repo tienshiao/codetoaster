@@ -1,7 +1,8 @@
-import { test, expect, describe, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { test, expect, describe, vi, afterEach, beforeEach } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { chooseOption, selectValue } from "../../../test/v2-select";
+import type { ProfileSummary } from "../hooks/use-profiles";
 import type { ProjectInfo, ProjectSettings } from "../../lib/xtmux/types";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 
@@ -23,6 +24,7 @@ function project(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
     initialPath: "~/projects/web",
     taskIds: [],
     defaultModel: null,
+    defaultProfile: null,
     defaultPermissionMode: null,
     defaultBaseRef: null,
     setupCommand: null,
@@ -35,10 +37,37 @@ function project(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
 const onSave = vi.fn();
 const onClose = vi.fn();
 
+/** What `GET /api/profiles` answers. Only the names and labels matter to this
+ * dialog — it renders a list and nothing else off them — so the capabilities
+ * are spelled once and left alone. */
+const PROFILES: ProfileSummary[] = ["claude", "shell", "pi"].map((name) => ({
+  name,
+  label: name === "claude" ? "Claude Code" : name,
+  capabilities: {
+    sessionId: true, resume: true, continue: true,
+    hooks: false, model: true, permissionMode: false, prompt: true,
+  },
+}));
+
 beforeEach(() => {
   onSave.mockReset();
   onClose.mockReset();
+  // Routed by path, not answered blindly: the path field's autocomplete goes
+  // through the same global, and handing it a list of agents would be a
+  // stranger failure than the 404 it already gets.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes("/api/profiles")
+        ? new Response(JSON.stringify(PROFILES), {
+            headers: { "content-type": "application/json" },
+          })
+        : new Response("", { status: 404 }),
+    ),
+  );
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 /** The path field's autocomplete is a react-query hook, so the dialog does not
  * mount without a client — even in the tests that never touch that field. */
@@ -160,6 +189,43 @@ describe("project settings", () => {
     expect(worktreeBox().checked).toBe(true);
   });
 
+  // TASK-89.3. The agent list is fetched rather than compiled in, so this
+  // field renders once before the answer exists and again after — which is why
+  // it seeds on a key of its own.
+  test("the default agent is seeded from the project once the list arrives", async () => {
+    open({ defaultProfile: "pi" });
+
+    // The frame before the fetch lands: "pi" is not an option yet, so the
+    // control shows the only thing it honestly can.
+    expect(selectValue("Default agent")).toBe("Default (Claude Code)");
+    // And it corrects itself, which a seed keyed only on opening would not
+    // have done — the dialog was already open when the answer came back.
+    await waitFor(() => expect(selectValue("Default agent")).toBe("pi"));
+  });
+
+  test("the empty choice is not the claude profile's own row", () => {
+    // The registry holds a profile labelled "Claude Code", and the two choices
+    // do the same thing — but a list with two identical rows in it is one the
+    // user has to guess at.
+    open({ defaultProfile: "claude" });
+    expect(selectValue("Default agent")).toBe("Default (Claude Code)");
+  });
+
+  test("the default agent is in what Save sends", async () => {
+    // Seeded from a project that names one, which is also the only
+    // deterministic signal that the fetched list has landed: the control
+    // cannot show a label the list does not hold.
+    open({ defaultProfile: "claude" });
+    await waitFor(() => expect(selectValue("Default agent")).toBe("Claude Code"));
+
+    chooseOption("Default agent", "pi");
+    save();
+
+    // A name, never a command: the profile lives in the daemon's own
+    // configuration and only ever gets named over the wire (TASK-89).
+    expect(saved().defaultProfile).toBe("pi");
+  });
+
   test("an unset column shows the fall-through choice, not a blank control", () => {
     open();
 
@@ -181,6 +247,7 @@ describe("project settings", () => {
     // is meant to be empty. The server turns blank into NULL.
     expect(saved()).toEqual({
       defaultModel: "",
+      defaultProfile: "",
       defaultBaseRef: "",
       worktreeDefault: false,
       setupCommand: "",

@@ -6,7 +6,8 @@ import { Select } from "@/frontend/components/v2/Select";
 import { TextInput } from "@/frontend/components/v2/TextInput";
 import { DirectoryBrowser, PathField } from "@/frontend/components/PathField";
 import { Textarea } from "@/frontend/components/v2/Textarea";
-import { knownValue, modelOptions } from "@/frontend/lib/agent-options";
+import { useProfiles } from "@/frontend/hooks/use-profiles";
+import { knownValue, modelOptions, profileOptions } from "@/frontend/lib/agent-options";
 
 // "Claude Code default", not "None": the empty choice does not turn the flag
 // off, it declines to pass one, and what happens then is the agent's own
@@ -37,6 +38,11 @@ export interface ProjectFormValues {
   name: string;
   path: string;
   defaultModel: string;
+  /** A profile name, or `""` for unset. Unset here means `claude` rather than
+   * "the agent decides", which is why the empty choice reads as Claude Code
+   * and not as a fall-through — there is no such thing as a task running on
+   * no agent at all. */
+  defaultProfile: string;
   defaultBaseRef: string;
   worktreeDefault: boolean;
   setupCommand: string;
@@ -48,6 +54,7 @@ export const BLANK_PROJECT: ProjectFormValues = {
   name: "",
   path: "",
   defaultModel: "",
+  defaultProfile: "",
   defaultBaseRef: "",
   worktreeDefault: false,
   setupCommand: "",
@@ -109,9 +116,31 @@ export function ProjectDialog({
   onClose,
   onSubmit,
 }: ProjectDialogProps) {
+  // The daemon's own list, not a constant: `profiles.json` can add one
+  // (TASK-89.2), so a dialog offering a compiled-in set would refuse to show
+  // what a user configured.
+  const { data: profiles } = useProfiles();
+  // "Default (Claude Code)", and not "Claude Code" flat, because the registry
+  // holds a profile *labelled* "Claude Code" — two rows reading identically is
+  // a list the user has to guess at, however identical the two choices are in
+  // effect. The parenthesis is what says which one is the empty one.
+  //
+  // And unlike the model's empty choice, this one names an agent rather than
+  // declining to pass a flag: there is no such thing as a task running on no
+  // agent at all, so unset here resolves to claude rather than to whatever
+  // someone below would have picked.
+  const PROFILES = profileOptions(profiles, "Default (Claude Code)");
+
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [model, setModel] = useState("");
+  /** `null` is "the user has not touched this", which is not the same as the
+   * empty choice — that is a deliberate "run claude". Held apart because the
+   * options are *fetched*: the seed cannot be computed when the dialog opens,
+   * so the shown value is derived below instead, and a list that lands while
+   * the dialog is already open corrects the control by being read again rather
+   * than by a second seeding pass. */
+  const [profile, setProfile] = useState<string | null>(null);
   const [baseRef, setBaseRef] = useState("");
   const [worktreeDefault, setWorktreeDefault] = useState(false);
   const [setupCommand, setSetupCommand] = useState("");
@@ -146,12 +175,23 @@ export function ProjectDialog({
       setBrowsed(false);
       setPicked(null);
       setModel(knownValue(MODELS, initial.defaultModel));
+      // Back to untouched, not to a value: what it shows is derived from this
+      // project and the fetched list on every render below.
+      setProfile(null);
       setBaseRef(initial.defaultBaseRef);
       setWorktreeDefault(initial.worktreeDefault);
       setSetupCommand(initial.setupCommand);
       setWorktreeCopy(initial.worktreeCopy);
     }
   }
+
+  // Derived rather than seeded, unlike every field above it, because its
+  // options arrive over the network: `knownValue` against a list that has not
+  // landed answers "unset" for every project, so a value stored at open time
+  // would show the fall-through over a project set to something else — and
+  // would never correct itself, since opening is not what changed when the
+  // answer came back. Read every render, it simply becomes right.
+  const shownProfile = profile ?? knownValue(PROFILES, initial.defaultProfile);
 
   // Read off the field rather than off what was seeded: point a project at a
   // repository and the worktree settings become usable in the same breath,
@@ -193,6 +233,7 @@ export function ProjectDialog({
         // "unset" rather than as an empty string.
         onSubmit(name.trim(), path.trim(), {
           defaultModel: model,
+          defaultProfile: shownProfile,
           defaultBaseRef: baseRef,
           worktreeDefault: hasRepo && worktreeDefault,
           setupCommand,
@@ -222,6 +263,15 @@ export function ProjectDialog({
           setBrowsing(true);
         }}
       />
+      <Field label="Default agent">
+        <Select
+          aria-label="Default agent"
+          options={PROFILES}
+          value={shownProfile}
+          className="w-full"
+          onValueChange={setProfile}
+        />
+      </Field>
       <Field label="Default model">
         <Select
           aria-label="Default model"

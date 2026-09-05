@@ -446,6 +446,7 @@ test("creating a project reports name and path, and only once submitted", () => 
   // defaults travel as blank, which the server normalizes to NULL columns.
   expect(onCreate).toHaveBeenCalledWith("Website", "~/projects/website", {
     defaultModel: "",
+    defaultProfile: "",
     defaultBaseRef: "",
     worktreeDefault: false,
     setupCommand: "",

@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { taskDisplayNames, taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { usePty } from "@/frontend/PtyContext";
 import { AppShell } from "@/frontend/components/v2/AppShell";
+import { Badge } from "@/frontend/components/v2/Badge";
 import { useTaskSidebar } from "@/frontend/components/TaskSidebar";
 import { Button } from "@/frontend/components/v2/Button";
 import { WipNotice } from "@/frontend/components/WipNotice";
@@ -11,6 +12,10 @@ import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { CommandPaletteHost } from "@/frontend/components/CommandPalette";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
+import { useProfiles } from "@/frontend/hooks/use-profiles";
+// From `profile.ts`, which imports nothing — the registry beside it reads the
+// daemon's configuration off disk.
+import { DEFAULT_PROFILE } from "@/lib/agent/profile";
 import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { useShellKeymap } from "@/frontend/hooks/use-shell-keymap";
 import { pathLabel } from "@/frontend/utils/path-label";
@@ -278,6 +283,21 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   useEffect(() => {
     document.title = label ? `${label} — CodeToaster` : "CodeToaster";
   }, [label]);
+
+  // What this task is running on, when that is worth saying (TASK-89.3). Only
+  // when it is *not* claude: a badge on every task would say the same word on
+  // every task and stop being read, and the whole point of it is that a pi or
+  // a shell task behaves differently — no hooks, no resume — in ways the rest
+  // of the chrome cannot explain on its own.
+  //
+  // The registry's label, falling back to the name the row carries: a task
+  // outlives a `profiles.json` edit, so the name may be one nothing answers to
+  // any more, and printing it is better than printing nothing.
+  const { data: profiles } = useProfiles();
+  const profileLabel =
+    selected && selected.profile !== DEFAULT_PROFILE
+      ? (profiles?.find((p) => p.name === selected.profile)?.label ?? selected.profile)
+      : null;
 
   // Which task is on screen. It decides whether a notification is for the
   // terminal the user is already watching — and with nothing telling it, every
@@ -603,6 +623,11 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
           // spends most of its life in.
           items: selected
             ? [
+                // First, ahead of where the task is: what it is running on
+                // changes what the rest of the bar means.
+                ...(profileLabel
+                  ? [<Badge key="profile" tone="accent">{profileLabel}</Badge>]
+                  : []),
                 ...(selected.cwd === selected.worktreeCwd
                   ? []
                   : [

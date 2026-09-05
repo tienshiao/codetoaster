@@ -58,6 +58,11 @@ export interface CreateTaskOptions {
   cwd?: string;
   model?: string;
   permissionMode?: string;
+  /** Which agent to run the task on: a *name* from `GET /api/profiles`, never
+   * a command (TASK-89). Left out to mean the project's `default_profile`,
+   * and absent again means `claude` — resolved on the server, like the model
+   * above. */
+  profile?: string;
   /** Give the task a checkout of its own (§5.6). Left out to mean "whatever
    * the project says", the same way an absent model does — the server owns
    * that resolution so the HTTP API and the CLI inherit it. */

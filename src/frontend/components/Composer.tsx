@@ -6,12 +6,21 @@ import {
   subscribeComposerRequest,
 } from "@/frontend/composer-request-store";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
+import { useProfiles } from "@/frontend/hooks/use-profiles";
 import { COMPOSER_PROMPT_ID, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { Button } from "@/frontend/components/v2/Button";
 import { Checkbox } from "@/frontend/components/v2/Checkbox";
 import { KeyHint } from "@/frontend/components/v2/KeyHint";
 import { Select } from "@/frontend/components/v2/Select";
-import { knownValue, modelOptions, UNSET } from "@/frontend/lib/agent-options";
+import {
+  knownValue,
+  modelOptions,
+  profileOptions,
+  UNSET,
+} from "@/frontend/lib/agent-options";
+// From `profile.ts`, which imports nothing, and not from the registry beside
+// it, which reads the daemon's configuration off disk.
+import { DEFAULT_PROFILE } from "@/lib/agent/profile";
 import { TextInput } from "@/frontend/components/v2/TextInput";
 import { Textarea } from "@/frontend/components/v2/Textarea";
 
@@ -72,10 +81,17 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   const { projects, createTask } = useTasks();
   const openTask = useOpenTask();
   const isMobile = useIsMobile();
+  // What this daemon can actually run a task on, rather than a list compiled
+  // in: `profiles.json` can add one (TASK-89.2). Undefined until it lands, and
+  // the options below are the unset choice alone for that first frame — which
+  // is what the control already holds and what an untouched submit sends.
+  const { data: profiles } = useProfiles();
+  const PROFILES = profileOptions(profiles, "Project default");
 
   const [prompt, setPrompt] = useState("");
   const [projectId, setProjectId] = useState(requestedProjectId ?? "");
   const [model, setModel] = useState(PROJECT_DEFAULT);
+  const [touchedProfile, setProfile] = useState<string | null>(null);
   const [worktree, setWorktree] = useState(false);
   const [baseRef, setBaseRef] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -134,9 +150,39 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   if (project && seededFor !== project.id) {
     setSeededFor(project.id);
     setModel(knownValue(MODELS, project.defaultModel));
+    // Back to untouched, not to a value: what the agent chip shows is derived
+    // from this project and the fetched list below.
+    setProfile(null);
     setWorktree(project.worktreeDefault);
     setBaseRef(project.defaultBaseRef ?? "");
   }
+
+  // Derived rather than seeded, unlike the three fields above it, because its
+  // options arrive over the network: `knownValue` against a list that has not
+  // landed answers "unset" for every project, so a value stored when the
+  // selection moved would show "Project default" over a project that has one —
+  // and would never correct itself, since the selection is not what changed
+  // when the answer came back. Read every render, it simply becomes right.
+  //
+  // `null` is "the user has not touched this", which is not the empty choice:
+  // that is a deliberate "let the project decide", and it has to survive the
+  // list arriving.
+  const profile = touchedProfile ?? knownValue(PROFILES, project?.defaultProfile ?? null);
+
+  // What this task would actually run on, which is the resolution the server
+  // will do again: the override, else the project's column, else claude. Its
+  // capabilities decide which controls beside it still mean anything — a
+  // profile that takes no model gets the model chip disabled rather than a
+  // value silently dropped at the spawn.
+  //
+  // Undefined while the list is loading, and undefined too for a name the list
+  // does not hold (a project configured against a `profiles.json` since
+  // edited). Both read as "no claim either way", so nothing is disabled: a
+  // control greyed out on a guess is worse than one that lets the server give
+  // the real answer.
+  const effectiveProfile = profile || project?.defaultProfile || DEFAULT_PROFILE;
+  const capabilities = profiles?.find((p) => p.name === effectiveProfile)?.capabilities;
+  const takesModel = capabilities?.model ?? true;
 
   // A project with nowhere to make one. "General" is the case in practice: it
   // has no directory, so a task in it runs wherever the daemon does and there
@@ -162,6 +208,11 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
         prompt: text,
         projectId: project?.id,
         model: model || undefined,
+        // A name, never a command: the profile itself lives in the daemon's
+        // configuration and only ever gets named over the wire (TASK-89).
+        // Absent means the project's column, resolved on the server like the
+        // model above.
+        profile: profile || undefined,
         // Sent only when it differs from what the project would have done on
         // its own, so "I did not touch this" and "I chose the same thing"
         // stay the same request — and a project whose default later changes
@@ -208,7 +259,10 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
     // Left submitting: the navigation unmounts this, and until it does the
     // button must not take a second ⌘⏎.
     openTask(result.value.id, { tab: "agent" });
-  }, [prompt, submitting, createTask, project, model, worktree, baseRef, canWorktree, openTask]);
+  }, [
+    prompt, submitting, createTask, project, model, profile, worktree, baseRef, canWorktree,
+    openTask,
+  ]);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -251,10 +305,28 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
             value={project?.id ?? ""}
             onValueChange={setProjectId}
           />
+          {/* Before the model, because it decides whether the model means
+              anything: the two read left to right as "run it on this, at that
+              size". */}
+          <Select
+            label="agent"
+            options={PROFILES}
+            value={profile}
+            onValueChange={setProfile}
+          />
           <Select
             label="model"
             options={MODELS}
             value={model}
+            // Disabled rather than hidden, so the row does not reflow as the
+            // agent selection moves — the same bargain the worktree box
+            // strikes for a project with nowhere to branch.
+            disabled={!takesModel}
+            title={
+              takesModel
+                ? undefined
+                : "This agent takes no model"
+            }
             onValueChange={setModel}
           />
           <Checkbox

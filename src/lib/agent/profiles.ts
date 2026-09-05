@@ -30,8 +30,11 @@ import { builtinProfiles, validateProfile, type AgentProfile } from "./profile";
  * something else.
  */
 
-/** The profile a task gets when nothing names one: today's behaviour. */
-export const DEFAULT_PROFILE = "claude";
+/** The profile a task gets when nothing names one: today's behaviour. Defined
+ * in `profile.ts` — which imports nothing — so the frontend can read it
+ * without this file's `fs` coming with it, and re-exported here because this
+ * is where every server-side caller already looks for it. */
+export { DEFAULT_PROFILE } from "./profile";
 
 /** A name nothing in the registry answers to. Its own type so the API layer can
  * tell "you asked for a profile that does not exist" (a 400) from every other

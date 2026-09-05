@@ -18,6 +18,7 @@ function valuesOf(project: ProjectInfo): ProjectFormValues {
     name: project.name,
     path: project.initialPath ?? "",
     defaultModel: project.defaultModel ?? "",
+    defaultProfile: project.defaultProfile ?? "",
     defaultBaseRef: project.defaultBaseRef ?? "",
     worktreeDefault: project.worktreeDefault,
     setupCommand: project.setupCommand ?? "",

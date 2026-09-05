@@ -507,6 +507,61 @@ describe("creating a task", () => {
     expect(store.get("t2")!.permission_mode).toBe("acceptEdits");
   });
 
+  // The same three rungs the model has, one level up: which *agent* a task
+  // runs on is a project's decision until a request overrules it (TASK-89.3).
+  // Resolved on the server for the same reason — the composer sends "Project
+  // default" as no field at all, so the API and the CLI inherit the answer.
+  test("falls back to the project's default profile, and a named one outranks it", async () => {
+    const { manager, store } = newManager();
+    manager.createProject("proj", "Project", "", { defaultProfile: "pi" });
+
+    await manager.createTask({ id: "t1", projectId: "proj", command: shell() });
+    expect(store.get("t1")!.agent_profile).toBe("pi");
+
+    await manager.createTask({
+      id: "t2", projectId: "proj", profile: "shell", command: shell(),
+    });
+    expect(store.get("t2")!.agent_profile).toBe("shell");
+
+    // And a project that decided nothing still runs claude, which is what
+    // every row that predates the column reads as.
+    manager.createProject("plain", "Plain", "");
+    await manager.createTask({ id: "t3", projectId: "plain", command: shell() });
+    expect(store.get("t3")!.agent_profile).toBe("claude");
+  });
+
+  // A default is refused at the write, not at the create it would have broken.
+  // Stored, it would fail every task started in the project — at the point
+  // where the user has already typed a prompt and pressed Start.
+  test("a default profile the registry does not hold is refused, not stored", () => {
+    const { manager, db: database } = newManager();
+
+    expect(() => manager.createProject("proj", "Project", "", { defaultProfile: "nope" }))
+      .toThrow(/nope/);
+    expect(manager.getProjects().find((p) => p.id === "proj")).toBeUndefined();
+
+    manager.createProject("proj", "Project", "", { defaultProfile: "pi" });
+    expect(() => manager.updateProject("proj", "Project", "", { defaultProfile: "nope" }))
+      .toThrow(/nope/);
+
+    // Neither in memory nor on the row: the refusal is before the write, so
+    // there is nothing half-applied to notice later.
+    expect(manager.getProjects().find((p) => p.id === "proj")!.defaultProfile).toBe("pi");
+    const row = database.query("SELECT default_profile FROM projects WHERE id = ?").get("proj");
+    expect(row).toEqual({ default_profile: "pi" });
+  });
+
+  // Blank is how the dialog's empty choice arrives, and it is unset rather than
+  // a profile named "". Unset is claude, so it must not be refused.
+  test("a blank default profile clears the column instead of being refused", () => {
+    const { manager } = newManager();
+    manager.createProject("proj", "Project", "", { defaultProfile: "pi" });
+
+    manager.updateProject("proj", "Project", "", { defaultProfile: "   " });
+
+    expect(manager.getProjects().find((p) => p.id === "proj")!.defaultProfile).toBeNull();
+  });
+
   // The shape the API and the CLI actually send. A create that names no project
   // still lands in "general" — `resolveProjectId` says so — and a task sitting
   // in a project has to inherit that project's defaults however it got there.

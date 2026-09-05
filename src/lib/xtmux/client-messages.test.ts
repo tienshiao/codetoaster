@@ -110,6 +110,43 @@ test("a failure no terminal provoked carries no ptyId", () => {
   for (const error of errors) expect("ptyId" in error).toBe(false);
 });
 
+// ── project settings the daemon can refuse (TASK-89.3) ──────────────────────
+
+test("a default profile the daemon does not have is refused, on create and on update", () => {
+  const manager = newManager();
+  const client = fakeClient();
+
+  send(manager, client, {
+    type: "createProject",
+    id: "proj",
+    name: "Project",
+    initialPath: "",
+    settings: { defaultProfile: "nope" },
+  });
+
+  // Named, so the dialog can say which value it was. And nothing was created:
+  // a project whose default names a profile this daemon has never heard of
+  // would fail every task started in it.
+  expect(soleError(client.received).message).toContain("nope");
+  expect(manager.getProjects().some((p) => p.id === "proj")).toBe(false);
+
+  // The update path is the one that had no guard at all: the handler read the
+  // return value and never expected a throw, which would have taken the whole
+  // message frame with it — a save that silently did nothing.
+  const second = fakeClient("c2");
+  send(manager, second, {
+    type: "createProject", id: "proj", name: "Project", initialPath: "",
+    settings: { defaultProfile: "pi" },
+  });
+  send(manager, second, {
+    type: "updateProject", id: "proj", name: "Project", initialPath: "",
+    settings: { defaultProfile: "nope" },
+  });
+
+  expect(soleError(second.received).message).toContain("nope");
+  expect(manager.getProjects().find((p) => p.id === "proj")!.defaultProfile).toBe("pi");
+});
+
 // ── the rest of the switch still works where it was moved to ────────────────
 
 test("list answers with the task snapshot", () => {

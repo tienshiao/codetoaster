@@ -58,6 +58,7 @@ function project(id: string, name: string): ProjectInfo {
     initialPath: `/Users/someone/projects/${id}`,
     taskIds: [],
     defaultModel: null,
+    defaultProfile: null,
     defaultPermissionMode: null,
     defaultBaseRef: null,
     setupCommand: null,

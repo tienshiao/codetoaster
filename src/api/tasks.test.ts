@@ -122,6 +122,37 @@ describe("POST /api/tasks", () => {
     expect(row.title_source).toBe("manual");
   });
 
+  // A name in the daemon's registry, never a command (TASK-89): a profile is
+  // an argv template, and one arriving in a body would be the raw argv over
+  // HTTP that TASK-42 closed off. So the body names, and the daemon looks up.
+  test("a known profile lands on the row", async () => {
+    const res = await post({ profile: "shell" });
+    const task = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(task.profile).toBe("shell");
+    expect(taskManager.getTask(task.id)!.agent_profile).toBe("shell");
+  });
+
+  // A 400 and not a 500: it is a name the caller typed. And not a silent fall
+  // back to claude either — a request that asked for something else must not
+  // quietly get a real Claude Code session instead.
+  test("an unknown profile is a 400 that names it, and creates nothing", async () => {
+    const before = taskManager.listTasks().length;
+    const res = await post({ profile: "nope" });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("nope");
+    // Checked before the worktree and before the row, so there is nothing to
+    // have left behind.
+    expect(taskManager.listTasks().length).toBe(before);
+  });
+
+  test("a task that names no profile runs claude", async () => {
+    const task = await (await post({})).json();
+    expect(task.profile).toBe("claude");
+  });
+
   test("a prompt of nothing but whitespace is refused, not reinterpreted", async () => {
     for (const prompt of ["", "   ", "  \n\t\n "]) {
       const res = await post({ prompt });

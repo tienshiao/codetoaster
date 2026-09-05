@@ -1,4 +1,5 @@
 import type { SelectOption } from "@/frontend/components/v2/Select";
+import type { ProfileSummary } from "@/frontend/hooks/use-profiles";
 
 // What a task can be told to run as, in one place because two surfaces choose
 // from it: the composer picks per task, and project settings pick the default
@@ -27,6 +28,26 @@ export const UNSET = "";
 /** The models, with the empty choice first under whatever that surface calls it. */
 export function modelOptions(fallbackLabel: string): SelectOption[] {
   return [{ value: UNSET, label: fallbackLabel }, ...MODEL_OPTIONS];
+}
+
+/** The agents this daemon knows, with the empty choice first.
+ *
+ * A function of what `GET /api/profiles` answered rather than a constant like
+ * `MODEL_OPTIONS`, because the list is the daemon's configuration: a
+ * `profiles.json` can add one, and a build that hard-coded the built-ins would
+ * both hide those and go on offering one a later release dropped.
+ *
+ * `undefined` — the fetch has not landed — is the unset choice alone. Which is
+ * the truth of that moment and costs nothing: the unset choice is the value
+ * the control already holds, and an absent field is what it sends. */
+export function profileOptions(
+  profiles: ProfileSummary[] | undefined,
+  fallbackLabel: string,
+): SelectOption[] {
+  return [
+    { value: UNSET, label: fallbackLabel },
+    ...(profiles ?? []).map((p) => ({ value: p.name, label: p.label })),
+  ];
 }
 
 /** A stored value the select can actually display. A column holding something

@@ -71,7 +71,7 @@ const TASK_COLUMNS = [
 ];
 
 const PROJECT_V2_COLUMNS = [
-  "default_base_ref", "default_model", "default_permission_mode",
+  "default_base_ref", "default_model", "default_permission_mode", "default_profile",
   "worktree_default", "setup_command", "worktree_copy",
 ];
 
@@ -330,6 +330,7 @@ describe("initDatabase", () => {
       "006_tasks_worktree_repo",
       "007_tasks_worktree_subdir",
       "008_tasks_agent_profile",
+      "009_projects_default_profile",
     ]);
     db.close();
   });

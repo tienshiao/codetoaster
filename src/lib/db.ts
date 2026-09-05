@@ -13,6 +13,11 @@ export interface ProjectRow {
   default_base_ref: string | null;
   default_model: string | null;
   default_permission_mode: string | null;
+  /** Which agent a task started here runs on: a name in the daemon's profile
+   * registry (TASK-89). NULL means unset, and unset means `claude` — the same
+   * "someone below me decides" the other defaults spell, except that the
+   * someone below is a constant rather than the agent's own judgement. */
+  default_profile: string | null;
   // Run after every `git worktree add` (e.g. `bun install`), and the ignored
   // files to copy over from the project checkout (e.g. `.env`).
   setup_command: string | null;
@@ -351,6 +356,22 @@ const migrations: Migration[] = [
       addColumn(db, "tasks", "agent_profile", "TEXT NOT NULL DEFAULT 'claude'");
     },
   },
+  {
+    // Which agent a project's tasks run on unless the request names one
+    // (TASK-89.3) — the counterpart of 008, one level up.
+    //
+    // Nullable and defaulting to nothing, unlike the task column it feeds.
+    // `tasks.agent_profile` records what a task *is* running and so can never
+    // be absent; this one records a preference, and "unset" is a real answer
+    // that has to be distinguishable from "claude, deliberately". It is also
+    // what every other per-project default here means by NULL, and a column
+    // that spelled unset differently from its five neighbours would be one the
+    // dialog had to special-case.
+    name: "009_projects_default_profile",
+    up(db) {
+      addColumn(db, "projects", "default_profile", "TEXT");
+    },
+  },
 ];
 
 // ALTER TABLE ADD COLUMN is not idempotent, and applied_migrations is the only
@@ -435,7 +456,8 @@ export function getAllProjects(database: Database = getDb()): ProjectRow[] {
 // object may have come off the wire.
 const UPDATABLE_PROJECT_COLUMNS: ReadonlySet<string> = new Set([
   "name", "initial_path", "sort_order", "default_base_ref", "default_model",
-  "default_permission_mode", "setup_command", "worktree_copy", "worktree_default",
+  "default_permission_mode", "default_profile", "setup_command", "worktree_copy",
+  "worktree_default",
 ]);
 
 // An insert may name everything an update may, plus the id it is being given.

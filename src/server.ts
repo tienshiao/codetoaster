@@ -10,6 +10,7 @@ import { handleClientMessage } from "./lib/xtmux/client-messages";
 import { removePidFile } from "./cli/daemon";
 import { formatDuration } from "./cli/duration";
 import { taskRoutes } from "./api/tasks";
+import { profileRoutes } from "./api/profiles";
 import { hookRoutes } from "./api/hooks";
 import { diffRoutes } from "./api/diff";
 import { fileRoutes } from "./api/files";
@@ -307,6 +308,7 @@ export function startServer(options?: ServerOptions) {
       // construction rather than by someone remembering (TASK-42).
       ...guardApiRoutes({
         ...taskRoutes,
+        ...profileRoutes,
         ...hookRoutes,
         ...diffRoutes,
         ...fileRoutes,

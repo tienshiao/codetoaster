@@ -30,6 +30,10 @@ export interface SelectProps {
   /** sm 24px · md 28px (chrome default). */
   size?: SelectSize;
   disabled?: boolean;
+  /** Hover text on the trigger. Here for the same case `Checkbox`'s is: the
+   * words explaining why a control is greyed out, which is the one moment the
+   * control cannot say them itself. */
+  title?: string;
   /** Turns typing into a filter rather than a jump-to-first-match, and shows
    * what has been typed at the top of the popup under this placeholder. Only
    * worth it for a list too long to scan — the terminal themes are 157. */
@@ -77,6 +81,7 @@ export function Select({
   icon: Icon,
   size = "md",
   disabled = false,
+  title,
   filterPlaceholder,
   id,
   className,
@@ -101,7 +106,31 @@ export function Select({
   return (
     <RadixSelect.Root
       value={toRadix(value)}
-      onValueChange={(next) => onValueChange(fromRadix(next))}
+      // The raw `""` is dropped, and it has to be.
+      //
+      // Inside a `<form>` — which every `Dialog` body is — Radix renders a
+      // hidden native `<select>` so the value can be submitted, and on every
+      // programmatic change of `value` it sets that element and dispatches a
+      // `change` from an effect. The element's `<option>`s come from the
+      // mounted `Select.Item`s, which live in the portal and so do not exist
+      // while the popup is closed — so the assignment lands on a select with
+      // nothing to select, the event reports `""`, and Radix hands that back
+      // as a value change. The control silently takes back whatever it was
+      // just given, one frame later.
+      //
+      // Which is invisible for a value set at mount (no change, no effect) and
+      // for one the user picked (the popup was open, so the option existed),
+      // and is exactly why this never showed until a *fetched* list arrived
+      // after the first render (TASK-89.3).
+      //
+      // `""` is the tell, and a reliable one: every option this component
+      // offers goes to Radix through `toRadix`, so the empty choice reaches it
+      // as the sentinel and nothing a user can pick ever comes back as the
+      // empty string. A raw `""` has only one source.
+      onValueChange={(next) => {
+        if (next === "") return;
+        onValueChange(fromRadix(next));
+      }}
       disabled={disabled}
       // The filter is per-opening: a query left behind would hide the list the
       // next time the chip is pressed, on a box the user cannot see until they
@@ -112,6 +141,7 @@ export function Select({
     >
       <RadixSelect.Trigger
         id={id}
+        title={title}
         aria-label={ariaLabel ?? label}
         className={cn(
           "relative inline-flex items-center gap-1.5 rounded-md border border-input bg-pane pl-2 pr-1.5",
