@@ -99,6 +99,83 @@ function ArchiveBody({ preview, failed }: { preview: ArchivePreview | null; fail
   );
 }
 
+export interface ArchiveTaskDialogProps {
+  open: boolean;
+  taskId: string;
+  label: string;
+  /** What archiving would cost, fetched when the dialog opens. Resolving to
+   * null is a failure the dialog says out loud rather than a blank. */
+  onArchivePreview: (id: string) => Promise<ArchivePreview | null>;
+  onArchive: (id: string) => void;
+  onClose: () => void;
+}
+
+/**
+ * The archive confirmation, with its cost fetched on open.
+ *
+ * Its own component rather than a dialog inside `TaskRowActions`, because two
+ * surfaces ask the same question — the row's archive button and the command
+ * palette's Archive task — and the preview fetch, its cancellation and the
+ * "checking / failed / answered" states are the part that must not be written
+ * twice.
+ */
+export function ArchiveTaskDialog({
+  open,
+  taskId,
+  label,
+  onArchivePreview,
+  onArchive,
+  onClose,
+}: ArchiveTaskDialogProps) {
+  const [preview, setPreview] = useState<ArchivePreview | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+
+  // Asked on open, and asked again on every open: the counts are what the user
+  // is being shown, and a dialog reopened an hour later must not quote what
+  // git said the first time.
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    setPreview(null);
+    setPreviewFailed(false);
+    // Rejection is the same answer as `null`, and it has to be handled or the
+    // "failed" state is unreachable by the one route that reaches it without a
+    // resolved value: `request` swallows fetch and HTTP failures, so what is
+    // left to throw is a 200 whose body would not parse. Unhandled, that leaves
+    // the dialog sitting on "Checking what this would remove…" for good, with
+    // the confirm disabled and nothing saying why.
+    void onArchivePreview(taskId)
+      .catch(() => null)
+      .then((answer) => {
+        if (!live) return;
+        setPreview(answer);
+        setPreviewFailed(answer === null);
+      });
+    // Not a cancellation of the request — there is nothing to cancel — but of
+    // its effect: a dialog closed and reopened has two in flight, and the
+    // slower one would otherwise land on top of the newer answer.
+    return () => {
+      live = false;
+    };
+  }, [open, taskId, onArchivePreview]);
+
+  return (
+    <Dialog
+      open={open}
+      title="Archive this task?"
+      description={`${label} leaves the list, and the archived toggle is where it can be found again. What that costs:`}
+      confirmLabel="Archive"
+      confirmVariant="destructive"
+      // Nothing to confirm against until the dialog has said what it costs.
+      confirmDisabled={!preview && !previewFailed}
+      onConfirm={() => onArchive(taskId)}
+      onClose={onClose}
+    >
+      <ArchiveBody preview={preview} failed={previewFailed} />
+    </Dialog>
+  );
+}
+
 interface TaskRowActionsProps {
   taskId: string;
   label: string;
@@ -135,37 +212,6 @@ export function TaskRowActions({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [archiving, setArchiving] = useState(false);
-  const [preview, setPreview] = useState<ArchivePreview | null>(null);
-  const [previewFailed, setPreviewFailed] = useState(false);
-
-  // Asked on open, and asked again on every open: the counts are what the user
-  // is being shown, and a dialog reopened an hour later must not quote what
-  // git said the first time.
-  useEffect(() => {
-    if (!archiving) return;
-    let live = true;
-    setPreview(null);
-    setPreviewFailed(false);
-    // Rejection is the same answer as `null`, and it has to be handled or the
-    // "failed" state is unreachable by the one route that reaches it without a
-    // resolved value: `request` swallows fetch and HTTP failures, so what is
-    // left to throw is a 200 whose body would not parse. Unhandled, that leaves
-    // the dialog sitting on "Checking what this would remove…" for good, with
-    // the confirm disabled and nothing saying why.
-    void onArchivePreview(taskId)
-      .catch(() => null)
-      .then((answer) => {
-        if (!live) return;
-        setPreview(answer);
-        setPreviewFailed(answer === null);
-      });
-    // Not a cancellation of the request — there is nothing to cancel — but of
-    // its effect: a dialog closed and reopened has two in flight, and the
-    // slower one would otherwise land on top of the newer answer.
-    return () => {
-      live = false;
-    };
-  }, [archiving, taskId, onArchivePreview]);
 
   return (
     <>
@@ -190,19 +236,14 @@ export function TaskRowActions({
         onClick={() => (busy ? setConfirmingClose(true) : onClose(taskId))}
       />
 
-      <Dialog
+      <ArchiveTaskDialog
         open={archiving}
-        title="Archive this task?"
-        description={`${label} leaves the list, and the archived toggle is where it can be found again. What that costs:`}
-        confirmLabel="Archive"
-        confirmVariant="destructive"
-        // Nothing to confirm against until the dialog has said what it costs.
-        confirmDisabled={!preview && !previewFailed}
-        onConfirm={() => onArchive(taskId)}
+        taskId={taskId}
+        label={label}
+        onArchivePreview={onArchivePreview}
+        onArchive={onArchive}
         onClose={() => setArchiving(false)}
-      >
-        <ArchiveBody preview={preview} failed={previewFailed} />
-      </Dialog>
+      />
 
       <Dialog
         open={renaming !== null}

@@ -8,6 +8,7 @@ import { Button } from "@/frontend/components/v2/Button";
 import { WipNotice } from "@/frontend/components/WipNotice";
 import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
+import { CommandPaletteHost } from "@/frontend/components/CommandPalette";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { useShellKeymap } from "@/frontend/hooks/use-shell-keymap";
@@ -77,6 +78,12 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   // The shell's footer draws the Settings button; the dialog it opens is held
   // here, since it is the shell's chrome and belongs to no task.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Held here rather than left to `AppShell`'s own state, because the palette
+  // toggles it and the palette is a sibling of the shell, not a child. Not
+  // persisted: a task list hidden by a chord and still hidden after a reload
+  // is the kind of state that has to be explained, and there is nowhere to.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   /**
    * The last "take the caret" a keyboard command raised, and the tab it was
    * raised for (TASK-34).
@@ -236,7 +243,10 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   // is where the three actions it drives already are, and given the same
   // handlers the strip's own controls get — so ⌘K W kills a shell exactly as
   // the X does, rather than by a second path that could drift from it.
-  useShellKeymap({
+  const pulseTab = useCallback((tabId: string) => {
+    setFocusPulse((prev) => ({ n: (prev?.n ?? 0) + 1, tabId }));
+  }, []);
+  const keymap = useShellKeymap({
     // Through the ref, not the render's `layout`: `applyLayout` writes it
     // before `setLayout`, so two chords inside one commit still compose. The
     // comment on `layoutRef` above is about the same hazard.
@@ -249,9 +259,9 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     // rather than the one that was in front before it.
     onFocusPane: () => {
       const tab = layoutRef.current ? activeTab(layoutRef.current) : null;
-      if (!tab) return;
-      setFocusPulse((prev) => ({ n: (prev?.n ?? 0) + 1, tabId: tab.id }));
+      if (tab) pulseTab(tab.id);
     },
+    onTogglePalette: () => setPaletteOpen((prev) => !prev),
   });
 
   /**
@@ -333,6 +343,8 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         {...sidebar}
         endpoint={loaded ? `:${location.port || "80"}` : "connecting…"}
         onOpenSettings={() => setSettingsOpen(true)}
+        sidebarOpen={sidebarOpen}
+        onSidebarOpenChange={setSidebarOpen}
         tabArea={
           layout
             ? ({ leading }) => (
@@ -476,6 +488,21 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
           is every page with a layout, and so every page the Settings button in
           the sidebar footer is reachable from. */}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      {/* The same sibling, for the same reason. It is given the layout the
+          render saw rather than the ref: a selection is one action from a
+          settled screen, not a chord typed into an in-flight commit. */}
+      <CommandPaletteHost
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        taskId={taskId}
+        layout={layout}
+        onLayoutChange={applyLayout}
+        onFocusTab={pulseTab}
+        onOpenTab={handleOpenTab}
+        runCommand={keymap.run}
+        onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+        onToggleExplorer={() => explorerPanel.setOpen(!explorerPanel.open)}
+      />
     </>
   );
 }

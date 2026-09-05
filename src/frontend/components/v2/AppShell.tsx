@@ -2,6 +2,7 @@ import { useCallback, useState, type ChangeEvent, type ReactNode } from "react";
 import { Archive, FilePen, GitBranch, ListFilter, PanelLeft, Plus, Settings } from "lucide-react";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { usePaneWidth } from "@/frontend/hooks/use-pane-width";
+import { capsFor } from "@/frontend/keymap";
 import { Badge } from "./Badge";
 import { Button } from "./Button";
 import { ExplorerRail, type ExplorerRailItem } from "./ExplorerRail";
@@ -97,6 +98,12 @@ export interface AppShellProps {
   onOpenSettings?: () => void;
   /** The daemon's address, trailing the sidebar footer. */
   endpoint?: string;
+  /** Controlled open state, for a caller that persists it. Falls back to
+   * internal state (`defaultSidebarOpen`) when omitted — the panel's collapsed
+   * state is a per-device concern, and where it is stored is not the shell's
+   * business. The Explorer pair below works the same way. */
+  sidebarOpen?: boolean;
+  onSidebarOpenChange?: (open: boolean) => void;
 
   // ── main area ──
   /**
@@ -326,6 +333,8 @@ export function AppShell({
   headerActions,
   onOpenSettings,
   endpoint,
+  sidebarOpen: sidebarOpenProp,
+  onSidebarOpenChange,
   tabArea,
   tabs = [],
   onSplit,
@@ -343,7 +352,12 @@ export function AppShell({
   defaultExplorerOpen = true,
   className,
 }: AppShellProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen);
+  const [uncontrolledSidebarOpen, setUncontrolledSidebarOpen] = useState(defaultSidebarOpen);
+  const sidebarOpen = sidebarOpenProp ?? uncontrolledSidebarOpen;
+  const setSidebarOpen = (next: boolean) => {
+    if (sidebarOpenProp === undefined) setUncontrolledSidebarOpen(next);
+    onSidebarOpenChange?.(next);
+  };
   const [uncontrolledExplorerOpen, setUncontrolledExplorerOpen] = useState(defaultExplorerOpen);
   const explorerOpen = explorerOpenProp ?? uncontrolledExplorerOpen;
   const setExplorerOpen = (next: boolean) => {
@@ -450,12 +464,10 @@ export function AppShell({
               placeholder="Filter tasks"
               value={taskFilter}
               onChange={onTaskFilterChange}
-              // No key hint while nothing binds one. The v1 command palette
-              // owned ⌘K and went with the session routes (TASK-21); TASK-35
-              // builds it back over tasks and tabs, and can turn the hint on
-              // when there is something behind it. A label promising a
-              // shortcut that does nothing is worse than no label.
-              shortcut={null}
+              // The hint names the palette, not this box: the palette searches
+              // the same list and everything else besides, so a user reaching
+              // for a shortcut from here should land there.
+              shortcut={capsFor("palette")}
               className="min-w-0 flex-1"
             />
             {onToggleArchived && (

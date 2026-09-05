@@ -69,6 +69,9 @@ vi.mock("@/frontend/components/Explorer", () => ({
   useExplorerRail: () => [],
 }));
 vi.mock("@/frontend/components/TaskSidebar", () => ({ useTaskSidebar: () => ({}) }));
+// The palette is a sibling of the shell with its own queries and dialogs, none
+// of which these tests ask about; it is stubbed the way the Explorer is.
+vi.mock("@/frontend/components/CommandPalette", () => ({ CommandPaletteHost: () => null }));
 // Only the slot and the Settings button. Everything else `AppShell` draws is
 // chrome this file has no question about, and all of it wants data from the
 // contexts stubbed above.

@@ -10,10 +10,11 @@ async function fetchGitRefs(taskId: string): Promise<GitRefsResponse> {
   return res.json();
 }
 
-export function useGitRefs(taskId: string) {
+export function useGitRefs(taskId: string, enabled = true) {
   return useQuery({
     queryKey: ["git-refs", taskId],
     queryFn: () => fetchGitRefs(taskId),
+    enabled,
     // Refs move out-of-band (commits, checkouts in the terminal). Re-fetch on
     // focus so returning to the tab reflects the current branch/tag state; the
     // global default is false.

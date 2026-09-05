@@ -62,11 +62,14 @@ async function fetchGitLog(taskId: string, param: LogPageParam): Promise<GitLogP
   return res.json();
 }
 
-export function useGitLog(taskId: string) {
+/** `enabled` is for a caller that has no task yet — the command palette at
+ * `/` — where an empty id would otherwise be fetched as `/api/tasks//git/log`. */
+export function useGitLog(taskId: string, enabled = true) {
   const query = useInfiniteQuery({
     queryKey: logQueryKey(taskId),
     queryFn: ({ pageParam }) => fetchGitLog(taskId, pageParam),
     initialPageParam: { skip: 0 } as LogPageParam,
+    enabled,
     // A stale window won't fix itself by retrying the same request — reset it
     // instead (below). Every other error keeps the global retry:1 semantics.
     retry: (failureCount, error) => !(error instanceof StaleLogError) && failureCount < 1,

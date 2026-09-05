@@ -32,9 +32,10 @@ function RootComponent() {
                 the context. These are the classes it resolved to. */}
             <div className="flex min-h-0 w-full h-[var(--app-height,100svh)]">
               <Outlet />
-              {/* No command palette and no tab switcher: both were typed off
-                  the v1 session routes and went with them. TASK-35 builds the
-                  palette back over tasks and tabs. */}
+              {/* No command palette here: v1's was mounted at the root and
+                  typed off the session routes, and went with them. The v2 one
+                  is a sibling of `TaskShell`, which is where the layout and
+                  the keymap it acts on already are (TASK-35). */}
               <Toaster />
             </div>
           </TaskProvider>
