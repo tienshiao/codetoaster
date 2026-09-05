@@ -18,6 +18,7 @@ import { gitRoutes } from "./api/git";
 import { highlightRoutes } from "./api/highlight";
 import { symbolRoutes } from "./api/symbols";
 import { initDatabase } from "./lib/db";
+import { loadProfiles, profilesPath } from "./lib/agent/profiles";
 import {
   configureOriginGuard,
   crossOriginRefusal,
@@ -91,6 +92,18 @@ export function startServer(options?: ServerOptions) {
   // Initialize database
   const dbPath = options?.dbPath ?? `${process.env.HOME ?? "."}/.codetoaster/data.db`;
   initDatabase(dbPath);
+  // Before anything can create a task, and before `loadProjects` for no reason
+  // beyond that. A throw here travels out of `startServer` and fails the
+  // daemon's start naming the file and the profile — which is the point: a
+  // malformed profiles.json is a typo in a file the user just edited, and
+  // saying so now beats a 500 on their first task, or a task quietly running
+  // claude when it was told to run something else (TASK-89).
+  const profiles = loadProfiles();
+  taskManager.setProfiles(profiles);
+  if (profiles.userDefined.length > 0) {
+    const n = profiles.userDefined.length;
+    console.log(`Loaded ${n} agent profile${n === 1 ? "" : "s"} from ${profilesPath()}`);
+  }
   taskManager.loadProjects();
   // Every `live` row is a lie at boot: the PTYs died with the previous daemon
   // (§5.5). Suspending them is the whole of what a restart needs.

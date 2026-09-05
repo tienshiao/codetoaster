@@ -89,6 +89,15 @@ export interface TaskRow {
   setup_duration_ms: number | null;
   pinned: number;
   agent_session_id: string | null;
+  /** The agent profile the task was created on — a name in the daemon's
+   * registry (TASK-89), `'claude'` for everything created before profiles
+   * existed.
+   *
+   * On the row rather than resolved at spawn time from the project, because a
+   * task outlives the choice: a resume months later has to render its argv
+   * through the same templates the conversation was opened with, whatever the
+   * project's default has become since. */
+  agent_profile: string;
   transcript_path: string | null;
   agent_state: AgentState;
   lifecycle: Lifecycle;
@@ -321,6 +330,25 @@ const migrations: Migration[] = [
     name: "007_tasks_worktree_subdir",
     up(db) {
       addColumn(db, "tasks", "worktree_subdir", "TEXT");
+    },
+  },
+  {
+    // Which agent the task runs on (TASK-89): the name of a profile in the
+    // daemon's registry, whose argv templates every spawn for this task renders
+    // through — the create and, months later, the resume.
+    //
+    // NOT NULL with a default rather than a nullable column, because there is
+    // no such thing as a task that runs on nothing: every row that existed
+    // before this column ran `claude`, and so does every row created without
+    // naming a profile. A NULL would mean "unset" and every reader would have
+    // to spell the same fallback, which is one more place for them to disagree.
+    //
+    // After 005 for the reason 006 and 007 are: 005 rebuilds `tasks` from an
+    // explicit column list, so a column added ahead of it exists only until
+    // that rebuild fires.
+    name: "008_tasks_agent_profile",
+    up(db) {
+      addColumn(db, "tasks", "agent_profile", "TEXT NOT NULL DEFAULT 'claude'");
     },
   },
 ];

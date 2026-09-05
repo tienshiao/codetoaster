@@ -212,6 +212,15 @@ export interface TaskInfo {
    * projected over `title` at render time; see naming.ts. */
   terminalTitle: string;
   agentState: AgentState;
+  /** The agent profile the task runs on (TASK-89), straight off its row.
+   *
+   * On the wire because it is what makes the card's state legible: a profile
+   * without our hook settings reports nothing, so `agentState` is the
+   * output-activity guess rather than the agent's own account of itself, and a
+   * profile that cannot resume restarts its command on reopen instead of
+   * bringing the conversation back. `'claude'` for every task created before
+   * profiles existed, and for every one that named none. */
+  profile: string;
   lifecycle: Lifecycle;
   /** Where the task's checkout stands (§5.6). `none` for a task running in the
    * project's own directory; the other three are about a worktree we made.

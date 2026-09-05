@@ -53,6 +53,7 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
     titleSource: "derived",
     terminalTitle: "",
     agentState: "idle",
+    profile: "claude",
     lifecycle: "suspended",
     cwd: "/Users/someone/projects/app",
     worktreePath: null,

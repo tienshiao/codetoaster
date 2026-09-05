@@ -22,6 +22,8 @@ import * as db from "../db";
 import type { ProjectRow, TaskRow } from "../db";
 import { TaskStore } from "./store";
 import { buildAgentCommand, removeTaskDir, taskDir, taskEnv, type AgentMode } from "../agent/spawn";
+import { builtinProfiles, profileCapabilities } from "../agent/profile";
+import { DEFAULT_PROFILE, ProfileRegistry } from "../agent/profiles";
 import {
   canResumeSessionId,
   continueIsSafe,
@@ -224,6 +226,12 @@ export interface CreateTaskOptions {
   /** Recorded on the row, and passed through to the agent's argv. */
   model?: string;
   permissionMode?: string;
+  /** Which agent to run this task on: a *name* in the daemon's registry, never
+   * a command (TASK-89). A profile is a command template, and one arriving from
+   * a caller would be the raw argv over HTTP that TASK-42 closed off — see
+   * `agent/profiles.ts`. Absent means `claude`; TASK-89.3 puts the project's
+   * default in between. */
+  profile?: string;
   /** Give the task a checkout of its own (§5.6). Absent means the project's
    * `worktree_default`, resolved here rather than in the client so the HTTP
    * API and the CLI answer the same as the composer. */
@@ -272,6 +280,11 @@ export class TaskManager {
   // `refreshCwd`, and resume's own already-running test.
   private agentPtys: Map<string, string> = new Map();
   private projects: ProjectInfo[] = [generalProject()];
+  /** Which agents this daemon can run a task on (TASK-89). The built-ins until
+   * the server replaces it at startup, so the module-level manager and every
+   * test have a working registry without wiring one up — and so a `claude` task
+   * is spawned identically whether or not anything ever called `setProfiles`. */
+  private profiles = new ProfileRegistry(builtinProfiles());
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
   // Which tasks have ever reported a hook, and the timers waiting to find out
   // (§9, risk 4). Both in memory on purpose: what they guard is a running
@@ -413,6 +426,14 @@ export class TaskManager {
   setPort(port: number, origin?: string): void {
     this.port = port;
     this.origin = origin;
+  }
+
+  /** The agents this daemon can run a task on, read from its configuration
+   * (TASK-89). Set once, at startup, before any task can be created — a task
+   * already running holds its profile's *name* on its row, so a registry
+   * replaced underneath it changes what the next resume renders. */
+  setProfiles(registry: ProfileRegistry): void {
+    this.profiles = registry;
   }
 
   /** How long a new task has to report its first hook before it is called
@@ -810,6 +831,14 @@ export class TaskManager {
     const projectId = this.resolveProjectId(options);
     const project = this.projects.find((p) => p.id === projectId);
 
+    // Before the worktree, the row and the settings file — before anything this
+    // create would have to undo. An unknown profile is a name the caller typed,
+    // and the cheapest possible failure for it is one with nothing behind it
+    // yet: no checkout added, no branch named, no row holding an id that can
+    // never be issued again.
+    const profile = this.profiles.require(options.profile ?? DEFAULT_PROFILE);
+    const capabilities = profileCapabilities(profile);
+
     // Inherit cwd from afterTaskId's terminal, or from the project's initialPath
     let cwd: string | undefined;
     if (options.afterTaskId) {
@@ -913,6 +942,10 @@ export class TaskManager {
         // replaced — by a `/clear` reported through SessionStart (TASK-11), or
         // by a start-fresh fallback (TASK-13).
         agent_session_id: crypto.randomUUID(),
+        // What every spawn for this task renders its argv through, now and at a
+        // resume months from now — which is why it is stored rather than
+        // re-resolved from the project each time (TASK-89).
+        agent_profile: profile.name,
         title,
         title_source: options.title ? "manual" : "derived",
         // Trimmed, because `buildAgentCommand` judges this on truthiness and
@@ -976,9 +1009,13 @@ export class TaskManager {
     // Before the spawn, because `--settings` names it: the agent reads the file
     // at startup, and a task whose hooks were written afterwards would run its
     // first session reporting nothing (§4.2). Skipped when the caller brought
-    // its own command — a plain shell has no hooks to install.
+    // its own command — a plain shell has no hooks to install — and skipped for
+    // a profile whose templates never name `{settings}`, which has nowhere to
+    // point at the file: writing one anyway would be a directory per task that
+    // nothing will ever read, and the task lives in TASK-12's degraded mode
+    // either way.
     let settingsPath: string | undefined;
-    if (!options.command) {
+    if (!options.command && capabilities.hooks) {
       try {
         settingsPath = await writeTaskSettings(id);
       } catch (e) {
@@ -1000,7 +1037,7 @@ export class TaskManager {
     // tab is not the agent.
     const command = options.command
       ?? wrapWithSetup(
-        buildAgentCommand(row, { settingsPath }),
+        buildAgentCommand(row, { settingsPath, profile, cwd }),
         worktree ? project?.setupCommand : null,
         setupStampPath(id),
       );
@@ -1285,12 +1322,28 @@ export class TaskManager {
     // a hook POSTed by the rung the ladder just discarded can land during that
     // await — and a flag set then would make `awaitAgentStart` return true
     // instantly for the *next* rung, declaring it a success however dead it is.
-    const settingsPath = await writeTaskSettings(row.id);
+    //
+    // The profile off the row, not off the project: what a resume has to render
+    // is the templates the conversation was opened with (TASK-89). Its
+    // `{settings}` is also what decides whether there is a file to write at all
+    // — a profile that cannot be pointed at one gets no directory — but the two
+    // sets are cleared either way, since what they are about is the process
+    // that is starting now.
+    const profile = this.profiles.require(row.agent_profile);
+    const settingsPath = profileCapabilities(profile).hooks
+      ? await writeTaskSettings(row.id)
+      : undefined;
     this.hookSeen.delete(row.id);
     this.compactTriggers.delete(row.id);
     const pty = this.ptys.spawn(
       wrapWithSetup(
-        buildAgentCommand(row, { mode: options.mode, sessionId: options.sessionId, settingsPath }),
+        buildAgentCommand(row, {
+          mode: options.mode,
+          sessionId: options.sessionId,
+          settingsPath,
+          profile,
+          cwd: row.cwd,
+        }),
         options.setupCommand,
         setupStampPath(row.id),
       ),
@@ -1625,12 +1678,44 @@ export class TaskManager {
     if (fresh) return [{ mode: "start", mint: true }];
 
     const ladder: Array<{ mode: AgentMode; sessionId?: string; mint?: boolean }> = [];
+    const profile = this.profiles.require(row.agent_profile);
+    const capabilities = profileCapabilities(profile);
+
+    // Every rung below the first is derived from Claude Code's own transcript
+    // directory — `canResumeSessionId`, `sessionIdFromTranscript`,
+    // `continueIsSafe` and `findResumableTranscript` all read files it writes —
+    // so none of them says anything about another agent, whose conversations
+    // live wherever that agent puts them (pi keeps its own per directory). For
+    // any other profile the ladder is what the templates themselves claim: the
+    // stored id if it can resume by id, then its directory-scoped fallback if
+    // it has one.
+    //
+    // A profile with neither leaves an empty ladder, which falls through to
+    // `could_not_resume` — a card with a button rather than a lie about being
+    // live. TASK-89.4 turns that into a restart in the task's cwd with the card
+    // explaining that the conversation could not come back, which is the honest
+    // thing for a shell task and for any agent that cannot resume.
+    if (profile.name !== DEFAULT_PROFILE) {
+      if (capabilities.resume && row.agent_session_id) {
+        ladder.push({ mode: "resume", sessionId: row.agent_session_id });
+      }
+      if (capabilities.continue) ladder.push({ mode: "continue" });
+      return ladder;
+    }
+
+    // Everything below is `claude`, whose templates are the built-in ones —
+    // unless the user replaced it, which `profiles.json` lets them do wholesale.
+    // So the capabilities still gate the rungs: a replacement that dropped
+    // `--resume` or `--continue` would otherwise reach `buildAgentCommand`,
+    // throw "cannot resume", and be read by the ladder as an unrunnable binary
+    // — which stops it trying the rungs that would have worked.
+    //
     // Offered only when a transcript for that id is actually there. This has
     // to be decided up front rather than discovered: a `--resume` on an id
     // with no conversation exits 1 down a pipe, but in a PTY it prints the
     // error and keeps running, so a doomed rung is indistinguishable from a
     // healthy one once it has started.
-    if (row.agent_session_id && canResumeSessionId(row, row.agent_session_id)) {
+    if (capabilities.resume && row.agent_session_id && canResumeSessionId(row, row.agent_session_id)) {
       ladder.push({ mode: "resume", sessionId: row.agent_session_id });
     }
     // The conversation the task itself last reported, when that is not the one
@@ -1640,7 +1725,10 @@ export class TaskManager {
     // filename is both precise and cheap, and it is the rung that recovers a
     // task whose stored id no longer means anything.
     const reported = sessionIdFromTranscript(row.transcript_path);
-    if (reported && reported !== row.agent_session_id && transcriptExists(row.transcript_path)) {
+    if (
+      capabilities.resume
+      && reported && reported !== row.agent_session_id && transcriptExists(row.transcript_path)
+    ) {
       ladder.push({ mode: "resume", sessionId: reported });
     }
     // "The most recent conversation in this directory" — but only when that is
@@ -1658,7 +1746,7 @@ export class TaskManager {
     // transcript has no conversation of its own in that directory, and the
     // most recent one there is by elimination somebody else's. The guard used
     // to wave that case through on the grounds that it could not tell.
-    if (continueIsSafe(row)) ladder.push({ mode: "continue" });
+    if (capabilities.continue && continueIsSafe(row)) ladder.push({ mode: "continue" });
     // §4.3's last rung: scan the directory for a conversation nobody ever told
     // us about. Offered only in a checkout we made for this task, and that
     // gate is the whole of TASK-60.
@@ -1693,7 +1781,7 @@ export class TaskManager {
     // it: it resumes the found conversation *by id*, so it says which one it
     // opened, and the rung above stays gated as it is rather than being
     // loosened in a worktree.
-    if (runsInOwnWorktree(row)) {
+    if (capabilities.resume && runsInOwnWorktree(row)) {
       const found = findResumableTranscript(row, {
         // Every id the ladder can name, offered or not. An id with no
         // transcript is skipped above and would find nothing here either, and
@@ -3110,6 +3198,7 @@ export class TaskManager {
       titleSource: row.title_source,
       terminalTitle: pty?.title ?? "",
       agentState: row.agent_state,
+      profile: row.agent_profile,
       lifecycle: row.lifecycle,
       worktreeState: row.worktree_state,
       // Null until measured, which a client must not read as "nothing to

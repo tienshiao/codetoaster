@@ -19,6 +19,9 @@ export interface NewTask {
   base_ref?: string | null;
   worktree_state?: WorktreeState;
   agent_session_id?: string | null;
+  /** The agent profile to run this task on. Absent means `claude`, which is
+   * what every task ran before profiles existed (TASK-89). */
+  agent_profile?: string;
   agent_state?: AgentState;
   lifecycle?: Lifecycle;
   model?: string | null;
@@ -44,7 +47,7 @@ const UPDATABLE_COLUMNS: ReadonlySet<string> = new Set([
   "project_id", "title", "title_source", "initial_prompt", "repo_root", "cwd",
   "worktree_path", "worktree_repo", "worktree_subdir", "branch", "base_ref",
   "worktree_state", "wip_ref", "wip_at",
-  "setup_duration_ms", "pinned", "agent_session_id", "transcript_path",
+  "setup_duration_ms", "pinned", "agent_session_id", "agent_profile", "transcript_path",
   "agent_state", "lifecycle", "last_message", "last_size_cols", "last_size_rows",
   "model", "permission_mode", "created_at", "last_active_at", "idle_since",
   "exit_code",
@@ -54,8 +57,8 @@ const INSERT_COLUMNS = [
   "id", "project_id", "title", "title_source", "initial_prompt", "repo_root",
   "cwd", "worktree_path", "worktree_repo", "worktree_subdir", "branch", "base_ref",
   "worktree_state", "pinned",
-  "agent_session_id", "agent_state", "lifecycle", "model", "permission_mode",
-  "created_at", "last_active_at",
+  "agent_session_id", "agent_profile", "agent_state", "lifecycle", "model",
+  "permission_mode", "created_at", "last_active_at",
 ] as const;
 
 // Pure data access over the `tasks` table (§5.2). It holds no processes, runs
@@ -85,6 +88,7 @@ export class TaskStore {
       worktree_state: task.worktree_state ?? "none",
       pinned: task.pinned ? 1 : 0,
       agent_session_id: task.agent_session_id ?? null,
+      agent_profile: task.agent_profile ?? "claude",
       agent_state: task.agent_state ?? "starting",
       lifecycle: task.lifecycle ?? "live",
       model: task.model ?? null,

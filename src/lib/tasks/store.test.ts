@@ -77,6 +77,20 @@ describe("create", () => {
     expect(row.last_active_at).toBe(99);
   });
 
+  // TASK-89: which agent the task runs on. A column and not a lookup, because
+  // a resume months from now has to render the argv the conversation was
+  // opened with — whatever the project's default has become since.
+  test("a task with no profile named runs on claude", () => {
+    expect(store.create(seed({ id: "t1" })).agent_profile).toBe("claude");
+  });
+
+  test("the profile round-trips through the row", () => {
+    expect(store.create(seed({ id: "t1", agent_profile: "pi" })).agent_profile).toBe("pi");
+    expect(store.get("t1")!.agent_profile).toBe("pi");
+    // And is updatable, which is what a task moved onto another agent needs.
+    expect(store.update("t1", { agent_profile: "shell" })!.agent_profile).toBe("shell");
+  });
+
   test("a duplicate id is rejected", () => {
     store.create(seed({ id: "t1" }));
     expect(() => store.create(seed({ id: "t1" }))).toThrow();

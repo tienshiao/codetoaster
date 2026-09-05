@@ -65,7 +65,7 @@ const TASK_COLUMNS = [
   "id", "project_id", "title", "title_source", "initial_prompt", "repo_root", "cwd",
   "worktree_path", "worktree_repo", "worktree_subdir", "branch", "base_ref", "worktree_state",
   "wip_ref", "wip_at",
-  "setup_duration_ms", "pinned", "agent_session_id", "transcript_path", "agent_state",
+  "setup_duration_ms", "pinned", "agent_session_id", "agent_profile", "transcript_path", "agent_state",
   "lifecycle", "last_message", "last_size_cols", "last_size_rows", "model",
   "permission_mode", "created_at", "last_active_at", "idle_since", "exit_code",
 ];
@@ -119,6 +119,9 @@ describe("fresh database", () => {
     // so the checkout's root is where it works.
     expect(row.worktree_subdir).toBeNull();
     expect(row.exit_code).toBeNull();
+    // Unlike those: there is no such thing as a task that runs on no agent, and
+    // every row written before profiles existed ran claude (TASK-89).
+    expect(row.agent_profile).toBe("claude");
   });
 });
 
@@ -326,6 +329,7 @@ describe("initDatabase", () => {
       "005_tasks_repo_root_nullable",
       "006_tasks_worktree_repo",
       "007_tasks_worktree_subdir",
+      "008_tasks_agent_profile",
     ]);
     db.close();
   });

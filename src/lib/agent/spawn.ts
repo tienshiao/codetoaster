@@ -85,6 +85,11 @@ export interface AgentCommandOptions {
    * templates are today's argv, so a caller that names nothing is unchanged
    * (TASK-89.1). */
   profile?: AgentProfile;
+  /** Where the task works, for a profile whose template names `{cwd}`. An
+   * option rather than a field on `AgentTask`, because the process is spawned
+   * in that directory anyway — this is only for the agent that also wants to be
+   * *told* where it is. */
+  cwd?: string;
 }
 
 // Building the agent invocation for a task (docs/v2-architecture.md §4.1).
@@ -134,9 +139,10 @@ export function buildAgentCommand(task: AgentTask, options: AgentCommandOptions 
       // Left out while there is no file to point at: `--settings` on a missing
       // path fails the start, and the unset placeholder takes its flag with it.
       settings: options.settingsPath,
-      // `cwd` is not on `AgentTask` — the worktree path lives on the row the
-      // manager holds, and TASK-89.2 is where it starts supplying it.
-      cwd: undefined,
+      // Not off `AgentTask`: the worktree path lives on the row the manager
+      // holds, and a resume builds its command from a row it has just
+      // rewritten, so the directory is passed in beside the mode.
+      cwd: options.cwd,
     }),
   ];
 }
