@@ -4,7 +4,7 @@ title: Command palette over tasks and tabs
 status: To Do
 assignee: []
 created_date: '2026-08-29 00:03'
-updated_date: '2026-08-30 09:20'
+updated_date: '2026-09-04 23:33'
 labels:
   - frontend
 milestone: m-5
@@ -27,7 +27,10 @@ Rewrite CommandPalette.tsx to be task-oriented (§8): jump to a task (with state
 - [ ] #1 Palette lists tasks with agent-state indicators and navigates on select
 - [ ] #2 Palette lists open tabs and the Explorer's openable items for the current task
 - [ ] #3 Task actions (new, close, resume, archive) and layout actions (split, toggle sidebars) are available
+- [ ] #4 The palette lists the shell commands from keymap.ts's SHELL_COMMANDS with their chords (moved from TASK-34 AC 3, which had no palette to list into)
 <!-- AC:END -->
+
+
 
 ## Implementation Notes
 
