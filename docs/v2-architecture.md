@@ -1,7 +1,8 @@
 # CodeToaster v2 Architecture
 
-Status: design draft. Target: a `v2` branch, merged once (big-bang), per the delivery
-decision below.
+Status: implemented. Phases 0–6 (§10) are built on the `v2` branch. This document is kept
+as the design record — the reasoning behind the shape, not a description of the current
+code. Where the two differ, the code and its comments are what is current.
 
 ## 1. What changes, in one paragraph
 
