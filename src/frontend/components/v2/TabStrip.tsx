@@ -39,6 +39,13 @@ export interface TabProps {
   /** Trailing mono detail — a sha, a line number, a diff stat. */
   detail?: string;
   active?: boolean;
+  /** Whether the tab's group is the layout's active group. An active tab in a
+   * group that is not keeps its pane-coloured shape but loses the accent bar
+   * and drops to the muted foreground — VSCode's unfocused-active tab — so a
+   * split reads at a glance as one current group and one beside it. Only the
+   * active tab draws differently; the group's other tabs are muted already.
+   * Defaults to true, for a lone strip. */
+  focused?: boolean;
   /** VSCode's preview tab: italic, and the next single click replaces it. */
   preview?: boolean;
   closable?: boolean;
@@ -79,6 +86,7 @@ export function Tab({
   label,
   detail,
   active = false,
+  focused = true,
   preview = false,
   closable = true,
   onClick,
@@ -111,7 +119,11 @@ export function Tab({
       onDoubleClick={onDoubleClick}
       className={cn(
         "relative flex h-tabstrip flex-none items-center border-r border-border pr-2",
-        active ? "bg-pane text-foreground shadow-[inset_0_2px_0_var(--primary)]" : "text-muted-foreground",
+        active
+          ? focused
+            ? "bg-pane text-foreground shadow-[inset_0_2px_0_var(--primary)]"
+            : "bg-pane text-muted-foreground"
+          : "text-muted-foreground",
         dragging && "opacity-40",
         className,
       )}
@@ -194,9 +206,11 @@ export interface TabStripProps {
    * and the same rule: a control that vanishes reads as a bug. */
   searchDisabled?: boolean;
   /** This strip's group is the one the leader chords act on — the layout's
-   * active group. Defaults to true, for a lone strip. Only the chord hints read
-   * it: a strip that is not focused still closes and splits by click, it just
-   * does not name a key that would act on a different group. */
+   * active group, where the palette opens its next tab. Defaults to true, for
+   * a lone strip. It dims the active tab of an unfocused group (see
+   * `TabProps.focused`) and withholds the chord hints there: a strip that is
+   * not focused still closes and splits by click, it just does not name a key
+   * that would act on a different group. */
   focused?: boolean;
   onTabActions?: () => void;
   /** Open a plain shell in this task as a new tab (§3). Absent on a strip that
@@ -206,9 +220,6 @@ export interface TabStripProps {
   /** Emitted as `data-tab-group`: what a drag hit-tests to find the strip it is
    * over, and what tells `TabArea` which group a drop belongs to. */
   groupId?: string;
-  /** Focus the group. A click anywhere in the strip — including the empty
-   * stretch past the last tab — is a click on this group. */
-  onPointerDown?: (e: PointerEvent<HTMLDivElement>) => void;
   ref?: Ref<HTMLDivElement>;
   /** Chrome pinned before the first tab — the shell hangs its left-sidebar
    * toggle here, where it stays put as tabs come and go. */
@@ -229,7 +240,6 @@ export function TabStrip({
   onTabActions,
   onNewShell,
   groupId,
-  onPointerDown,
   ref,
   leading,
   trailing,
@@ -240,7 +250,6 @@ export function TabStrip({
       ref={ref}
       role="tablist"
       data-tab-group={groupId}
-      onPointerDown={onPointerDown}
       className={cn(
         // `select-none`: a press in the strip is a click or the start of a tab
         // drag, never the start of a selection. `body[data-dragging]` suppresses
@@ -269,6 +278,7 @@ export function TabStrip({
           <Tab
             key={t.tabId ?? i}
             {...t}
+            focused={focused}
             // The chord closes what is in front of the *focused* group, so only
             // that group's front tab may name it. Otherwise the hint would point
             // at a key that closes a tab in the group beside it.

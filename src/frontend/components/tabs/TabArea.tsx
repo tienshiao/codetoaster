@@ -455,6 +455,20 @@ export function TabArea({
               data-tab-column={group.id}
               style={{ flexGrow: group.flex, flexBasis: 0 }}
               className={cn("flex min-w-0 flex-col", groupIndex > 0 && "border-l border-border")}
+              // A press anywhere in the group — a tab, the empty stretch past
+              // the last one, the action cluster, or the pane below — is a
+              // press on this group. The pane counts because "the group I was
+              // last in" is where the palette opens its next tab and where the
+              // leader chords act, and a user reading a diff in the right-hand
+              // pane has been in that group without ever touching its strip.
+              // Capture phase, so a pane that stops the event (xterm's mouse
+              // handling, a diff's own gestures) cannot keep the group from
+              // hearing about it.
+              onPointerDownCapture={() => {
+                if (group.id !== layout.activeGroupId && active) {
+                  onLayoutChange(focusTab(layout, active.id));
+                }
+              }}
             >
               <TabStrip
                 groupId={group.id}
@@ -478,13 +492,6 @@ export function TabArea({
                 searchDisabled={!searchable}
                 onTabActions={onTabActions ? () => onTabActions(group) : undefined}
                 onNewShell={onNewShell}
-                // A press anywhere on the strip — a tab, the empty stretch past
-                // the last one, the action cluster — is a press on this group.
-                onPointerDown={() => {
-                  if (group.id !== layout.activeGroupId && active) {
-                    onLayoutChange(focusTab(layout, active.id));
-                  }
-                }}
               />
               {/* Terminal tabs stay mounted and merely hide, which is the one
                   place a pane's identity outlives its being on screen.

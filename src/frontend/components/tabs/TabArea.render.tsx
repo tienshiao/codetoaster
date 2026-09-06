@@ -315,6 +315,69 @@ test("only the focused group's front tab names the close chord", () => {
 });
 
 /**
+ * "The group I was last in" is decided by where the pointer went, and the
+ * pane counts as much as the strip.
+ *
+ * `openTab` puts a new tab in the active group, so a user who split, read the
+ * diff in the right-hand pane, and opened a file from the palette expects it
+ * beside that diff. The group used to become active only on a press in its
+ * strip, so a press in the pane below left the *other* group active and the
+ * palette's tab landed there.
+ */
+test("a press in a group's pane focuses the group, not only a press in its strip", () => {
+  resetIdCounter();
+  let layout = createLayout(); // the agent tab
+  layout = openTab(layout, { kind: "diffAll" });
+  const changes = layout.groups[0]!.activeTabId!;
+  layout = splitTab(layout, changes); // the new right-hand group is active
+
+  let current = layout;
+  function Observed() {
+    const [state, setState] = useState(layout);
+    current = state;
+    return (
+      <TabArea
+        layout={state}
+        onLayoutChange={setState}
+        renderPane={(_tab, group) => <div data-pane={group.id} />}
+      />
+    );
+  }
+  const view = render(<Observed />);
+  const [left, right] = current.groups;
+  expect(current.activeGroupId).toBe(right!.id);
+
+  // The one visible difference between the groups: the focused group's active
+  // tab carries the accent bar, the other group's is dimmed to the muted
+  // foreground. Without it the palette would open a tab into a group the user
+  // has no way to tell is the current one.
+  const frontTabOf = (groupId: string) =>
+    view.container
+      .querySelector<HTMLElement>(`[data-tab-column="${groupId}"]`)!
+      .querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')!
+      .closest<HTMLElement>("[data-tab-id]")!;
+  const dimmed = (groupId: string) => frontTabOf(groupId).className.includes("text-muted-foreground");
+  expect(dimmed(right!.id)).toBe(false);
+  expect(dimmed(left!.id)).toBe(true);
+
+  const leftPane = view.container.querySelector<HTMLElement>(`[data-pane="${left!.id}"]`)!;
+  act(() => {
+    leftPane.dispatchEvent(pointer("pointerdown", 10, 1));
+  });
+  expect(current.activeGroupId).toBe(left!.id);
+  expect(dimmed(left!.id)).toBe(false);
+  expect(dimmed(right!.id)).toBe(true);
+
+  // And back, by pressing in the other pane rather than its strip.
+  const rightPane = view.container.querySelector<HTMLElement>(`[data-pane="${right!.id}"]`)!;
+  act(() => {
+    rightPane.dispatchEvent(pointer("pointerdown", 10, 1));
+  });
+  expect(current.activeGroupId).toBe(right!.id);
+  expect(dimmed(right!.id)).toBe(false);
+});
+
+/**
  * The terminal tabs' one privilege: they survive being switched away from.
  *
  * A `useEffect` in the pane is what is under test, not the markup — a pane that
