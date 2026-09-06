@@ -292,7 +292,7 @@ test("the palette's own chord still fires inside a modal, so it can close itself
   dialog.setAttribute("aria-modal", "true");
   document.body.append(dialog);
   try {
-    h.press("P", { metaKey: true, shiftKey: true });
+    h.press("p", { metaKey: true });
     expect(h.palette).toHaveBeenCalledTimes(1);
   } finally {
     dialog.remove();
@@ -301,15 +301,14 @@ test("the palette's own chord still fires inside a modal, so it can close itself
 
 // ── the direct chord ────────────────────────────────────────────────────────
 
-test("⌘⇧P opens the palette, and is consumed on the way", () => {
+test("⌘P opens the palette, and is consumed on the way", () => {
   const h = mount();
-  // `P`, because the browser reports the shifted cap — and with no leader in
-  // front of it, so a single press.
-  const ev = h.press("P", { metaKey: true, shiftKey: true });
+  // No leader in front of it, so a single press.
+  const ev = h.press("p", { metaKey: true });
   expect(h.palette).toHaveBeenCalledTimes(1);
   expect(h.reachedPane).toEqual([]);
   // Stopped *and* prevented: stopping alone would still leave the browser free
-  // to act on the key.
+  // to act on the key — and on ⌘P that is the print dialog.
   expect(ev.defaultPrevented).toBe(true);
 });
 
@@ -324,7 +323,7 @@ test("⌘K then P is a cancelled chord, not the palette", () => {
 
 test("the palette opens at the composer too, where there is no layout", () => {
   const h = mount(null);
-  h.press("P", { metaKey: true, shiftKey: true });
+  h.press("p", { metaKey: true });
   expect(h.palette).toHaveBeenCalledTimes(1);
 });
 

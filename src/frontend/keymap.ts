@@ -19,7 +19,7 @@
  * before the shell sees it. After the leader the whole keyboard is free, which
  * is also why there is room for `⌘K 1`‑`9` without an argument about it.
  *
- * One row is not behind the leader: the palette, `⌘⇧P` / `⌃⇧P`. It is the
+ * One row is not behind the leader: the palette, `⌘P` / `⌃⇧P`. It is the
  * thing that *lists* the leader's chords, so a user who does not know the
  * leader could not reach it. See `direct` below.
  *
@@ -62,15 +62,21 @@ export interface ShellCommand {
   /** Which tab `jump-tab` means, 1-based. Absent for every other command. */
   index?: number;
   /**
-   * Fires on its own chord — ⌘⇧`key` on macOS, ⌃⇧`key` elsewhere — instead of
+   * Fires on its own chord — ⌘`key` on macOS, ⌃⇧`key` elsewhere — instead of
    * after the leader. Absent, and so false, for every other row.
    *
    * Only the palette is direct, and for two reasons. It is the most-used
    * command in the table, and it is the one that *lists* the leader chords: put
    * it behind the leader and the only way to find out the leader exists is to
-   * already know it. It is also the one chord v1 already had, so the muscle
-   * memory is there, and Chrome binds nothing to ⌘⇧P — so unlike every other
-   * conventional chord, taking it costs the browser nothing.
+   * already know it.
+   *
+   * The two platforms differ in whether Shift is in the chord, for the same
+   * reason the leader does. On a Mac ⌘P is only the browser's print dialog,
+   * which nobody wants of a terminal, and Chrome lets `preventDefault` take it
+   * — so the chord is the one-modifier press. Elsewhere the bare ⌃P is
+   * readline's previous-line and vim's insert-mode completion inside the
+   * agent, so the palette sits on ⌃⇧P with the rest of the terminal-emulator
+   * convention.
    */
   direct?: boolean;
 }
@@ -213,18 +219,19 @@ export function matchCommand(ev: KeyLike): ShellCommand | null {
 /**
  * The command a press means on its own, with no leader before it.
  *
- * The modifiers have to be exactly the platform's — ⌘⇧ on a Mac, ⌃⇧ elsewhere
- * — rather than merely present the way `matchCommand` tolerates them. There is
- * no armed leader here saying the keyboard belongs to the shell, so anything
- * extra under the chord is somebody else's: ⌥ is the terminal's Meta, and a ⌃
- * held under ⌘⇧P is a chord this table does not own.
+ * The modifiers have to be exactly the platform's — ⌘ alone on a Mac, ⌃⇧
+ * elsewhere — rather than merely present the way `matchCommand` tolerates
+ * them. There is no armed leader here saying the keyboard belongs to the
+ * shell, so anything extra under the chord is somebody else's: ⌥ is the
+ * terminal's Meta, a ⌃ held under ⌘P is a chord this table does not own, and
+ * ⌘⇧P on a Mac is left alone the same way rather than read as a sloppy ⌘P.
  *
  * With Shift down `ev.key` arrives as `P`, which `normalizeKey` folds back onto
  * the lowercase cap the table stores.
  */
 export function matchDirect(ev: KeyLike, mac: boolean = isMac()): ShellCommand | null {
   const modifiers = mac
-    ? ev.metaKey && ev.shiftKey && !ev.ctrlKey && !ev.altKey
+    ? ev.metaKey && !ev.shiftKey && !ev.ctrlKey && !ev.altKey
     : ev.ctrlKey && ev.shiftKey && !ev.metaKey && !ev.altKey;
   if (!modifiers) return null;
   const key = normalizeKey(ev.key);
@@ -286,7 +293,7 @@ export function isSearchOpenChord(ev: KeyLike, mac: boolean = isMac()): boolean 
  * the agent.
  *
  * A direct chord is here for the same disagreement, and the stray keystroke it
- * guards against is worse: ⌘⇧P reaching xterm sends a bare `P` to whatever the
+ * guards against is worse: ⌘P reaching xterm sends a bare `p` to whatever the
  * agent is running.
  *
  * The step chord is yielded only while this terminal's search bar is open
@@ -386,7 +393,7 @@ export function stepKeymap(
     if (isLeader(ev, mac)) return { armedAt: now, result: { kind: "armed" } };
 
     // `matchDirect` is deliberately not consulted while armed: an armed leader
-    // owns the keyboard, so ⌘K ⌘⇧P is a cancelled chord rather than the
+    // owns the keyboard, so ⌘K ⌘P is a cancelled chord rather than the
     // palette. A chord that meant one thing alone and the same thing mid-chord
     // would make the arm a state the user cannot see and cannot rely on.
     const command = matchCommand(ev);
@@ -427,11 +434,11 @@ function keyCap(key: string): string {
  * A direct row prints its own modifiers instead, since there is no leader in
  * front of it to draw. */
 export function chordCaps(command: ShellCommand, mac: boolean = isMac()): string[] {
-  if (command.direct) return [mac ? "⌘" : "Ctrl", "⇧", keyCap(command.key)];
+  if (command.direct) return mac ? ["⌘", keyCap(command.key)] : ["Ctrl", "⇧", keyCap(command.key)];
   return [...leaderCaps(mac), keyCap(command.key)];
 }
 
-/** Caps as one tooltip string: `⌘K X`, `Ctrl+Shift+K X`, `⌘⇧P`, `Ctrl+Shift+P`.
+/** Caps as one tooltip string: `⌘K X`, `Ctrl+Shift+K X`, `⌘P`, `Ctrl+Shift+P`.
  * The leader's caps run together on a Mac and join with `+` elsewhere, which is
  * how each platform writes its own chords; the second press follows a space. */
 function joinCaps(caps: string[], mac: boolean): string {

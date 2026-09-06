@@ -186,7 +186,7 @@ function OpenPalette({
 
   // Where the caret was when the palette opened, so closing puts it back —
   // however the palette closed. Dismissing is not the only way out that leaves
-  // nothing focused: the ⌘⇧P toggle, and every selection whose action moves no
+  // nothing focused: the ⌘P toggle, and every selection whose action moves no
   // focus (toggle-sidebar, split, close-tab, new-shell), all unmount the input
   // and leave `document.activeElement` on `<body>`.
   const opener = useRef<HTMLElement | null>(

@@ -144,7 +144,7 @@ the panel. Selections open tabs rather than filling a pane below the tree.
   definitions/references popover
 
 ### Command palette
-⌘⇧P (Ctrl+Shift+P) opens one palette over everything: open tabs, tasks, actions
+⌘P (Ctrl+Shift+P) opens one palette over everything: open tabs, tasks, actions
 (new/close/resume/archive a task, new shell, every leader chord that would
 actually do something here, find in terminal, toggle either sidebar), changed
 files, commits, refs, and a file search.
@@ -153,7 +153,7 @@ files, commits, refs, and a file search.
 
 | Action | Mac | Windows/Linux |
 |--------|-----|---------------|
-| Command palette | ⌘⇧P | Ctrl+Shift+P |
+| Command palette | ⌘P | Ctrl+Shift+P |
 
 The palette is the one shortcut not behind the leader, because it is what
 *lists* the leader's chords — and runs them.

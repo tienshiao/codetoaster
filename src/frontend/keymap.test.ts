@@ -24,8 +24,9 @@ function press(key: string, mods: Partial<Omit<KeyLike, "key">> = {}): KeyLike {
 }
 
 const CMD = { metaKey: true };
+const CTRL = { ctrlKey: true };
+/** The non-Mac direct modifiers. With ⇧ held the browser reports `P`. */
 const CTRL_SHIFT = { ctrlKey: true, shiftKey: true };
-/** The direct modifiers, per platform. With ⇧ held the browser reports `P`. */
 const CMD_SHIFT = { metaKey: true, shiftKey: true };
 
 // ── the table ───────────────────────────────────────────────────────────────
@@ -186,8 +187,8 @@ test("a direct row is not reachable through the leader", () => {
 
 // ── the direct chords ───────────────────────────────────────────────────────
 
-test("⌘⇧P is the palette on a Mac and ⌃⇧P elsewhere", () => {
-  expect(matchDirect(press("P", CMD_SHIFT), true)?.command).toBe("palette");
+test("⌘P is the palette on a Mac and ⌃⇧P elsewhere", () => {
+  expect(matchDirect(press("p", CMD), true)?.command).toBe("palette");
   expect(matchDirect(press("P", CTRL_SHIFT), false)?.command).toBe("palette");
 });
 
@@ -195,23 +196,26 @@ test("each platform's direct chord is not the other's", () => {
   // ⌃⇧P on a Mac is nothing of ours — the leader there is ⌘-based, and a Mac
   // user pressing ⌃⇧ means the terminal.
   expect(matchDirect(press("P", CTRL_SHIFT), true)).toBeNull();
-  expect(matchDirect(press("P", CMD_SHIFT), false)).toBeNull();
+  expect(matchDirect(press("p", CMD), false)).toBeNull();
 });
 
-test("⌘P without Shift is the browser's print, and stays it", () => {
-  expect(matchDirect(press("p", CMD), true)).toBeNull();
-  expect(matchDirect(press("p", { ctrlKey: true }), false)).toBeNull();
+test("⌃P without Shift is readline's previous-line off a Mac, and stays it", () => {
+  expect(matchDirect(press("p", CTRL), false)).toBeNull();
+});
+
+test("⌘⇧P on a Mac is not a sloppy ⌘P — the chord is exact", () => {
+  expect(matchDirect(press("P", CMD_SHIFT), true)).toBeNull();
 });
 
 test("⌥ disqualifies a direct chord — that is the terminal's Meta", () => {
-  expect(matchDirect(press("P", { ...CMD_SHIFT, altKey: true }), true)).toBeNull();
+  expect(matchDirect(press("p", { ...CMD, altKey: true }), true)).toBeNull();
   expect(matchDirect(press("P", { ...CTRL_SHIFT, altKey: true }), false)).toBeNull();
 });
 
 test("a spare modifier under the chord means it belongs to somebody else", () => {
   // Nothing here is armed, so unlike the leader's second press there is no
   // reason to be forgiving about what else is held down.
-  expect(matchDirect(press("P", { ...CMD_SHIFT, ctrlKey: true }), true)).toBeNull();
+  expect(matchDirect(press("p", { ...CMD, ctrlKey: true }), true)).toBeNull();
   expect(matchDirect(press("P", { ...CTRL_SHIFT, metaKey: true }), false)).toBeNull();
 });
 
@@ -228,10 +232,10 @@ test("the terminal yields the leader", () => {
 });
 
 test("the terminal yields the palette's direct chord", () => {
-  // Reaching xterm, ⌘⇧P is a bare `P` typed into whatever the agent is running.
-  expect(terminalMustYield(press("P", CMD_SHIFT), true)).toBe(true);
+  // Reaching xterm, ⌘P is a bare `p` typed into whatever the agent is running.
+  expect(terminalMustYield(press("p", CMD), true)).toBe(true);
   expect(terminalMustYield(press("P", CTRL_SHIFT), false)).toBe(true);
-  expect(terminalMustYield(press("P", CMD_SHIFT), false)).toBe(false);
+  expect(terminalMustYield(press("p", CMD), false)).toBe(false);
 });
 
 test("the terminal yields ⌘G and ⇧⌘G while its search bar is open, which hears them after it", () => {
@@ -282,13 +286,13 @@ test("a chord prints leader-first, with letters capitalised and arrows drawn", (
 
 test("a direct chord prints its own modifiers, with no leader in front", () => {
   const palette = SHELL_COMMANDS.find((c) => c.id === "palette")!;
-  expect(chordCaps(palette, true)).toEqual(["⌘", "⇧", "P"]);
+  expect(chordCaps(palette, true)).toEqual(["⌘", "P"]);
   expect(chordCaps(palette, false)).toEqual(["Ctrl", "⇧", "P"]);
 });
 
 test("capsFor looks a chord up by id, and draws nothing for one that is gone", () => {
   expect(capsFor("new-shell", true)).toEqual(["⌘", "K", "S"]);
-  expect(capsFor("palette", true)).toEqual(["⌘", "⇧", "P"]);
+  expect(capsFor("palette", true)).toEqual(["⌘", "P"]);
   expect(capsFor("no-such-command", true)).toEqual([]);
 });
 
@@ -299,7 +303,7 @@ test("chordHint spells a chord out for a tooltip, which cannot hold caps", () =>
 });
 
 test("a direct chord spells out as one press, with no space in it", () => {
-  expect(chordHint("palette", true)).toBe("⌘⇧P");
+  expect(chordHint("palette", true)).toBe("⌘P");
   expect(chordHint("palette", false)).toBe("Ctrl+Shift+P");
 });
 
@@ -407,7 +411,7 @@ test("an expired leader followed by the leader arms again", () => {
 });
 
 test("a direct chord fires from cold, and leaves the leader disarmed", () => {
-  const mac = run([[press("P", CMD_SHIFT)]]);
+  const mac = run([[press("p", CMD)]]);
   expect(mac.last).toMatchObject({ kind: "command", command: { command: "palette" } });
   expect(mac.armedAt).toBeNull();
 
@@ -420,9 +424,9 @@ test("an armed leader owns the keyboard, so `p` after it is cancelled", () => {
 });
 
 test("even the direct chord itself is cancelled while the leader is armed", () => {
-  // One entrance, and it is the one that is not mid-chord: a ⌘⇧P that meant the
+  // One entrance, and it is the one that is not mid-chord: a ⌘P that meant the
   // palette here would make the arm a state whose effect the user cannot see.
-  const { last, armedAt } = run([[press("k", CMD)], [press("P", CMD_SHIFT)]]);
+  const { last, armedAt } = run([[press("k", CMD)], [press("p", CMD)]]);
   expect(last).toEqual({ kind: "cancelled" });
   expect(armedAt).toBeNull();
 });
@@ -458,7 +462,7 @@ test("a modal opening mid-chord drops the arm rather than eating the next key", 
 });
 
 test("the direct chord still fires in a modal — it is how the palette closes", () => {
-  const step = stepKeymap(null, press("P", CMD_SHIFT), 0, true, true);
+  const step = stepKeymap(null, press("p", CMD), 0, true, true);
   expect(step.result).toMatchObject({ kind: "command", command: { command: "palette" } });
 });
 
