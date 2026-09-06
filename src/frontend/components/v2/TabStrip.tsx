@@ -1,3 +1,4 @@
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { MouseEvent, PointerEvent, ReactNode, Ref } from "react";
 import {
   Columns2,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { IconButton } from "./IconButton";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu";
+import { revealScrollLeft } from "./strip-scroll";
 import { chordHint, searchHint } from "@/frontend/keymap";
 import { cn } from "@/frontend/lib/utils";
 
@@ -258,6 +260,71 @@ export function TabStrip({
   trailing,
   className,
 }: TabStripProps) {
+  const scroller = useRef<HTMLDivElement>(null);
+
+  // Keep the active tab in view. Keyed on its id rather than on the tab list:
+  // every door that changes which tab is active — a click, a drag landing, a
+  // split, the palette, the Explorer, a leader chord, a ?tab= link — changes
+  // the id, while a re-render that leaves it alone (a drag passing over the
+  // strip, a hint changing) must not tug the strip under the pointer. Before
+  // this, a narrow group given a new tab had it selected and out of sight,
+  // past the action cluster, with no scrollbar to reach it by.
+  //
+  // Measured by rects rather than `offsetLeft`, which is relative to the
+  // nearest positioned ancestor — the tab itself is `relative`, and what is
+  // above it varies. A layout effect, so the strip is right on the first paint
+  // after the change rather than a frame later.
+  const activeId = tabs.find((t) => t.active)?.tabId;
+  const reveal = () => {
+    const el = scroller.current;
+    if (!el || activeId === undefined) return;
+    const tab = el.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(activeId)}"]`);
+    if (!tab) return;
+    const box = el.getBoundingClientRect();
+    const rect = tab.getBoundingClientRect();
+    const start = rect.left - box.left + el.scrollLeft;
+    const next = revealScrollLeft(el.scrollLeft, el.clientWidth, start, start + rect.width);
+    if (next !== el.scrollLeft) el.scrollLeft = next;
+  };
+  useLayoutEffect(reveal, [activeId]);
+
+  // The strip's width changes too — a divider dragged, a window narrowed —
+  // and the active tab can slide out of view without ever changing. Watching
+  // the container covers both. The observer is made once and reads the
+  // current `reveal` through a ref: an observer fires on attach, so one
+  // rebuilt every render would snap a strip the user had wheeled away from
+  // back to the active tab on any re-render at all. Guarded because a test
+  // DOM may not have the observer.
+  const revealRef = useRef(reveal);
+  revealRef.current = reveal;
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => revealRef.current());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // A vertical wheel over an overflowing strip scrolls it sideways. A trackpad
+  // already scrolls the strip with a horizontal swipe, but a mouse wheel has
+  // no horizontal axis, and with the scrollbar hidden a mouse would otherwise
+  // have no way at all to reach a tab past the edge. Bound natively so the
+  // default can be prevented — React's wheel listeners are passive — and only
+  // when the strip actually overflows, so a wheel over a strip with room to
+  // spare still reaches whatever scrolls behind it.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaX !== 0 || event.deltaY === 0) return;
+      if (el.scrollWidth <= el.clientWidth) return;
+      el.scrollLeft += event.deltaY;
+      event.preventDefault();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   return (
     <div
       ref={ref}
@@ -284,6 +351,7 @@ export function TabStrip({
           user can no longer reach. The scrollbar itself is hidden: 36px of
           chrome has no room for one, and the strip is dragged, not scrolled. */}
       <div
+        ref={scroller}
         role="presentation"
         className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
