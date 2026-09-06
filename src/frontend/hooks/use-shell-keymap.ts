@@ -69,11 +69,22 @@ export interface ShellKeymap {
   run: (command: ShellCommand) => void;
 }
 
-/** Whether a modal surface is up — see "…except a modal" below. Every v2
- * modal declares `aria-modal`, which is the one attribute a modal has to carry
- * for assistive technology anyway, so nothing has to register itself here. */
+/** Whether a surface that owns the keyboard is up — see "…except a modal"
+ * below. Every v2 modal declares `aria-modal`, which is the one attribute a
+ * modal has to carry for assistive technology anyway, so nothing has to
+ * register itself here.
+ *
+ * A menu is the one such surface the attribute does not cover. `DropdownMenu`
+ * is modal in Radix's sense — outside pointer events are off, and the arrow
+ * keys, the typeahead and Escape are all its own — but `aria-modal` on a
+ * `role="menu"` would be wrong, so Radix marks its content
+ * `data-radix-menu-content` and nothing else. Without that half of the
+ * selector, `⌘K X` over an open tab menu arms and fires against the layout
+ * behind it, closing a tab the user cannot see while the menu stands over it.
+ * Menus only: a `Select`'s listbox carries no such attribute and keeps the
+ * behaviour it had. */
 function modalOpen(): boolean {
-  return document.querySelector('[aria-modal="true"]') !== null;
+  return document.querySelector('[aria-modal="true"], [data-radix-menu-content]') !== null;
 }
 
 /**

@@ -409,9 +409,12 @@ export function TabArea({
    * greyed out by the store's own predicate rather than a second guess at it.
    *
    * A chord is named only on the tab it would act on — the active tab of the
-   * focused group — for the same reason the strip's hints are: the chord
-   * closes or splits *that* tab, and naming it on any other would advertise a
-   * key that acts somewhere else.
+   * focused group — and only on a row that is not greyed out, for the same
+   * reason the strip's hints are: the chord closes or splits *that* tab, and
+   * naming it on any other would advertise a key that acts somewhere else,
+   * while naming it on a row that will not act (the agent's Close, a
+   * terminal's Split) advertises a key that does nothing at all. The strip's
+   * own controls already drop their hint when disabled; the menu follows.
    *
    * Under `singleGroup` the group rows are withheld entirely, as the Split
    * button is: on a phone a second group is not a thing the device offers.
@@ -419,13 +422,14 @@ export function TabArea({
   const menuFor = (tab: TabState, group: TabGroup, groupIndex: number): DropdownMenuItem[] => {
     const closable = tab.descriptor.kind !== "agent";
     const named = group.id === layout.activeGroupId && tab.id === group.activeTabId;
-    const keysFor = (id: string) => (named ? capsFor(id) : undefined);
+    const keysFor = (id: string, enabled: boolean) =>
+      named && enabled ? capsFor(id) : undefined;
 
     const items: DropdownMenuItem[] = [
       {
         label: "Close",
         icon: X,
-        keys: keysFor("close-tab"),
+        keys: keysFor("close-tab", closable),
         disabled: !closable,
         title: closable ? undefined : "The agent tab is the task; close the task instead",
         onSelect: () => applyClose(closeTab(layout, tab.id)),
@@ -457,7 +461,7 @@ export function TabArea({
         {
           label: "Split",
           icon: Columns2,
-          keys: keysFor("split"),
+          keys: keysFor("split", splittable),
           disabled: !splittable,
           title: splittable ? undefined : "Not available for terminals",
           onSelect: () => onLayoutChange(splitTab(layout, tab.id)),

@@ -286,6 +286,25 @@ test("with a dialog up, ⌘K does not arm and the Escape after it reaches the di
   }
 });
 
+test("with a tab's context menu up, the leader does not act on the layout behind it", () => {
+  const h = mount();
+  // What Radix's menu content carries. It is modal in every way that matters
+  // to the keyboard, but a `role="menu"` may not say `aria-modal`, so the
+  // attribute alone would leave the map live under an open menu.
+  const menu = document.createElement("div");
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("data-radix-menu-content", "");
+  document.body.append(menu);
+  try {
+    h.press("k", { metaKey: true });
+    const x = h.press("x");
+    expect(x.defaultPrevented).toBe(false);
+    expect(h.closed).not.toHaveBeenCalled();
+  } finally {
+    menu.remove();
+  }
+});
+
 test("the palette's own chord still fires inside a modal, so it can close itself", () => {
   const h = mount();
   const dialog = document.createElement("div");

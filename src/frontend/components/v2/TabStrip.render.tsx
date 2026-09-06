@@ -121,6 +121,15 @@ test("a vertical wheel scrolls an overflowing strip sideways, and is consumed", 
   expect(scroller.scrollLeft).toBe(40);
 });
 
+test("a line-mode wheel is scaled to pixels rather than moving the strip three of them", () => {
+  // Firefox reports a mouse wheel notch as `deltaY: 3, deltaMode: 1`. Taken as
+  // pixels it would nudge the strip three pixels and eat the event doing it —
+  // on the one device the wheel handling exists for.
+  const { scroller } = mount(0);
+  fireEvent.wheel(scroller, { deltaY: 3, deltaX: 0, deltaMode: 1 });
+  expect(scroller.scrollLeft).toBe(48);
+});
+
 test("a wheel over a strip with room to spare is left to whatever is behind it", () => {
   const { scroller } = mount(0);
   Object.defineProperty(scroller, "scrollWidth", { value: STRIP_WIDTH, configurable: true });

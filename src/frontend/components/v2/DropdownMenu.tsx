@@ -94,7 +94,14 @@ function renderItems(items: readonly DropdownMenuItem[], parts: MenuParts): Reac
         className={cn(
           "flex h-control cursor-pointer select-none items-center gap-2 rounded-md px-2 outline-none",
           "data-[highlighted]:bg-hover",
-          "data-[disabled]:pointer-events-none data-[disabled]:opacity-45",
+          // Greyed out, but still hoverable: a `title` is the only way a
+          // disabled row says why it is disabled, and a native tooltip needs
+          // the pointer to be able to land on the element. Radix refuses the
+          // selection itself — a disabled item is not focusable and its
+          // `onSelect` does not fire — so nothing but the tooltip depends on
+          // this, and `pointer-events-none` would take exactly the one thing
+          // the row still has to offer.
+          "data-[disabled]:cursor-default data-[disabled]:opacity-45",
           item.destructive ? "text-destructive" : "text-foreground",
         )}
       >

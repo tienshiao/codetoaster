@@ -206,6 +206,25 @@ export function Tab({
   );
 }
 
+/**
+ * A wheel event's vertical delta in pixels, whatever unit it arrived in.
+ *
+ * `deltaY` is only a pixel count when `deltaMode` says so. Firefox reports a
+ * mouse wheel in *lines* — a notch is a `deltaY` of 3 — and a page-scrolling
+ * device reports pages, so a handler that adds `deltaY` to `scrollLeft` moves
+ * the strip three pixels per notch and swallows the event doing it, on exactly
+ * the device the strip's wheel handling exists for. `Terminal.tsx` synthesises
+ * line-mode wheels for the same reason: the unit is not a formality.
+ *
+ * A line is taken as 16px, the root font size the shell is drawn at; a page,
+ * scrolling sideways, is the strip's own visible width.
+ */
+function wheelPx(event: WheelEvent, pagePx: number): number {
+  if (event.deltaMode === 1) return event.deltaY * 16;
+  if (event.deltaMode === 2) return event.deltaY * pagePx;
+  return event.deltaY;
+}
+
 export interface TabStripProps {
   tabs?: TabProps[];
   /** The trailing new-shell / find / split cluster. */
@@ -318,7 +337,7 @@ export function TabStrip({
     const onWheel = (event: WheelEvent) => {
       if (event.deltaX !== 0 || event.deltaY === 0) return;
       if (el.scrollWidth <= el.clientWidth) return;
-      el.scrollLeft += event.deltaY;
+      el.scrollLeft += wheelPx(event, el.clientWidth);
       event.preventDefault();
     };
     el.addEventListener("wheel", onWheel, { passive: false });
