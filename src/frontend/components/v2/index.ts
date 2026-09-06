@@ -39,6 +39,9 @@ export type { SelectOption, SelectProps, SelectSize } from "./Select";
 export { Dialog } from "./Dialog";
 export type { DialogProps } from "./Dialog";
 
+export { DropdownMenu } from "./DropdownMenu";
+export type { DropdownMenuItem, DropdownMenuProps } from "./DropdownMenu";
+
 export { CommandPalette } from "./CommandPalette";
 export type { CommandPaletteProps, PaletteGroup, PaletteItem } from "./CommandPalette";
 

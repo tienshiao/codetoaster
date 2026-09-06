@@ -101,6 +101,7 @@ one repository possible at all.
 - The agent terminal is tab one and cannot be closed
 - Diffs, files, commits, history, and extra shells open as sibling tabs
 - Drag to reorder, drag between groups, split read-only tabs side by side
+- Right-click a tab for close variants, split, move to another group, and pin
 - Preview tabs: a single click opens an italic tab the next click replaces
 - Layout persists per task, per device
 

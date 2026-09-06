@@ -1,7 +1,6 @@
 import type { MouseEvent, PointerEvent, ReactNode, Ref } from "react";
 import {
   Columns2,
-  EllipsisVertical,
   FileDiff,
   FileText,
   GitBranch,
@@ -16,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { IconButton } from "./IconButton";
+import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu";
 import { chordHint, searchHint } from "@/frontend/keymap";
 import { cn } from "@/frontend/lib/utils";
 
@@ -59,6 +59,11 @@ export interface TabProps {
   /** The chord that closes this tab, appended to the close control's tooltip;
    * set only for the tab the chord would actually close. */
   closeHint?: string;
+  /** The tab's context menu — right-click, ⌃-click, long-press — as rows for
+   * `DropdownMenu`. The strip is drawn from props alone, so the rows arrive as
+   * data and whoever owns the layout decides what they do. Absent, no menu:
+   * a static strip has nothing a menu could act on. */
+  menu?: readonly DropdownMenuItem[];
   className?: string;
 
   // ── drag ──
@@ -94,6 +99,7 @@ export function Tab({
   onDoubleClick,
   title,
   closeHint,
+  menu,
   className,
   tabId,
   onPointerDown,
@@ -108,7 +114,7 @@ export function Tab({
     e.stopPropagation();
     onClose?.();
   };
-  return (
+  const tab = (
     // The close control cannot nest inside the tab's own <button>, so the tab
     // chrome is a presentational wrapper and role="tab" sits on the label half.
     <div
@@ -187,11 +193,20 @@ export function Tab({
       )}
     </div>
   );
+  // The menu attaches to the tab's own element rather than wrapping it, so
+  // the strip's layout and the drag's hit-testing see the same box either way.
+  return menu ? (
+    <DropdownMenu trigger="context" items={menu} aria-label={`${label} tab`}>
+      {tab}
+    </DropdownMenu>
+  ) : (
+    tab
+  );
 }
 
 export interface TabStripProps {
   tabs?: TabProps[];
-  /** The trailing split / overflow cluster. */
+  /** The trailing new-shell / find / split cluster. */
   actions?: boolean;
   onSplit?: () => void;
   /** Terminal tabs are never splittable (§7.2), so the command greys out
@@ -212,7 +227,6 @@ export interface TabStripProps {
    * not focused still closes and splits by click, it just does not name a key
    * that would act on a different group. */
   focused?: boolean;
-  onTabActions?: () => void;
   /** Open a plain shell in this task as a new tab (§3). Absent on a strip that
    * has no task behind it — a design-system preview, say — where the button
    * would be chrome that does nothing. */
@@ -237,7 +251,6 @@ export function TabStrip({
   onSearch,
   searchDisabled = false,
   focused = true,
-  onTabActions,
   onNewShell,
   groupId,
   ref,
@@ -337,7 +350,6 @@ export function TabStrip({
                   onClick={onSplit}
                 />
               ) : null}
-              <IconButton icon={EllipsisVertical} label="Tab actions" size="sm" onClick={onTabActions} />
             </>
           ) : null}
           {trailing}

@@ -331,6 +331,195 @@ export function closeTab(layout: TaskLayout, tabId: string): TaskLayout {
   return replaceGroup(layout, group.id, group);
 }
 
+/**
+ * The tabs a bulk close would actually close.
+ *
+ * The three closes and the three predicates that offer them read their
+ * selection from here, so a menu item that is enabled and an operation that
+ * does nothing cannot disagree — the same reason `commandAvailable` is one
+ * function rather than a guard written twice. The agent tab is filtered out at
+ * this level rather than in each caller, so "except the agent" is stated once
+ * and holds for whatever selects tabs next.
+ */
+function closableTabs(
+  group: TabGroup,
+  shouldClose: (tab: TabState, index: number) => boolean,
+): TabState[] {
+  return group.tabs.filter(
+    (tab, index) => tab.descriptor.kind !== "agent" && shouldClose(tab, index),
+  );
+}
+
+/**
+ * Close every tab of a group that `shouldClose` selects, and settle what the
+ * close leaves behind.
+ *
+ * The bookkeeping `closeTab` does for one tab is the same for ten — an emptied
+ * group collapses unless it is the last one, and when it collapses out from
+ * under the caret focus falls to the group at its index, clamped, else the
+ * first — so it is written here once and the three bulk closes are predicates
+ * over it. Doing otherwise means three copies of a rule that has to agree with
+ * `closeTab` as well as with itself.
+ *
+ * `nextActiveId` is what the operation wants in front when it has an opinion,
+ * and it wins whenever that tab survives. With no opinion the group keeps the
+ * tab it already had in front if the close spared it, and otherwise falls to
+ * the first survivor: after a close that takes everything but the agent there
+ * is only one place focus can honestly go.
+ */
+function closeWhere(
+  layout: TaskLayout,
+  groupId: string,
+  shouldClose: (tab: TabState, index: number) => boolean,
+  nextActiveId?: string,
+): TaskLayout {
+  const groupIndex = layout.groups.findIndex((g) => g.id === groupId);
+  if (groupIndex === -1) return layout;
+  const group = layout.groups[groupIndex]!;
+
+  const doomed = new Set(closableTabs(group, shouldClose).map((t) => t.id));
+  if (doomed.size === 0) return layout;
+  const tabs = group.tabs.filter((t) => !doomed.has(t.id));
+
+  // As in `closeTab`: the last group stays even when empty, so the shell always
+  // has somewhere to put the next tab.
+  if (tabs.length === 0 && layout.groups.length > 1) {
+    const groups = layout.groups.filter((g) => g.id !== groupId);
+    const activeGroupId =
+      layout.activeGroupId === groupId
+        ? (groups[Math.min(groupIndex, groups.length - 1)]?.id ?? groups[0]!.id)
+        : layout.activeGroupId;
+    return { groups, activeGroupId };
+  }
+
+  const survives = (id: string) => tabs.some((t) => t.id === id);
+  const activeTabId =
+    nextActiveId && survives(nextActiveId)
+      ? nextActiveId
+      : survives(group.activeTabId)
+        ? group.activeTabId
+        : (tabs[0]?.id ?? "");
+  return replaceGroup(layout, groupId, { ...group, tabs, activeTabId });
+}
+
+/**
+ * Close everything in a tab's group but that tab — and the agent, which no
+ * close may take.
+ *
+ * The kept tab ends up in front whether or not it was before: the user named it
+ * as the one thing worth keeping, so leaving the caret on the agent because the
+ * agent happened to be active would answer a different question than the one
+ * asked. Returns the layout itself when there was nothing else to close.
+ */
+export function closeOthers(layout: TaskLayout, tabId: string): TaskLayout {
+  const found = findTab(layout, tabId);
+  if (!found) return layout;
+  return closeWhere(layout, found.group.id, (tab) => tab.id !== tabId, tabId);
+}
+
+/**
+ * Close the tabs after this one in its group, sparing the agent wherever it
+ * sits.
+ *
+ * Focus moves to the named tab only when the close took the tab that had it.
+ * Everything to the left is untouched, so a caret sitting there is looking at a
+ * tab that has not moved, and dragging it rightwards to the edge of the cut
+ * would be a jump the user did not ask for.
+ */
+export function closeToRight(layout: TaskLayout, tabId: string): TaskLayout {
+  const found = findTab(layout, tabId);
+  if (!found) return layout;
+  const toRight = (_tab: TabState, index: number) => index > found.tabIndex;
+  const closing = closableTabs(found.group, toRight);
+  const activeIsClosing = closing.some((t) => t.id === found.group.activeTabId);
+  return closeWhere(layout, found.group.id, toRight, activeIsClosing ? tabId : undefined);
+}
+
+/**
+ * Empty a group, except for the agent tab if it is in there.
+ *
+ * A group the agent is not in disappears the way it does under `closeTab`,
+ * unless it is the only group left — which then sits empty, holding the place
+ * the next tab opens into. The agent's group cannot empty, so it stays and the
+ * agent is what remains in front.
+ */
+export function closeAll(layout: TaskLayout, groupId: string): TaskLayout {
+  return closeWhere(layout, groupId, () => true);
+}
+
+/** Whether `closeOthers` would close anything — a group of just the tab and the
+ * agent has nothing for it to do. */
+export function canCloseOthers(layout: TaskLayout, tabId: string): boolean {
+  const found = findTab(layout, tabId);
+  return found != null && closableTabs(found.group, (tab) => tab.id !== tabId).length > 0;
+}
+
+/** Whether `closeToRight` would close anything: false with nothing to the
+ * right, and false when the only thing there is the agent. */
+export function canCloseToRight(layout: TaskLayout, tabId: string): boolean {
+  const found = findTab(layout, tabId);
+  return (
+    found != null &&
+    closableTabs(found.group, (_tab, index) => index > found.tabIndex).length > 0
+  );
+}
+
+/** Whether `closeAll` would close anything — false for an unknown group, and
+ * false for one holding nothing but the agent. */
+export function canCloseAll(layout: TaskLayout, groupId: string): boolean {
+  const group = layout.groups.find((g) => g.id === groupId);
+  return group != null && closableTabs(group, () => true).length > 0;
+}
+
+/**
+ * Take a tab out of its group and into a new one beside it.
+ *
+ * The split of `splitTab` without the copy: the tab itself moves, keeping its
+ * id and its preview flag, which is why a terminal may go this way when it may
+ * not be split — the PTY ends up rendered in one place, just a different one.
+ * The new group inherits the source's width so the two halves start even, and
+ * takes focus, because a tab pulled out is the tab being looked at.
+ *
+ * Refused for the only tab of the only group: there would be nothing left on
+ * the other side of the splitter, so the result is the layout it started from
+ * with a group id churned for nothing. A source group emptied in any other case
+ * collapses, as it does under `moveTab`.
+ */
+export function moveTabToNewGroup(layout: TaskLayout, tabId: string): TaskLayout {
+  const found = findTab(layout, tabId);
+  if (!found || !canMoveTabToNewGroup(layout, tabId)) return layout;
+
+  const sourceTabs = found.group.tabs.filter((t) => t.id !== tabId);
+  const group = makeGroup([found.tab], found.tab.id, found.group.flex);
+
+  const groups = layout.groups.map((g) =>
+    g.id === found.group.id
+      ? {
+          ...g,
+          tabs: sourceTabs,
+          activeTabId:
+            g.activeTabId === tabId
+              ? (sourceTabs[Math.min(found.tabIndex, sourceTabs.length - 1)]?.id ?? "")
+              : g.activeTabId,
+        }
+      : g,
+  );
+  groups.splice(found.groupIndex + 1, 0, group);
+  // The insertion guarantees a second group, so an emptied source always goes.
+  return {
+    groups: sourceTabs.length === 0 ? groups.filter((g) => g.id !== found.group.id) : groups,
+    activeGroupId: group.id,
+  };
+}
+
+/** Whether `moveTabToNewGroup` would do anything: only the lone tab of a lone
+ * layout has nowhere to move to. */
+export function canMoveTabToNewGroup(layout: TaskLayout, tabId: string): boolean {
+  const found = findTab(layout, tabId);
+  if (!found) return false;
+  return layout.groups.length > 1 || found.group.tabs.length > 1;
+}
+
 /** Focus a tab, and the group holding it. */
 export function focusTab(layout: TaskLayout, tabId: string): TaskLayout {
   const found = findTab(layout, tabId);

@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import { test, expect, vi } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { TabArea, type TabAreaProps } from "./TabArea";
 import {
+  closeTab,
   createLayout,
   focusTab,
   openTab,
   resetIdCounter,
+  setGroupFlex,
   splitTab,
   type TaskLayout,
 } from "@/frontend/layout-store";
-import { chordHint, searchHint } from "@/frontend/keymap";
+import { capsFor, chordHint, searchHint } from "@/frontend/keymap";
 
 /**
  * The tab strip's gestures. A rendering test, so Vitest's, not `bun test`'s —
@@ -375,6 +377,157 @@ test("a press in a group's pane focuses the group, not only a press in its strip
   });
   expect(current.activeGroupId).toBe(right!.id);
   expect(dimmed(right!.id)).toBe(false);
+});
+
+/**
+ * A group's share is drawn relative to the others, never as a raw grow factor.
+ *
+ * Flexbox hands out only `sum(flex-grow)` of the free space when that sum is
+ * under 1, and nothing in the store keeps the sum at 1: a resize moves share
+ * within a pair and a collapse keeps what the survivor had. So a lone group
+ * left with 0.4 after its wide neighbour closed drew at 40% width with a blank
+ * strip beside it.
+ */
+test("group widths are normalised so a lone or under-summed group still fills the row", () => {
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, { kind: "diffAll" });
+  const changes = layout.groups[0]!.activeTabId!;
+  layout = splitTab(layout, changes);
+  layout = setGroupFlex(layout, [0.4, 1.6]);
+  layout = closeTab(layout, layout.groups[1]!.tabs[0]!.id); // the lone survivor keeps 0.4
+
+  const view = render(<Controlled initial={layout} />);
+  const grow = () =>
+    Array.from(view.container.querySelectorAll<HTMLElement>("[data-tab-column]")).map((el) =>
+      Number(el.style.flexGrow),
+    );
+  expect(grow()).toEqual([1]);
+
+  // Two groups whose shares sum to under 1 are drawn as their ratio of the row.
+  const under = setGroupFlex(splitTab(layout, layout.groups[0]!.tabs[1]!.id), [0.3, 0.1]);
+  view.rerender(<Controlled initial={under} key="under" />);
+  expect(grow()).toEqual([0.75, 0.25]);
+});
+
+// ── the context menu (TASK-91) ──────────────────────────────────────────────
+
+/** Right-click a tab and return the menu's rows by name. Radix portals the
+ * menu to `<body>`, so it is found by role rather than inside the container. */
+function openMenuOn(tab: HTMLElement): string[] {
+  fireEvent.contextMenu(tab, { clientX: 20, clientY: 15 });
+  return screen.getAllByRole("menuitem").map((el) => el.textContent?.trim() ?? "");
+}
+
+test("right-click opens the tab's menu, with the chord named only on the active tab", () => {
+  const area = mountArea(); // agent, Changes, History — History active
+  // The active tab of the focused group: its rows carry the chords.
+  const rows = openMenuOn(area.tabAt(2));
+  expect(rows[0]).toContain("Close");
+  expect(rows[0]).toContain(capsFor("close-tab").join(""));
+  // Labels with the trailing chord caps stripped, on whichever platform the
+  // runner reports — no label starts with a modifier's name.
+  const labels = rows.map((r) => r.replace(/(⌘|Ctrl).*$/, "").trim());
+  expect(labels).toEqual([
+    "Close",
+    "Close Others",
+    "Close to the Right",
+    "Close All",
+    "Split",
+    "Move to New Group",
+  ]);
+  fireEvent.keyDown(document.activeElement ?? document, { key: "Escape" });
+
+  // A tab that is not the active one names no chord: the key would close
+  // History, not Changes.
+  const others = openMenuOn(area.tabAt(1));
+  expect(others[0]).toBe("Close");
+});
+
+test("the agent tab's Close is disabled, and Close to the Right is what is left for it", () => {
+  const area = mountArea();
+  openMenuOn(area.tabAt(0));
+  // Radix marks a disabled row with `data-disabled=""` and leaves the
+  // attribute off an enabled one.
+  const disabled = (name: RegExp) =>
+    screen.getByRole("menuitem", { name }).getAttribute("data-disabled") !== null;
+  expect(disabled(/^Close$/)).toBe(true);
+  // Nothing to its left, nothing it is; everything else is to its right.
+  expect(disabled(/^Close Others$/)).toBe(false);
+  expect(disabled(/^Close to the Right$/)).toBe(false);
+  // The agent tab is a terminal: no split.
+  expect(disabled(/^Split/)).toBe(true);
+});
+
+test("Close Others closes the rest and reports each closed tab, so a shell's PTY dies with it", () => {
+  resetIdCounter();
+  let layout = createLayout(); // the agent tab
+  layout = openTab(layout, { kind: "shell", ptyId: "pty-1" });
+  layout = openTab(layout, { kind: "diffAll" });
+  layout = openTab(layout, { kind: "history" });
+
+  const closed: string[] = [];
+  let current = layout;
+  function Observed() {
+    const [state, setState] = useState(layout);
+    current = state;
+    return (
+      <TabArea
+        layout={state}
+        onLayoutChange={setState}
+        renderPane={() => null}
+        onCloseTab={(tab) => closed.push(tab.key)}
+      />
+    );
+  }
+  const view = render(<Observed />);
+  const tabs = () => Array.from(view.container.querySelectorAll<HTMLElement>("[data-tab-id]"));
+
+  openMenuOn(tabs()[2]!); // Changes
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Close Others$/ }));
+
+  expect(current.groups[0]!.tabs.map((t) => t.key)).toEqual(["agent", "diffAll"]);
+  expect(current.groups[0]!.activeTabId).toBe(current.groups[0]!.tabs[1]!.id);
+  // The shell was reported (its PTY has to be killed); the history tab too,
+  // which the shell's owner ignores. The agent, never closed, is not.
+  expect(closed).toEqual(["shell:pty-1", "history"]);
+});
+
+test("Move to Other Group moves the tab across a split, and greys out where it is already open", () => {
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, { kind: "diffAll" });
+  layout = openTab(layout, { kind: "history" });
+  const changes = layout.groups[0]!.tabs[1]!;
+  layout = splitTab(layout, changes.id); // Changes is now in both groups
+
+  let current = layout;
+  function Observed() {
+    const [state, setState] = useState(layout);
+    current = state;
+    return <TabArea layout={state} onLayoutChange={setState} renderPane={() => null} />;
+  }
+  const view = render(<Observed />);
+  const leftTabs = () =>
+    Array.from(
+      view.container
+        .querySelector<HTMLElement>(`[data-tab-column="${current.groups[0]!.id}"]`)!
+        .querySelectorAll<HTMLElement>("[data-tab-id]"),
+    );
+
+  // Changes on the left: the right group already holds it.
+  openMenuOn(leftTabs()[1]!);
+  expect(
+    screen.getByRole("menuitem", { name: /^Move to Other Group$/ }).getAttribute("data-disabled"),
+  ).not.toBeNull();
+  fireEvent.keyDown(document.activeElement ?? document, { key: "Escape" });
+
+  // History on the left: free to go.
+  openMenuOn(leftTabs()[2]!);
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Move to Other Group$/ }));
+  expect(current.groups[0]!.tabs.map((t) => t.key)).toEqual(["agent", "diffAll"]);
+  expect(current.groups[1]!.tabs.map((t) => t.key)).toEqual(["diffAll", "history"]);
+  expect(current.activeGroupId).toBe(current.groups[1]!.id);
 });
 
 /**

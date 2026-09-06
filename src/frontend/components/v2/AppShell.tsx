@@ -120,7 +120,6 @@ export interface AppShellProps {
   tabArea?: (chrome: { leading: ReactNode }) => ReactNode;
   tabs?: ShellTab[];
   onSplit?: () => void;
-  onTabActions?: () => void;
   status?: StatusBarProps;
   /** The active tab's content. The shell gives it a bounded, non-scrolling box
    * — a terminal or a diff pane scrolls inside itself, never the page. The
@@ -359,7 +358,6 @@ export function AppShell({
   tabArea,
   tabs = [],
   onSplit,
-  onTabActions,
   status,
   children,
   explorerSections = [],
@@ -573,7 +571,6 @@ export function AppShell({
             <TabStrip
               tabs={tabs}
               onSplit={onSplit}
-              onTabActions={onTabActions}
               leading={sidebarToggle}
             />
             <div className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>

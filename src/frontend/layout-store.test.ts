@@ -13,6 +13,14 @@ import {
   openTab,
   pinTab,
   closeTab,
+  closeOthers,
+  closeToRight,
+  closeAll,
+  canCloseOthers,
+  canCloseToRight,
+  canCloseAll,
+  moveTabToNewGroup,
+  canMoveTabToNewGroup,
   focusTab,
   canSearch,
   canSplit,
@@ -571,6 +579,266 @@ test("closeTab does not mutate the layout it is given", () => {
   pure(base, (l) => closeTab(l, copyId));
   pure(base, (l) => closeTab(l, idOf(l, "file:a.ts")));
   pure(base, (l) => closeTab(l, agentId(l)));
+});
+
+// ── bulk closes ─────────────────────────────────────────────────────────────
+//
+// Three operations over one selection rule, so the menu item that offers one
+// and the operation behind it cannot disagree — and none of them may take the
+// agent tab, which `closeTab` already refuses.
+
+/** [agent, a.ts, b.ts, c.ts] in one group, c in front. */
+function fourTabs(): TaskLayout {
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, file("a.ts"));
+  layout = openTab(layout, file("b.ts"));
+  layout = openTab(layout, file("c.ts"));
+  return layout;
+}
+
+test("closeOthers keeps the named tab and the agent, and puts the named tab in front", () => {
+  const layout = fourTabs();
+  const bId = idOf(layout, "file:b.ts");
+  expect(activeTab(layout)?.key).toBe("file:c.ts");
+
+  const closed = closeOthers(layout, bId);
+  expect(keyGrid(closed)).toEqual([["agent", "file:b.ts"]]);
+  // In front even though the agent survived and the caret was elsewhere: the
+  // user named the one tab worth keeping.
+  expect(closed.groups[0]!.activeTabId).toBe(bId);
+  expect(closed.activeGroupId).toBe(layout.groups[0]!.id);
+});
+
+test("closeOthers on the agent tab itself closes everything else", () => {
+  const layout = fourTabs();
+  const id = agentId(layout);
+  const closed = closeOthers(layout, id);
+  expect(keyGrid(closed)).toEqual([["agent"]]);
+  expect(closed.groups[0]!.activeTabId).toBe(id);
+});
+
+test("closeOthers works per group and leaves the others alone", () => {
+  let layout = createLayout();
+  layout = openTab(layout, file("a.ts"));
+  layout = splitTab(layout, idOf(layout, "file:a.ts"));
+  layout = openTab(layout, commit("abc"));
+  layout = openTab(layout, history);
+  // g0: [agent, file:a.ts]   g1: [file:a.ts, commit:abc, history]
+  const copyId = layout.groups[1]!.tabs[0]!.id;
+
+  const closed = closeOthers(layout, copyId);
+  expect(keyGrid(closed)).toEqual([["agent", "file:a.ts"], ["file:a.ts"]]);
+  expect(closed.groups[1]!.activeTabId).toBe(copyId);
+});
+
+test("closeOthers is a no-op for an unknown id and when only the agent is left over", () => {
+  const layout = openTab(createLayout(), file("a.ts"));
+  expect(closeOthers(layout, "nope")).toBe(layout);
+  expect(closeOthers(layout, idOf(layout, "file:a.ts"))).toBe(layout);
+});
+
+test("closeToRight closes only what is to the right, and never the agent", () => {
+  let layout = fourTabs();
+  const groupId = layout.groups[0]!.id;
+  // The agent to the right of the cut, which is the case that has to survive.
+  layout = moveTab(layout, agentId(layout), groupId, 99);
+  expect(keyGrid(layout)).toEqual([["file:a.ts", "file:b.ts", "file:c.ts", "agent"]]);
+
+  const closed = closeToRight(layout, idOf(layout, "file:a.ts"));
+  expect(keyGrid(closed)).toEqual([["file:a.ts", "agent"]]);
+});
+
+test("closeToRight takes the caret only when the close took the active tab", () => {
+  const layout = fourTabs();
+  const aId = idOf(layout, "file:a.ts");
+
+  // c.ts is in front and is to the right, so focus lands on the named tab.
+  expect(activeTab(layout)?.key).toBe("file:c.ts");
+  const fromRight = closeToRight(layout, aId);
+  expect(keyGrid(fromRight)).toEqual([["agent", "file:a.ts"]]);
+  expect(fromRight.groups[0]!.activeTabId).toBe(aId);
+
+  // The agent is to the left and untouched, so the caret does not move to a.ts.
+  const onAgent = focusTab(layout, agentId(layout));
+  const fromLeft = closeToRight(onAgent, aId);
+  expect(fromLeft.groups[0]!.activeTabId).toBe(agentId(onAgent));
+});
+
+test("closeToRight is a no-op with nothing to the right, or only the agent there", () => {
+  let layout = fourTabs();
+  expect(closeToRight(layout, idOf(layout, "file:c.ts"))).toBe(layout);
+  expect(closeToRight(layout, "nope")).toBe(layout);
+
+  layout = moveTab(layout, agentId(layout), layout.groups[0]!.id, 99);
+  expect(closeToRight(layout, idOf(layout, "file:c.ts"))).toBe(layout);
+});
+
+test("closeAll leaves the agent's group holding the agent, in front", () => {
+  const layout = fourTabs();
+  const id = agentId(layout);
+  const closed = closeAll(layout, layout.groups[0]!.id);
+  expect(keyGrid(closed)).toEqual([["agent"]]);
+  expect(closed.groups[0]!.activeTabId).toBe(id);
+  expect(closed.activeGroupId).toBe(layout.groups[0]!.id);
+});
+
+test("closeAll on a second group removes it and moves activeGroupId", () => {
+  let layout = createLayout();
+  layout = openTab(layout, file("a.ts"));
+  layout = splitTab(layout, idOf(layout, "file:a.ts"));
+  layout = openTab(layout, history);
+  // g0: [agent, file:a.ts]   g1: [file:a.ts, history], and g1 is in front.
+  const firstGroupId = layout.groups[0]!.id;
+  const secondGroupId = layout.groups[1]!.id;
+  expect(layout.activeGroupId).toBe(secondGroupId);
+
+  const closed = closeAll(layout, secondGroupId);
+  expect(closed.groups).toHaveLength(1);
+  expect(keyGrid(closed)).toEqual([["agent", "file:a.ts"]]);
+  expect(closed.activeGroupId).toBe(firstGroupId);
+});
+
+test("closeAll on the last group empties it rather than removing it", () => {
+  // A group with no agent tab is never the only group by any route above, so
+  // this one is built by hand — but the rule is `closeTab`'s and holds here
+  // too: a layout with no groups has no valid active ids.
+  resetIdCounter();
+  let layout = createLayout();
+  layout = openTab(layout, file("a.ts"));
+  const group = layout.groups[0]!;
+  const agentless: TaskLayout = {
+    ...layout,
+    groups: [{ ...group, tabs: group.tabs.filter((t) => t.key !== "agent") }],
+  };
+
+  const closed = closeAll(agentless, group.id);
+  expect(closed.groups).toHaveLength(1);
+  expect(closed.groups[0]!.tabs).toEqual([]);
+  expect(closed.groups[0]!.activeTabId).toBe("");
+  expect(closed.activeGroupId).toBe(group.id);
+});
+
+test("closeAll is a no-op for an unknown group and for one holding only the agent", () => {
+  const layout = createLayout();
+  expect(closeAll(layout, "nope")).toBe(layout);
+  expect(closeAll(layout, layout.groups[0]!.id)).toBe(layout);
+});
+
+test("the can* predicates agree with the closes they offer", () => {
+  const layout = fourTabs();
+  const aId = idOf(layout, "file:a.ts");
+  const cId = idOf(layout, "file:c.ts");
+  const groupId = layout.groups[0]!.id;
+
+  expect(canCloseOthers(layout, aId)).toBe(true);
+  expect(canCloseToRight(layout, aId)).toBe(true);
+  expect(canCloseAll(layout, groupId)).toBe(true);
+  // Nothing to the right of the last tab.
+  expect(canCloseToRight(layout, cId)).toBe(false);
+  expect(canCloseToRight(layout, "nope")).toBe(false);
+  expect(canCloseOthers(layout, "nope")).toBe(false);
+  expect(canCloseAll(layout, "nope")).toBe(false);
+
+  // A group of the agent and one tab: nothing is "other", and nothing is left
+  // to close once the agent is spared.
+  const pair = openTab(createLayout(), file("a.ts"));
+  expect(canCloseOthers(pair, idOf(pair, "file:a.ts"))).toBe(false);
+  expect(canCloseOthers(pair, agentId(pair))).toBe(true);
+  expect(canCloseAll(pair, pair.groups[0]!.id)).toBe(true);
+
+  const alone = createLayout();
+  expect(canCloseOthers(alone, agentId(alone))).toBe(false);
+  expect(canCloseAll(alone, alone.groups[0]!.id)).toBe(false);
+
+  // And to the right of a tab, an agent alone is nothing to close.
+  const agentLast = moveTab(pair, agentId(pair), pair.groups[0]!.id, 99);
+  expect(canCloseToRight(agentLast, idOf(agentLast, "file:a.ts"))).toBe(false);
+});
+
+test("the bulk closes do not mutate the layout they are given", () => {
+  const base = fourTabs();
+  const groupId = base.groups[0]!.id;
+  pure(base, (l) => closeOthers(l, idOf(l, "file:b.ts")));
+  pure(base, (l) => closeOthers(l, agentId(l)));
+  pure(base, (l) => closeToRight(l, idOf(l, "file:a.ts")));
+  pure(base, (l) => closeAll(l, groupId));
+});
+
+// ── moveTabToNewGroup ───────────────────────────────────────────────────────
+
+test("moveTabToNewGroup puts the tab in a new group right after its own", () => {
+  let layout = createLayout();
+  layout = openTab(layout, file("a.ts"));
+  layout = openTab(layout, file("b.ts"));
+  layout = splitTab(layout, idOf(layout, "file:b.ts"));
+  layout = setGroupFlex(layout, [2, 3]);
+  // g0: [agent, file:a.ts, file:b.ts]   g1: [file:b.ts]
+  const aId = findTab(layout, layout.groups[0]!.tabs[1]!.id)!.tab.id;
+  const before = allTabs(layout).length;
+
+  const moved = moveTabToNewGroup(layout, aId);
+  expect(keyGrid(moved)).toEqual([["agent", "file:b.ts"], ["file:a.ts"], ["file:b.ts"]]);
+  // A move, not a copy: the same tab, once, and no more tabs than before.
+  expect(allTabs(moved)).toHaveLength(before);
+  expect(allTabs(moved).filter((t) => t.id === aId)).toHaveLength(1);
+  expect(moved.groups[1]!.tabs[0]!.id).toBe(aId);
+  // The new group inherits the source's width and takes focus.
+  expect(moved.groups[1]!.flex).toBe(2);
+  expect(moved.activeGroupId).toBe(moved.groups[1]!.id);
+  expect(moved.groups[1]!.activeTabId).toBe(aId);
+  // The source keeps its own active tab, which was not the one that left.
+  expect(moved.groups[0]!.activeTabId).toBe(moved.groups[0]!.tabs[1]!.id);
+});
+
+test("moveTabToNewGroup moves a shell tab, which splitTab refuses", () => {
+  let layout = createLayout();
+  layout = openTab(layout, shell("pty-1"));
+  const shellId = idOf(layout, "shell:pty-1");
+  // No copy is made, so the PTY is still rendered exactly once.
+  expect(canSplit(layout, shellId)).toBe(false);
+  expect(canMoveTabToNewGroup(layout, shellId)).toBe(true);
+
+  const moved = moveTabToNewGroup(layout, shellId);
+  expect(keyGrid(moved)).toEqual([["agent"], ["shell:pty-1"]]);
+  expect(moved.groups[1]!.tabs[0]!.id).toBe(shellId);
+});
+
+test("moveTabToNewGroup collapses a source group it empties", () => {
+  let layout = createLayout();
+  layout = openTab(layout, file("a.ts"));
+  layout = splitTab(layout, idOf(layout, "file:a.ts"));
+  const secondGroupId = layout.groups[1]!.id;
+  const copyId = layout.groups[1]!.tabs[0]!.id;
+
+  const moved = moveTabToNewGroup(layout, copyId);
+  expect(moved.groups).toHaveLength(2);
+  expect(keyGrid(moved)).toEqual([["agent", "file:a.ts"], ["file:a.ts"]]);
+  // The tab is the same one; the group around it is not.
+  expect(moved.groups[1]!.tabs[0]!.id).toBe(copyId);
+  expect(moved.groups[1]!.id).not.toBe(secondGroupId);
+  expect(moved.activeGroupId).toBe(moved.groups[1]!.id);
+});
+
+test("moveTabToNewGroup refuses the only tab of the only group, and unknown ids", () => {
+  const alone = createLayout();
+  expect(canMoveTabToNewGroup(alone, agentId(alone))).toBe(false);
+  expect(moveTabToNewGroup(alone, agentId(alone))).toBe(alone);
+  expect(canMoveTabToNewGroup(alone, "nope")).toBe(false);
+  expect(moveTabToNewGroup(alone, "nope")).toBe(alone);
+
+  // A second tab in the group is enough for there to be something left behind.
+  const pair = openTab(alone, file("a.ts"));
+  expect(canMoveTabToNewGroup(pair, agentId(pair))).toBe(true);
+});
+
+test("moveTabToNewGroup does not mutate the layout it is given", () => {
+  let base = createLayout();
+  base = openTab(base, file("a.ts"));
+  base = splitTab(base, idOf(base, "file:a.ts"));
+  const copyId = base.groups[1]!.tabs[0]!.id;
+  pure(base, (l) => moveTabToNewGroup(l, agentId(l)));
+  pure(base, (l) => moveTabToNewGroup(l, copyId));
 });
 
 // ── focusTab ────────────────────────────────────────────────────────────────

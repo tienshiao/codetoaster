@@ -10,12 +10,32 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  ArrowLeftToLine,
+  ArrowRightFromLine,
+  ArrowRightToLine,
+  CircleX,
+  Columns2,
+  Pin,
+  SquareSplitHorizontal,
+  SquareX,
+  X,
+} from "lucide-react";
+import {
+  allTabs,
+  canCloseAll,
+  canCloseOthers,
+  canCloseToRight,
+  canMoveTabToNewGroup,
   canSearch,
   canSplit,
+  closeAll,
+  closeOthers,
   closeTab,
+  closeToRight,
   focusTab,
   isTerminalTab,
   moveTab,
+  moveTabToNewGroup,
   pinTab,
   setGroupFlex,
   splitTab,
@@ -24,7 +44,9 @@ import {
   type TabState,
   type TaskLayout,
 } from "@/frontend/layout-store";
+import { capsFor } from "@/frontend/keymap";
 import { ResizeHandle } from "@/frontend/components/v2/ResizeHandle";
+import type { DropdownMenuItem } from "@/frontend/components/v2/DropdownMenu";
 import { Tab, TabStrip, type TabProps } from "@/frontend/components/v2/TabStrip";
 import { cn } from "@/frontend/lib/utils";
 import { dropIndexAt, moveIndexFor, resizeFlex, type TabBox } from "./drag";
@@ -57,8 +79,6 @@ export interface TabAreaProps {
   /** Chrome for the first strip only: the shell's sidebar toggle, which belongs
    * at the window's edge rather than following the active group. */
   leading?: ReactNode;
-  /** The overflow menu on a group's strip. */
-  onTabActions?: (group: TabGroup) => void;
   /** Open a plain shell in this task as a new tab (§3). The strip's `+`; absent
    * where there is no task to open one in. */
   onNewShell?: () => void;
@@ -138,7 +158,6 @@ export function TabArea({
   onLayoutChange,
   renderPane,
   leading,
-  onTabActions,
   onNewShell,
   onCloseTab,
   onSearchTab,
@@ -372,6 +391,122 @@ export function TabArea({
     ? layout.groups.flatMap((g) => g.tabs).find((t) => t.id === drag.tabId)
     : undefined;
 
+  // A close that may take several tabs at once — the menu's Close Others and
+  // kin. Every tab that left the layout is reported through `onCloseTab`, the
+  // way the X reports its one, so a shell among them has its PTY killed rather
+  // than lingering headless. Reported before the layout changes, as the X does.
+  const applyClose = (next: TaskLayout) => {
+    if (next === layout) return;
+    const kept = new Set(allTabs(next).map((t) => t.id));
+    for (const tab of allTabs(layout)) {
+      if (!kept.has(tab.id)) onCloseTab?.(tab);
+    }
+    onLayoutChange(next);
+  };
+
+  /**
+   * The tab's context menu: the VSCode set, each row a store operation and
+   * greyed out by the store's own predicate rather than a second guess at it.
+   *
+   * A chord is named only on the tab it would act on — the active tab of the
+   * focused group — for the same reason the strip's hints are: the chord
+   * closes or splits *that* tab, and naming it on any other would advertise a
+   * key that acts somewhere else.
+   *
+   * Under `singleGroup` the group rows are withheld entirely, as the Split
+   * button is: on a phone a second group is not a thing the device offers.
+   */
+  const menuFor = (tab: TabState, group: TabGroup, groupIndex: number): DropdownMenuItem[] => {
+    const closable = tab.descriptor.kind !== "agent";
+    const named = group.id === layout.activeGroupId && tab.id === group.activeTabId;
+    const keysFor = (id: string) => (named ? capsFor(id) : undefined);
+
+    const items: DropdownMenuItem[] = [
+      {
+        label: "Close",
+        icon: X,
+        keys: keysFor("close-tab"),
+        disabled: !closable,
+        title: closable ? undefined : "The agent tab is the task; close the task instead",
+        onSelect: () => applyClose(closeTab(layout, tab.id)),
+      },
+      {
+        label: "Close Others",
+        icon: CircleX,
+        disabled: !canCloseOthers(layout, tab.id),
+        onSelect: () => applyClose(closeOthers(layout, tab.id)),
+      },
+      {
+        label: "Close to the Right",
+        icon: ArrowRightFromLine,
+        disabled: !canCloseToRight(layout, tab.id),
+        onSelect: () => applyClose(closeToRight(layout, tab.id)),
+      },
+      {
+        label: "Close All",
+        icon: SquareX,
+        disabled: !canCloseAll(layout, group.id),
+        onSelect: () => applyClose(closeAll(layout, group.id)),
+      },
+    ];
+
+    if (!env?.singleGroup) {
+      const splittable = canSplit(layout, tab.id, env);
+      items.push(
+        { separator: true },
+        {
+          label: "Split",
+          icon: Columns2,
+          keys: keysFor("split"),
+          disabled: !splittable,
+          title: splittable ? undefined : "Not available for terminals",
+          onSelect: () => onLayoutChange(splitTab(layout, tab.id)),
+        },
+      );
+      // "Other" while there are two groups, since there is only one it could
+      // be; a side once there are more. `moveTab` refuses a group that already
+      // holds the key, so the row says so rather than doing nothing.
+      const two = layout.groups.length === 2;
+      const neighbours: [TabGroup | undefined, "left" | "right"][] = [
+        [layout.groups[groupIndex - 1], "left"],
+        [layout.groups[groupIndex + 1], "right"],
+      ];
+      for (const [other, side] of neighbours) {
+        if (!other) continue;
+        const holds = other.tabs.some((t) => t.key === tab.key);
+        items.push({
+          label: two ? "Move to Other Group" : side === "left" ? "Move to Left Group" : "Move to Right Group",
+          icon: side === "left" ? ArrowLeftToLine : ArrowRightToLine,
+          disabled: holds,
+          title: holds ? "Already open in that group" : undefined,
+          onSelect: () => onLayoutChange(moveTab(layout, tab.id, other.id, other.tabs.length)),
+        });
+      }
+      if (layout.groups.length === 1) {
+        items.push({
+          label: "Move to New Group",
+          icon: SquareSplitHorizontal,
+          disabled: !canMoveTabToNewGroup(layout, tab.id),
+          onSelect: () => onLayoutChange(moveTabToNewGroup(layout, tab.id)),
+        });
+      }
+    }
+
+    if (tab.preview) {
+      items.push({ separator: true }, { label: "Pin", icon: Pin, onSelect: () => onLayoutChange(pinTab(layout, tab.id)) });
+    }
+    return items;
+  };
+
+  // The stored flexes are shares, and they are drawn as shares — not handed to
+  // `flex-grow` as they are. When grow factors sum to less than 1, flexbox
+  // distributes only that fraction of the free space and leaves the rest
+  // empty, and the store makes no promise about the sum: a split copies its
+  // source's share, a resize moves share between a pair, and a collapse keeps
+  // whatever the survivors had. Close the wide half of a resized split and the
+  // lone group left behind is 0.4 of a row, with a blank strip beside it.
+  const totalFlex = layout.groups.reduce((sum, g) => sum + g.flex, 0) || 1;
+
   return (
     <div ref={rowRef} className={cn("flex min-h-0 min-w-0 flex-1", className)}>
       {layout.groups.map((group, groupIndex) => {
@@ -407,6 +542,7 @@ export function TabArea({
                 }
               : undefined,
             onPointerDown: startDrag(tab, group),
+            menu: menuFor(tab, group, groupIndex),
             dragging: drag?.tabId === tab.id,
             dropBefore: target === tabIndex,
             dropAfter: target === group.tabs.length && tabIndex === group.tabs.length - 1,
@@ -453,7 +589,7 @@ export function TabArea({
             )}
             <section
               data-tab-column={group.id}
-              style={{ flexGrow: group.flex, flexBasis: 0 }}
+              style={{ flexGrow: group.flex / totalFlex, flexBasis: 0 }}
               className={cn("flex min-w-0 flex-col", groupIndex > 0 && "border-l border-border")}
               // A press anywhere in the group — a tab, the empty stretch past
               // the last one, the action cluster, or the pane below — is a
@@ -490,7 +626,6 @@ export function TabArea({
                 }
                 onSearch={onSearchTab && active ? () => onSearchTab(active) : undefined}
                 searchDisabled={!searchable}
-                onTabActions={onTabActions ? () => onTabActions(group) : undefined}
                 onNewShell={onNewShell}
               />
               {/* Terminal tabs stay mounted and merely hide, which is the one
