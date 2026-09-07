@@ -1,4 +1,4 @@
-import * as React from "react"
+import { useMediaQuery } from "./use-media-query"
 
 /** Below this width the shell is a phone: one tab group, and both sidebars
  * float as sheets rather than holding a column (§9). In rem, because it is
@@ -18,40 +18,21 @@ export const MOBILE_BREAKPOINT_REM = 48
  */
 const QUERY = `not all and (min-width: ${MOBILE_BREAKPOINT_REM}rem)`
 
-/** The media query list, or null where there is nothing to ask — a server
- * render, or a test runner with no `matchMedia`. Not cached: a test swaps
- * `matchMedia` between cases, and the list has to come from the current one. */
-function mediaQuery(): MediaQueryList | null {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null
-  return window.matchMedia(QUERY)
-}
-
 /**
  * Whether the viewport is a phone's.
  *
- * Seeded synchronously rather than in an effect. The state used to start
- * undefined and be filled in after the first paint, so *every* client began
- * life saying "not mobile" — a phone painted the three-column desktop layout
- * for a frame before collapsing it. That was cosmetic while nothing but layout
- * read it; it is not any more. `Composer`'s `autoFocus` is decided at its first
- * render, and a first render that says desktop pops the soft keyboard before
- * the user has asked to type; `TaskShell`'s single-group rule is read the same
- * way, and would let the frame through in which a split is still offered.
+ * Seeded synchronously by `useMediaQuery`, and it matters here. The state used
+ * to start undefined and be filled in after the first paint, so *every* client
+ * began life saying "not mobile" — a phone painted the three-column desktop
+ * layout for a frame before collapsing it. That was cosmetic while nothing but
+ * layout read it; it is not any more. `Composer`'s `autoFocus` is decided at its
+ * first render, and a first render that says desktop pops the soft keyboard
+ * before the user has asked to type; `TaskShell`'s single-group rule is read the
+ * same way, and would let the frame through in which a split is still offered.
+ *
+ * Desktop where there is nothing to ask: a server render has no viewport, and
+ * guessing phone there would collapse the layout for everyone.
  */
 export function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = React.useState(() => mediaQuery()?.matches ?? false)
-
-  React.useEffect(() => {
-    const mql = mediaQuery()
-    if (!mql) return
-    const onChange = () => setIsMobile(mql.matches)
-    mql.addEventListener("change", onChange)
-    // The viewport can have moved between the first render and this effect —
-    // a rotation during hydration, or a window resized while the tab was in
-    // the background.
-    onChange()
-    return () => mql.removeEventListener("change", onChange)
-  }, [])
-
-  return isMobile
+  return useMediaQuery(QUERY, false)
 }

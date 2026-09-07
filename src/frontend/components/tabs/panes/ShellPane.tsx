@@ -7,10 +7,14 @@ import {
   type TerminalSize,
 } from "@/frontend/Terminal";
 import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
+import { TerminalDropFailure, useTerminalDrop } from "./use-terminal-drop";
 import { useTerminalSearch } from "@/frontend/hooks/use-terminal-search";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 
 export interface ShellPaneProps {
+  /** The task the shell belongs to — what a dropped file's upload is scoped
+   * under, since the route that stages it is the task's (TASK-96). */
+  taskId: string;
   /** The PTY this tab was opened onto. Unlike the agent's, it is named by the
    * tab itself: a task has one agent and however many shells, so the descriptor
    * is the only thing that knows which of them this is. */
@@ -54,6 +58,7 @@ export interface ShellPaneProps {
  * shell died is written.
  */
 export function ShellPane({
+  taskId,
   ptyId,
   visible,
   focusRequest = 0,
@@ -62,6 +67,7 @@ export function ShellPane({
   linkProvider,
 }: ShellPaneProps) {
   const { attach, detach, resize, send, isConnected } = usePty();
+  const drop = useTerminalDrop(taskId, ptyId);
   const terminalRef = useRef<TerminalHandle>(null);
   useFocusRequest(focusRequest, terminalRef);
   /** How the search bar tells a ⌘G typed in this pane from one typed elsewhere,
@@ -119,6 +125,7 @@ export function ShellPane({
         sendMessage={send}
         onSearchOpen={search.openSearch}
         searchOpen={search.open}
+        onFileDrop={drop.onFileDrop}
         linkProvider={linkProvider}
       />
       {searchAddon ? (
@@ -129,6 +136,9 @@ export function ShellPane({
           scope={root}
           active={active}
         />
+      ) : null}
+      {drop.failure ? (
+        <TerminalDropFailure failure={drop.failure} onDismiss={drop.dismiss} />
       ) : null}
     </div>
   );

@@ -15,8 +15,9 @@ import { StatusDot } from "@/frontend/components/v2/StatusDot";
 import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
 import { useProfiles } from "@/frontend/hooks/use-profiles";
 import { useTerminalSearch } from "@/frontend/hooks/use-terminal-search";
-import { cn } from "@/frontend/lib/utils";
+import { OverlayCard, OverlayCause } from "./OverlayCard";
 import { TerminalSearchBar } from "./TerminalSearchBar";
+import { TerminalDropFailure, useTerminalDrop } from "./use-terminal-drop";
 
 /**
  * The agent tab (§7.2): one terminal, bound to one task's PTY.
@@ -64,7 +65,6 @@ export interface AgentPaneProps {
   /** Whether this pane's group is the layout's active one. Only its search bar
    * answers a ⌘G typed outside every terminal — see `TerminalSearchBar`. */
   active?: boolean;
-  onFileDrop?: (files: File[]) => void;
   /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
    * This is the task's own terminal, so the ids the agent writes here are the
    * first place a link is wanted. */
@@ -77,7 +77,6 @@ export function AgentPane({
   focusRequest = 0,
   searchRequest = 0,
   active = false,
-  onFileDrop,
   linkProvider,
 }: AgentPaneProps) {
   const { tasks, resumeTask } = useTasks();
@@ -88,6 +87,7 @@ export function AgentPane({
 
   const task = tasks.find((t) => t.id === taskId);
   const ptyId = task?.ptyId ?? null;
+  const drop = useTerminalDrop(taskId, ptyId);
   const suspended = task?.lifecycle === "suspended";
   // A task whose checkout was evicted has a directory to rebuild before its
   // agent can start — a `worktree add`, the project's setup command, a cold
@@ -347,7 +347,7 @@ export function AgentPane({
           sendMessage={send}
           onSearchOpen={search.openSearch}
           searchOpen={search.open}
-          onFileDrop={onFileDrop}
+          onFileDrop={drop.onFileDrop}
           onRestoreEnd={handleRestoreEnd}
           linkProvider={linkProvider}
         />
@@ -359,6 +359,9 @@ export function AgentPane({
             scope={root}
             active={active}
           />
+        ) : null}
+        {drop.failure ? (
+          <TerminalDropFailure failure={drop.failure} onDismiss={drop.dismiss} />
         ) : null}
         <Overlay
           phase={phase}
@@ -394,11 +397,10 @@ export function AgentPane({
  * only half right — `Suspended` waits for an answer and is a state — but it
  * lands in the right place for the better reason.
  *
- * What it is not allowed to be is *off the system*, which it was: the only
- * `rounded-full` chrome in the app, over a `bg-pane/95` and a raw `shadow-lg`,
- * with a hand-set button height and a status dot rolled by hand. It floats;
- * it still uses the same radius, surface, shadow, control sizes and dot as
- * everything else.
+ * The pill it floats in is `OverlayCard`, shared with the drop failure, and the
+ * rest of that reasoning is written down there. What stays this component's own
+ * is the contents: the app's `StatusDot` and `Button` rather than a dot and a
+ * height rolled by hand, which is what this used to be.
  */
 function Overlay({
   phase,
@@ -418,40 +420,26 @@ function Overlay({
   if (phase === "live" && !resting) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center">
-      <div
-        className={cn(
-          "pointer-events-auto flex items-center gap-3 rounded-md border border-border",
-          "bg-pane py-1.5 pl-3 pr-1.5 text-sm text-muted-foreground shadow-overlay",
-        )}
-      >
-        {phase === "restoring" ? (
-          <>
-            <StatusDot state="busy" />
-            <span className="pr-2.5">
-              {restoringWorkspace ? "Restoring workspace…" : "Suspended — resuming…"}
-            </span>
-          </>
-        ) : (
-          <>
-            <span>
-              {phase === "failed" ? "Could not resume this task" : "Suspended"}
-              {failure ? (
-                // The cause, where the toast used to carry it. Truncated by the
-                // card rather than by us: a network error can be a paragraph,
-                // and the sentence in front of it is the part that must stay
-                // readable.
-                <span className="ml-2 max-w-[28ch] truncate align-bottom text-subtle-foreground">
-                  {failure}
-                </span>
-              ) : null}
-            </span>
-            <Button variant="outline" size="sm" onClick={onReopen}>
-              {phase === "failed" ? "Try again" : "Reopen"}
-            </Button>
-          </>
-        )}
-      </div>
-    </div>
+    <OverlayCard side="top">
+      {phase === "restoring" ? (
+        <>
+          <StatusDot state="busy" />
+          <span className="pr-2.5">
+            {restoringWorkspace ? "Restoring workspace…" : "Suspended — resuming…"}
+          </span>
+        </>
+      ) : (
+        <>
+          <span>
+            {phase === "failed" ? "Could not resume this task" : "Suspended"}
+            {/* The cause, where the toast used to carry it. */}
+            {failure ? <OverlayCause>{failure}</OverlayCause> : null}
+          </span>
+          <Button variant="outline" size="sm" onClick={onReopen}>
+            {phase === "failed" ? "Try again" : "Reopen"}
+          </Button>
+        </>
+      )}
+    </OverlayCard>
   );
 }

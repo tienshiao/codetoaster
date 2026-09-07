@@ -10,8 +10,8 @@ import { handleClientMessage } from "./lib/xtmux/client-messages";
 import { removePidFile } from "./cli/daemon";
 import { formatDuration } from "./cli/duration";
 import { taskRoutes } from "./api/tasks";
-import { readUploadedFiles, uploadRoutes } from "./api/uploads";
-import { ptyPathList, saveUploads, uploadsDir } from "./lib/uploads";
+import { uploadRoutes } from "./api/uploads";
+import { uploadsDir } from "./lib/uploads";
 import { profileRoutes } from "./api/profiles";
 import { hookRoutes } from "./api/hooks";
 import { diffRoutes } from "./api/diff";
@@ -241,27 +241,6 @@ export function startServer(options?: ServerOptions) {
           return new Response(session.getPreviewHTML(theme), {
             headers: { "Content-Type": "text/html; charset=utf-8" },
           });
-        },
-      }),
-
-      "/api/tasks/:id/upload": guardRoute({
-        async POST(req: Request & { params: { id: string } }) {
-          const session = taskManager.primaryPty(req.params.id);
-          if (!session) {
-            return Response.json({ error: "Task has no live terminal" }, { status: 404 });
-          }
-          const files = await readUploadedFiles(req);
-          if (files.length === 0) {
-            return Response.json({ error: "No files" }, { status: 400 });
-          }
-          // Same staging directory as the composer's attachments (api/uploads.ts),
-          // rather than a second copy of multipart-to-disk with its own traversal
-          // guard to keep right.
-          const paths = await saveUploads(files, uploadsRoot);
-          // Quoted where it has to be: a screenshot's name has spaces in it,
-          // and a raw join makes one path into several words (lib/uploads.ts).
-          session.write(ptyPathList(paths));
-          return Response.json({ paths });
         },
       }),
 

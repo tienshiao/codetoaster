@@ -13,6 +13,7 @@ import { ResizeHandle } from "./ResizeHandle";
 import { StatusBar, type StatusBarProps } from "./StatusBar";
 import { TabStrip, type TabProps } from "./TabStrip";
 import { TaskRow, type TaskRowProps } from "./TaskRow";
+import { TaskHoverCard, type TaskRowDetails } from "./TaskHoverCard";
 import { cn } from "@/frontend/lib/utils";
 
 /**
@@ -24,8 +25,17 @@ import { cn } from "@/frontend/lib/utils";
  * survive the outer one. The shell positions whatever it is given over the
  * row's trailing edge and reveals it on hover *and* on keyboard focus, so the
  * actions are never hover-only.
+ *
+ * `details` is what the row had to truncate away, drawn in a hover card beside
+ * the sidebar (TASK-97). Optional, and absent is not "nothing to say": a caller
+ * that has not built one simply gets a row with no card, which is what every
+ * row was before.
  */
-export type ShellTask = TaskRowProps & { id: string; actions?: ReactNode };
+export type ShellTask = TaskRowProps & {
+  id: string;
+  actions?: ReactNode;
+  details?: TaskRowDetails;
+};
 
 /** A project header plus the task rows under it. `open` and `onToggle` are the
  * caller's: the shell draws the list, it does not own which groups are open. */
@@ -211,16 +221,19 @@ function RowActions({ group = "row", children }: { group?: keyof typeof REVEALED
 }
 
 function TaskRows({ tasks }: { tasks: ShellTask[] }) {
-  return tasks.map(({ id, actions, ...task }) =>
-    actions ? (
-      <div key={id} className="group/row relative">
+  return tasks.map(({ id, actions, details, ...task }) => (
+    // The wrapper is what the actions are positioned against and what the hover
+    // card anchors to — the card cannot take `TaskRow` as its trigger, because
+    // Radix's `asChild` hands the child a ref and `TaskRow` forwards none. It
+    // costs no box: the list is `flex flex-col gap-px` and the row's own root is
+    // a `w-full` button, so a row with neither is laid out identically.
+    <TaskHoverCard key={id} details={details}>
+      <div className="group/row relative">
         <TaskRow {...task} />
-        <RowActions>{actions}</RowActions>
+        {actions ? <RowActions>{actions}</RowActions> : null}
       </div>
-    ) : (
-      <TaskRow key={id} {...task} />
-    ),
-  );
+    </TaskHoverCard>
+  ));
 }
 
 /**

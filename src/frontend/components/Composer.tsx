@@ -15,7 +15,7 @@ import {
   subscribeComposerRequest,
 } from "@/frontend/composer-request-store";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
-import { uploadStaged } from "@/frontend/hooks/use-upload-mutation";
+import { uploadStaged } from "@/frontend/lib/upload-api";
 import { useProfiles } from "@/frontend/hooks/use-profiles";
 import { COMPOSER_PROMPT_ID, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import {

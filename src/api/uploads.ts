@@ -1,4 +1,6 @@
-import { saveUploads } from "../lib/uploads";
+import { taskManager } from "../lib/tasks/manager";
+import { ptyPathList, saveUploads } from "../lib/uploads";
+import { guardRoute } from "./origin";
 
 /** Files read out of a multipart body under the field name the frontend uses.
  * Shared with the task-scoped upload in server.ts, which posts the same shape. */
@@ -29,5 +31,51 @@ export function uploadRoutes(root: string) {
         return Response.json({ paths: await saveUploads(files, root) });
       },
     },
+
+    // Files dropped on one of a task's terminals: staged the same way, then
+    // their paths typed into the PTY they were dropped on, quoted where they
+    // have to be — a screenshot's name has spaces in it, and a raw join makes
+    // one path into several words (lib/uploads.ts). The server types them, so
+    // the paths arrive exactly once whatever clients are attached.
+    "/api/tasks/:id/upload": guardRoute({
+      async POST(req: Request & { params: { id: string } }) {
+        const taskId = req.params.id;
+        // The agent's terminal, unless the drop names one of the task's shells
+        // (TASK-96): a shell tab's grid is as much a drop target as the
+        // agent's, and a path typed into the wrong one is a path the user has
+        // to carry over by hand. Looked up among *this task's* terminals rather
+        // than by id alone, so a client holding another task's PTY id cannot
+        // type into it from here.
+        const wanted = new URL(req.url).searchParams.get("pty");
+        const session =
+          wanted === null
+            ? taskManager.primaryPty(taskId)
+            : taskManager.taskPtyList(taskId).find((pty) => pty.id === wanted);
+        if (!session) {
+          return Response.json(
+            { error: wanted === null ? "Task has no live terminal" : "That terminal is gone" },
+            { status: 404 },
+          );
+        }
+        const files = await readUploadedFiles(req);
+        if (files.length === 0) {
+          return Response.json({ error: "No files" }, { status: 400 });
+        }
+        const paths = await saveUploads(files, root);
+        // Asked again after the write, because reading a multipart body and
+        // putting it on disk both take time and the terminal can die under
+        // them — and `Pty.write` no-ops on an exited PTY, so answering 200 here
+        // would report paths that were typed nowhere. The staged directory is
+        // harmless: nothing references it, and the harvester collects it by age.
+        if (session.exited) {
+          return Response.json({ error: "That terminal is gone" }, { status: 404 });
+        }
+        // A trailing space, the way a drop into Terminal.app or iTerm leaves
+        // one: it ends the token, so a second drop or the next word typed
+        // starts its own rather than gluing onto the last path.
+        session.write(ptyPathList(paths) + " ");
+        return Response.json({ paths });
+      },
+    }),
   };
 }

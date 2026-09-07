@@ -11,6 +11,8 @@ import {
   type SidebarState,
 } from "@/frontend/sidebar-store";
 import { meaningfulTitle, sessionDisplayNames } from "@/lib/xtmux/naming";
+import { ago } from "@/frontend/utils/taskTimes";
+import { detailsOf } from "@/frontend/task-details";
 import type { ArchivePreview, ProjectInfo, ProjectSettings, TaskInfo } from "@/lib/xtmux/types";
 import type { AppShellProps, ShellTask } from "@/frontend/components/v2/AppShell";
 import { Dialog } from "@/frontend/components/v2/Dialog";
@@ -31,18 +33,6 @@ import { BLANK_PROJECT, ProjectDialog } from "@/frontend/components/ProjectDialo
  *
  * `AppShell` stays layout-only, so this hands it props rather than markup.
  */
-
-/** Coarse and mono, the way the design wants a timestamp: the list is scanned,
- * not read. */
-function ago(timestamp: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - timestamp) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.round(hours / 24)}d`;
-}
 
 /**
  * The row's second line.
@@ -691,6 +681,10 @@ export function useTaskSidebar({
           archived: true,
           meta: ago(task.lastActiveAt, now),
           indent: false,
+          // An archived row gets a card too: it is the row whose title is
+          // hardest to place — no preview line under it, and the reason to be
+          // looking at it at all is usually "which one was that".
+          details: detailsOf(task, label, state, projectNames),
           actions: (
             <ArchivedRowActions taskId={task.id} label={label} onDelete={handleDeleteForGood} />
           ),
@@ -715,6 +709,7 @@ export function useTaskSidebar({
         // make an unmeasured checkout indistinguishable from no checkout.
         worktree: task.worktreeState !== "none",
         worktreeFacts: task.worktree,
+        details: detailsOf(task, label, state, projectNames),
         // Selecting is all the sidebar does, including for a suspended task:
         // `AgentPane` resumes one when it mounts, and a second resume path
         // here would race it (§7.5, AC #4).
@@ -735,6 +730,7 @@ export function useTaskSidebar({
   }, [
     visible,
     labels,
+    projectNames,
     selectedTaskId,
     onSelectTask,
     handleRename,

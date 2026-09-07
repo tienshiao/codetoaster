@@ -122,6 +122,7 @@ export function TabPane({
       // however many of these.
       return (
         <ShellPane
+          taskId={taskId}
           ptyId={descriptor.ptyId}
           visible={visible}
           focusRequest={focusRequest}

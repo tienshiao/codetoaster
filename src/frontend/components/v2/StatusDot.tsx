@@ -2,6 +2,12 @@ import { cn } from "@/frontend/lib/utils";
 
 export type TaskState = "busy" | "idle" | "attention" | "suspended" | "exited" | "error";
 
+/** How a state that was guessed from output rather than reported by the agent
+ * is qualified (TASK-89.4). Here because the row's dot tooltip and the hover
+ * card say it in the same words, and a phrase drawn twice is a phrase to keep
+ * in one place. */
+export const INFERRED_STATE_NOTE = "inferred from output";
+
 export interface StatusDotProps {
   state?: TaskState;
   /** Edge length in px. 7 is the task-list dot; the status bar uses 6. */

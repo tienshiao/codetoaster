@@ -48,6 +48,9 @@ export type { CommandPaletteProps, PaletteGroup, PaletteItem } from "./CommandPa
 export { TaskRow } from "./TaskRow";
 export type { TaskRowProps, TaskRowWorktreeFacts } from "./TaskRow";
 
+export { TaskHoverCard } from "./TaskHoverCard";
+export type { TaskHoverCardProps, TaskRowDetails } from "./TaskHoverCard";
+
 export { ProjectGroup } from "./ProjectGroup";
 export type { ProjectGroupProps } from "./ProjectGroup";
 

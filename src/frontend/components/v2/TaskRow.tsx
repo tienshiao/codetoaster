@@ -1,5 +1,5 @@
 import { Archive, ArrowUp, FilePen, GitBranch } from "lucide-react";
-import { StatusDot, type TaskState } from "./StatusDot";
+import { INFERRED_STATE_NOTE, StatusDot, type TaskState } from "./StatusDot";
 import { cn } from "@/frontend/lib/utils";
 
 /**
@@ -99,17 +99,41 @@ function worthShowing(facts: TaskRowWorktreeFacts): boolean {
  * status dot, and a list of thirty stays scannable only if that stays true.
  */
 function WorktreeLine({ facts }: { facts: TaskRowWorktreeFacts }) {
-  // `dirty: null` is "git could not be asked", which is exactly as absent as a
-  // zero is uninteresting — neither draws.
-  const dirty = facts.dirty != null && facts.dirty > 0 ? facts.dirty : null;
-  const unpushed = facts.unpushed > 0 ? facts.unpushed : null;
-
   return (
     <span className="flex items-center gap-1.5 text-micro text-subtle-foreground">
       {/* Always rendered, empty branch included: with `flex-1` it is also the
           spacer that holds the counts against the trailing edge, so they sit in
           the same column whether or not the branch is known. */}
       <span className="min-w-0 flex-1 truncate font-mono tracking-mono">{facts.branch ?? ""}</span>
+      <WorktreeMarks dirty={facts.dirty} unpushed={facts.unpushed} merged={facts.merged} />
+    </span>
+  );
+}
+
+/**
+ * The counts and the merged nudge, in the glyph language the row established.
+ *
+ * Shared with the hover card, which lays the branch out its own way and then
+ * draws exactly these: the card is where you land after scanning the row, and a
+ * mark that meant one thing in the list and another in the card would have to
+ * be learned twice.
+ */
+export function WorktreeMarks({
+  dirty: rawDirty,
+  unpushed: rawUnpushed,
+  merged,
+}: {
+  dirty: number | null | undefined;
+  unpushed: number | undefined;
+  merged: boolean | undefined;
+}) {
+  // `dirty: null` is "git could not be asked", which is exactly as absent as a
+  // zero is uninteresting — neither draws.
+  const dirty = rawDirty != null && rawDirty > 0 ? rawDirty : null;
+  const unpushed = rawUnpushed != null && rawUnpushed > 0 ? rawUnpushed : null;
+
+  return (
+    <>
       {dirty !== null ? (
         <span
           className="flex flex-none items-center gap-px font-mono tracking-mono"
@@ -130,7 +154,7 @@ function WorktreeLine({ facts }: { facts: TaskRowWorktreeFacts }) {
           {unpushed}
         </span>
       ) : null}
-      {facts.merged ? (
+      {merged ? (
         // The 'archive?' nudge (§5.6). One 10px glyph in the success tone —
         // enough to be found when scanning for finished work, not enough to
         // compete with the status dot. It is a suggestion, not a state: the
@@ -141,7 +165,7 @@ function WorktreeLine({ facts }: { facts: TaskRowWorktreeFacts }) {
           aria-label="merged into its base — archive?"
         />
       ) : null}
-    </span>
+    </>
   );
 }
 
@@ -200,7 +224,7 @@ export function TaskRow({
     >
       <StatusDot
         state={state}
-        title={hooks ? undefined : `${state} · inferred from output`}
+        title={hooks ? undefined : `${state} · ${INFERRED_STATE_NOTE}`}
         className={stacked ? "mt-[5px]" : undefined}
       />
       <span className="flex min-w-0 flex-1 flex-col gap-px">

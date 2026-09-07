@@ -747,3 +747,28 @@ html, body, #root {
   max-width: 100%;
   height: auto;
 }
+
+/* ─── Terminal ───────────────────────────────────────────────────────────────
+   xterm's DOM renderer draws a row at cols × cell width and then sets a
+   letter-spacing on the row container to absorb any difference between that
+   cell width and the width it measures a "W" at (`DomRenderer._setDefaultSpacing`).
+   The two are measured on different paths, and only one of them is the path
+   the rows are drawn on. The cell width comes from canvas `measureText`: the
+   font's linear advance, 9px for JetBrains Mono at 15px. The "W" is measured on
+   a DOM element that declares no letter-spacing, and in Chrome a run with none
+   declared advances narrower than the same run with one (8.9375px against 9px
+   here). The rows always carry an explicit letter-spacing, so they advance at
+   the linear width — and the correction (+0.0625px) lands on top of an advance
+   that was already right. Every cell is drawn that much too wide, and over 96
+   columns the last glyph is pushed 6px past the row's edge and cut off by its
+   `overflow: hidden` (TASK-95). Every bundled font, every size: 6–8px per 96
+   columns.
+
+   Declaring a letter-spacing on the measuring container puts its "W" on the
+   rows' shaping path, so the deviation it finds is the one the rows have. What
+   remains is xterm's own rounding — it reads the measurement off an integer
+   `offsetWidth` over 32 glyphs — which is under a pixel across a row at any of
+   the sizes offered. No `!important`: the container has no inline spacing. */
+.xterm-width-cache-measure-container {
+  letter-spacing: 0;
+}
