@@ -7,10 +7,12 @@
 import { beforeEach } from "bun:test";
 import { useFakeAgentBin } from "./agent-bin";
 import { useTestShell } from "./shell";
+import { useTestUploadsDir } from "./uploads";
 
 // Once, for anything that reads the variables at module scope.
 useFakeAgentBin();
 useTestShell();
+useTestUploadsDir();
 
 // And again before every test, because setting it once is not enough. Files
 // move this variable around: one `delete`s it in an `afterEach` so its
@@ -27,3 +29,9 @@ beforeEach(useFakeAgentBin);
 // harvester tests reach a shell through `openShell`, which reads the variable
 // itself, so nothing they pass could pin it. See `test/shell.ts`.
 beforeEach(useTestShell);
+
+// And the attachment staging root, which is the one of the three that would
+// *destroy* something: the harvester's uploads tier deletes any staging
+// directory no prompt in its database names, and a test's database names none
+// of the developer's. See `test/uploads.ts`.
+beforeEach(useTestUploadsDir);

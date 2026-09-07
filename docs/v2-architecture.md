@@ -372,6 +372,35 @@ agents to reap and no risk of a resumed task colliding with a still-running one.
 everything" into "restart suspends everything, resume on click" — and makes `bun --hot`
 development far less hostile.
 
+**A third tier collects attachments** (TASK-94). `POST /api/uploads` stages a composer
+attachment under `~/.codetoaster/uploads/<uuid>/` and the paths go into the prompt
+(§7.5), which is the only record that the file is in use — there is no back-link from a
+staging directory to a task. The staging root sits beside the database (`<db dir>/uploads`,
+so the default `data.db` gives the path above) rather than at a fixed place: the collector
+judges a directory by *this* database's prompts, and two daemons on two `--db`s over one
+root would each take the other's attachments as unreferenced. So the tier takes a
+directory when **both** hold:
+
+- **no task's `initial_prompt` names it**, at any lifecycle. That reference *is* the
+  link between an attachment's lifetime and its task's: a suspended or archived
+  conversation can still be resumed and re-read, so its files stay; a hard-deleted task
+  takes its prompt — and so its attachments — with it.
+- **it is older than `uploads_after`** (default 7 d, `--uploads-after`, `0` = never).
+  Two things need this. A directory written moments ago is named by nothing *yet*,
+  because the `POST /api/tasks` that will name it is still in flight. And the
+  task-scoped `POST /api/tasks/:id/upload` — a file dropped on a live terminal — types
+  its paths into the *PTY*, so no row will ever name it and age is the only thing that
+  can collect it at all. A drop older than the window whose agent wants to re-read it is
+  the accepted loss, the same bargain the evict tier strikes with a checkout.
+
+Only uuid-named directories directly under the staging root are ever removed, and the
+prompts are read lazily — a tick that finds nothing old enough costs one `readdir` and
+no table scan — and only the `initial_prompt` column when they are, since once one kept
+attachment has aged past the window that read happens on every tick. This tier is also
+why every sweep, `sweepWorktreeStatus` included, now guards its own window instead of
+leaning on a compound test in `tick`: that test widened for this tier, and the git the
+other two gate must not come back through this one's door.
+
 **Reopening a suspended task is two-phase**, because a resumed agent repaints a fresh
 screen that will not match the snapshot:
 
@@ -678,6 +707,15 @@ The composer itself:
   chip was removed (TASK-80) because Claude Code answers that better than a form
   does. The column, the `POST /api/tasks` field and the server's resolution of
   them all remain, so the API and the CLI can still set one.
+- **attachments** — files taken by button, drop or paste (TASK-93). A task is started
+  by a string, so they reach the agent as paths *inside* the prompt: `POST /api/uploads`
+  writes them under `~/.codetoaster/uploads/<uuid>/` and the paths are appended below
+  the user's text, where they cannot displace the title `titleFromPrompt` takes off the
+  first line. The upload runs at submit and not at attach, so a composer that is
+  abandoned writes nothing and there is no orphan sweep to own; a failure there stops
+  the create, because a task whose prompt names files that were never written is worse
+  than one that never started. Attachments alone are a valid submit — a pasted
+  screenshot and ⌘⏎ is a complete ask.
 
 **The left sidebar is the chat history, and the primary resume affordance.** v1's
 sidebar already does this job; what changes is what it has to survive. A cattle list

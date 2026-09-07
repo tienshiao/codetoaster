@@ -64,7 +64,8 @@ export async function cmdStart(options: DaemonOptions): Promise<void> {
         options.hostname ||
         options.allowedHosts?.length ||
         options.harvestAfterMs !== undefined ||
-        options.evictAfterMs !== undefined
+        options.evictAfterMs !== undefined ||
+        options.uploadsAfterMs !== undefined
       ) {
         console.log(
           "  Flags other than --port apply only to a new daemon; `codetoaster stop` first to restart with them.",
@@ -406,6 +407,8 @@ Options:
                          (default: 30m; 0 disables; env CODETOASTER_HARVEST_AFTER)
   --evict-after <dur>    Base grace before a suspended checkout is dropped
                          (default: 7d; 0 disables; env CODETOASTER_EVICT_AFTER)
+  --uploads-after <dur>  Keep an attachment no task's prompt names this long
+                         (default: 7d; 0 disables; env CODETOASTER_UPLOADS_AFTER)
   --version       Show version
   --help          Show this help message`);
 }

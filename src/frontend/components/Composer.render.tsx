@@ -574,3 +574,209 @@ describe("the caret on a phone", () => {
     expect(document.activeElement).toBe(promptBox());
   });
 });
+
+/**
+ * Attachments (TASK-93).
+ *
+ * The upload is stubbed at `fetch`, not at a module boundary, because what is
+ * under test is the *order*: the files go up first and the paths they came
+ * back on are what the prompt is built from, so a create that ran before the
+ * upload answered would still pass a mock of `uploadStaged`.
+ */
+describe("attachments", () => {
+  /** Every path the stub has answered with, in order — the composer appends
+   * these to the prompt, and the assertions below name them. */
+  let uploaded: File[][];
+
+  beforeEach(() => {
+    uploaded = [];
+    // Routed by URL: the outer `beforeEach` answers everything with the
+    // profile list, and `uploadStaged` reading that would get `paths:
+    // undefined` rather than a failure anyone could read.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/uploads") {
+          const files = ((init?.body as FormData).getAll("files") as File[]);
+          uploaded.push(files);
+          return Response.json({
+            paths: files.map((f) => `/home/me/.codetoaster/uploads/abc/${f.name}`),
+          });
+        }
+        return Response.json(profiles);
+      }),
+    );
+  });
+
+  function png(name: string, bytes = 2048): File {
+    return new File([new Uint8Array(bytes)], name, { type: "image/png" });
+  }
+
+  function attach(...files: File[]) {
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files } });
+  }
+
+  function chips(): string[] {
+    const list = screen.queryByRole("list", { name: "Attachments" });
+    return list ? Array.from(list.children).map((li) => li.textContent ?? "") : [];
+  }
+
+  function attachButton(): HTMLButtonElement {
+    return screen.getByRole("button", { name: "Attach files" }) as HTMLButtonElement;
+  }
+
+  test("a file attached by the button becomes a chip, and its path joins the prompt", async () => {
+    mount(<Composer />);
+    type("what is wrong here");
+    attach(png("shot.png"));
+
+    // Name and size, so a chip says which screenshot it is.
+    expect(chips()).toEqual(["shot.png2.0 KB"]);
+    // Nothing is written until submit: a composer the user walks away from
+    // leaves no files behind.
+    expect(uploaded).toEqual([]);
+
+    submitKey(screen.getByLabelText("Prompt"));
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    expect(uploaded).toHaveLength(1);
+    expect(uploaded[0]!.map((f) => f.name)).toEqual(["shot.png"]);
+    // Under the ask, never over it: `titleFromPrompt` takes the first non-empty
+    // line, and a prompt led by a path titles the task with one.
+    expect((stubs.createTask.mock.calls[0]![0] as CreateTaskOptions).prompt).toBe(
+      "what is wrong here\n\n/home/me/.codetoaster/uploads/abc/shot.png",
+    );
+  });
+
+  test("a chip can be taken back off", () => {
+    mount(<Composer />);
+    attach(png("a.png"), png("b.png"));
+    expect(chips()).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove a.png" }));
+
+    expect(chips()).toEqual(["b.png2.0 KB"]);
+  });
+
+  test("a pasted screenshot attaches, and a pasted paragraph still types", () => {
+    mount(<Composer />);
+    const box = screen.getByLabelText("Prompt");
+
+    fireEvent.paste(box, { clipboardData: { files: [png("Screenshot.png")] } });
+    expect(chips()).toEqual(["Screenshot.png2.0 KB"]);
+
+    // The other half of the same handler: a paste carrying no files is the
+    // browser's to handle, so the default is left alone.
+    const textPaste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(textPaste, "clipboardData", { value: { files: [] } });
+    box.dispatchEvent(textPaste);
+    expect(textPaste.defaultPrevented).toBe(false);
+  });
+
+  test("files dropped on the composer attach", () => {
+    const { container } = mount(<Composer />);
+    const zone = container.firstElementChild!;
+    const dataTransfer = { types: ["Files"], files: [png("dropped.png")] };
+
+    fireEvent.dragEnter(zone, { dataTransfer });
+    expect(screen.getByText("Drop files to attach")).toBeTruthy();
+
+    fireEvent.drop(zone, { dataTransfer });
+
+    expect(chips()).toEqual(["dropped.png2.0 KB"]);
+    // The overlay goes with the drag that raised it.
+    expect(screen.queryByText("Drop files to attach")).toBeNull();
+  });
+
+  test("an attachment on its own is a task, with the path as the whole prompt", async () => {
+    mount(<Composer />);
+    expect(startButton().disabled).toBe(true);
+
+    attach(png("shot.png"));
+
+    // "Look at this" is a complete ask, and the path is what the agent needs.
+    expect(startButton().disabled).toBe(false);
+    fireEvent.click(startButton());
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    expect((stubs.createTask.mock.calls[0]![0] as CreateTaskOptions).prompt).toBe(
+      "/home/me/.codetoaster/uploads/abc/shot.png",
+    );
+  });
+
+  test("a failed upload starts nothing, and leaves the prompt and the chips alone", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input) === "/api/uploads"
+          ? Response.json({ error: "Disk is full" }, { status: 500 })
+          : Response.json(profiles),
+      ),
+    );
+    mount(<Composer />);
+    type("what is wrong here");
+    attach(png("shot.png"));
+    submitKey(screen.getByLabelText("Prompt"));
+
+    // The server's own words, inline under the form — the same place a failed
+    // create reports, and for the same reason.
+    expect((await screen.findByRole("alert")).textContent).toBe("Disk is full");
+    // A task whose prompt names files that were never written is worse than no
+    // task at all, so the create never runs.
+    expect(stubs.createTask).not.toHaveBeenCalled();
+    // Everything the user assembled is still there, so the same ⌘⏎ retries it.
+    expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe(
+      "what is wrong here",
+    );
+    expect(chips()).toEqual(["shot.png2.0 KB"]);
+    expect(startButton().disabled).toBe(false);
+  });
+
+  test("a file offered while the upload is in flight is refused, not lost", async () => {
+    // The submit snapshots the list before awaiting the upload, so anything
+    // that joined it after would be uploaded by nobody and named in no prompt.
+    // Held open by hand, because the whole question is what the composer does
+    // in the window between the request going out and the answer coming back.
+    let release!: () => void;
+    const inFlight = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) !== "/api/uploads") return Response.json(profiles);
+        const files = (init?.body as FormData).getAll("files") as File[];
+        uploaded.push(files);
+        await inFlight;
+        return Response.json({
+          paths: files.map((f) => `/home/me/.codetoaster/uploads/abc/${f.name}`),
+        });
+      }),
+    );
+
+    mount(<Composer />);
+    type("what is wrong here");
+    attach(png("a.png"));
+    submitKey(screen.getByLabelText("Prompt"));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+
+    attach(png("b.png"));
+
+    // Refused rather than added, and the button says so before anyone tries.
+    expect(chips()).toEqual(["a.png2.0 KB"]);
+    expect(attachButton().disabled).toBe(true);
+
+    await act(async () => {
+      release();
+      await inFlight;
+    });
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    expect(uploaded).toHaveLength(1);
+    expect((stubs.createTask.mock.calls[0]![0] as CreateTaskOptions).prompt).toBe(
+      "what is wrong here\n\n/home/me/.codetoaster/uploads/abc/a.png",
+    );
+  });
+});

@@ -128,6 +128,7 @@ describe("daemonArgs", () => {
         allowedHosts: ["toaster.local", "toaster.lan"],
         harvestAfterMs: 2 * 60 * 60_000,
         evictAfterMs: 7 * 24 * 60 * 60_000,
+        uploadsAfterMs: 30 * 24 * 60 * 60_000,
       }),
     ).toEqual([
       "--port", "4100",
@@ -137,16 +138,20 @@ describe("daemonArgs", () => {
       "--allowed-host", "toaster.lan",
       "--harvest-after", "2h",
       "--evict-after", "7d",
+      "--uploads-after", "30d",
     ]);
   });
 
   test("disabling a tier survives the respawn", () => {
     // The falsy-check bug: `0` dropped here would hand the child the default
     // the user had just turned off.
-    expect(daemonArgs({ port: 4000, harvestAfterMs: 0, evictAfterMs: 0 })).toEqual([
+    expect(
+      daemonArgs({ port: 4000, harvestAfterMs: 0, evictAfterMs: 0, uploadsAfterMs: 0 }),
+    ).toEqual([
       "--port", "4000",
       "--harvest-after", "0",
       "--evict-after", "0",
+      "--uploads-after", "0",
     ]);
   });
 });

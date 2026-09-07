@@ -1,4 +1,5 @@
 import type { TaskRow } from "../db";
+import { collectUploads } from "../uploads";
 import type { TaskManager } from "./manager";
 
 // How often the guards are evaluated. Not the resolution of `harvest_after` —
@@ -25,6 +26,11 @@ const DEFAULT_HARVEST_AFTER_MS = THIRTY_MINUTES_MS;
  * risked is a checkout somebody may still be thinking about. */
 export const SEVEN_DAYS_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_EVICT_AFTER_MS = SEVEN_DAYS_MS;
+
+/** How long an attachment nobody names is kept (§5.5, TASK-94). The same seven
+ * days as a checkout's grace, and for the same reason: what is being reclaimed
+ * is disk, and what is risked is a file the user chose. */
+const DEFAULT_UPLOADS_AFTER_MS = SEVEN_DAYS_MS;
 
 /** The setup duration one unit of grace is worth.
  *
@@ -64,6 +70,16 @@ export interface HarvesterOptions {
   harvestAfterMs?: number;
   /** §5.6's base eviction grace; `undefined` is the default, `0` off. */
   evictAfterMs?: number;
+  /** How long an unreferenced attachment is kept; `undefined` is the default,
+   * `0` off. */
+  uploadsAfterMs?: number;
+  /** The staging directory the uploads tier collects: the daemon's
+   * `uploadsDir(dbPath)`, the same root its upload routes write to, so the
+   * collector is over the rows that name what the writer wrote. `undefined`
+   * falls back to `uploadsDir()` with no database, which is only right for a
+   * test — and this tier *deletes*, so `test/uploads.ts` pins that fallback at
+   * a temporary root for every test as well. */
+  uploadsRoot?: string;
 }
 
 // The harvester (docs/v2-architecture.md §5.5, §5.6). It decides *whether* a
@@ -75,15 +91,18 @@ export interface HarvesterOptions {
 // `shouldHarvest`, handed over so it can be asked once more from inside the
 // snapshot write, which is the one window this file cannot see.
 //
-// Two tiers, sharing one timer because they share one shutdown: a sweep may be
-// mid-write when the daemon is asked to stop, and `stop()` has to be able to
+// Three tiers, sharing one timer because they share one shutdown: a sweep may
+// be mid-write when the daemon is asked to stop, and `stop()` has to be able to
 // hand back whatever is still running. They are otherwise independent — over
-// different task lists, on different clocks, disabled separately — and the
-// order is the only thing that couples them: idle harvesting runs first, so a
-// task suspended by this very tick is one the evict tier can then consider. It
-// will not take it, because its grace is measured in days and it has been
-// suspended for microseconds, but the ordering is what makes that a fact about
-// the policy rather than an accident of the loop.
+// different lists, on different clocks, disabled separately — and the order is
+// the only thing that couples them. Idle harvesting runs first, so a task
+// suspended by this very tick is one the evict tier can then consider; it will
+// not take it, because its grace is measured in days and it has been suspended
+// for microseconds, but the ordering is what makes that a fact about the policy
+// rather than an accident of the loop. The uploads tier is the exception that
+// proves it: neither of the others writes anything it reads — eviction takes a
+// checkout, not a row — so its position in the sweep is not load-bearing at
+// all.
 //
 // Every guard here is a reason not to act, and that asymmetry is the whole
 // design (§9, risk 3). Failing to harvest an idle task costs a process sitting
@@ -95,6 +114,8 @@ export class Harvester {
   private timer?: Timer;
   private harvestAfterMs: number;
   private evictAfterMs: number;
+  private uploadsAfterMs: number;
+  private uploadsRoot?: string;
   // The tick still running, if there is one. The last guard spawns a `ps` per
   // terminal and waits up to two seconds for each, so a daemon with enough live
   // tasks can take longer than one interval to walk them — and two ticks over
@@ -114,6 +135,8 @@ export class Harvester {
   ) {
     this.harvestAfterMs = options.harvestAfterMs ?? DEFAULT_HARVEST_AFTER_MS;
     this.evictAfterMs = options.evictAfterMs ?? DEFAULT_EVICT_AFTER_MS;
+    this.uploadsAfterMs = options.uploadsAfterMs ?? DEFAULT_UPLOADS_AFTER_MS;
+    this.uploadsRoot = options.uploadsRoot;
   }
 
   /** How long a task has to have been idle before it is harvested. `0` — or
@@ -132,6 +155,14 @@ export class Harvester {
     this.evictAfterMs = ms;
   }
 
+  /** How long a staging directory nobody names is kept. `0` — or anything
+   * negative — turns the tier off: attachments accumulate and the disk is the
+   * user's problem, which is a reasonable thing to want from someone who
+   * resumes year-old conversations. */
+  setUploadsAfter(ms: number): void {
+    this.uploadsAfterMs = ms;
+  }
+
   /** The idle timeout in force, whether it was configured or defaulted. Read
    * by the daemon on the way up so what it logs is what the harvester will
    * actually use rather than what it was asked for. */
@@ -142,6 +173,11 @@ export class Harvester {
   /** The base eviction grace in force, before `graceFor` scales it. */
   get evictAfter(): number {
     return this.evictAfterMs;
+  }
+
+  /** The attachment retention window in force. */
+  get uploadsAfter(): number {
+    return this.uploadsAfterMs;
   }
 
   start(): void {
@@ -178,13 +214,13 @@ export class Harvester {
    * on a dead mount — is exactly the one whose neighbours still need looking
    * at. Exposed so tests can drive a sweep without waiting on the clock. */
   async tick(): Promise<void> {
-    // Both tiers off is the only thing that skips the sweep entirely. Testing
-    // `harvestAfterMs` alone — which is what this did while there was one tier
-    // — would let a user who turned off idle harvesting silently turn off
-    // eviction with it, and the two settings answer completely different
-    // questions: one is about processes on a machine with little memory, the
-    // other about disk on a machine with little of that.
-    if (this.harvestAfterMs <= 0 && this.evictAfterMs <= 0) return;
+    // No "every tier off" shortcut here, on purpose. Each sweep below guards
+    // its own window, and that is the only place a tier's enablement is
+    // written: a compound test up here used to restate it, and the restatement
+    // is what once let the worktree refresh ride along unguarded — the guard
+    // widened for a new tier, and a sweep that had been leaning on it came
+    // back for a user who had switched everything it belonged to off. With
+    // every tier off a tick costs four early returns and a `Date.now()`.
     if (this.inFlight) return;
     // Held, not just flagged, so `stop` has something to hand a shutdown.
     const sweep = this.sweep().finally(() => {
@@ -198,7 +234,39 @@ export class Harvester {
     const now = Date.now();
     await this.sweepIdle(now);
     await this.sweepEvict(now);
+    await this.sweepUploads(now);
     await this.sweepWorktreeStatus();
+  }
+
+  /** §5.5: give back the disk of attachments nothing is using any more
+   * (TASK-94).
+   *
+   * The thinnest of the three, and the only one that touches no task at all:
+   * the policy is entirely in `collectUploads`, and what belongs here is the
+   * decision to run it and the promise not to let it fail the sweep.
+   *
+   * `taskPrompts` is passed unevaluated. A staging directory is only weighed
+   * against the prompts once something has actually aged out of the window,
+   * which on a machine that is not accumulating attachments is never — so the
+   * usual cost of this tier is one `readdir`.
+   *
+   * Its place in the sweep is not load-bearing, unlike the ordering of the two
+   * above: what makes an attachment collectable is a prompt going away, and no
+   * tier here removes a row — eviction takes a checkout and leaves the task.
+   * The delete that does is the user's, and this tier sees it on whichever
+   * tick follows. */
+  private async sweepUploads(now: number): Promise<void> {
+    if (this.uploadsAfterMs <= 0) return;
+    try {
+      await collectUploads({
+        root: this.uploadsRoot,
+        olderThanMs: this.uploadsAfterMs,
+        now,
+        prompts: () => this.manager.taskPrompts(),
+      });
+    } catch (e) {
+      console.warn("Upload tier could not collect attachments:", e);
+    }
   }
 
   /** The backstop behind the card facts (§5.6, TASK-32).
@@ -214,10 +282,14 @@ export class Harvester {
    * the state the tick left it in rather than the one it started in.
    *
    * Guarded like the tiers above and for a different reason: they are switched
-   * off by a user who does not want them, while this is skipped only because
-   * `tick` returns early when both are off, and a sweep that ran anyway would
-   * make "harvesting off" mean "except for the git". */
+   * off by a user who does not want them, while this is skipped to keep
+   * "harvesting off" from meaning "except for the git". It rides along with
+   * the two tiers that touch checkouts, and not with the uploads tier, which
+   * has nothing to do with worktrees — so a user who turned harvesting and
+   * eviction off and left attachment collection on pays no git call per
+   * checkout for it. */
   private async sweepWorktreeStatus(): Promise<void> {
+    if (this.harvestAfterMs <= 0 && this.evictAfterMs <= 0) return;
     try {
       await this.manager.refreshStaleWorktreeStatuses();
     } catch (e) {

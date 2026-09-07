@@ -1,5 +1,6 @@
 import { useFakeAgentBin } from "./agent-bin";
 import { useTestShell } from "./shell";
+import { useTestUploadsDir } from "./uploads";
 
 // Testing Library's matchers on Vitest's `expect`, and the unmount between
 // tests that keeps one test's rendered tree from being found by the next.
@@ -21,5 +22,7 @@ afterEach(cleanup);
 // guard that would say so (`test-shell.test.ts`) never runs under this runner.
 useFakeAgentBin();
 useTestShell();
+useTestUploadsDir();
 beforeEach(useFakeAgentBin);
 beforeEach(useTestShell);
+beforeEach(useTestUploadsDir);

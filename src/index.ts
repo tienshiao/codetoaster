@@ -15,6 +15,7 @@ import type { DaemonOptions } from "./cli/daemon";
       db: { type: "string" },
       "harvest-after": { type: "string" },
       "evict-after": { type: "string" },
+      "uploads-after": { type: "string" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -100,6 +101,11 @@ import type { DaemonOptions } from "./cli/daemon";
           flag: "--evict-after",
           env: "CODETOASTER_EVICT_AFTER",
         }),
+        uploadsAfterMs: resolveDuration(
+          values["uploads-after"],
+          process.env.CODETOASTER_UPLOADS_AFTER,
+          { flag: "--uploads-after", env: "CODETOASTER_UPLOADS_AFTER" },
+        ),
       };
     } catch (e) {
       console.error((e as Error).message);

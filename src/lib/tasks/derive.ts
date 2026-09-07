@@ -52,6 +52,18 @@ export async function branchLabel(cwd: string): Promise<string | undefined> {
  * is written into (§7.3). */
 const TITLE_MAX = 60;
 
+/** A line that is exactly one staged attachment path: an absolute path whose
+ * last directory is a uuid — the shape `saveUploads` writes and nothing a user
+ * types — ending in a filename with an extension. The capture is the filename.
+ *
+ * The extension is what tells `Screenshot 2026-09-06 at 14.22.13.png` from
+ * `a.png is the broken one`: a filename may hold spaces, so a sentence that
+ * opens with a staged path has the same shape up to its last word. A staged
+ * file with no extension at all keeps the path as its title, which is the
+ * smaller loss. */
+const ATTACHMENT_LINE =
+  /^\/\S.*\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/([^/]+\.[A-Za-z0-9]{1,8})$/i;
+
 /**
  * A task's title, taken from the prompt that started it (§7.5).
  *
@@ -75,7 +87,14 @@ export function titleFromPrompt(prompt: string | undefined): string | undefined 
     .map((l) => l.trim())
     .find((l) => l.length > 0);
   if (!line) return undefined;
-  const collapsed = line.replace(/\s+/g, " ");
+  // A prompt that is nothing but attachments — a screenshot dropped in and
+  // sent with no words, which the composer allows — opens with a staging path
+  // (`…/uploads/<uuid>/Screenshot.png`, lib/uploads.ts). The path is the
+  // agent's business; the user's is the file's name, and a title cut from the
+  // path would be its uuid directory. Only that shape: a line that merely
+  // begins with a path ("/src/a.ts is broken") is still the user's sentence.
+  const attachment = ATTACHMENT_LINE.exec(line);
+  const collapsed = (attachment ? attachment[1]! : line).replace(/\s+/g, " ");
   if (collapsed.length <= TITLE_MAX) return collapsed;
   // Cut at the last word boundary inside the budget, so a title ends on a word
   // rather than mid-syllable. A single word longer than the budget has no

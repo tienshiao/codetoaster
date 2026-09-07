@@ -74,6 +74,26 @@ describe("titleFromPrompt", () => {
     expect(titleFromPrompt("   \n\t\n  ")).toBeUndefined();
   });
 
+  test("titles an attachment-only prompt with the file's name, not its staging path", () => {
+    // A screenshot dropped in and sent with no words. The prompt opens with
+    // the staged path, and a title cut from that at sixty characters is the
+    // uuid directory with the filename never reached.
+    const dir = "/Users/tma/.codetoaster/uploads/0f8a1b2c-3d4e-4f60-8a8b-9c0d1e2f3a4b";
+    expect(titleFromPrompt(`${dir}/Screenshot 2026-09-06 at 14.22.13.png`)).toBe(
+      "Screenshot 2026-09-06 at 14.22.13.png",
+    );
+    // Several: the first names the task, as the first line always does.
+    expect(titleFromPrompt(`${dir}/a.png\n${dir}/b.png`)).toBe("a.png");
+    // Only a line that is nothing but the path. One that begins with a path
+    // is still the user's sentence — told apart by the extension a filename
+    // ends in, since a filename may hold spaces too — and a path with no uuid
+    // directory is not ours.
+    expect(titleFromPrompt(`${dir}/a.png is the broken one`)).toBe(
+      `${dir}/a.png is the broken one`.slice(0, 60).trimEnd() + "…",
+    );
+    expect(titleFromPrompt("/Users/tma/notes.md")).toBe("/Users/tma/notes.md");
+  });
+
   test("cuts a long line at a word boundary", () => {
     const title = titleFromPrompt(
       "rewrite the commit graph lane assignment so that pagination stays deterministic",

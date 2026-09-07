@@ -10,6 +10,8 @@ import { handleClientMessage } from "./lib/xtmux/client-messages";
 import { removePidFile } from "./cli/daemon";
 import { formatDuration } from "./cli/duration";
 import { taskRoutes } from "./api/tasks";
+import { readUploadedFiles, uploadRoutes } from "./api/uploads";
+import { ptyPathList, saveUploads, uploadsDir } from "./lib/uploads";
 import { profileRoutes } from "./api/profiles";
 import { hookRoutes } from "./api/hooks";
 import { diffRoutes } from "./api/diff";
@@ -84,6 +86,10 @@ export interface ServerOptions {
    * the same set of projects. */
   harvestAfterMs?: number;
   evictAfterMs?: number;
+  /** How long an attachment nobody's prompt names is kept (§5.5, TASK-94).
+   * Per daemon for the same reason as the two above: it is a question about
+   * this machine's disk. */
+  uploadsAfterMs?: number;
 }
 
 export function startServer(options?: ServerOptions) {
@@ -93,6 +99,12 @@ export function startServer(options?: ServerOptions) {
   // Initialize database
   const dbPath = options?.dbPath ?? `${process.env.HOME ?? "."}/.codetoaster/data.db`;
   initDatabase(dbPath);
+  // Resolved once, beside the database, and handed to everything that writes
+  // to it or collects from it: the staging root is scoped to the database
+  // because the collector judges a directory by this database's prompts, and a
+  // second daemon on another `--db` over the same root would take the first
+  // one's attachments (lib/uploads.ts).
+  const uploadsRoot = uploadsDir(dbPath);
   // Before anything can create a task, and before `loadProjects` for no reason
   // beyond that. A throw here travels out of `startServer` and fails the
   // daemon's start naming the file and the profile — which is the point: a
@@ -143,21 +155,28 @@ export function startServer(options?: ServerOptions) {
   // After the reconciliation, so the first tick walks what is actually running
   // rather than the rows the previous daemon left behind — every one of which
   // is live, idle-looking and long past any timeout. On its own defaults of
-  // thirty minutes and seven days (§5.5, §5.6) unless the daemon was told
+  // thirty minutes and seven days twice over (§5.5, §5.6) unless the daemon was told
   // otherwise, which it can be now that a suspended task shows in the sidebar
   // and comes back on a click.
   const harvester = new Harvester(taskManager, {
     harvestAfterMs: options?.harvestAfterMs,
     evictAfterMs: options?.evictAfterMs,
+    uploadsAfterMs: options?.uploadsAfterMs,
+    uploadsRoot,
   });
-  // Logged only when something was overridden, and both values together: what a
+  // Logged only when something was overridden, and every value together: what a
   // user checking their launchd unit needs is confirmation that the daemon read
-  // what they wrote, and the other tier's number is the context that makes it
+  // what they wrote, and the other tiers' numbers are the context that makes it
   // legible. Silent on the defaults, because they are documented.
-  if (options?.harvestAfterMs !== undefined || options?.evictAfterMs !== undefined) {
+  if (
+    options?.harvestAfterMs !== undefined ||
+    options?.evictAfterMs !== undefined ||
+    options?.uploadsAfterMs !== undefined
+  ) {
     console.log(
       `Harvest after ${describeWindow(harvester.harvestAfter)}, ` +
-        `evict after ${describeWindow(harvester.evictAfter)}`,
+        `evict after ${describeWindow(harvester.evictAfter)}, ` +
+        `drop unused attachments after ${describeWindow(harvester.uploadsAfter)}`,
     );
   }
   harvester.start();
@@ -231,21 +250,17 @@ export function startServer(options?: ServerOptions) {
           if (!session) {
             return Response.json({ error: "Task has no live terminal" }, { status: 404 });
           }
-          const formData = await req.formData();
-          const files = formData.getAll("files") as File[];
+          const files = await readUploadedFiles(req);
           if (files.length === 0) {
             return Response.json({ error: "No files" }, { status: 400 });
           }
-          const paths: string[] = [];
-          for (const file of files) {
-            // basename, because the name comes off a multipart body: a client
-            // is free to send "../../.zshrc", and Bun.write would resolve it
-            // out of /tmp and overwrite the file it names.
-            const tmpPath = `/tmp/${crypto.randomUUID()}-${basename(file.name)}`;
-            await Bun.write(tmpPath, file);
-            paths.push(tmpPath);
-          }
-          session.write(paths.join(" "));
+          // Same staging directory as the composer's attachments (api/uploads.ts),
+          // rather than a second copy of multipart-to-disk with its own traversal
+          // guard to keep right.
+          const paths = await saveUploads(files, uploadsRoot);
+          // Quoted where it has to be: a screenshot's name has spaces in it,
+          // and a raw join makes one path into several words (lib/uploads.ts).
+          session.write(ptyPathList(paths));
           return Response.json({ paths });
         },
       }),
@@ -308,6 +323,7 @@ export function startServer(options?: ServerOptions) {
       // construction rather than by someone remembering (TASK-42).
       ...guardApiRoutes({
         ...taskRoutes,
+        ...uploadRoutes(uploadsRoot),
         ...profileRoutes,
         ...hookRoutes,
         ...diffRoutes,

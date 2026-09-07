@@ -2894,6 +2894,13 @@ export class TaskManager {
     return this.store.list({ lifecycle: "suspended" });
   }
 
+  /** Every task's opening prompt, at every lifecycle (§5.5, TASK-94) — what
+   * the uploads tier weighs a staging directory against. See
+   * `TaskStore.initialPrompts` for why it is one column and unfiltered. */
+  taskPrompts(): string[] {
+    return this.store.initialPrompts();
+  }
+
   /** Commit a task's working state to its WIP ref, and record it on the row
    * (§5.6).
    *

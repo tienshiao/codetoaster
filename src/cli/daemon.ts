@@ -139,6 +139,10 @@ export function daemonArgs(options: DaemonOptions): string[] {
     args.push("--evict-after", formatDuration(options.evictAfterMs));
   }
 
+  if (options.uploadsAfterMs !== undefined) {
+    args.push("--uploads-after", formatDuration(options.uploadsAfterMs));
+  }
+
   return args;
 }
 

@@ -1,13 +1,31 @@
-import { useCallback, useState, useSyncExternalStore, type KeyboardEvent } from "react";
-import { CornerDownLeft, Folder, GitBranch } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ClipboardEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
+import { CornerDownLeft, Folder, GitBranch, Paperclip, Upload } from "lucide-react";
 import { useTasks } from "@/frontend/TaskContext";
 import {
   getComposerRequest,
   subscribeComposerRequest,
 } from "@/frontend/composer-request-store";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
+import { uploadStaged } from "@/frontend/hooks/use-upload-mutation";
 import { useProfiles } from "@/frontend/hooks/use-profiles";
 import { COMPOSER_PROMPT_ID, useOpenTask } from "@/frontend/hooks/use-task-nav";
+import {
+  AttachmentStrip,
+  releaseAttachment,
+  toAttachment,
+  type Attachment,
+} from "@/frontend/components/AttachmentStrip";
+import { promptWithAttachments } from "@/frontend/lib/attachments";
+import { cn } from "@/frontend/lib/utils";
 import { Button } from "@/frontend/components/v2/Button";
 import { Checkbox } from "@/frontend/components/v2/Checkbox";
 import { KeyHint } from "@/frontend/components/v2/KeyHint";
@@ -96,6 +114,47 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   const [baseRef, setBaseRef] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Files held until submit (TASK-93). Nothing is written to disk while they
+  // sit here, so a composer the user walks away from leaves no orphans behind
+  // and there is no cleanup pass to own; the cost is that a large paste is
+  // uploaded at ⌘⏎ rather than in the background before it.
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Nested drag targets fire `dragleave` on the way *in* to a child, so the
+  // overlay has to count enters rather than trust the last event — the same
+  // arrangement the terminal's drop target uses.
+  const [dragDepth, setDragDepth] = useState(0);
+  const dragOver = dragDepth > 0;
+
+  // Every object URL still held when this unmounts, released. Through a ref
+  // because the effect must not re-run per attachment — a dependency on the
+  // list would revoke the URLs of the chips still on screen the moment the
+  // next one is added, and the thumbnails would go blank. `removeAttachment`
+  // reads the same ref for the current list.
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  useEffect(() => () => attachmentsRef.current.forEach(releaseAttachment), []);
+
+  const addFiles = useCallback(
+    (files: File[]) => {
+      // Nothing joins the list once the submit is under way: it snapshotted
+      // the attachments before awaiting the upload, so a file added now would
+      // be uploaded by nobody and named in no prompt — silently dropped.
+      if (submitting || files.length === 0) return;
+      setAttachments((current) => [...current, ...files.map(toAttachment)]);
+    },
+    [submitting],
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    // Released outside the updater: React may run one twice, and revoking the
+    // same object URL from a re-run is a side effect in a place that must not
+    // have any.
+    const going = attachmentsRef.current.find((a) => a.id === id);
+    if (going) releaseAttachment(going);
+    setAttachments((current) => current.filter((a) => a.id !== id));
+  }, []);
 
   // Two "adjust state when a prop changes" branches, and they answer different
   // questions.
@@ -190,15 +249,34 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   // row does not reflow as the project selection moves.
   const canWorktree = Boolean(project?.initialPath);
 
-  const canSubmit = prompt.trim().length > 0 && !submitting;
+  // Attachments alone are enough. Dropping a screenshot in and pressing ⌘⏎ is
+  // a complete ask — "look at this" — and the prompt it builds is the path,
+  // which is what the agent needs anyway.
+  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !submitting;
 
   const submit = useCallback(async () => {
-    const text = prompt.trim();
-    // An empty prompt is not a task. The button is disabled for it, and this
-    // guard is what makes the keystroke inert too.
-    if (!text || submitting) return;
+    const typed = prompt.trim();
+    // Nothing typed and nothing attached is not a task. The button is disabled
+    // for it, and this guard is what makes the keystroke inert too.
+    if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
+
+    // Before the create, because the prompt names the paths this answers with
+    // and a task started on paths that were never written is worse than one
+    // not started at all. A failure here leaves the prompt and the chips
+    // exactly as they are, so the same ⌘⏎ retries the whole thing.
+    let paths: string[] = [];
+    if (attachments.length > 0) {
+      try {
+        paths = await uploadStaged(attachments.map((a) => a.file));
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not upload the attachments");
+        setSubmitting(false);
+        return;
+      }
+    }
+    const text = promptWithAttachments(typed, paths);
 
     // Only what the user actually overrode goes on the wire: an absent field
     // means "whatever the project says", and `createTask` on the server is
@@ -260,8 +338,8 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
     // button must not take a second ⌘⏎.
     openTask(result.value.id, { tab: "agent" });
   }, [
-    prompt, submitting, createTask, project, model, profile, worktree, baseRef, canWorktree,
-    openTask,
+    prompt, canSubmit, createTask, project, model, profile, worktree, baseRef, canWorktree,
+    attachments, openTask,
   ]);
 
   const handleKeyDown = useCallback(
@@ -274,9 +352,71 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
     [submit],
   );
 
+  // A screenshot on the clipboard, which is the case attachments exist for:
+  // ⌘⇧4 then ⌘V, with nothing saved to disk in between. `preventDefault` only
+  // when there are files, because a paste carries both — copying an image out
+  // of a browser puts its markup on the clipboard beside it — and swallowing
+  // an ordinary text paste to catch the rare one is the worse trade.
+  const handlePaste = useCallback(
+    (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = Array.from(event.clipboardData?.files ?? []);
+      if (files.length === 0) return;
+      event.preventDefault();
+      addFiles(files);
+    },
+    [addFiles],
+  );
+
+  // Counted, not toggled: `dragenter` fires again for every child the pointer
+  // crosses and `dragleave` fires for the one it left, so a boolean flickers
+  // off as the drag moves over the textarea inside the drop zone. The count is
+  // the state — the overlay is `dragDepth > 0` — so there is no second flag to
+  // keep in step with it.
+  //
+  // Nothing is counted while the submit is in flight, because `addFiles` would
+  // refuse the drop and an overlay saying "drop files to attach" over a drop
+  // that is about to be ignored is the one lie worth avoiding.
+  const handleDragEnter = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (submitting || !event.dataTransfer.types.includes("Files")) return;
+      event.preventDefault();
+      setDragDepth((d) => d + 1);
+    },
+    [submitting],
+  );
+
+  const handleDragLeave = useCallback(() => {
+    // Unconditional, and floored rather than guarded: an "only if counted"
+    // test on the rendered value would read stale between two drag events
+    // that land before a commit — enter then leave on one swipe — and skip
+    // the decrement, leaving the overlay up. A leave nothing counted (a text
+    // drag) takes 0 to 0. There is no default to prevent on dragleave.
+    setDragDepth((d) => Math.max(0, d - 1));
+  }, []);
+
+  const handleDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!event.dataTransfer.types.includes("Files")) return;
+      // Without this the browser navigates the whole SPA to the dropped file,
+      // taking the prompt with it.
+      event.preventDefault();
+      setDragDepth(0);
+      addFiles(Array.from(event.dataTransfer.files));
+    },
+    [addFiles],
+  );
+
   return (
-    <div className="grid h-full place-items-center overflow-auto p-3 md:p-6">
-      <div className="flex w-full max-w-[720px] flex-col gap-2.5">
+    <div
+      className="grid h-full place-items-center overflow-auto p-3 md:p-6"
+      onDragEnter={handleDragEnter}
+      // Every one of them: a `dragover` that is not prevented is the browser
+      // declining the drop, and then `onDrop` never fires at all.
+      onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <div className="relative flex w-full max-w-[720px] flex-col gap-2.5">
         <Textarea
           // Addressed by id, and focused on mount — on a desktop. Arriving at
           // `/` there means the user is about to type, so the caret is placed.
@@ -296,6 +436,12 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
           aria-label="Prompt"
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+        />
+        <AttachmentStrip
+          attachments={attachments}
+          onRemove={removeAttachment}
+          disabled={submitting}
         />
         <div className="flex flex-wrap items-center gap-1.5">
           <Select
@@ -359,6 +505,37 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
               />
             </label>
           ) : null}
+          {/* Last of the option chips, and first of the things that are about
+              the prompt rather than about the task's settings — the strip it
+              fills sits directly above it. */}
+          <Button
+            variant="outline"
+            icon={Paperclip}
+            aria-label="Attach files"
+            title="Attach files or images"
+            // Off once the submit is under way: the file list was snapshotted
+            // before the upload, so anything picked now would go nowhere.
+            disabled={submitting}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Attach
+          </Button>
+          {/* Hidden, and driven by the button above: a bare file input cannot
+              be styled into the chip row, and `capture`-less `accept` would
+              only narrow what the user is allowed to attach. `value` is
+              cleared on every change so re-picking the same file fires one.
+              No name of its own: `display: none` keeps it out of the a11y tree
+              entirely, and the button above is what carries the label. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              addFiles(Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }}
+          />
           <div className="ml-auto flex items-center gap-2">
             {error ? (
               <span role="alert" className="text-xs text-destructive">
@@ -380,6 +557,22 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
             </Button>
           </div>
         </div>
+        {dragOver ? (
+          // `pointer-events-none`, so the overlay cannot become the drop
+          // target itself and take the `dragleave` that closes it.
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-0 z-10 grid place-items-center",
+              "rounded-md border border-dashed border-ring bg-pane/90",
+              "text-sm text-muted-foreground",
+            )}
+          >
+            <span className="flex items-center gap-2">
+              <Upload size={14} />
+              Drop files to attach
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

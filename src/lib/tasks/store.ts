@@ -127,6 +127,21 @@ export class TaskStore {
       .all(...(lifecycles ?? [])) as TaskRow[];
   }
 
+  /** Every task's opening prompt, at every lifecycle and in no order.
+   *
+   * One column, because the one reader — the harvester's uploads tier (§5.5,
+   * TASK-94) — is looking for staging paths inside the text and nothing else,
+   * and it asks on every tick that has a directory old enough to weigh, which
+   * once one referenced attachment has aged past the window is every tick for
+   * good. Unfiltered on purpose: an archived task's prompt names its
+   * attachments exactly as a live one's does, and an archived conversation is
+   * still there to be read. The rows this does not answer with are the ones a
+   * hard delete removed, which is what makes those attachments collectable. */
+  initialPrompts(): string[] {
+    return (this.db.query("SELECT initial_prompt FROM tasks").all() as { initial_prompt: string }[])
+      .map((row) => row.initial_prompt);
+  }
+
   /** Writes only the columns named. A field set to undefined is left alone;
    * null is a value, and clears the column. */
   update(id: string, fields: TaskUpdate): TaskRow | undefined {

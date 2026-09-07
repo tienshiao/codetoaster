@@ -1,6 +1,8 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import type { ServerWebSocket } from "bun";
 import { applyMigrations } from "../db";
 import { TaskStore } from "./store";
@@ -8,6 +10,7 @@ import { TaskManager } from "./manager";
 import { Harvester, SEVEN_DAYS_MS, THIRTY_MINUTES_MS, graceFor } from "./harvester";
 import type { ServerMessage, WebSocketData } from "../xtmux/types";
 import { taskDir, taskScrollbackPath } from "../agent/spawn";
+import { saveUploads } from "../uploads";
 import { waitFor } from "../../../test/wait";
 
 // A client socket that records what the server sent it.
@@ -43,6 +46,11 @@ function newManager(): { manager: TaskManager; store: TaskStore; harvester: Harv
   // something else. The test that pins the default down builds its own
   // harvester instead.
   harvester.setHarvestAfter(THIRTY_MINUTES_MS);
+  // Off, because this tier *deletes* and its default root is the developer's
+  // own `~/.codetoaster/uploads` — a sweep from a test whose database holds
+  // none of those tasks' prompts would read every one of them as unreferenced.
+  // The tier's own tests below build a harvester pointed at a temporary root.
+  harvester.setUploadsAfter(0);
   return { manager, store: new TaskStore(db), harvester };
 }
 
@@ -627,16 +635,23 @@ describe("eviction grace", () => {
   });
 });
 
-describe("the two tiers are switched separately", () => {
-  /** Which task lists a sweep actually consults. The tiers are disabled by not
-   * doing the work, not by doing it and discarding the answer, so what is
-   * observable is whether they looked. */
+describe("the tiers are switched separately", () => {
+  /** Which work a sweep actually does. The tiers are disabled by not doing the
+   * work, not by doing it and discarding the answer, so what is observable is
+   * whether they looked. `worktree` is not a tier — it is the backstop that
+   * rides along with the other two, and the one thing here that costs a git
+   * call per checkout. */
   function watchLists(manager: TaskManager) {
-    const consulted = { live: false, suspended: false };
+    const consulted = { live: false, suspended: false, worktree: false };
     const liveTasks = manager.liveTasks.bind(manager);
     const suspendedTasks = manager.suspendedTasks.bind(manager);
+    const refresh = manager.refreshStaleWorktreeStatuses.bind(manager);
     (manager as any).liveTasks = () => { consulted.live = true; return liveTasks(); };
     (manager as any).suspendedTasks = () => { consulted.suspended = true; return suspendedTasks(); };
+    (manager as any).refreshStaleWorktreeStatuses = () => {
+      consulted.worktree = true;
+      return refresh();
+    };
     return consulted;
   }
 
@@ -666,14 +681,95 @@ describe("the two tiers are switched separately", () => {
     expect(consulted.suspended).toBe(false);
   });
 
-  test("both off is the only thing that skips the sweep entirely", async () => {
+  test("every tier off is the only thing that skips the sweep entirely", async () => {
     const { manager, harvester } = newManager();
     const consulted = watchLists(manager);
     harvester.setHarvestAfter(0);
     harvester.setEvictAfter(0);
+    harvester.setUploadsAfter(0);
 
     await harvester.tick();
 
-    expect(consulted).toEqual({ live: false, suspended: false });
+    expect(consulted).toEqual({ live: false, suspended: false, worktree: false });
+  });
+
+  // The uploads tier reaches no task list at all, so what says it ran is the
+  // directory it read. It is also the tier that made `tick`'s early return
+  // insufficient on its own: leaving the other two off used to be what stopped
+  // the git below, and now it has to stop it by itself.
+  test("collecting attachments does not restart the git the other tiers gate", async () => {
+    const { manager } = newManager();
+    const consulted = watchLists(manager);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-harvester-uploads-"));
+    const harvester = new Harvester(manager, {
+      harvestAfterMs: 0,
+      evictAfterMs: 0,
+      uploadsAfterMs: SEVEN_DAYS_MS,
+      uploadsRoot: root,
+    });
+
+    await harvester.tick();
+
+    // The sweep ran — `tick` no longer returns early — but nothing the user
+    // switched off came back with it.
+    expect(consulted).toEqual({ live: false, suspended: false, worktree: false });
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("collecting attachments", () => {
+  /** A staging directory as `saveUploads` leaves one, aged by hand: the window
+   * is measured off `mtime`, and a test cannot wait a week. */
+  async function staged(root: string, name: string, ageMs: number): Promise<string> {
+    const [file] = await saveUploads([new File(["x"], name)], root);
+    const dir = path.dirname(file!);
+    const when = new Date(Date.now() - ageMs);
+    fs.utimesSync(dir, when, when);
+    return dir;
+  }
+
+  function uploadsHarvester(manager: TaskManager, root: string): Harvester {
+    // The other two off, so what this asserts is this tier alone.
+    return new Harvester(manager, {
+      harvestAfterMs: 0,
+      evictAfterMs: 0,
+      uploadsAfterMs: SEVEN_DAYS_MS,
+      uploadsRoot: root,
+    });
+  }
+
+  test("takes what has aged out, and keeps what a task's prompt still names", async () => {
+    const { manager, store } = newManager();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-harvester-uploads-"));
+    const orphan = await staged(root, "orphan.png", 8 * 24 * 60 * 60_000);
+    const named = await staged(root, "named.png", 8 * 24 * 60 * 60_000);
+    // Archived on purpose: an archived conversation is still there to be read,
+    // so the files its opening turn points at are still in use.
+    store.create({
+      id: newTaskId(),
+      project_id: "general",
+      title: "what is wrong here",
+      initial_prompt: `what is wrong here\n\n${named}/named.png`,
+      repo_root: null,
+      cwd: "/tmp",
+      lifecycle: "archived",
+    });
+
+    await uploadsHarvester(manager, root).tick();
+
+    expect(fs.existsSync(orphan)).toBe(false);
+    expect(fs.existsSync(named)).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a staging root that cannot be read does not fail the sweep", async () => {
+    const { manager } = newManager();
+    // Never created. Nothing has ever been uploaded, which is the state the
+    // tier is being asked for rather than an error to report.
+    const root = path.join(os.tmpdir(), `codetoaster-absent-${crypto.randomUUID()}`);
+
+    await uploadsHarvester(manager, root).tick();
+
+    expect(fs.existsSync(root)).toBe(false);
   });
 });
