@@ -3,8 +3,9 @@ import { Terminal, type ILinkProvider } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
+import { ImageAddon } from "@xterm/addon-image";
 import { Upload } from "lucide-react";
-import { silenceTerminalQueries } from "./utils/terminal-queries";
+import { IMAGE_ADDON_OPTIONS, silenceTerminalQueries } from "./utils/terminal-queries";
 import { useTerminalTheme } from "./hooks/use-terminal-theme";
 import { playBellSound } from "./hooks/use-notification-sound";
 import {
@@ -392,6 +393,11 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       term.loadAddon(fitAddon);
       term.loadAddon(webLinksAddon);
       term.loadAddon(searchAddon);
+      // Inline images, configured in terminal-queries.ts beside the silencer.
+      // Loaded *before* it on purpose: xterm runs parser handlers newest-first,
+      // so the silencer registered after this wins over the addon's own DA1 and
+      // XTSMGRAPHICS replies and the server's answers are the only ones.
+      term.loadAddon(new ImageAddon(IMAGE_ADDON_OPTIONS));
       // The server's headless terminal answers DA, cursor-position and mode
       // queries for every viewer; this copy must not answer them too, or the
       // program reads a second reply as keystrokes.

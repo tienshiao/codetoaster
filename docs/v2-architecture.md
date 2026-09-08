@@ -273,6 +273,19 @@ key is simply `${clientId}:${ptyId}`.
 | { type: "activity" | "notification"; taskId: string; … }
 ```
 
+**Inline images** (TASK-98) ride the same two messages, but not as the bytes the
+program wrote. A sixel or iTerm inline image is lifted out of the PTY's output on the
+server before either side parses it (`lib/xtmux/image-stream.ts`), decoded far enough
+to be boxed into a whole number of cells against one canonical cell size, and sent to
+every viewer as an OSC 1337 with that cell box spelled out — so the browser's image
+addon gives it the same number of rows whatever font the viewer uses, and the headless
+terminal, handed a placeholder in its place, moves its cursor the way the addon does.
+Each placed image is remembered against a buffer marker, and `restore` (and the
+scrollback snapshot on disk, which is the same serialization) splices it back in at
+its row. The server also answers the queries a program sizes an image with — Primary
+DA advertising sixel, XTSMGRAPHICS, XTWINOPS 14/16/18 — from that canonical cell, and
+the browser stays silent on them (`frontend/utils/terminal-queries.ts`).
+
 Multi-client is untouched: two browsers on the same PTY are still two connections with
 independent `restore` and shared `stream`, which is what v1 already does — only the
 *within one client* fan-out disappears. If terminal splitting is ever allowed, this is

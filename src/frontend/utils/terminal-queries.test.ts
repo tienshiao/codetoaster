@@ -1,6 +1,7 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { Terminal } from "@xterm/headless";
-import { silenceTerminalQueries } from "./terminal-queries";
+import { ImageAddon } from "@xterm/addon-image";
+import { IMAGE_ADDON_OPTIONS, silenceTerminalQueries } from "./terminal-queries";
 
 // The headless build shares the browser's InputHandler, so what it answers is
 // what a client's xterm.js answers — and what the server now answers for it.
@@ -66,9 +67,65 @@ describe("silenceTerminalQueries", () => {
   });
 
   // Not answered by a plain terminal, so not in the set: every windowOptions
-  // flag is off by default. Pinned so that turning one on someday shows up
-  // here as a query the server would then have to answer too.
-  test("XTWINOPS grid size is not a query either side answers", async () => {
+  // flag is off by default here. The server answers 14, 16 and 18 from the
+  // cell it lays images out with (lib/xtmux/inline-images.ts); pinned so
+  // that turning a flag on in the browser someday shows up here as a second
+  // answer.
+  test("XTWINOPS grid size is not a query the browser answers", async () => {
     expect(await repliesTo(terminal(), "\x1b[18t")).toEqual([]);
+  });
+});
+
+// XTSMGRAPHICS is the one silenced query xterm does not answer itself, so it
+// has no business in QUERIES: that table's control case asserts a *plain*
+// terminal replies, and a plain one ignores this. The thing that answers is the
+// image addon, which is also the reason the client loads the addon first and
+// the silencer second — newest-first parser dispatch is what puts the silencer
+// in front of it. So the control case here is the addon, and both halves of
+// that ordering are worth pinning.
+describe("silenceTerminalQueries over the image addon", () => {
+  // The addon's `activate` only registers parser handlers and hooks the render
+  // event, so it runs headless — but `onRender` is a browser-terminal method
+  // the headless build does not have, and reaching it throws mid-activate.
+  // Standing in a no-op subscription is enough to let activate finish; nothing
+  // here renders an image, only asks the addon what size it would take.
+  function withImageAddon(options: ConstructorParameters<typeof ImageAddon>[0] = IMAGE_ADDON_OPTIONS): Terminal {
+    const term = terminal();
+    (term as unknown as { onRender: () => { dispose(): void } }).onRender = () => ({
+      dispose() {},
+    });
+    term.loadAddon(new ImageAddon(options) as Parameters<Terminal["loadAddon"]>[0]);
+    return term;
+  }
+
+  test("XTSMGRAPHICS is answered by the image addon", async () => {
+    const [reply] = await repliesTo(withImageAddon(), "\x1b[?2;1;0S");
+    expect(reply).toStartWith("\x1b[?2;0;");
+  });
+
+  test("XTSMGRAPHICS is silent with the helper installed after the addon", async () => {
+    const term = withImageAddon();
+    silenceTerminalQueries(term);
+    expect(await repliesTo(term, "\x1b[?2;1;0S")).toEqual([]);
+  });
+
+  // The addon's other reply channel, and the one no handler silences: with
+  // `enableSizeReports` on it sets the `windowOptions` flags for XTWINOPS
+  // 14/16/18, which the server already answers. So the options the app loads
+  // the addon with are pinned here rather than the addon's defaults.
+  test.each(["\x1b[14t", "\x1b[16t", "\x1b[18t"])(
+    "%p is not a query the browser answers with the image addon loaded",
+    async (query) => {
+      expect(await repliesTo(withImageAddon(), query)).toEqual([]);
+    },
+  );
+
+  // The control: the flag is what keeps them quiet, not the headless build. 14
+  // and 16 need a renderer to have a pixel size to report, so only 18 — the
+  // grid in cells — can be pinned from here.
+  test("XTWINOPS is answered once enableSizeReports is on", async () => {
+    const term = withImageAddon({ ...IMAGE_ADDON_OPTIONS, enableSizeReports: true });
+    const [reply] = await repliesTo(term, "\x1b[18t");
+    expect(reply).toStartWith("\x1b[8;");
   });
 });

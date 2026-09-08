@@ -36,10 +36,14 @@ function writesInto(pty: Pty): string[] {
 // the headless terminal answers — and then a Primary DA, which fish uses as
 // the terminator for the lot. Only the DA has to come back for fish to reach a
 // prompt; this is what every fish user's shell tab sat on (TASK-83).
+//
+// The Primary DA is the image addon's rather than xterm's own — VT220 with
+// sixel, charsets and ANSI colour — since TASK-98, which is how a program
+// finds out it may draw pictures here (inline-images.ts).
 const ASKED: Array<[name: string, query: string, bytes: number, reply: string]> = [
-  ["a Primary DA", "\\033[c", 7, "[?1;2c"],
+  ["a Primary DA", "\\033[c", 13, "[?62;4;9;22c"],
   ["a Secondary DA", "\\033[>c", 11, "[>0;276;0c"],
-  ["fish's opening burst", "\\033[?u\\033[>0q\\033]11;?\\033\\\\\\033P+q544e\\033\\\\\\033[0c", 7, "[?1;2c"],
+  ["fish's opening burst", "\\033[?u\\033[>0q\\033]11;?\\033\\\\\\033P+q544e\\033\\\\\\033[0c", 13, "[?62;4;9;22c"],
 ];
 
 test.each(ASKED)("%s is answered with nobody attached", async (_name, query, bytes, reply) => {

@@ -2,6 +2,7 @@ import type { Subprocess } from "bun";
 import { readlink } from "node:fs/promises";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { InlineImages } from "./inline-images";
 import type { ClientInfo, ServerMessage } from "./types";
 
 // Validate a client-reported terminal size. Messages are parsed from the wire,
@@ -42,6 +43,7 @@ export class Pty {
   private proc: Subprocess;
   private terminal: Terminal;
   private serializeAddon: SerializeAddon;
+  private images: InlineImages;
   // Keyed by connection, `${clientId}:${ptyId}` — the address a terminal view
   // has on the wire (docs/v2-architecture.md §5.3). A client shows any given
   // PTY at most once, so clientId alone would still be unique inside one PTY's
@@ -89,6 +91,13 @@ export class Pty {
     });
     this.serializeAddon = new SerializeAddon();
     this.terminal.loadAddon(this.serializeAddon);
+    // Images (TASK-98): lifted out of the output below before either side
+    // parses it, boxed into cells here, and asked about — Primary DA,
+    // XTSMGRAPHICS, XTWINOPS are what a program sends to learn whether and
+    // how big it may draw — so those answers come from here too, in the
+    // built-in Primary DA's place. Its replies take the same road into the
+    // PTY as the terminal's own, below.
+    this.images = new InlineImages(this.terminal, (reply) => this.write(reply));
 
     this.terminal.onTitleChange((title) => {
       this.title = title;
@@ -201,10 +210,13 @@ export class Pty {
         data: (_terminal, data) => {
           // Convert Uint8Array to string (stream: true buffers incomplete multi-byte sequences)
           const str = this.decoder.decode(data, { stream: true });
+          // An image in the output reaches the two sides as two different
+          // things (inline-images.ts); everything else reaches both as it is.
+          const { headless, clients } = this.images.stream.push(str);
           // Write to headless terminal (authoritative state)
-          this.terminal.write(str);
+          if (headless) this.terminal.write(headless);
           // Broadcast to all connected clients
-          this.broadcast({ type: "data", ptyId: this.id, data: str });
+          if (clients) this.broadcast({ type: "data", ptyId: this.id, data: clients });
           // Track activity
           if (!this.isActive) {
             this.isActive = true;
@@ -272,7 +284,7 @@ export class Pty {
    * Answering "" makes that hazard inert instead of fatal. */
   serialize(): string {
     if (this.disposed) return "";
-    return this.serializeAddon.serialize();
+    return this.images.serialize(this.serializeAddon);
   }
 
   /** Whether `serialize` still has a terminal behind it. The empty string above
@@ -377,6 +389,7 @@ export class Pty {
     // already-disposed terminal is not.
     if (!this.disposed) {
       this.disposed = true;
+      this.images.dispose();
       this.terminal.dispose();
     }
   }

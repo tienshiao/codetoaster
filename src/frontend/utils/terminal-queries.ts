@@ -13,13 +13,23 @@
  * not three.
  *
  * The set is xterm.js's own: every request its `InputHandler` answers through
- * a data event, which the headless build shares. Colour queries (OSC 4, 10, 11,
+ * a data event, which the headless build shares. XTSMGRAPHICS is the one entry
+ * xterm itself never answers — an addon does, the image addon, which reports
+ * the largest image it would accept in pixels derived from the browser's
+ * rendered cell size. The server answers it instead, from the canonical cell
+ * size it lays every image out with, so a program sizing an image asks one
+ * terminal and gets the dimensions the image will actually be given.
+ * Colour queries (OSC 4, 10, 11,
  * 12) are deliberately not here: the browser answers those from its theme, and
  * the headless terminal has no theme to answer from. So for colour the old
  * shape stands — two viewers answer twice, and nobody attached answers not at
- * all — until the server has a theme to answer with. XTWINOPS reports are not
- * here either, because neither side gives them: every `windowOptions` flag is
- * off by default and nothing here turns one on.
+ * all — until the server has a theme to answer with. XTWINOPS 14, 16 and 18 are
+ * not here either, and for a different reason again: the server answers them
+ * from the canonical cell it boxes images with (`lib/xtmux/inline-images.ts`),
+ * and the browser stays silent without a handler because every `windowOptions`
+ * flag is off unless something turns one on. The image addon is exactly that
+ * something, which is why `IMAGE_ADDON_OPTIONS` below loads it with
+ * `enableSizeReports: false`.
  *
  * A list, and one xterm owns the other half of: a query xterm starts answering
  * in an upgrade is answered by the server and by every viewer until it is added
@@ -32,6 +42,33 @@
  */
 
 import type { IDisposable, IParser } from "@xterm/xterm";
+import { IIP_SIZE_LIMIT, PIXEL_LIMIT } from "../../lib/xtmux/image-stream";
+
+/** How the image addon is loaded on every viewer. It lives beside the silencer
+ * because one of its options is part of the same bargain — who answers a
+ * terminal query — and because the test can then pin the configuration the app
+ * actually runs with. */
+export const IMAGE_ADDON_OPTIONS = {
+  // The addon otherwise turns the browser's XTWINOPS 14/16/18 reports on; the
+  // server answers those from the cell it boxes images with, and a second
+  // answer is read by the program as keystrokes.
+  enableSizeReports: false,
+  // Sixel stays off: a raw sixel never reaches this terminal. The server
+  // decodes every image out of the PTY's output and re-emits it as an IIP
+  // sequence carrying an explicit cell box, so the server's grid and every
+  // viewer agree on how many rows the image occupies — a viewer decoding sixel
+  // itself would size it from its own font instead, and the grids would drift.
+  sixelSupport: false,
+  iipSupport: true,
+  storageLimit: 32,
+  // The server refuses what these refuse, so a viewer never drops an image
+  // whose rows the server already counted. The pixel check the addon applies to
+  // the *resized* box uses the viewer's own cell, which may be up to about
+  // twice the server's 10x20 canonical cell in each direction, hence the
+  // headroom.
+  pixelLimit: PIXEL_LIMIT * 4,
+  iipSizeLimit: IIP_SIZE_LIMIT,
+} as const;
 
 const swallow = () => true;
 
@@ -52,6 +89,8 @@ export function silenceTerminalQueries(term: { parser: IParser }): IDisposable {
     // DECRQM, ANSI and DEC-private: CSI Ps $ p / CSI ? Ps $ p
     parser.registerCsiHandler({ intermediates: "$", final: "p" }, swallow),
     parser.registerCsiHandler({ prefix: "?", intermediates: "$", final: "p" }, swallow),
+    // XTSMGRAPHICS: CSI ? Pi ; Pa ; Pv S — answered by the image addon, not xterm
+    parser.registerCsiHandler({ prefix: "?", final: "S" }, swallow),
     // DECRQSS: DCS $ q Pt ST
     parser.registerDcsHandler({ intermediates: "$", final: "q" }, swallow),
   ];
