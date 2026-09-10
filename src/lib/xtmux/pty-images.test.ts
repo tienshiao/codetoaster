@@ -52,7 +52,12 @@ test("a sixel reaches an attached viewer as an inline image and moves the prompt
   pty.addClient(client("viewer", received));
 
   const rows = () => pty.serialize().replace(/\x1b\]1337;[^\x1b]*\x1b\\/g, "<img>");
-  expect(await waitFor(() => rows().includes("B"))).toBe(true);
+  // Wait for the image itself, not just B: the sixel is spliced into the
+  // serialized grid off the headless terminal's async writes, so B (printed
+  // after it) can land a poll ahead of the image's placeholder. Waiting only
+  // for B read the grid mid-render, which surfaced as a flake once suite
+  // ordering put a heavier test file just before this one.
+  expect(await waitFor(() => rows().includes("<img>") && rows().includes("B"))).toBe(true);
 
   // What the viewer got: the image as an OSC 1337 with the cell box, never
   // the sixel itself.
