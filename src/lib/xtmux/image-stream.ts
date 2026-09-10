@@ -156,7 +156,12 @@ export class ImageStream {
             both(this.abort() + c);
             i++;
           } else {
-            this.head += c;
+            // Params and intermediates before the final. The body is capped by
+            // `hold`, but this header is not, so a DCS whose final never comes
+            // (a flood of `;`) would grow it without bound: cap it the same
+            // way, and let `overflow` drop the sequence when it does terminate.
+            if (this.head.length > SEQUENCE_SIZE_LIMIT) this.overflow = true;
+            else this.head += c;
             i++;
           }
           break;
