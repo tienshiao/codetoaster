@@ -42,6 +42,7 @@ import {
 } from "../agent/hook-state";
 import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
+import { startTaskWatcher, type WatcherHandle } from "./watcher";
 import {
   applyWip,
   branchIsExpendable,
@@ -293,6 +294,19 @@ export class TaskManager {
    * is spawned identically whether or not anything ever called `setProfiles`. */
   private profiles = new ProfileRegistry(builtinProfiles());
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
+  // One checkout watcher per live task while a client is connected (TASK-103).
+  // The root is held alongside the handle because a task's checkout moves
+  // under it — `refreshCwd` rewrites cwd and repo_root when the agent cd's,
+  // `restoreTaskWorktree` rewrites worktree_path — and a watcher still pointed
+  // at the old directory reports nothing about the new one while looking
+  // perfectly healthy. Owned entirely by the reconcile below; nothing else
+  // writes it.
+  private watchers: Map<string, { root: string; handle: WatcherHandle; failedAt?: number }> =
+    new Map();
+  /** How long a watch that died stays dead before a reconcile tries again.
+   * Long enough that a persistent EMFILE does not restart a stream on every
+   * title repaint, short enough that a dropped one is back within a session. */
+  private static readonly WATCH_RETRY_MS = 30_000;
   // Which tasks have ever reported a hook, and the timers waiting to find out
   // (§9, risk 4). Both in memory on purpose: what they guard is a running
   // PTY's output activity, which is per-process by definition. A task with no
@@ -793,10 +807,12 @@ export class TaskManager {
 
   registerClient(clientId: string, ws: ServerWebSocket<WebSocketData>): void {
     this.connectedClients.set(clientId, ws);
+    this.reconcileWatchers();
   }
 
   unregisterClient(clientId: string): void {
     this.connectedClients.delete(clientId);
+    this.reconcileWatchers();
   }
 
   broadcastToAll(message: object): void {
@@ -826,6 +842,7 @@ export class TaskManager {
   /** The whole list — for a connect, or any change to which tasks exist. */
   broadcastTasks(): void {
     this.broadcastToAll(this.tasksSnapshot());
+    this.reconcileWatchers();
   }
 
   /** One row changed. Cheaper than a snapshot, and the reason the protocol has
@@ -833,6 +850,142 @@ export class TaskManager {
   broadcastTask(taskId: string): void {
     const info = this.taskInfo(taskId);
     if (info) this.broadcastToAll({ type: "task", task: info });
+    // The single-row reconcile, because this is a hot path: ~34 sites call it,
+    // among them `onTitleChange` — which fires per OSC sequence, undeduped and
+    // many a second under a busy agent — and a loop in `detachClient`. Whatever
+    // moved is this one row, and a row that has gone leaves a watcher only this
+    // can stop.
+    const row = this.store.get(taskId);
+    if (row) this.reconcileWatcher(row);
+    else this.stopWatcher(taskId);
+  }
+
+  // -------------------------------------------------------------- watchers
+
+  /**
+   * Bring the set of checkout watchers (TASK-103) into line with what should
+   * be watched: every live task with a checkout on disk, while at least one
+   * client is connected.
+   *
+   * Reconciled rather than started and stopped at each lifecycle site, because
+   * the sites are many — resume, suspend, evict, archive, delete, boot
+   * adoption — and one forgotten is a watcher leaked for the daemon's lifetime.
+   * Every one of them ends in a `broadcastTask` or `broadcastTasks`, which is
+   * where this hangs. Only the second of those reaches this method: the whole
+   * walk is a `SELECT *` over the live rows and a `stat` each, and
+   * `broadcastTask` fires per OSC title sequence, so it takes the single-row
+   * path in `reconcileWatcher` instead.
+   *
+   * The client condition is not an optimisation. A `changed` message has
+   * nobody to reach when no browser is attached, and a daemon left running
+   * over a large checkout should not hold an FSEvents stream per task for the
+   * hours between sessions to say so.
+   */
+  reconcileWatchers(): void {
+    const live = this.store.list({ lifecycle: "live" });
+    const liveIds = new Set(live.map((row) => row.id));
+    // Rows that are no longer live — or no longer rows at all, which is what a
+    // delete leaves — have nothing left to ask about, so they are stopped from
+    // the outside before the survivors reconcile themselves.
+    for (const taskId of [...this.watchers.keys()]) {
+      if (!liveIds.has(taskId)) this.stopWatcher(taskId);
+    }
+    for (const row of live) this.reconcileWatcher(row);
+  }
+
+  /**
+   * Where one task's watcher belongs, or null if it should have none.
+   *
+   * `repo_root` first, and that is the whole of the point: every route a batch
+   * invalidates resolves through `resolveTaskRoot`, which hands back
+   * `task.repo_root`, so the paths those routes speak are relative to the
+   * repository's toplevel. A project pointed at `repo/frontend` — which
+   * `initial_path` is explicitly allowed to be — has `cwd` there and
+   * `repo_root` at `repo`: a watcher on the cwd would report `src/a.ts` where
+   * the open file's query key holds `frontend/src/a.ts`, and would never see
+   * an edit under `repo/backend` at all. The fallbacks are for a task with no
+   * repository behind it, which has no route to disagree with.
+   */
+  private watchRootFor(row: TaskRow): string | null {
+    if (this.connectedClients.size === 0) return null;
+    if (row.lifecycle !== "live") return null;
+    const root = row.repo_root ?? row.worktree_path ?? row.cwd;
+    return fs.existsSync(root) ? root : null;
+  }
+
+  /**
+   * One row's watcher, brought into line: the O(1) path, one point lookup and
+   * one `stat`, which is what makes it safe to hang off `broadcastTask`.
+   */
+  private reconcileWatcher(row: TaskRow): void {
+    const wanted = this.watchRootFor(row);
+    const entry = this.watchers.get(row.id);
+    if (entry) {
+      if (wanted === null) {
+        this.stopWatcher(row.id);
+        return;
+      }
+      const retryDue =
+        entry.failedAt !== undefined &&
+        Date.now() - entry.failedAt >= TaskManager.WATCH_RETRY_MS;
+      // A watch on the right root that is still alive is left alone; the two
+      // reasons to replace one are that the root moved and that the stream
+      // died on it.
+      if (entry.root === wanted && !retryDue) return;
+      this.stopWatcher(row.id);
+    }
+    if (wanted === null) return;
+    this.startWatcher(row.id, wanted);
+  }
+
+  private startWatcher(taskId: string, root: string): void {
+    const handle = startTaskWatcher(
+      root,
+      (batch) => this.broadcastToAll({ type: "changed", taskId, ...batch }),
+      {
+        // A stream that died with its root still on disk — a transient EMFILE,
+        // an FSEvents stream dropped — used to disable refresh for the task
+        // until the daemon restarted, because the dead handle stayed in the map
+        // and every later reconcile saw it and moved on. Marking it instead is
+        // what makes the retry both possible and throttled: the next reconcile
+        // past the window restarts it, and the ones before — many a second
+        // under a busy agent's title repaints — neither restart nor log. A root
+        // that went with the stream fails `existsSync` and is simply stopped.
+        onError: (error) => {
+          // Identity guard: a stopped handle never reports, but an entry
+          // already replaced by a re-root must not be marked dead.
+          const entry = this.watchers.get(taskId);
+          if (entry?.handle === handle) entry.failedAt = Date.now();
+          console.error(`Task ${taskId}: checkout watch ended:`, error.message);
+        },
+      },
+    );
+    this.watchers.set(taskId, { root, handle });
+  }
+
+  private stopWatcher(taskId: string): void {
+    const entry = this.watchers.get(taskId);
+    if (!entry) return;
+    this.watchers.delete(taskId);
+    entry.handle.stop();
+  }
+
+  /** The tasks currently watched. For tests; the set is otherwise nobody's
+   * business but `reconcileWatchers`'. */
+  watchedTaskIds(): string[] {
+    return [...this.watchers.keys()];
+  }
+
+  /** The root each watcher is on, for the tests that care that it moved. */
+  watchedRoots(): Record<string, string> {
+    return Object.fromEntries([...this.watchers].map(([taskId, entry]) => [taskId, entry.root]));
+  }
+
+  /** Shutdown: the process is about to exit and would take the streams with
+   * it, but a watcher mid-settle would otherwise try to send on sockets that
+   * are closing. */
+  stopWatchers(): void {
+    for (const taskId of [...this.watchers.keys()]) this.stopWatcher(taskId);
   }
 
   // ------------------------------------------------------------------ tasks
@@ -1220,7 +1373,12 @@ export class TaskManager {
     pty.onActivityChange((_ptyId, active) => {
       // Recency is what the task list is ordered by, so it is worth a write —
       // but not a row broadcast, which is what the activity message is for.
-      if (active) this.store.update(taskId, { last_active_at: Date.now() });
+      // The same stamp rides that message as `at`, so a client can move the
+      // row without being sent one: the write below is otherwise invisible
+      // until the next full snapshot, which is how a busy task used to sink
+      // under shorter ones started after it (TASK-101).
+      const now = Date.now();
+      if (active) this.store.update(taskId, { last_active_at: now });
       // Degraded mode (§9, risk 4). An agent run with hooks disabled, or one
       // whose payloads a future version has changed, reports nothing — and a
       // task list that says `starting` forever is worse than v1's guess. So
@@ -1229,7 +1387,7 @@ export class TaskManager {
       // this goes back to being about recency alone, and never fights the
       // agent's own account of itself.
       if (!this.hookSeen.has(taskId)) this.inferState(taskId, active);
-      this.broadcastToAll({ type: "activity", taskId, active });
+      this.broadcastToAll({ type: "activity", taskId, active, ...(active ? { at: now } : {}) });
     });
     pty.onNotification((_ptyId, title, body) => {
       this.broadcastToAll({ type: "notification", taskId, title, body });
@@ -1254,6 +1412,14 @@ export class TaskManager {
    * shell and an agent both emitting would have each one's falling edge clear
    * the other's dot, so a build finishing would put out the light on an agent
    * still mid-turn.
+   *
+   * A row broadcast, though, on the rising edge — because between full
+   * snapshots that is the only carrier the recency stamp has (TASK-101). The
+   * write below is what the list is ordered by; without a `task` delta behind
+   * it, a build in a shell tab moved the task in the database and nowhere a
+   * user could see, until the next `tasks` snapshot happened along. It is safe
+   * where an `activity` frame would not be: a `task` delta says what the row is
+   * now, and has no falling edge to clear the agent's dot with.
    */
   private adoptShell(pty: Pty, taskId: string): void {
     pty.onExit(() => {
@@ -1264,7 +1430,9 @@ export class TaskManager {
       this.broadcastTask(taskId);
     });
     pty.onActivityChange((_ptyId, active) => {
-      if (active) this.store.update(taskId, { last_active_at: Date.now() });
+      if (!active) return;
+      this.store.update(taskId, { last_active_at: Date.now() });
+      this.broadcastTask(taskId);
     });
   }
 

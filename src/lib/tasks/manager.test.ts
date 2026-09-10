@@ -1265,3 +1265,149 @@ describe("shell tabs", () => {
     expect(manager.taskInfo("t1")!.shellPtyIds).toEqual([]);
   });
 });
+
+// TASK-103. A watcher is a real FSEvents stream per task, so what is pinned
+// here is not that files are noticed — `watcher.test.ts` does that — but that
+// the *set* of them tracks the tasks, and empties. Every leak here would
+// outlive the daemon's usefulness: a stream per task that was ever live.
+describe("checkout watchers", () => {
+  const dirs: string[] = [];
+  function checkout(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-watch-"));
+    dirs.push(dir);
+    return dir;
+  }
+
+  /** A live row with a checkout that exists, which is all `reconcileWatchers`
+   * reads: no process, no agent, nothing to spawn. */
+  function liveRow(store: TaskStore, id: string): string {
+    const cwd = checkout();
+    store.create({
+      id, project_id: "general", title: id, initial_prompt: "",
+      repo_root: cwd, cwd, lifecycle: "live",
+    });
+    return cwd;
+  }
+
+  afterEach(() => {
+    // Before the directories go, and before the file-level cleanup: a stream
+    // left open on a removed root is exactly the leak this block is about.
+    for (const m of managers) m.stopWatchers();
+    for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("nothing is watched until a client is connected", () => {
+    const { manager, store } = newManager();
+    liveRow(store, "w1");
+
+    // The task is live and its checkout is on disk, and still nothing watches
+    // it: a `changed` message with no socket to carry it is a stream held open
+    // for nobody (AC #6).
+    manager.reconcileWatchers();
+    expect(manager.watchedTaskIds()).toEqual([]);
+
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    expect(manager.watchedTaskIds()).toEqual(["w1"]);
+  });
+
+  test("the last client leaving takes the watchers with it", () => {
+    const { manager, store } = newManager();
+    liveRow(store, "w1");
+    const first = fakeClient("c1");
+    const second = fakeClient("c2");
+    manager.registerClient(first.id, first.ws);
+    manager.registerClient(second.id, second.ws);
+    expect(manager.watchedTaskIds()).toEqual(["w1"]);
+
+    // One of two browsers closing is not the end of anyone watching.
+    manager.unregisterClient(first.id);
+    expect(manager.watchedTaskIds()).toEqual(["w1"]);
+
+    manager.unregisterClient(second.id);
+    expect(manager.watchedTaskIds()).toEqual([]);
+  });
+
+  test("suspending a task stops watching its checkout", async () => {
+    const { manager, store } = newManager();
+    liveRow(store, "w1");
+    liveRow(store, "w2");
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    expect(manager.watchedTaskIds().sort()).toEqual(["w1", "w2"]);
+
+    // AC #5, through the ordinary door: `closeTask` is a suspend, it ends in a
+    // `broadcastTask`, and that is where the reconcile hangs — no lifecycle
+    // site has to remember to stop a watcher itself.
+    expect(await manager.closeTask("w1")).toBe(true);
+    expect(manager.watchedTaskIds()).toEqual(["w2"]);
+
+    // And deleting the other, which is the harder case: the row is gone, so
+    // there is nothing left to ask about it. `deleteTask` is the one lifecycle
+    // call that does not broadcast for itself — its route does, immediately
+    // after — so the reconcile arrives with that broadcast rather than from
+    // inside the delete.
+    expect(await manager.deleteTask("w2")).not.toBeNull();
+    manager.broadcastTasks();
+    expect(manager.watchedTaskIds()).toEqual([]);
+  });
+
+  test("a checkout that moves re-roots the watcher", () => {
+    const { manager, store } = newManager();
+    const before = liveRow(store, "w1");
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    expect(manager.watchedRoots()).toEqual({ w1: before });
+
+    // What `refreshCwd` does when the agent `cd`s out of the directory it was
+    // started in, and `restoreTaskWorktree` when a checkout is rebuilt: the row
+    // moves, and a watcher keyed on the task alone would keep the old stream —
+    // healthy, reporting a directory nobody is looking at, and blind to the one
+    // they are.
+    const after = checkout();
+    store.update("w1", { cwd: after, repo_root: after });
+    manager.broadcastTask("w1");
+    expect(manager.watchedRoots()).toEqual({ w1: after });
+  });
+
+  test("the single-row path stops a watcher when the row leaves live", () => {
+    const { manager, store } = newManager();
+    liveRow(store, "w1");
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    expect(manager.watchedTaskIds()).toEqual(["w1"]);
+
+    // `broadcastTask` is the hot path and does not walk the live rows, so the
+    // stopping has to come off the row it was handed.
+    store.update("w1", { lifecycle: "suspended" });
+    manager.broadcastTask("w1");
+    expect(manager.watchedTaskIds()).toEqual([]);
+  });
+
+  test("reconciling twice leaves one watcher, not two", () => {
+    const { manager, store } = newManager();
+    liveRow(store, "w1");
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+
+    // Idempotence is the whole reason this is a reconcile: it is called from
+    // `registerClient` and from both broadcast paths, so a busy task runs it
+    // many times a second, and a second stream per call would be a leak on the
+    // hot path rather than an edge case.
+    manager.reconcileWatchers();
+    manager.reconcileWatchers();
+    expect(manager.watchedTaskIds()).toEqual(["w1"]);
+  });
+
+  test("shutdown stops every watcher", () => {
+    const { manager, store } = newManager();
+    liveRow(store, "w1");
+    liveRow(store, "w2");
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    expect(manager.watchedTaskIds()).toHaveLength(2);
+
+    manager.stopWatchers();
+    expect(manager.watchedTaskIds()).toEqual([]);
+  });
+});

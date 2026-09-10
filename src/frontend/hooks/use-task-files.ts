@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { taskKeys } from "../query-keys";
 import type { FileContentResponse, FilesResponse } from "../types/file";
 
 async function fetchFiles(taskId: string): Promise<FilesResponse> {
@@ -23,14 +24,14 @@ async function fetchFileContent(taskId: string, filePath: string): Promise<FileC
 
 export function useTaskFiles(taskId: string) {
   return useQuery({
-    queryKey: ["tasks", taskId, "files"],
+    queryKey: taskKeys.files(taskId),
     queryFn: () => fetchFiles(taskId),
   });
 }
 
 export function useFileContent(taskId: string, filePath: string | null) {
   return useQuery({
-    queryKey: ["tasks", taskId, "file", filePath],
+    queryKey: taskKeys.file(taskId, filePath),
     queryFn: () => fetchFileContent(taskId, filePath!),
     enabled: filePath !== null,
   });

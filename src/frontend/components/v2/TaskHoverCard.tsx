@@ -1,10 +1,8 @@
 import { useState, type ReactNode } from "react";
-import { HoverCard } from "radix-ui";
 import { StatusDot, type TaskState } from "./StatusDot";
 import { WorktreeMarks } from "./TaskRow";
-import { useMediaQuery } from "@/frontend/hooks/use-media-query";
 import { absoluteTime, agoLabel } from "@/frontend/utils/taskTimes";
-import { cn } from "@/frontend/lib/utils";
+import { Fact, HoverCardShell } from "./HoverCardParts";
 
 /**
  * Everything a 240px row had to throw away (TASK-97).
@@ -77,69 +75,6 @@ export interface TaskHoverCardProps {
   /** Controlled open state. Only tests pass this; the pointer owns it in the
    * app. */
   open?: boolean;
-}
-
-/**
- * Long enough that dragging the pointer down the list, or flinging it across
- * the sidebar on the way somewhere else, opens nothing (AC #4). Short enough
- * that stopping on a row you meant to read does not feel like waiting.
- */
-const OPEN_DELAY = 400;
-
-/** Brief, and not zero: it is the grace period for a pointer that clips the
- * gap between the row and the card, and for one that drifts a pixel off a row
- * it is still reading. */
-const CLOSE_DELAY = 100;
-
-const CONTENT_CLASS = cn(
-  "z-50 flex w-72 flex-col gap-2 rounded-md border border-border bg-pane p-3",
-  "font-sans text-sm leading-ui tracking-ui text-foreground shadow-overlay",
-  // Display-only, and enforced rather than promised (AC #5). The card hangs
-  // over the pane beside the sidebar, where a click is meant for whatever is
-  // underneath it — a terminal, a diff — and an invisible sheet of glass over
-  // that would be a worse bug than the card is a feature. Nothing in here is
-  // interactive, so nothing is lost: the cost is that the card cannot be
-  // hovered onto to keep it open, which is why nothing in it is a control.
-  "pointer-events-none select-none",
-);
-
-/**
- * Whether this device has a pointer that can hover at all.
- *
- * `(hover: hover)` alone is not that question. It describes the *primary*
- * pointer, so a touchscreen laptop or an iPad with a trackpad matches it while
- * still delivering taps — which is the case that matters, because of Radix:
- * `HoverCard.Trigger` calls `preventDefault()` on `touchstart`, sensible for
- * the anchor it is normally wrapped around and ruinous around a task row,
- * because a prevented `touchstart` suppresses the emulated click and the tap
- * stops selecting the task. There is no way to opt out of that handler, so the
- * fix is not to mount the trigger at all.
- *
- * Hence the second half: any coarse pointer on the device disqualifies it, even
- * when a fine one is also attached. That deliberately loses the card on hybrids
- * where it would have worked with a mouse, and the standing rule is what allows
- * it — everything on the card is reachable elsewhere, and a tap that does
- * nothing is not.
- *
- * Nothing is lost on a phone either way: Radix already refuses to *open* on
- * touch (`excludeTouch`), so there the trigger was never anything but that one
- * side effect.
- */
-function useHoverPointer(): boolean {
-  const fine = useMediaQuery("(hover: hover) and (pointer: fine)", true);
-  const anyCoarse = useMediaQuery("(any-pointer: coarse)", false);
-  return fine && !anyCoarse;
-}
-
-/** One `dt`/`dd` pair of the fact block. The label column is fixed so the
- * values line up: this is read down the left edge. */
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex gap-2">
-      <dt className="w-[52px] flex-none text-subtle-foreground">{label}</dt>
-      <dd className="min-w-0 flex-1">{children}</dd>
-    </div>
-  );
 }
 
 /** A relative reading and an absolute one, in that order: the first answers
@@ -273,35 +208,18 @@ function Card({ details }: { details: TaskRowDetails }) {
  * no clicks and no focus, and it opens on a delay so that running the pointer
  * down the list opens nothing at all.
  *
- * Radix underneath, for the parts a floating panel is judged on and that are
- * tedious to get right by hand: the open/close delays with their grace area,
- * flipping and shifting to stay on screen, and a portal so the sidebar's own
- * `overflow-y-auto` does not clip it.
+ * The arrangement — the delays, the trigger, the portal, the panel — is
+ * `HoverCardShell`'s, shared with the commit card; this component is only the
+ * projection of a task onto it.
  */
 export function TaskHoverCard({ details, children, open }: TaskHoverCardProps) {
-  const hoverable = useHoverPointer();
-  // The row, and nothing around it — for a device that cannot hover, and for a
-  // row that was handed nothing to say. Everything the card would have said is
-  // reachable without it, which is the standing rule for a hover card and what
-  // makes leaving it out a choice rather than a loss.
-  if (!hoverable || !details) return <>{children}</>;
+  // The bare row for a task that was handed nothing to say. (The shell has the
+  // other reason for drawing one: a device that cannot hover.)
+  if (!details) return <>{children}</>;
 
   return (
-    <HoverCard.Root open={open} openDelay={OPEN_DELAY} closeDelay={CLOSE_DELAY}>
-      {/* `asChild`: the row stays the element the list lays out — nothing about
-          its box changes for having a card. */}
-      <HoverCard.Trigger asChild>{children}</HoverCard.Trigger>
-      <HoverCard.Portal>
-        <HoverCard.Content
-          side="right"
-          align="start"
-          sideOffset={6}
-          collisionPadding={8}
-          className={CONTENT_CLASS}
-        >
-          <Card details={details} />
-        </HoverCard.Content>
-      </HoverCard.Portal>
-    </HoverCard.Root>
+    <HoverCardShell open={open} card={<Card details={details} />}>
+      {children}
+    </HoverCardShell>
   );
 }

@@ -346,6 +346,7 @@ export function startServer(options?: ServerOptions) {
           // as long as the task exists. So the drain is awaited, and the 100ms
           // runs alongside it rather than after it.
           const drained = harvester.stop();
+          taskManager.stopWatchers();
           setTimeout(() => {
             // `finally`, so a tick that somehow rejected still lets the daemon
             // go: the pid file has to come off whatever the sweep did.

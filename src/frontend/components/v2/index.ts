@@ -48,6 +48,11 @@ export type { CommandPaletteProps, PaletteGroup, PaletteItem } from "./CommandPa
 export { TaskRow } from "./TaskRow";
 export type { TaskRowProps, TaskRowWorktreeFacts } from "./TaskRow";
 
+// The chrome the hover cards share — the arrangement and the fact block.
+// Exported because the git view's commit card is built from them too.
+export { Fact, HoverCardShell } from "./HoverCardParts";
+export type { HoverCardShellProps } from "./HoverCardParts";
+
 export { TaskHoverCard } from "./TaskHoverCard";
 export type { TaskHoverCardProps, TaskRowDetails } from "./TaskHoverCard";
 

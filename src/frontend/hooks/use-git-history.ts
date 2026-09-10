@@ -5,6 +5,7 @@ import { useGitRefs } from "./use-git-refs";
 import { useRefSets } from "../components/git/RefChip";
 import { useTasks } from "../TaskContext";
 import { queryClient } from "../query-client";
+import { gitKeys } from "../query-keys";
 import type { RefSets } from "../components/git/RefChip";
 import type { GitLogCommit } from "../types/git";
 
@@ -179,7 +180,7 @@ export function useGitHistory(
     prevRefsHashRef.current = { taskId, hash: refsHash };
     if (previous.taskId !== taskId) return;
     if (previous.hash !== undefined && refsHash !== undefined && previous.hash !== refsHash) {
-      queryClient.resetQueries({ queryKey: ["git-log", taskId] });
+      queryClient.resetQueries({ queryKey: gitKeys.log(taskId) });
       onResetRef.current?.();
     }
   }, [refsHash, taskId]);

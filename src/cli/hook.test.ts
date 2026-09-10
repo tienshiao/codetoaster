@@ -22,7 +22,17 @@ async function runHook(
     stdin: stdin === "never-closes" ? "pipe" : new TextEncoder().encode(stdin),
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, CODETOASTER_TASK_ID: undefined, CODETOASTER_PORT: undefined, ...env },
+    // All three cleared, not two: a test run from inside a CodeToaster task
+    // inherits the daemon's origin, and the hook prefers it to the port — so
+    // the fake daemon below would receive nothing while the real one got a
+    // stray payload.
+    env: {
+      ...process.env,
+      CODETOASTER_TASK_ID: undefined,
+      CODETOASTER_PORT: undefined,
+      CODETOASTER_ORIGIN: undefined,
+      ...env,
+    },
   });
   const [stdout, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),

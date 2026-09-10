@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { taskKeys } from "../query-keys";
 import type { BacklogResponse } from "../../types/backlog";
 
 async function fetchBacklog(taskId: string): Promise<BacklogResponse> {
@@ -22,7 +23,7 @@ async function fetchBacklog(taskId: string): Promise<BacklogResponse> {
  */
 export function useBacklog(taskId: string | null, options: { refetchInterval?: number | false } = {}) {
   return useQuery({
-    queryKey: ["tasks", taskId, "backlog"],
+    queryKey: taskKeys.backlog(taskId),
     queryFn: () => fetchBacklog(taskId!),
     enabled: taskId != null,
     refetchInterval: options.refetchInterval ?? false,

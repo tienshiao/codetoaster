@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import {
+  byRecency,
   groupByProject,
   selectTasks,
   taskMatchesFilter,
@@ -136,4 +137,31 @@ test("grouping preserves recency order inside a group", () => {
   const tasks = [task("newest"), task("older"), task("oldest")];
   const [group] = groupByProject(tasks, NO_NAMES);
   expect(group!.tasks.map((t) => t.id)).toEqual(["newest", "older", "oldest"]);
+});
+
+/** `byRecency` — the server's order, re-applied to a list one frame disturbed. */
+
+const stamped = (id: string, lastActiveAt: number) => ({ id, lastActiveAt });
+
+test("a task that just became more recent moves to the front", () => {
+  // What a `task` delta or an `activity` stamp does to the list: one row's
+  // stamp jumps past the others, everything else keeps its relative order.
+  const sorted = byRecency([stamped("a", 30), stamped("b", 99), stamped("c", 10)]);
+  expect(sorted.map((t) => t.id)).toEqual(["b", "a", "c"]);
+});
+
+test("ties keep the order they arrived in", () => {
+  // Everything a fresh daemon has not touched shares a stamp, and so does
+  // anything written inside the same millisecond. The stable sort is what
+  // stops those rows shuffling on every delta.
+  const sorted = byRecency([stamped("a", 5), stamped("b", 5), stamped("c", 5), stamped("d", 9)]);
+  expect(sorted.map((t) => t.id)).toEqual(["d", "a", "b", "c"]);
+});
+
+test("an already-ordered list comes back as the same array", () => {
+  // Identity, not just equality: the common delta changes a row's state and
+  // not its rank, and a fresh array for that would re-render the sidebar and
+  // move rows under a pointer that is mid-click.
+  const tasks = [stamped("a", 30), stamped("b", 20), stamped("b2", 20), stamped("c", 10)];
+  expect(byRecency(tasks)).toBe(tasks);
 });

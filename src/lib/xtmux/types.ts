@@ -151,8 +151,20 @@ export type ServerMessage =
   // One row changed. A delta rather than a fresh snapshot, so a busy agent
   // does not re-send every task on every state transition.
   | { type: "task"; task: TaskInfo }
-  | { type: "activity"; taskId: string; active: boolean }
-  | { type: "notification"; taskId: string; title: string; body: string };
+  // Liveness, and — when the PTY went from quiet to noisy — the recency stamp
+  // that write left on the row. The stamp rides this message because activity
+  // is the one recency change that never sends a row: without it the client's
+  // list would keep the order it was last given until some unrelated create or
+  // close happened to provoke a snapshot. `at` is absent from an older daemon,
+  // and from every falling edge.
+  | { type: "activity"; taskId: string; active: boolean; at?: number }
+  | { type: "notification"; taskId: string; title: string; body: string }
+  // The task's checkout changed underneath whatever a client is showing of it
+  // (TASK-103). Coarse on purpose: it names what kind of thing moved and, when
+  // the burst was small enough for the list to mean anything, which files —
+  // `null` is "too many to name, assume everything". The client turns this
+  // into query invalidations; nothing is re-read on the server's behalf.
+  | { type: "changed"; taskId: string; files: string[] | null; history: boolean };
 
 /** A checkout on disk that no task accounts for (§5.6, TASK-32).
  *

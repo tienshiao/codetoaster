@@ -179,6 +179,77 @@ test("a delta for an archived task takes the row out rather than putting it back
   expect(ids).toEqual(["t2", "t4"]);
 });
 
+/**
+ * The list is `last_active_at DESC`, and between snapshots the only things
+ * that say so are a `task` delta and an `activity` stamp (TASK-101).
+ *
+ * A rendering test rather than a `task-list` one because what is being pinned
+ * is the store's *application* of the sort — that both frames reach it, and
+ * that the one carrying no stamp leaves the order alone. `byRecency` itself is
+ * covered as a function in `task-list.test.ts`.
+ */
+function renderList() {
+  let ids: string[] = [];
+  function Watch() {
+    ids = useTasks().tasks.map((t) => t.id);
+    return null;
+  }
+  render(
+    <TaskProvider>
+      <Watch />
+    </TaskProvider>,
+  );
+  return () => ids;
+}
+
+test("a delta whose row is now the most recent moves it to the top", () => {
+  const ids = renderList();
+  deliver({
+    type: "tasks",
+    list: [task("t1", { lastActiveAt: 30 }), task("t2", { lastActiveAt: 20 }), task("t3", { lastActiveAt: 10 })],
+    projects: [],
+  });
+  expect(ids()).toEqual(["t1", "t2", "t3"]);
+
+  // One row, at its old index, carrying a stamp fresher than the one the
+  // snapshot gave it — what any row broadcast that follows a PTY's activity
+  // write looks like: a title change, a shell tab's rising edge, a hook
+  // transition landing after one. Without the re-sort the list would still
+  // read t1, t2, t3.
+  deliver({ type: "task", task: task("t3", { lastActiveAt: 99, agentState: "busy" }) });
+  expect(ids()).toEqual(["t3", "t1", "t2"]);
+
+  // A delta that does not change rank leaves the order alone.
+  deliver({ type: "task", task: task("t1", { lastActiveAt: 30, agentState: "busy" }) });
+  expect(ids()).toEqual(["t3", "t1", "t2"]);
+});
+
+test("an activity stamp moves the row without a row being sent", () => {
+  const ids = renderList();
+  deliver({
+    type: "tasks",
+    list: [task("t1", { lastActiveAt: 30 }), task("t2", { lastActiveAt: 20 })],
+    projects: [],
+  });
+
+  deliver({ type: "activity", taskId: "t2", active: true, at: 99 });
+  expect(ids()).toEqual(["t2", "t1"]);
+});
+
+test("an activity message with no stamp leaves the order as it was", () => {
+  // An older daemon, and every falling edge. The dot still moves; the list
+  // does not guess a time it was not given.
+  const ids = renderList();
+  deliver({
+    type: "tasks",
+    list: [task("t1", { lastActiveAt: 30 }), task("t2", { lastActiveAt: 20 })],
+    projects: [],
+  });
+
+  deliver({ type: "activity", taskId: "t2", active: true });
+  expect(ids()).toEqual(["t1", "t2"]);
+});
+
 test("a notification for the task on screen is acknowledged, not rung", () => {
   render(
     <TaskProvider>
@@ -256,6 +327,33 @@ test("a user who has refused notifications is not asked again", () => {
   expect(notifications).toHaveLength(0);
   expect(Notification.requestPermission).not.toHaveBeenCalled();
   expect(stubs.playNotificationSound).toHaveBeenCalledTimes(1);
+});
+
+/**
+ * TASK-103: a `changed` frame reaches the query cache.
+ *
+ * `invalidationsFor` is tested as a function next door; what is pinned here is
+ * the wiring — that the branch exists in `onMessage`, and that it hands the
+ * keys to the shared `queryClient` rather than to a client of its own, which
+ * would invalidate nothing anything is subscribed to.
+ */
+test("a changed frame invalidates the task's file, diff and search queries", async () => {
+  const { queryClient } = await import("./query-client");
+  const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+  render(<TaskProvider>{null}</TaskProvider>);
+
+  deliver({ type: "changed", taskId: "t1", files: ["src/a.ts"], history: false });
+
+  const keys = invalidate.mock.calls.map(([arg]) => arg?.queryKey);
+  expect(keys).toEqual([
+    ["tasks", "t1", "files"],
+    ["tasks", "t1", "files-search"],
+    ["tasks", "t1", "file", "src/a.ts"],
+    ["tasks", "t1", "symbols"],
+    ["tasks", "t1", "symbol-search"],
+    ["tasks", "t1", "backlog"],
+    ["tasks", "t1", "diff"],
+  ]);
 });
 
 // TASK-57. Where a mutation's failure is reported is decided once, in

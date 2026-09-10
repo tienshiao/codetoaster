@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseLogOutput, parseRefDecorations, applyAfterCheck, sliceUntil } from "./git";
+import { parseLogOutput, parseRefDecorations, applyAfterCheck, sliceUntil, LOG_BODY_CAP } from "./git";
 import type { GitLogCommit } from "./git";
 import { buildFileListing } from "./utils";
 
@@ -43,8 +43,16 @@ function record(fields: string[]): string {
 
 test("parses a single commit record", () => {
   const out =
-    record(["abc123", "def456", "Ada Lovelace", "ada@example.com", "1700000000", "HEAD -> main", "Initial commit"]) +
-    "\n";
+    record([
+      "abc123",
+      "def456",
+      "Ada Lovelace",
+      "ada@example.com",
+      "1700000000",
+      "HEAD -> main",
+      "Initial commit",
+      "",
+    ]) + "\n";
   const commits = parseLogOutput(out);
   expect(commits).toHaveLength(1);
   expect(commits[0]).toEqual({
@@ -55,6 +63,7 @@ test("parses a single commit record", () => {
     email: "ada@example.com",
     date: 1700000000,
     subject: "Initial commit",
+    body: "",
   });
 });
 
@@ -94,10 +103,63 @@ test("subject containing spaces and punctuation is preserved verbatim", () => {
   expect(commits[0]!.subject).toBe("fix: handle a, b, and c -> d");
 });
 
+test("a multi-line body is kept whole, with git's trailing newline dropped", () => {
+  // Git writes the body verbatim and then a newline before the record
+  // terminator. The blank line *inside* the message is the author's paragraph
+  // break and has to survive; the one at the end is git's punctuation.
+  const body = "Why this had to change.\n\nAnd the part nobody would guess.\n";
+  const out = record(["h", "p", "A", "a@x", "1", "", "fix: the thing", body]) + "\n";
+  const commits = parseLogOutput(out);
+  expect(commits[0]!.subject).toBe("fix: the thing");
+  expect(commits[0]!.body).toBe("Why this had to change.\n\nAnd the part nobody would guess.");
+});
+
+test("a subject-only commit has an empty body, not a whitespace one", () => {
+  // `%b` on a one-line message is empty, so the field is git's own newline and
+  // nothing else — which must not read as "there is a body" downstream.
+  const out = record(["h", "p", "A", "a@x", "1", "", "chore: bump", "\n"]) + "\n";
+  expect(parseLogOutput(out)[0]!.body).toBe("");
+});
+
+test("a record from the older seven-field format still parses, with no body", () => {
+  const out = record(["h", "p", "A", "a@x", "1", "", "fix: the thing"]) + "\n";
+  const commits = parseLogOutput(out);
+  expect(commits).toHaveLength(1);
+  expect(commits[0]!.subject).toBe("fix: the thing");
+  expect(commits[0]!.body).toBe("");
+});
+
+test("a body past the cap is cut to it, and every other field survives", () => {
+  // The row is a hover card's worth of message, not the message: a generated
+  // commit note or a pasted stack trace would otherwise ride in every page the
+  // client caches, for a card that clips after a dozen lines.
+  const body = "x".repeat(LOG_BODY_CAP + 500);
+  const out = record(["h", "p", "A", "a@x", "1", "", "fix: the thing", body]) + "\n";
+  const commits = parseLogOutput(out);
+  expect(commits[0]!.body).toHaveLength(LOG_BODY_CAP);
+  expect(commits[0]!.body).toBe("x".repeat(LOG_BODY_CAP));
+  expect(commits[0]!.subject).toBe("fix: the thing");
+});
+
+test("a separator inside the body rejoins rather than truncating the message", () => {
+  const out =
+    record(["h", "p", "A", "a@x", "1", "", "fix: the thing", `paste\x1fof a log line`]) + "\n";
+  expect(parseLogOutput(out)[0]!.body).toBe("paste\x1fof a log line");
+});
+
 // --- applyAfterCheck ---------------------------------------------------------
 
 function commit(hash: string): GitLogCommit {
-  return { hash, parents: [], refs: [], author: "A", email: "a@x", date: 0, subject: hash };
+  return {
+    hash,
+    parents: [],
+    refs: [],
+    author: "A",
+    email: "a@x",
+    date: 0,
+    subject: hash,
+    body: "",
+  };
 }
 
 test("applyAfterCheck: row 0 matches after → predecessor dropped, remainder returned", () => {

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { taskKeys } from "../query-keys";
 import type { SymbolLookupResult } from "../../lib/symbols/types";
 
 async function fetchSymbol(taskId: string, name: string): Promise<SymbolLookupResult> {
@@ -14,7 +15,7 @@ async function fetchSymbol(taskId: string, name: string): Promise<SymbolLookupRe
 
 export function useSymbolLookup(taskId: string, name: string | null) {
   return useQuery({
-    queryKey: ["tasks", taskId, "symbols", name],
+    queryKey: taskKeys.symbol(taskId, name),
     queryFn: () => fetchSymbol(taskId, name!),
     enabled: !!name,
     staleTime: 5000,

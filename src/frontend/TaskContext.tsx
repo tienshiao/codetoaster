@@ -10,9 +10,12 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { sessionDisplayNames } from "../lib/xtmux/naming";
+import { invalidationsFor } from "./change-invalidation";
+import { queryClient } from "./query-client";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { usePty } from "./PtyContext";
 import { retainLayouts } from "./layout-store";
+import { byRecency } from "./task-list";
 import { retainTaskViewStates } from "./view-state-store";
 import { generateUUID } from "./utils/uuid";
 import type { TaskState } from "./components/v2/StatusDot";
@@ -416,21 +419,49 @@ export function TaskProvider({ children }: { children: ReactNode }) {
             // straight back into the sidebar, as a second copy of a task now
             // also in the archived list. So an archived delta removes rather
             // than upserts: it is the server saying this row has left.
+            //
+            // And re-sorted after, because the upsert writes the row back at
+            // the index it already had. The list is the server's
+            // `last_active_at DESC`, but that order only arrives with a full
+            // snapshot — between snapshots this delta and the `activity` stamp
+            // below are the only carriers of recency, so a task that has been
+            // busy for an hour would sit wherever it was when the last create
+            // happened (TASK-101). The copy this updater has already made means
+            // a new array either way; what keeps the sidebar still is that
+            // `byRecency` moves a row only when its rank actually changed, and
+            // every row it does not move is the same object it was — so a delta
+            // about one task's state re-renders that row and nothing shuffles
+            // under the pointer.
             setTasks((prev) => {
               const i = prev.findIndex((t) => t.id === message.task.id);
               if (message.task.lifecycle === "archived") {
                 return i === -1 ? prev : prev.filter((t) => t.id !== message.task.id);
               }
-              if (i === -1) return [...prev, message.task];
+              if (i === -1) return byRecency([...prev, message.task]);
               const next = [...prev];
               next[i] = message.task;
-              return next;
+              return byRecency(next);
             });
             return;
           }
 
           if (message.type === "activity") {
             setActivity((prev) => ({ ...prev, [message.taskId]: message.active }));
+            // The rising edge carries the stamp the server just wrote to
+            // `last_active_at` — no row comes with it, so this is the only
+            // chance to move the task up the list before the next snapshot.
+            // Absent from a falling edge, and from an older daemon, in which
+            // case the order simply stays as it was.
+            const { taskId, at } = message;
+            if (message.active && at !== undefined) {
+              setTasks((prev) => {
+                const i = prev.findIndex((t) => t.id === taskId);
+                if (i === -1 || at <= prev[i]!.lastActiveAt) return prev;
+                const next = [...prev];
+                next[i] = { ...prev[i]!, lastActiveAt: at };
+                return byRecency(next);
+              });
+            }
             return;
           }
 
@@ -461,6 +492,17 @@ export function TaskProvider({ children }: { children: ReactNode }) {
                 taskDisplayNames(tasksRef.current).get(taskId),
                 task?.title,
               );
+            }
+            return;
+          }
+
+          // The task's checkout moved under whatever is showing it (TASK-103).
+          // The server said what changed; `invalidationsFor` decides what that
+          // makes stale, and `invalidateQueries`' default `refetchType:
+          // "active"` means only mounted views actually refetch.
+          if (message.type === "changed") {
+            for (const queryKey of invalidationsFor(message)) {
+              void queryClient.invalidateQueries({ queryKey });
             }
             return;
           }
@@ -546,9 +588,16 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     // missing-task guard reads "loaded, and no such task" and bounces it
     // straight back to `/`, taking the typed prompt with it. The next
     // broadcast overwrites this row either way.
+    //
+    // Sorted like every other delta, and for the same reason: a bare append
+    // puts the newest task at the *bottom* of a list ordered by recency, where
+    // it sits looking like the oldest thing on screen until the next snapshot
+    // arrives to move it (TASK-101).
     if (result.ok) {
       const created = result.value;
-      setTasks((prev) => (prev.some((t) => t.id === created.id) ? prev : [...prev, created]));
+      setTasks((prev) =>
+        prev.some((t) => t.id === created.id) ? prev : byRecency([...prev, created]),
+      );
     }
     return result;
   }, []);

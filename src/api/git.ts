@@ -13,6 +13,10 @@ export interface GitLogCommit {
   email: string;
   date: number;
   subject: string;
+  /** The rest of the message after the subject (`%b`), trailing blank lines
+   * trimmed and cut at `LOG_BODY_CAP`. `""` when the commit is a subject and
+   * nothing else. */
+  body: string;
 }
 
 /**
@@ -44,10 +48,30 @@ export function parseRefDecorations(decoration: string): string[] {
 }
 
 /**
- * Parse the output of `git log --format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e`.
+ * How much of a commit message body a log row carries.
+ *
+ * `%b` multiplies the log payload about sixfold in this repository — 60 KB to
+ * 345 KB per 500 rows — and every page stays in the client's infinite cache
+ * while the seek path parses up to `UNTIL_CAP + 1` records in one go. The only
+ * reader is the hover card, which clips at twelve lines or so; past that the
+ * bytes are held for something nobody can see, and the whole message is one
+ * click away in the commit tab. Git's own stdout is still uncapped — the seek
+ * buffers whatever git wrote before this trims it — which is the part of the
+ * cost this does not pay off.
+ */
+export const LOG_BODY_CAP = 2048;
+
+/**
+ * Parse the output of
+ * `git log --format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f%b%x1e`.
  * Records are terminated by \x1e; fields are separated by \x1f. Git emits a
  * newline after each record, which becomes the leading char of the next
  * record after the split — that is stripped here.
+ *
+ * The body is last and spans newlines, which is why it is last: it is whatever
+ * remains of the record, so anything inside it that looks like a separator
+ * rejoins rather than truncating the message. A seven-field record — the older
+ * format, or a fetch that predates this one — still parses, with an empty body.
  */
 export function parseLogOutput(stdout: string): GitLogCommit[] {
   const commits: GitLogCommit[] = [];
@@ -73,6 +97,9 @@ export function parseLogOutput(stdout: string): GitLogCommit[] {
       email,
       date: parseInt(at, 10),
       subject,
+      // `%b` ends in the newline git puts between the message and the record
+      // terminator; the leading structure is the message's own and is kept.
+      body: fields.slice(7).join("\x1f").trimEnd().slice(0, LOG_BODY_CAP),
     });
   }
   return commits;
@@ -125,7 +152,7 @@ export function sliceUntil(
 // the client didn't ask to render.
 const UNTIL_CAP = 50000;
 
-const LOG_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
+const LOG_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f%b%x1e";
 const COMMIT_META_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%D%x1f%B";
 
 // Strip any leading non-"diff --git" lines (git diff-tree prefixes its patch
