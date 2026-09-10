@@ -1,7 +1,4 @@
 import { serve } from "bun";
-import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, basename } from "node:path";
 import index from "./frontend/index.html";
 import { taskManager } from "./lib/tasks/manager";
 import { Harvester } from "./lib/tasks/harvester";
@@ -15,6 +12,7 @@ import { uploadsDir } from "./lib/uploads";
 import { profileRoutes } from "./api/profiles";
 import { hookRoutes } from "./api/hooks";
 import { diffRoutes } from "./api/diff";
+import { directoryRoutes } from "./api/directories";
 import { fileRoutes } from "./api/files";
 import { backlogRoutes } from "./api/backlog";
 import { gitRoutes } from "./api/git";
@@ -244,60 +242,6 @@ export function startServer(options?: ServerOptions) {
         },
       }),
 
-      "/api/directories": guardRoute({
-        async GET(req: Request) {
-          try {
-            const url = new URL(req.url);
-            const home = homedir();
-            let rawPath = url.searchParams.get("path") ?? "";
-
-            // Expand tilde
-            if (rawPath.startsWith("~")) {
-              rawPath = home + rawPath.slice(1);
-            }
-
-            // Default to home directory
-            if (!rawPath) rawPath = home;
-
-            let dirToList: string;
-            let prefix = "";
-
-            if (rawPath.endsWith("/")) {
-              dirToList = rawPath;
-            } else {
-              dirToList = dirname(rawPath);
-              prefix = basename(rawPath).toLowerCase();
-            }
-
-            const entries = await readdir(dirToList, { withFileTypes: true });
-            let directories = entries
-              .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-              .map((e) => e.name);
-
-            if (prefix) {
-              directories = directories.filter((n) =>
-                n.toLowerCase().startsWith(prefix)
-              );
-            }
-
-            directories.sort((a, b) => a.localeCompare(b));
-            directories = directories.slice(0, 50);
-
-            // Replace homedir with ~ for display
-            let parent = dirToList.endsWith("/") ? dirToList.slice(0, -1) : dirToList;
-            if (parent === home) {
-              parent = "~";
-            } else if (parent.startsWith(home + "/")) {
-              parent = "~" + parent.slice(home.length);
-            }
-
-            return Response.json({ parent, directories, home });
-          } catch {
-            return Response.json({ parent: "", directories: [], home: "" });
-          }
-        },
-      }),
-
       // Guarded as one table, so a route added to any of them is guarded by
       // construction rather than by someone remembering (TASK-42).
       ...guardApiRoutes({
@@ -307,6 +251,7 @@ export function startServer(options?: ServerOptions) {
         ...hookRoutes,
         ...diffRoutes,
         ...fileRoutes,
+        ...directoryRoutes,
         ...backlogRoutes,
         ...gitRoutes,
         ...highlightRoutes,

@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { taskKeys } from "../query-keys";
+import type { FileSearchResult } from "@/types/files";
 
-export interface FileSearchResult {
-  path: string;
-  name: string;
-  indices: number[];
-}
+// Re-exported so the palette and the composer's completion keep importing a
+// hit's shape from the hook that hands them hits.
+export type { FileSearchResult };
 
 interface FileSearchResponse {
   results: FileSearchResult[];

@@ -1,7 +1,11 @@
-import type { TextareaHTMLAttributes } from "react";
+import type { Ref, TextareaHTMLAttributes } from "react";
 import { cn } from "@/frontend/lib/utils";
 
 export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  /** The field itself, for a caller that has to place the caret — React 19
+   * passes a ref through a function component like any other prop, so this only
+   * has to be declared and spread. */
+  ref?: Ref<HTMLTextAreaElement>;
   /** Rendered above the field and wired to it, so the label is clickable —
    * the same arrangement `TextInput` uses, because a form mixing the two
    * should not have to lay one of them out by hand. */

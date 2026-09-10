@@ -25,6 +25,7 @@ import {
   type Attachment,
 } from "@/frontend/components/AttachmentStrip";
 import { promptWithAttachments } from "@/frontend/lib/attachments";
+import { MentionSuggestions, useMention } from "@/frontend/components/MentionSuggestions";
 import { cn } from "@/frontend/lib/utils";
 import { Button } from "@/frontend/components/v2/Button";
 import { Checkbox } from "@/frontend/components/v2/Checkbox";
@@ -60,11 +61,12 @@ export interface ComposerProps {
  * starting a task and resuming one are the same gesture in the same place. No
  * "recent tasks" list belongs under it — the sidebar already is the history.
  *
- * The options row is project, model, worktree, base ref — everything a task is
- * decided by before it starts. Each sends nothing when it matches the
- * project's own answer, because the server resolves an absent field against
- * the project's columns and that is what gives the HTTP API and the CLI the
- * same behaviour for free (§7.5).
+ * Project sits above the prompt, and the rest — agent, model, worktree, base
+ * ref — in the row below it: everything a task is decided by before it starts,
+ * with the one that is decided first read first. Each sends nothing when it
+ * matches the project's own answer, because the server resolves an absent
+ * field against the project's columns and that is what gives the HTTP API and
+ * the CLI the same behaviour for free (§7.5).
  *
  * Permission mode is not among them, and deliberately: the row offered a
  * `--permission-mode` picker that Claude Code is better placed to answer than
@@ -249,6 +251,18 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   // row does not reflow as the project selection moves.
   const canWorktree = Boolean(project?.initialPath);
 
+  // `@` completion over the prompt (TASK-100). The project is handed over only
+  // when it has a directory, which is what makes a relative query in "General"
+  // ask nothing and show nothing — an absolute one still completes, since the
+  // filesystem is there either way.
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const mention = useMention({
+    value: prompt,
+    onValue: setPrompt,
+    textarea: promptRef,
+    projectId: project?.initialPath ? project.id : undefined,
+  });
+
   // Attachments alone are enough. Dropping a screenshot in and pressing ⌘⏎ is
   // a complete ask — "look at this" — and the prompt it builds is the path,
   // which is what the agent needs anyway.
@@ -344,12 +358,16 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      // The suggestion list first, and only while it has rows on screen: it
+      // owns the arrows, plain Enter and Tab, and deliberately never takes ⌘⏎ —
+      // so submitting is the same keystroke whether or not it is open.
+      if (mention.onKeyDown(event)) return;
       if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
       // Before the newline the textarea would otherwise insert.
       event.preventDefault();
       void submit();
     },
-    [submit],
+    [mention, submit],
   );
 
   // A screenshot on the clipboard, which is the case attachments exist for:
@@ -417,33 +435,11 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
       onDrop={handleDrop}
     >
       <div className="relative flex w-full max-w-[720px] flex-col gap-2.5">
-        <Textarea
-          // Addressed by id, and focused on mount — on a desktop. Arriving at
-          // `/` there means the user is about to type, so the caret is placed.
-          //
-          // On a phone it is not (TASK-79). `autoFocus` fires on *every* mount
-          // of `/` — the initial load, the redirect from a dead task URL — and
-          // each one pops the soft keyboard over a third of the viewport
-          // before the user has asked to type. So the caret is placed only by
-          // `useOpenComposer`, which focuses this box by its id on the
-          // deliberate press, and which is what covers the case where `/` is
-          // already showing and this never remounts.
-          id={COMPOSER_PROMPT_ID}
-          autoFocus={!isMobile}
-          rows={5}
-          value={prompt}
-          placeholder="What should the agent do?"
-          aria-label="Prompt"
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-        />
-        <AttachmentStrip
-          attachments={attachments}
-          onRemove={removeAttachment}
-          disabled={submitting}
-        />
-        <div className="flex flex-wrap items-center gap-1.5">
+        {/* Above the prompt, and alone: the project is chosen before anything
+            is typed, so it comes first in reading order and first in tab
+            order. The rest of the options are decisions about a prompt that
+            already exists, and sit under it. */}
+        <div className="flex items-center gap-1.5">
           <Select
             label="project"
             icon={Folder}
@@ -451,6 +447,60 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
             value={project?.id ?? ""}
             onValueChange={setProjectId}
           />
+        </div>
+        {/* The positioning context for the suggestion list, which hangs off the
+            bottom edge of the field rather than following the caret: the prompt
+            is prose, and a popover moving with every keystroke inside it is
+            harder to read than one that stays put. */}
+        <div className="relative">
+          <Textarea
+            ref={promptRef}
+            // Addressed by id, and focused on mount — on a desktop. Arriving at
+            // `/` there means the user is about to type, so the caret is placed.
+            //
+            // On a phone it is not (TASK-79). `autoFocus` fires on *every* mount
+            // of `/` — the initial load, the redirect from a dead task URL — and
+            // each one pops the soft keyboard over a third of the viewport
+            // before the user has asked to type. So the caret is placed only by
+            // `useOpenComposer`, which focuses this box by its id on the
+            // deliberate press, and which is what covers the case where `/` is
+            // already showing and this never remounts.
+            id={COMPOSER_PROMPT_ID}
+            autoFocus={!isMobile}
+            rows={5}
+            value={prompt}
+            placeholder="What should the agent do?"
+            aria-label="Prompt"
+            // The composer's own `setPrompt`, through the completion: the mention
+            // is read off this event and nothing else, so clicking into an
+            // existing `@path` opens nothing while typing inside one re-queries.
+            onChange={mention.onChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onBlur={mention.onBlur}
+            aria-autocomplete="list"
+            // Only while the list exists: an id that points at nothing is what
+            // assistive tech reads as a broken relationship.
+            aria-controls={mention.open ? mention.listId : undefined}
+            aria-expanded={mention.open}
+            aria-activedescendant={mention.activeId}
+          />
+          {mention.open ? (
+            <MentionSuggestions
+              id={mention.listId}
+              rows={mention.rows}
+              index={mention.index}
+              onHighlight={mention.setIndex}
+              onAccept={mention.accept}
+            />
+          ) : null}
+        </div>
+        <AttachmentStrip
+          attachments={attachments}
+          onRemove={removeAttachment}
+          disabled={submitting}
+        />
+        <div className="flex flex-wrap items-center gap-1.5">
           {/* Before the model, because it decides whether the model means
               anything: the two read left to right as "run it on this, at that
               size". */}

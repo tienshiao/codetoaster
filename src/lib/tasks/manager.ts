@@ -18,6 +18,7 @@ import type {
   WebSocketData,
 } from "../xtmux/types";
 import { uniqueName } from "../xtmux/naming";
+import { expandTilde } from "../tilde";
 import * as db from "../db";
 import type { ProjectRow, TaskRow } from "../db";
 import { TaskStore } from "./store";
@@ -77,13 +78,6 @@ import {
 function sameWorktreeStatus(a: TaskWorktreeInfo, b: TaskWorktreeInfo): boolean {
   return a.branch === b.branch && a.dirty === b.dirty
     && a.unpushed === b.unpushed && a.merged === b.merged;
-}
-
-function expandTilde(filepath: string): string {
-  if (filepath.startsWith("~/") || filepath === "~") {
-    return os.homedir() + filepath.slice(1);
-  }
-  return filepath;
 }
 
 const DEFAULT_SIZE = { cols: 80, rows: 24 };

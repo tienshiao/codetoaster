@@ -780,3 +780,377 @@ describe("attachments", () => {
     );
   });
 });
+
+/**
+ * `@` completion over the prompt (TASK-100).
+ *
+ * `fetch` is routed by URL here, because the whole question is *which* endpoint
+ * a query reaches: one starting with `/` or `~` is the filesystem lister and
+ * anything else is the project's own files. Every assertion about the caret
+ * passes `selectionStart` explicitly — happy-dom does not place one for you,
+ * and where the caret is, is what decides whether there is a mention at all.
+ */
+describe("path completion", () => {
+  /** Every URL `fetch` was called with, so a test can assert what was asked as
+   * well as what came back. */
+  let asked: string[];
+
+  const HITS = [
+    { path: "src/parser.ts", name: "parser.ts", indices: [] },
+    { path: "src/palette.tsx", name: "palette.tsx", indices: [] },
+  ];
+
+  const LISTING = {
+    parent: "",
+    directories: ["Users"],
+    home: "/home/me",
+    entries: [
+      { name: "Users", isDirectory: true },
+      { name: "usr.txt", isDirectory: false },
+    ],
+  };
+
+  beforeEach(() => {
+    asked = [];
+    // The composer only offers relative completion for a project that has
+    // somewhere to look, so `web` gets a directory and `general` keeps none.
+    stubs.projects = [project("general"), project("web", { initialPath: "~/projects/web" })];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        asked.push(url);
+        if (url.startsWith("/api/projects/")) return Response.json({ results: HITS });
+        if (url.startsWith("/api/directories")) return Response.json(LISTING);
+        return Response.json(profiles);
+      }),
+    );
+  });
+
+  /** Typing, with the caret where it would be — at the end of what was typed,
+   * unless the test says otherwise. The file-level `type` carries no caret, and
+   * every key the completion owns checks one, so these tests use this. */
+  function typeAt(text: string, caret = text.length) {
+    const box = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    fireEvent.change(box, {
+      target: { value: text, selectionStart: caret, selectionEnd: caret },
+    });
+    return box;
+  }
+
+  function options(): string[] {
+    return screen.queryAllByRole("option").map((el) => el.textContent ?? "");
+  }
+
+  /** Out-wait the 150ms debounce, so a test asserting that *nothing* was asked
+   * has given the query every chance to go out. */
+  async function settle() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+  }
+
+  /** Mount on the project that has a directory, and get past the 150ms debounce
+   * and the request it starts. */
+  async function open(text: string, caret?: number) {
+    mount(<Composer projectId="web" />);
+    typeAt(text, caret);
+    await waitFor(() => expect(screen.queryAllByRole("option").length).toBeGreaterThan(0));
+  }
+
+  test("a query after @ opens the list", async () => {
+    await open("look at @src");
+
+    expect(options()).toEqual(["src/parser.ts", "src/palette.tsx"]);
+    const box = screen.getByLabelText("Prompt");
+    expect(box.getAttribute("aria-expanded")).toBe("true");
+    expect(box.getAttribute("aria-activedescendant")).toBe(
+      screen.queryAllByRole("option")[0]!.id,
+    );
+  });
+
+  test("an @ inside a word is an address, not a completion", async () => {
+    mount(<Composer projectId="web" />);
+    typeAt("mail tma@example.com");
+
+    // Long enough for the debounce it never set to have fired.
+    await settle();
+    expect(options()).toEqual([]);
+    expect(asked.some((url) => url.startsWith("/api/projects/"))).toBe(false);
+  });
+
+  test("arrow keys move the highlight and Enter takes the row", async () => {
+    await open("look at @src");
+    const box = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    expect(screen.queryAllByRole("option")[1]!.getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.keyDown(box, { key: "Enter" });
+
+    // The `@` stays, so the caret can come back into the token later; a file
+    // ends it with a space.
+    expect(valueOf("Prompt")).toBe("look at @src/palette.tsx ");
+    expect(box.selectionStart).toBe(valueOf("Prompt").length);
+    // Nothing was started: plain Enter with the list open is "take this one".
+    expect(stubs.createTask).not.toHaveBeenCalled();
+    await waitFor(() => expect(options()).toEqual([]));
+  });
+
+  test("Tab accepts as well", async () => {
+    await open("look at @src");
+    fireEvent.keyDown(screen.getByLabelText("Prompt"), { key: "Tab" });
+
+    expect(valueOf("Prompt")).toBe("look at @src/parser.ts ");
+  });
+
+  test("a row taken with the mouse accepts without blurring the field", async () => {
+    await open("look at @src");
+    const row = screen.queryAllByRole("option")[1]!;
+
+    // `mousedown`, not `click`: click lands after the blur that would have
+    // closed the list out from under the pointer.
+    fireEvent.mouseDown(row);
+
+    expect(valueOf("Prompt")).toBe("look at @src/palette.tsx ");
+  });
+
+  test("Escape closes the list and leaves the prompt alone", async () => {
+    await open("look at @src");
+    fireEvent.keyDown(screen.getByLabelText("Prompt"), { key: "Escape" });
+
+    await waitFor(() => expect(options()).toEqual([]));
+    expect(valueOf("Prompt")).toBe("look at @src");
+    expect(stubs.createTask).not.toHaveBeenCalled();
+  });
+
+  test("⌘⏎ still submits with the list open", async () => {
+    await open("look at @src");
+    submitKey(screen.getByLabelText("Prompt"));
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    expect((stubs.createTask.mock.calls[0]![0] as CreateTaskOptions).prompt).toBe("look at @src");
+  });
+
+  test("an absolute query goes to the filesystem lister, and a directory stays open", async () => {
+    await open("@/Us");
+
+    expect(asked.some((url) => url.startsWith("/api/directories?path=%2FUs&files=1"))).toBe(true);
+    // A directory is drawn with its slash, and a file beside it without one.
+    expect(options()).toEqual(["Users/", "usr.txt"]);
+
+    fireEvent.keyDown(screen.getByLabelText("Prompt"), { key: "Enter" });
+
+    // The token ends in `/`, which is both what lists inside it and what leaves
+    // it open for the next Enter one level down.
+    expect(valueOf("Prompt")).toBe("@/Users/");
+    await waitFor(() => expect(options().length).toBeGreaterThan(0));
+    expect(asked.some((url) => url.includes("path=%2FUsers%2F"))).toBe(true);
+  });
+
+  test("a relative query in a project with no directory asks nothing", async () => {
+    // "General": a task in it runs wherever the daemon does, so there is no
+    // repository to fuzzy-match against — and nothing worth an error either.
+    mount(<Composer projectId="general" />);
+    typeAt("look at @src");
+
+    await settle();
+    expect(options()).toEqual([]);
+    expect(asked.some((url) => url.startsWith("/api/projects/"))).toBe(false);
+  });
+
+  test("an absolute query completes even there — the filesystem is the same", async () => {
+    mount(<Composer projectId="general" />);
+    typeAt("@/Us");
+
+    await waitFor(() => expect(options()).toEqual(["Users/", "usr.txt"]));
+  });
+
+  test("editing an existing token from the middle re-opens on the prefix", async () => {
+    mount(<Composer projectId="web" />);
+    // The caret inside a token that is already there — which is what a click
+    // would leave behind, except that a click alone opens nothing: the mention
+    // is read from the change event and from nowhere else.
+    typeAt("look at @src/parser.ts", 13);
+
+    await waitFor(() => expect(options().length).toBeGreaterThan(0));
+    expect(asked.some((url) => url.endsWith("/files/search?q=src%2F"))).toBe(true);
+  });
+
+  test("clicking into a finished token opens nothing", async () => {
+    mount(<Composer projectId="web" />);
+    // The token is done — it ends in a space — and putting the caret back into
+    // it is not a request for suggestions. Only typing is.
+    const box = typeAt("look at @src/parser.ts done");
+    fireEvent.click(box);
+    fireEvent.focus(box);
+
+    await settle();
+    expect(options()).toEqual([]);
+    expect(asked.some((url) => url.startsWith("/api/projects/"))).toBe(false);
+  });
+
+  test("the list closes when the field loses focus", async () => {
+    await open("look at @src");
+    fireEvent.blur(screen.getByLabelText("Prompt"));
+
+    // On a delay, so a `mousedown` on a row — which blurs the field — still
+    // lands on a list that is there to be clicked.
+    await waitFor(() => expect(options()).toEqual([]));
+  });
+
+  test("Enter with the caret moved out of the token is a newline, not an accept", async () => {
+    await open("look at @src");
+    const box = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    // A click or Home moves the caret without a change event, so the list is
+    // still on screen while the user is somewhere else entirely. Rewriting the
+    // token from here would edit text nowhere near where they are looking.
+    box.setSelectionRange(0, 0);
+    fireEvent.keyDown(box, { key: "Enter" });
+
+    expect(valueOf("Prompt")).toBe("look at @src");
+    expect(stubs.createTask).not.toHaveBeenCalled();
+    // And the list goes, because it is about a token the caret has left.
+    await waitFor(() => expect(options()).toEqual([]));
+  });
+
+  test("Shift+Tab is not an accept", async () => {
+    await open("look at @src");
+    // It is the focus moving backwards out of the field, which the list has no
+    // business taking.
+    fireEvent.keyDown(screen.getByLabelText("Prompt"), { key: "Tab", shiftKey: true });
+
+    expect(valueOf("Prompt")).toBe("look at @src");
+  });
+
+  test("Enter while a directory's listing is in flight is swallowed, not a newline", async () => {
+    let release: (() => void) | undefined;
+    let listings = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        asked.push(url);
+        if (url.startsWith("/api/projects/")) return Response.json({ results: HITS });
+        if (url.startsWith("/api/directories")) {
+          listings += 1;
+          // The first listing answers at once; the one the accept starts is
+          // held open, which is the state the gate exists for.
+          if (listings > 1) {
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+          }
+          return Response.json(LISTING);
+        }
+        return Response.json(profiles);
+      }),
+    );
+
+    await open("@/Us");
+    const box = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    // Takes `Users/` and asks what is inside it. Nothing has come back yet, so
+    // there is no list and nothing to accept.
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(valueOf("Prompt")).toBe("@/Users/");
+    await waitFor(() => expect(options()).toEqual([]));
+
+    // The second Enter is the user drilling one level further before the
+    // answer arrived. It must not become a newline in the middle of the token.
+    expect(fireEvent.keyDown(box, { key: "Enter" })).toBe(false);
+    expect(valueOf("Prompt")).toBe("@/Users/");
+    expect(stubs.createTask).not.toHaveBeenCalled();
+
+    await act(async () => {
+      release!();
+    });
+    await waitFor(() => expect(options().length).toBeGreaterThan(0));
+  });
+
+  test("an absolute prefix through home stays absolute", async () => {
+    // The lister answers with a *display* parent — home collapsed to `~` —
+    // because that is what the path field shows. A token the user typed
+    // absolutely must not come back as `~/…` because it happened to pass
+    // through home.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        asked.push(url);
+        if (url.startsWith("/api/directories")) {
+          return Response.json({
+            parent: "~",
+            directories: ["Projects"],
+            home: "/home/me",
+            entries: [{ name: "Projects", isDirectory: true }],
+          });
+        }
+        return Response.json(profiles);
+      }),
+    );
+
+    await open("@/home/me/Pro");
+    fireEvent.keyDown(screen.getByLabelText("Prompt"), { key: "Enter" });
+
+    expect(valueOf("Prompt")).toBe("@/home/me/Projects/");
+  });
+
+  test("a bare ~ completes to ~/", async () => {
+    // `~` is a prefix of home's *siblings*, so the lister's parent is absolute
+    // — and the accepted token has to come back as the `~` the user typed
+    // rather than as the path it expands to.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        asked.push(url);
+        if (url.startsWith("/api/directories")) {
+          return Response.json({
+            parent: "/home",
+            directories: ["me"],
+            home: "/home/me",
+            entries: [{ name: "me", isDirectory: true }],
+          });
+        }
+        return Response.json(profiles);
+      }),
+    );
+
+    await open("@~");
+    fireEvent.keyDown(screen.getByLabelText("Prompt"), { key: "Enter" });
+
+    expect(valueOf("Prompt")).toBe("@~/");
+  });
+
+  test("Escape reaches the document when no list is showing", async () => {
+    // The list swallows Escape in the capture phase so a shell-level binding
+    // does not take one meant for it — but only while it is on screen. An
+    // Escape struck with an answer still in flight is the shell's, as it
+    // always was.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        asked.push(url);
+        if (url.startsWith("/api/projects/")) return new Promise<Response>(() => {});
+        return Response.json(profiles);
+      }),
+    );
+
+    mount(<Composer projectId="web" />);
+    const box = typeAt("look at @src");
+    await settle();
+    expect(options()).toEqual([]);
+
+    const seen = vi.fn();
+    document.addEventListener("keydown", seen);
+    try {
+      fireEvent.keyDown(box, { key: "Escape" });
+      expect(seen).toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("keydown", seen);
+    }
+  });
+});

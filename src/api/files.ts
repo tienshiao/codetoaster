@@ -1,7 +1,11 @@
+import * as fs from "node:fs";
 import { resolveTaskRoot, getImageMimeType, IMAGE_MIME_TYPES, listGitFiles, safePath, buildFileListing } from "./utils";
+import { taskManager } from "../lib/tasks/manager";
+import { expandTilde } from "../lib/tilde";
 import { highlightFile } from "../lib/highlight/tokenize";
 import { extractFrontmatter } from "../lib/frontmatter";
 import type { FileTokens } from "../types/highlight";
+import type { FileSearchResult } from "../types/files";
 import type { Frontmatter, FrontmatterEntry, FrontmatterValue } from "../types/frontmatter";
 
 function fuzzyMatch(filePath: string, query: string): { score: number; indices: number[] } | null {
@@ -28,6 +32,71 @@ function fuzzyMatch(filePath: string, query: string): { score: number; indices: 
 
   if (qi < lowerQuery.length) return null;
   return { score, indices };
+}
+
+/** How long one `git ls-files` answer stands in for the next. */
+const FILE_LIST_TTL_MS = 3000;
+
+/**
+ * `git ls-files` for `dir`, at most once every few seconds.
+ *
+ * Both callers of `searchFiles` are per-keystroke — the composer behind a
+ * 150ms debounce, the palette behind none at all — so a word typed into either
+ * one used to fork a git process per character and list the whole repository
+ * each time. Nothing in a repository's file list changes meaningfully inside
+ * three seconds of typing, and the query is re-matched against the cached list
+ * every time regardless, so what the cache costs is a file created mid-word
+ * appearing a moment late.
+ *
+ * Here rather than in `listGitFiles`, deliberately: the diff routes and the
+ * symbol store ask it about a tree they have just changed and need the real
+ * answer.
+ *
+ * The *promise* is cached, not the array, so the keystrokes that arrive while
+ * one spawn is in flight share it instead of starting their own. A rejection —
+ * `dir` is not a repository, most often — is evicted, or the first failure
+ * would be the answer for three seconds after it stopped being true.
+ */
+const fileListCache = new Map<string, { at: number; files: Promise<string[]> }>();
+
+function cachedGitFiles(dir: string): Promise<string[]> {
+  const hit = fileListCache.get(dir);
+  if (hit && Date.now() - hit.at < FILE_LIST_TTL_MS) return hit.files;
+
+  const files = listGitFiles(dir);
+  fileListCache.set(dir, { at: Date.now(), files });
+  files.catch(() => {
+    // Only if it is still ours: a later request may already have replaced it.
+    if (fileListCache.get(dir)?.files === files) fileListCache.delete(dir);
+  });
+  return files;
+}
+
+/**
+ * The tracked files of `dir` that fuzzy-match `q`, best first.
+ *
+ * Shared by the task-scoped route and the project-scoped one, which differ only
+ * in how they find the directory: the matcher, the ceiling and the shape of a
+ * hit are the same question asked from two places, and a composer whose
+ * suggestions ranked differently from the palette's would be the drift worth
+ * avoiding.
+ *
+ * Throws when `dir` is not a repository — `listGitFiles` does — and each caller
+ * says so in its own words.
+ */
+export async function searchFiles(dir: string, q: string): Promise<FileSearchResult[]> {
+  const filePaths = await cachedGitFiles(dir);
+  const scored: { path: string; name: string; score: number; indices: number[] }[] = [];
+
+  for (const fp of filePaths) {
+    const match = fuzzyMatch(fp, q);
+    if (match !== null) {
+      scored.push({ path: fp, name: fp.split("/").pop() || fp, ...match });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 20).map(({ path, name, indices }) => ({ path, name, indices }));
 }
 
 export function isBinaryContent(buffer: ArrayBuffer): boolean {
@@ -171,19 +240,59 @@ export const fileRoutes = {
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
-        const filePaths = await listGitFiles(dir);
-        const scored: { path: string; name: string; score: number; indices: number[] }[] = [];
+        return Response.json({ results: await searchFiles(dir, q) });
+      } catch (error) {
+        return Response.json(
+          { error: "Failed to search files", message: error instanceof Error ? error.message : String(error) },
+          { status: 500 }
+        );
+      }
+    },
+  },
 
-        for (const fp of filePaths) {
-          const match = fuzzyMatch(fp, q);
-          if (match !== null) {
-            scored.push({ path: fp, name: fp.split("/").pop() || fp, ...match });
-          }
+  /**
+   * The same search against a *project*, for the composer's `@` completion
+   * (TASK-100): there is no task yet when the prompt is being written, so the
+   * task route's `resolveTaskRoot` has nothing to resolve.
+   *
+   * A project with no directory ("General") and one whose directory is not a
+   * repository are both 400s rather than empty lists, because they are answers
+   * about the project rather than about the query — the composer's hook is what
+   * decides they are not worth showing the user.
+   */
+  "/api/projects/:id/files/search": {
+    async GET(req: Request & { params: { id: string } }) {
+      try {
+        const project = taskManager.getProjects().find((p) => p.id === req.params.id);
+        if (!project) {
+          return Response.json({ error: `Unknown project "${req.params.id}"` }, { status: 404 });
+        }
+        if (!project.initialPath) {
+          return Response.json({ error: "Project has no directory" }, { status: 400 });
         }
 
-        scored.sort((a, b) => b.score - a.score);
-        const results = scored.slice(0, 20).map(({ path, name, indices }) => ({ path, name, indices }));
+        const url = new URL(req.url);
+        const q = url.searchParams.get("q") || "";
+        if (!q) return Response.json({ results: [] });
 
+        const dir = expandTilde(project.initialPath);
+        let results: FileSearchResult[];
+        try {
+          results = await searchFiles(dir, q);
+        } catch {
+          // `git ls-files` fails the same way for a directory that is not a
+          // repository and one that is not there at all, and the second is
+          // worth its own words: a project whose path has been moved or
+          // deleted is a thing the user can fix, and "not a git repository"
+          // sends them looking for the wrong problem.
+          if (!fs.existsSync(dir)) {
+            return Response.json({ error: "Project directory does not exist" }, { status: 400 });
+          }
+          // Otherwise the directory is there and git had nothing to say about
+          // it — said in the same words `resolveTaskRoot` uses for a task in
+          // the same position.
+          return Response.json({ error: "Not a git repository" }, { status: 400 });
+        }
         return Response.json({ results });
       } catch (error) {
         return Response.json(
