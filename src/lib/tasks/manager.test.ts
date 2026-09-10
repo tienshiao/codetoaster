@@ -1352,6 +1352,38 @@ describe("checkout watchers", () => {
     expect(manager.watchedTaskIds()).toEqual([]);
   });
 
+  test("a checkout that moves re-roots the watcher", () => {
+    const { manager, store } = newManager();
+    const before = liveRow(store, "w1");
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    expect(manager.watchedRoots()).toEqual({ w1: before });
+
+    // What `refreshCwd` does when the agent `cd`s out of the directory it was
+    // started in, and `restoreTaskWorktree` when a checkout is rebuilt: the row
+    // moves, and a watcher keyed on the task alone would keep the old stream —
+    // healthy, reporting a directory nobody is looking at, and blind to the one
+    // they are.
+    const after = checkout();
+    store.update("w1", { cwd: after, repo_root: after });
+    manager.broadcastTask("w1");
+    expect(manager.watchedRoots()).toEqual({ w1: after });
+  });
+
+  test("the single-row path stops a watcher when the row leaves live", () => {
+    const { manager, store } = newManager();
+    liveRow(store, "w1");
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    expect(manager.watchedTaskIds()).toEqual(["w1"]);
+
+    // `broadcastTask` is the hot path and does not walk the live rows, so the
+    // stopping has to come off the row it was handed.
+    store.update("w1", { lifecycle: "suspended" });
+    manager.broadcastTask("w1");
+    expect(manager.watchedTaskIds()).toEqual([]);
+  });
+
   test("reconciling twice leaves one watcher, not two", () => {
     const { manager, store } = newManager();
     liveRow(store, "w1");

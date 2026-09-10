@@ -1,14 +1,8 @@
 import { useState, type ReactNode } from "react";
-import { HoverCard } from "radix-ui";
 import { StatusDot, type TaskState } from "./StatusDot";
 import { WorktreeMarks } from "./TaskRow";
-import {
-  useHoverPointer,
-  HOVER_OPEN_DELAY,
-  HOVER_CLOSE_DELAY,
-} from "@/frontend/hooks/use-hover-pointer";
 import { absoluteTime, agoLabel } from "@/frontend/utils/taskTimes";
-import { Fact, HOVER_CARD_CONTENT_CLASS } from "./HoverCardParts";
+import { Fact, HoverCardShell } from "./HoverCardParts";
 
 /**
  * Everything a 240px row had to throw away (TASK-97).
@@ -214,35 +208,18 @@ function Card({ details }: { details: TaskRowDetails }) {
  * no clicks and no focus, and it opens on a delay so that running the pointer
  * down the list opens nothing at all.
  *
- * Radix underneath, for the parts a floating panel is judged on and that are
- * tedious to get right by hand: the open/close delays with their grace area,
- * flipping and shifting to stay on screen, and a portal so the sidebar's own
- * `overflow-y-auto` does not clip it.
+ * The arrangement — the delays, the trigger, the portal, the panel — is
+ * `HoverCardShell`'s, shared with the commit card; this component is only the
+ * projection of a task onto it.
  */
 export function TaskHoverCard({ details, children, open }: TaskHoverCardProps) {
-  const hoverable = useHoverPointer();
-  // The row, and nothing around it — for a device that cannot hover, and for a
-  // row that was handed nothing to say. Everything the card would have said is
-  // reachable without it, which is the standing rule for a hover card and what
-  // makes leaving it out a choice rather than a loss.
-  if (!hoverable || !details) return <>{children}</>;
+  // The bare row for a task that was handed nothing to say. (The shell has the
+  // other reason for drawing one: a device that cannot hover.)
+  if (!details) return <>{children}</>;
 
   return (
-    <HoverCard.Root open={open} openDelay={HOVER_OPEN_DELAY} closeDelay={HOVER_CLOSE_DELAY}>
-      {/* `asChild`: the row stays the element the list lays out — nothing about
-          its box changes for having a card. */}
-      <HoverCard.Trigger asChild>{children}</HoverCard.Trigger>
-      <HoverCard.Portal>
-        <HoverCard.Content
-          side="right"
-          align="start"
-          sideOffset={6}
-          collisionPadding={8}
-          className={HOVER_CARD_CONTENT_CLASS}
-        >
-          <Card details={details} />
-        </HoverCard.Content>
-      </HoverCard.Portal>
-    </HoverCard.Root>
+    <HoverCardShell open={open} card={<Card details={details} />}>
+      {children}
+    </HoverCardShell>
   );
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { useInfiniteQuery, type InfiniteData } from "@tanstack/react-query";
 import { queryClient } from "../query-client";
+import { gitKeys } from "../query-keys";
 import type { GitLogPage } from "../types/git";
 
 /**
@@ -33,16 +34,12 @@ interface LogPageParam {
 
 const PAGE_LIMIT = 200;
 
-function logQueryKey(taskId: string) {
-  return ["git-log", taskId] as const;
-}
-
 /**
  * A 409 means the client's window no longer matches server history (new commits
  * arrived / refs moved). Reset the infinite query so it refetches page one.
  */
 function handleStale(taskId: string) {
-  queryClient.resetQueries({ queryKey: logQueryKey(taskId) });
+  queryClient.resetQueries({ queryKey: gitKeys.log(taskId) });
 }
 
 async function fetchGitLog(taskId: string, param: LogPageParam): Promise<GitLogPage> {
@@ -66,7 +63,7 @@ async function fetchGitLog(taskId: string, param: LogPageParam): Promise<GitLogP
  * `/` — where an empty id would otherwise be fetched as `/api/tasks//git/log`. */
 export function useGitLog(taskId: string, enabled = true) {
   const query = useInfiniteQuery({
-    queryKey: logQueryKey(taskId),
+    queryKey: gitKeys.log(taskId),
     queryFn: ({ pageParam }) => fetchGitLog(taskId, pageParam),
     initialPageParam: { skip: 0 } as LogPageParam,
     enabled,
@@ -107,14 +104,14 @@ export function useGitLog(taskId: string, enabled = true) {
         for (
           let waited = 0;
           waited < 50 &&
-          queryClient.getQueryState(logQueryKey(taskId))?.fetchStatus === "fetching";
+          queryClient.getQueryState(gitKeys.log(taskId))?.fetchStatus === "fetching";
           waited++
         ) {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
 
         const data = queryClient.getQueryData<InfiniteData<GitLogPage, LogPageParam>>(
-          logQueryKey(taskId),
+          gitKeys.log(taskId),
         );
         if (!data) return "error";
 
@@ -151,7 +148,7 @@ export function useGitLog(taskId: string, enabled = true) {
         // only if the loaded count is still the skip we requested from.
         let applied = false;
         queryClient.setQueryData<InfiniteData<GitLogPage, LogPageParam>>(
-          logQueryKey(taskId),
+          gitKeys.log(taskId),
           (old) => {
             if (!old) return old;
             const loaded = old.pages.reduce((sum, p) => sum + p.commits.length, 0);

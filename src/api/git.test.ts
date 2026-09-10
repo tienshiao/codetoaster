@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseLogOutput, parseRefDecorations, applyAfterCheck, sliceUntil } from "./git";
+import { parseLogOutput, parseRefDecorations, applyAfterCheck, sliceUntil, LOG_BODY_CAP } from "./git";
 import type { GitLogCommit } from "./git";
 import { buildFileListing } from "./utils";
 
@@ -127,6 +127,18 @@ test("a record from the older seven-field format still parses, with no body", ()
   expect(commits).toHaveLength(1);
   expect(commits[0]!.subject).toBe("fix: the thing");
   expect(commits[0]!.body).toBe("");
+});
+
+test("a body past the cap is cut to it, and every other field survives", () => {
+  // The row is a hover card's worth of message, not the message: a generated
+  // commit note or a pasted stack trace would otherwise ride in every page the
+  // client caches, for a card that clips after a dozen lines.
+  const body = "x".repeat(LOG_BODY_CAP + 500);
+  const out = record(["h", "p", "A", "a@x", "1", "", "fix: the thing", body]) + "\n";
+  const commits = parseLogOutput(out);
+  expect(commits[0]!.body).toHaveLength(LOG_BODY_CAP);
+  expect(commits[0]!.body).toBe("x".repeat(LOG_BODY_CAP));
+  expect(commits[0]!.subject).toBe("fix: the thing");
 });
 
 test("a separator inside the body rejoins rather than truncating the message", () => {

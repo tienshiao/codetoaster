@@ -1,4 +1,5 @@
 import type { QueryKey } from "@tanstack/react-query";
+import { gitKeys, taskKeys } from "./query-keys";
 import type { ServerMessage } from "../lib/xtmux/types";
 
 /**
@@ -18,50 +19,62 @@ import type { ServerMessage } from "../lib/xtmux/types";
  * a burst of edits to a task whose Files tab nobody has open costs one message
  * and a few map lookups.
  *
- * Every key below is written out here rather than imported, because the hooks
- * build theirs inline; the comment beside each names the hook it must match, so
- * a rename that misses one is at least findable by grepping this file.
+ * Every key comes from `query-keys.ts`, which the owning hooks build theirs
+ * from as well: a key spelled out twice is a key one rename can silently
+ * detach, and a detached invalidation fails as silence rather than as an error.
  */
 export function invalidationsFor(
   message: Extract<ServerMessage, { type: "changed" }>,
 ): QueryKey[] {
   const id = message.taskId;
   const keys: QueryKey[] = [];
-  // Keyed by a string so "the diff, once" survives both halves naming it.
-  const seen = new Set<string>();
-  const add = (key: QueryKey) => {
-    const tag = JSON.stringify(key);
-    if (seen.has(tag)) return;
-    seen.add(tag);
-    keys.push(key);
-  };
 
   const { files, history } = message;
   // `null` is the watcher's "too many to list" — a checkout, an install — and
   // means everything under the checkout may have moved. An empty array is the
   // opposite and says nothing did, which is what a history-only batch carries.
-  if (files === null || files.length > 0) {
-    add(["tasks", id, "files"]); // use-task-files.ts (the tree)
-    add(["tasks", id, "diff"]); // use-task-diff.ts (the working-tree diff)
+  const filesMoved = files === null || files.length > 0;
+
+  if (filesMoved) {
+    keys.push(taskKeys.files(id));
     // A prefix: the real key ends in the query string, and every search over
     // this task's files is now answering from a stale index.
-    add(["tasks", id, "files-search"]); // use-file-search.ts
+    keys.push(taskKeys.fileSearchPrefix(id));
     if (files === null) {
       // Same trick, one level up: invalidate every open file at once rather
       // than a list we do not have.
-      add(["tasks", id, "file"]); // use-task-files.ts (one file's content)
+      keys.push(taskKeys.filePrefix(id));
     } else {
-      for (const file of files) add(["tasks", id, "file", file]);
+      for (const file of files) keys.push(taskKeys.file(id, file));
     }
+    // The symbol index is revalidated by mtime on the server, so what is stale
+    // after a write is only the client's copy of the answer.
+    keys.push(taskKeys.symbolPrefix(id));
+    keys.push(taskKeys.symbolSearchPrefix(id));
+    // Backlog reads `backlog/` inside the checkout, and otherwise waits out a
+    // 3s poll that only runs while the section is open.
+    keys.push(taskKeys.backlog(id));
   }
 
   if (history) {
-    add(["git-log", id]); // use-git-log.ts
-    add(["git-refs", id]); // use-git-refs.ts
-    // HEAD moved, so the base the working-tree diff is taken against moved
-    // with it, even when not one file was written.
-    add(["tasks", id, "diff"]); // use-task-diff.ts
+    // The refs, and deliberately *not* the log. `use-git-history` already
+    // resets the log whenever the refs payload hash changes, and any commit
+    // changes `head.sha` in that payload — so invalidating the log as well
+    // would have react-query refetch every loaded page in sequence, re-deriving
+    // each page param through `getNextPageParam` (which turns a `fetchUntil`
+    // page back into a 200-row one), and then the refs-driven reset would throw
+    // all of it away. Letting the refs do it is a single page-one fetch.
+    //
+    // That leaves one consumer of the log this does not reach: the command
+    // palette's `useGitLog`, which is enabled only while its search is open and
+    // is mounted fresh each time, so it has no stale window to correct.
+    keys.push(gitKeys.refs(id));
   }
+
+  // Once, for either reason: files were written, or HEAD moved and took the
+  // base the working-tree diff is taken against with it — a commit changes the
+  // diff even when not one file was.
+  if (filesMoved || history) keys.push(taskKeys.diff(id));
 
   // Deliberately untouched: `git-tree`, `git-file` and `git-commit` are keyed
   // by a commit sha, and a sha's content cannot change. Invalidating them on

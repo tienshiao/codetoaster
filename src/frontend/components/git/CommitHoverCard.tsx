@@ -1,11 +1,5 @@
 import type { ReactNode } from "react";
-import { HoverCard } from "radix-ui";
-import {
-  useHoverPointer,
-  HOVER_OPEN_DELAY,
-  HOVER_CLOSE_DELAY,
-} from "@/frontend/hooks/use-hover-pointer";
-import { Fact, HOVER_CARD_CONTENT_CLASS } from "@/frontend/components/v2/HoverCardParts";
+import { Fact, HoverCardShell } from "@/frontend/components/v2/HoverCardParts";
 import { absoluteDate } from "../../utils/relativeDate";
 import type { GitLogCommit } from "../../types/git";
 
@@ -28,34 +22,17 @@ export interface CommitHoverCardProps {
  * is the subject whole, the body under it, and the three facts the row has no
  * column for.
  *
- * The same conventions as `TaskHoverCard`, from the same module: the delays,
- * the pointer test, the panel and the fact block. It takes no clicks and no
- * focus — the row underneath stays the thing being pointed at.
+ * The same conventions as `TaskHoverCard`, and from the same component: the
+ * delays, the pointer test and the panel are `HoverCardShell`'s, so this file
+ * is the commit's projection onto it and nothing else. It takes no clicks and
+ * no focus — the row underneath stays the thing being pointed at.
  */
 export function CommitHoverCard({ commit, children, open }: CommitHoverCardProps) {
-  const hoverable = useHoverPointer();
-  // The row and nothing around it, on a device that cannot hover: Radix's
-  // trigger prevents `touchstart`, which would eat the tap that selects the
-  // commit. See `useHoverPointer`.
-  if (!hoverable) return <>{children}</>;
-
   return (
-    <HoverCard.Root open={open} openDelay={HOVER_OPEN_DELAY} closeDelay={HOVER_CLOSE_DELAY}>
-      {/* `asChild`: the row stays the element the virtualizer positioned, and
-          keeps its own `onClick` — the card wraps the button, it does not
-          replace it. */}
-      <HoverCard.Trigger asChild>{children}</HoverCard.Trigger>
-      <HoverCard.Portal>
-        <HoverCard.Content
-          // Off the rail and into the pane, like the task card: the list is
-          // narrow and a card above or below it would cover the neighbouring
-          // commits — the rows you are reading this one against.
-          side="right"
-          align="start"
-          sideOffset={6}
-          collisionPadding={8}
-          className={HOVER_CARD_CONTENT_CLASS}
-        >
+    <HoverCardShell
+      open={open}
+      card={
+        <>
           <span className="font-medium break-words">{commit.subject}</span>
           {commit.body ? (
             // Wrapped and clamped rather than cut: a message can be a page of
@@ -72,8 +49,10 @@ export function CommitHoverCard({ commit, children, open }: CommitHoverCardProps
             <Fact label="Author">{commit.author}</Fact>
             <Fact label="Date">{absoluteDate(commit.date)}</Fact>
           </dl>
-        </HoverCard.Content>
-      </HoverCard.Portal>
-    </HoverCard.Root>
+        </>
+      }
+    >
+      {children}
+    </HoverCardShell>
   );
 }

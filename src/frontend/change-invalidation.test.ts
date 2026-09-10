@@ -17,27 +17,33 @@ function changed(files: string[] | null, history: boolean): Changed {
 }
 
 describe("invalidationsFor", () => {
-  test("named files stale the tree, the diff, the search and each file", () => {
+  test("named files stale the tree, the search, each file, the symbols, the backlog and the diff", () => {
     expect(invalidationsFor(changed(["src/a.ts", "README.md"], false))).toEqual([
       ["tasks", "t1", "files"],
-      ["tasks", "t1", "diff"],
       ["tasks", "t1", "files-search"],
       ["tasks", "t1", "file", "src/a.ts"],
       ["tasks", "t1", "file", "README.md"],
+      ["tasks", "t1", "symbols"],
+      ["tasks", "t1", "symbol-search"],
+      ["tasks", "t1", "backlog"],
+      ["tasks", "t1", "diff"],
     ]);
   });
 
-  test("history stales the log, the refs and the diff — and nothing keyed by sha", () => {
+  test("history stales the refs and the diff — not the log, and nothing keyed by sha", () => {
     const keys = invalidationsFor(changed([], true));
     expect(keys).toEqual([
-      ["git-log", "t1"],
       ["git-refs", "t1"],
       ["tasks", "t1", "diff"],
     ]);
+    // The log is reset by `use-git-history` when the refs hash changes, which
+    // any commit does. Invalidating it here as well would refetch every loaded
+    // page only for that reset to discard them.
+    const flat = JSON.stringify(keys);
+    expect(flat).not.toContain("git-log");
     // The tree, the file-at-sha and the commit are keyed by a commit hash, and
     // a hash's content does not change. Re-fetching them on every commit would
     // be work with no possible new answer.
-    const flat = JSON.stringify(keys);
     expect(flat).not.toContain("git-tree");
     expect(flat).not.toContain("git-file");
     expect(flat).not.toContain("git-commit");
@@ -47,11 +53,13 @@ describe("invalidationsFor", () => {
     const keys = invalidationsFor(changed(["src/a.ts"], true));
     expect(keys).toEqual([
       ["tasks", "t1", "files"],
-      ["tasks", "t1", "diff"],
       ["tasks", "t1", "files-search"],
       ["tasks", "t1", "file", "src/a.ts"],
-      ["git-log", "t1"],
+      ["tasks", "t1", "symbols"],
+      ["tasks", "t1", "symbol-search"],
+      ["tasks", "t1", "backlog"],
       ["git-refs", "t1"],
+      ["tasks", "t1", "diff"],
     ]);
     expect(keys.filter((k) => JSON.stringify(k) === '["tasks","t1","diff"]')).toHaveLength(1);
   });
@@ -61,9 +69,12 @@ describe("invalidationsFor", () => {
     // listing, so the prefix stands in for all of them.
     expect(invalidationsFor(changed(null, false))).toEqual([
       ["tasks", "t1", "files"],
-      ["tasks", "t1", "diff"],
       ["tasks", "t1", "files-search"],
       ["tasks", "t1", "file"],
+      ["tasks", "t1", "symbols"],
+      ["tasks", "t1", "symbol-search"],
+      ["tasks", "t1", "backlog"],
+      ["tasks", "t1", "diff"],
     ]);
   });
 

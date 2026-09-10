@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { parseDiff } from "../utils/parseDiff";
 import { enhanceWithWordDiff, type DiffFileTokens } from "../utils/wordDiff";
 import { sortFiles } from "../utils/sortFiles";
+import { taskKeys } from "../query-keys";
 import type { FileDiff } from "../types/diff";
 
 // Fetch server tree-sitter tokens for both sides of each file's diff. This runs
@@ -55,7 +56,7 @@ async function fetchDiff(taskId: string): Promise<{ diff: string; hash: string }
 // an empty one would fetch `/api/tasks//diff`.
 export function useTaskDiff(taskId: string, enabled = true) {
   const diffQuery = useQuery({
-    queryKey: ["tasks", taskId, "diff"],
+    queryKey: taskKeys.diff(taskId),
     queryFn: () => fetchDiff(taskId),
     enabled,
   });

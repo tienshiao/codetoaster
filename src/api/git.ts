@@ -14,7 +14,8 @@ export interface GitLogCommit {
   date: number;
   subject: string;
   /** The rest of the message after the subject (`%b`), trailing blank lines
-   * trimmed. `""` when the commit is a subject and nothing else. */
+   * trimmed and cut at `LOG_BODY_CAP`. `""` when the commit is a subject and
+   * nothing else. */
   body: string;
 }
 
@@ -45,6 +46,20 @@ export function parseRefDecorations(decoration: string): string[] {
   }
   return refs;
 }
+
+/**
+ * How much of a commit message body a log row carries.
+ *
+ * `%b` multiplies the log payload about sixfold in this repository — 60 KB to
+ * 345 KB per 500 rows — and every page stays in the client's infinite cache
+ * while the seek path parses up to `UNTIL_CAP + 1` records in one go. The only
+ * reader is the hover card, which clips at twelve lines or so; past that the
+ * bytes are held for something nobody can see, and the whole message is one
+ * click away in the commit tab. Git's own stdout is still uncapped — the seek
+ * buffers whatever git wrote before this trims it — which is the part of the
+ * cost this does not pay off.
+ */
+export const LOG_BODY_CAP = 2048;
 
 /**
  * Parse the output of
@@ -84,7 +99,7 @@ export function parseLogOutput(stdout: string): GitLogCommit[] {
       subject,
       // `%b` ends in the newline git puts between the message and the record
       // terminator; the leading structure is the message's own and is kept.
-      body: fields.slice(7).join("\x1f").replace(/\s+$/, ""),
+      body: fields.slice(7).join("\x1f").trimEnd().slice(0, LOG_BODY_CAP),
     });
   }
   return commits;

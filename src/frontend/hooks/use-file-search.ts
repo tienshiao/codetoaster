@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { taskKeys } from "../query-keys";
 
 export interface FileSearchResult {
   path: string;
@@ -30,7 +31,7 @@ async function fetchFileSearch(taskId: string, query: string): Promise<FileSearc
  */
 export function useFileSearch(taskId: string | null, query: string) {
   return useQuery({
-    queryKey: ["tasks", taskId, "files-search", query],
+    queryKey: taskKeys.fileSearch(taskId, query),
     queryFn: () => fetchFileSearch(taskId!, query),
     enabled: taskId !== null && query.length > 0,
     staleTime: 30_000,

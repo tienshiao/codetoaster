@@ -10,6 +10,8 @@ import {
   watchRootsFor,
   type ChangeBatch,
 } from "./watcher";
+import { git } from "../../../test/git-repo";
+import { waitFor } from "../../../test/wait";
 
 // Real directories and real events, because the thing under test is what the
 // platform delivers and how it is folded — a fake emitter would only prove the
@@ -34,15 +36,6 @@ afterEach(() => {
   for (const w of watchers.splice(0)) w.close();
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
-
-async function until(check: () => boolean, timeoutMs = 3000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (check()) return true;
-    await Bun.sleep(20);
-  }
-  return check();
-}
 
 // The pause before the watch is not politeness. FSEvents starts a stream
 // "since now" with a latency window, and delivers the fixture directories
@@ -104,7 +97,7 @@ describe("TaskWatcher", () => {
     fs.writeFileSync(path.join(checkout, "src", "b.ts"), "b");
     fs.writeFileSync(path.join(checkout, "src", "a.ts"), "aa");
 
-    expect(await until(() => batches.length > 0)).toBe(true);
+    expect(await waitFor(() => batches.length > 0, 3000)).toBe(true);
     // Settled, so nothing else arrives for the same burst.
     await Bun.sleep(SETTLE * 3);
     expect(batches).toHaveLength(1);
@@ -119,9 +112,8 @@ describe("TaskWatcher", () => {
     fs.mkdirSync(path.join(checkout, "later", "nested"), { recursive: true });
     fs.writeFileSync(path.join(checkout, "later", "nested", "x.txt"), "x");
 
-    expect(await until(() => batches.some((b) => b.files?.includes("later/nested/x.txt")))).toBe(
-      true,
-    );
+    const seen = () => batches.some((b) => b.files?.includes("later/nested/x.txt"));
+    expect(await waitFor(seen, 3000)).toBe(true);
   });
 
   test("ignored paths produce no batch at all", async () => {
@@ -161,7 +153,7 @@ describe("TaskWatcher", () => {
 
     for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(checkout, `f${i}.txt`), "x");
 
-    expect(await until(() => batches.length > 0)).toBe(true);
+    expect(await waitFor(() => batches.length > 0, 3000)).toBe(true);
     expect(batches[0]!.files).toBeNull();
     expect(batches[0]!.history).toBe(false);
   });
@@ -184,7 +176,7 @@ describe("TaskWatcher", () => {
     fs.writeFileSync(path.join(meta, "refs", "heads", "main.lock"), "sha");
     fs.renameSync(path.join(meta, "refs", "heads", "main.lock"), path.join(meta, "refs", "heads", "main"));
 
-    expect(await until(() => batches.length > 0)).toBe(true);
+    expect(await waitFor(() => batches.length > 0, 3000)).toBe(true);
     expect(batches[0]).toEqual({ files: [], history: true });
   });
 
@@ -197,9 +189,49 @@ describe("TaskWatcher", () => {
     fs.writeFileSync(path.join(checkout, "a.txt"), "a");
     fs.writeFileSync(path.join(meta, "HEAD"), "sha");
 
-    expect(await until(() => batches.length > 0)).toBe(true);
+    expect(await waitFor(() => batches.length > 0, 3000)).toBe(true);
     await Bun.sleep(SETTLE * 3);
     expect(batches).toEqual([{ files: ["a.txt"], history: true }]);
+  });
+
+  // A real repository, because what is under test is git's answer about the
+  // paths and not a rule reimplemented here.
+  async function ignoringDist(prefix: string): Promise<string> {
+    const repo = tmp(prefix);
+    await git(repo, "init", "-q");
+    fs.writeFileSync(path.join(repo, ".gitignore"), "dist/\n");
+    fs.mkdirSync(path.join(repo, "dist"));
+    fs.mkdirSync(path.join(repo, "src"));
+    return repo;
+  }
+
+  test("an ignored path is dropped and the edit beside it still reported", async () => {
+    const repo = await ignoringDist("watch-ignore");
+    const { batches } = await watching({ checkout: repo, gitDirs: [path.join(repo, ".git")] });
+    await Bun.sleep(100);
+
+    // A build and an edit in the same burst, which is what a watch task does
+    // to itself: the tree, the diff and the search are all
+    // `--exclude-standard`, so `dist/out.js` would invalidate three queries for
+    // content none of them can show.
+    fs.writeFileSync(path.join(repo, "dist", "out.js"), "built");
+    fs.writeFileSync(path.join(repo, "src", "a.ts"), "a");
+
+    expect(await waitFor(() => batches.length > 0, 3000)).toBe(true);
+    await Bun.sleep(SETTLE * 3);
+    expect(batches).toEqual([{ files: ["src/a.ts"], history: false }]);
+  });
+
+  test("a burst that is entirely ignored says nothing at all", async () => {
+    const repo = await ignoringDist("watch-ignore-all");
+    const { batches } = await watching({ checkout: repo, gitDirs: [path.join(repo, ".git")] });
+    await Bun.sleep(100);
+
+    // The whole of a build, and the point of the filter: an empty file list
+    // with nothing else to report is not a batch worth sending.
+    for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(repo, "dist", `out${i}.js`), "built");
+    await Bun.sleep(CAP + SETTLE * 4);
+    expect(batches).toEqual([]);
   });
 
   test("close stops delivery and drops what was pending", async () => {
@@ -231,8 +263,7 @@ describe("TaskWatcher", () => {
 describe("watchRootsFor", () => {
   test("a repository's own directory yields its .git", async () => {
     const repo = tmp("roots-repo");
-    const init = Bun.spawnSync(["git", "init", "-q", repo]);
-    expect(init.exitCode).toBe(0);
+    await git(repo, "init", "-q");
     const roots = await watchRootsFor(repo);
     expect(roots.checkout).toBe(repo);
     expect(roots.gitDirs).toEqual([path.join(repo, ".git")]);
@@ -240,11 +271,13 @@ describe("watchRootsFor", () => {
 
   test("a linked worktree yields its own metadata and the common dir", async () => {
     const repo = tmp("roots-main");
-    Bun.spawnSync(["git", "init", "-q", repo]);
-    Bun.spawnSync(["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-q", "-m", "root"]);
+    await git(repo, "init", "-q");
+    await git(
+      repo, "-c", "user.email=t@t", "-c", "user.name=t",
+      "commit", "--allow-empty", "-q", "-m", "root",
+    );
     const linked = path.join(repo, "linked");
-    const add = Bun.spawnSync(["git", "-C", repo, "worktree", "add", "-q", linked, "-b", "side"]);
-    expect(add.exitCode).toBe(0);
+    await git(repo, "worktree", "add", "-q", linked, "-b", "side");
     const roots = await watchRootsFor(linked);
     expect(roots.gitDirs).toHaveLength(2);
     expect(roots.gitDirs).toContain(path.join(repo, ".git"));
@@ -277,7 +310,7 @@ describe("startTaskWatcher", () => {
     expect(await handle.ready).toBe(true);
     await Bun.sleep(100);
     fs.writeFileSync(path.join(plain, "a.txt"), "a");
-    expect(await until(() => batches.length === 1)).toBe(true);
+    expect(await waitFor(() => batches.length === 1, 3000)).toBe(true);
     handle.stop();
     fs.writeFileSync(path.join(plain, "b.txt"), "b");
     await Bun.sleep(CAP + SETTLE * 2);

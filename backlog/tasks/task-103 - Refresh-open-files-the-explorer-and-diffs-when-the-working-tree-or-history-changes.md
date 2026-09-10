@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-10 07:44'
-updated_date: '2026-09-10 08:18'
+updated_date: '2026-09-10 09:24'
 labels:
   - frontend
   - server
@@ -56,6 +56,8 @@ TaskContext.tsx feeds each key to the shared queryClient.invalidateQueries, whos
 manager.test.ts gains a 'checkout watchers' block: nothing watched without a client, the last client leaving stops them, suspend and delete stop them, reconcile is idempotent, stopWatchers empties the set. One behaviour found while testing: deleteTask is the single lifecycle call that does not broadcast for itself - its route broadcasts immediately after, and the reconcile rides that broadcast.
 
 ACs 1-3 are verified in a browser by the main session and are left unchecked here. Watchers are tied to client connections rather than started at boot: reconcileWatchers runs from registerClient/unregisterClient and the two broadcast paths, and a daemon with no browser attached watches nothing.
+
+Post-review fixes: watcher root is repo_root (routes speak repo-relative paths) and a changed root restarts the watch; broadcastTask reconciles one row instead of walking all live rows; a failed watch is retried after 30s; metadata dirs are watched shallow plus refs/ recursive; ignored paths are dropped per batch via check-ignore (fail-open); history invalidates refs only and the existing refs-hash effect resets the log; query keys live in frontend/query-keys.ts and are shared by the hooks and the invalidation map.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

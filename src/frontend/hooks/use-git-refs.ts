@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { gitKeys } from "../query-keys";
 import type { GitRefsResponse } from "../types/git";
 
 async function fetchGitRefs(taskId: string): Promise<GitRefsResponse> {
@@ -12,7 +13,7 @@ async function fetchGitRefs(taskId: string): Promise<GitRefsResponse> {
 
 export function useGitRefs(taskId: string, enabled = true) {
   return useQuery({
-    queryKey: ["git-refs", taskId],
+    queryKey: gitKeys.refs(taskId),
     queryFn: () => fetchGitRefs(taskId),
     enabled,
     // Refs move out-of-band (commits, checkouts in the terminal). Re-fetch on

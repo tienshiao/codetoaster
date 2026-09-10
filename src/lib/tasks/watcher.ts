@@ -38,6 +38,10 @@ export interface WatchRoots {
    * a linked worktree that is `<main>/.git/worktrees/<name>` — and the common
    * one, where shared refs live. Empty when the checkout is not a repository,
    * in which case only the files are watched.
+   *
+   * Not watched recursively; see `TaskWatcher`'s constructor. The common dir
+   * is shared by every worktree of the repository, so a recursive stream on it
+   * delivers every object every task writes to every other task's watcher.
    */
   gitDirs: string[];
 }
@@ -60,7 +64,15 @@ export const MAX_FILES = 200;
  * metadata that matters is watched separately, by `classifyGitPath`.
  * `.claude/worktrees` is the case that would otherwise be spectacular — the
  * main checkout contains every other worktree, so a task there would be told
- * about every other task's edits.
+ * about every other task's edits. It is listed here and not left to the ignore
+ * file because it is genuinely not ignored: Claude Code puts linked worktrees
+ * at `<repo>/.claude/worktrees/*`, and this repository's own `ls-files -o`
+ * duly lists them.
+ *
+ * The cheap synchronous half. Everything else a view would not show —
+ * `dist/`, `target/`, `coverage/` — is dropped at flush time by the
+ * repository's own ignore rules, which cost a `git check-ignore` and so are
+ * asked once per batch rather than once per event.
  */
 export function isReportableCheckoutPath(rel: string): boolean {
   if (!rel) return false;
@@ -134,6 +146,15 @@ export interface TaskWatcherOptions {
  * Construction is synchronous and throws if a root cannot be watched, with
  * everything it did manage to open closed again first: a watcher that is half
  * up is worse than none, because it would report edits and miss commits.
+ *
+ * The checkout is watched recursively; the metadata directories are not. A
+ * repository's common dir is shared by all of its worktrees, so a recursive
+ * stream on it hands every task's watcher every object written by every
+ * commit, fetch and gc in the repository — N tasks' worth of events, all of
+ * them discarded by `isHistoryPath`. What that predicate accepts lives in
+ * exactly two places, so those are what is opened: the dir itself, shallow,
+ * for `HEAD`, `ORIG_HEAD`, `packed-refs` and a `refs` entry appearing, and
+ * `refs/` recursively when it is already there.
  */
 export class TaskWatcher {
   private readonly watchers: fs.FSWatcher[] = [];
@@ -148,6 +169,8 @@ export class TaskWatcher {
   private settle: ReturnType<typeof setTimeout> | null = null;
   private cap: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
+  /** The tail of the delivery chain; see `flush`. */
+  private delivery: Promise<void> = Promise.resolve();
 
   constructor(
     readonly roots: WatchRoots,
@@ -159,13 +182,19 @@ export class TaskWatcher {
     this.maxFiles = options.maxFiles ?? MAX_FILES;
     this.onError = options.onError;
     try {
-      this.open(roots.checkout, (rel) => {
+      this.open(roots.checkout, { recursive: true }, (rel) => {
         if (isReportableCheckoutPath(rel)) this.noteFile(rel);
       });
+      const history = (rel: string) => {
+        if (isHistoryPath(rel)) this.noteHistory();
+      };
       for (const dir of roots.gitDirs) {
-        this.open(dir, (rel) => {
-          if (isHistoryPath(rel)) this.noteHistory();
-        });
+        this.open(dir, { recursive: false }, history);
+        // The prefix is what makes the two streams speak one vocabulary: paths
+        // from this one are relative to `refs/`, and `isHistoryPath` is written
+        // against the metadata directory's own.
+        const refs = path.join(dir, "refs");
+        if (fs.existsSync(refs)) this.open(refs, { recursive: true, prefix: "refs/" }, history);
       }
     } catch (error) {
       this.close();
@@ -173,11 +202,15 @@ export class TaskWatcher {
     }
   }
 
-  private open(dir: string, onPath: (rel: string) => void): void {
-    const watcher = fs.watch(dir, { recursive: true }, (_event, filename) => {
+  private open(
+    dir: string,
+    options: { recursive: boolean; prefix?: string },
+    onPath: (rel: string) => void,
+  ): void {
+    const watcher = fs.watch(dir, { recursive: options.recursive }, (_event, filename) => {
       if (this.closed || filename === null) return;
       const name = String(filename);
-      onPath(path.sep === "/" ? name : name.split(path.sep).join("/"));
+      onPath((options.prefix ?? "") + (path.sep === "/" ? name : name.split(path.sep).join("/")));
     });
     watcher.on("error", (error: Error) => this.fail(error));
     this.watchers.push(watcher);
@@ -212,6 +245,11 @@ export class TaskWatcher {
     if (!this.cap) this.cap = setTimeout(() => this.flush(), this.maxWaitMs);
   }
 
+  /** The pending state is reset synchronously, as it always was — the next
+   * burst starts accumulating the moment this returns — but delivery is not,
+   * because the ignore check is a `git check-ignore`. Batches are chained
+   * rather than raced so that two bursts a second apart cannot arrive out of
+   * order because the second's check finished first. */
   private flush(): void {
     if (this.settle) clearTimeout(this.settle);
     if (this.cap) clearTimeout(this.cap);
@@ -226,7 +264,64 @@ export class TaskWatcher {
     this.files = new Set();
     this.overflowed = false;
     this.history = false;
-    this.onBatch(batch);
+    // The chain has to survive a link that throws — a consumer that raised, a
+    // `git` that could not be spawned at all — or one bad batch would leave a
+    // rejected promise that every later batch queues behind and never gets
+    // past. That batch is lost; the watch is not.
+    this.delivery = this.delivery.then(() => this.deliver(batch)).catch(() => {});
+  }
+
+  private async deliver(batch: ChangeBatch): Promise<void> {
+    // `null` is the overflow, which nothing can filter: there is no list to
+    // ask about, and the answer the client acts on is "everything".
+    const files = batch.files === null ? null : await this.withoutIgnored(batch.files);
+    // `close()` drops what is pending, and the await above is a window in
+    // which it can happen.
+    if (this.closed) return;
+    if (!batch.history && files !== null && files.length === 0) return;
+    this.onBatch({ files, history: batch.history });
+  }
+
+  /**
+   * Drop the paths the repository is told to ignore.
+   *
+   * Every view a batch invalidates is gitignore-aware — the tree is
+   * `ls-files --others --cached --exclude-standard`, the diff is `git diff`
+   * plus `--cached` plus those same untracked files — so a build writing into
+   * `dist/`, `.next/`, `target/` or `coverage/` invalidates the tree, the diff
+   * and the search for content none of them would ever show, once per settle
+   * window for the whole length of the build. One `check-ignore` per batch is
+   * far cheaper than that.
+   *
+   * Fail open: exit 1 is "none of them", and anything else — no git, the
+   * timeout, 128 from a repository being rewritten underneath — keeps every
+   * path, because a file reported that needed no refetch costs one query and a
+   * file dropped that needed it costs a view that is quietly wrong. Tracked
+   * files are safe by construction: `check-ignore` consults the index and does
+   * not call a tracked path ignored, however the ignore rules read. A path
+   * that has just been deleted is still answered for, from the rules alone,
+   * so a removal inside `dist/` is dropped and one in `src/` is not.
+   *
+   * Paths go as arguments and the answers come back a line each. `-z` is not
+   * an option here — git rejects it outright unless the paths arrive on stdin,
+   * which `gitSpawn` cannot offer — so `core.quotePath=false` stands in for
+   * most of what it would have bought: without it every non-ASCII name comes
+   * back C-quoted and matches nothing. What remains unrepresentable is a
+   * filename containing a literal newline, which git quotes regardless; that
+   * line matches no path in the batch, so the file is kept, which is the side
+   * to be wrong on.
+   */
+  private async withoutIgnored(files: string[]): Promise<string[]> {
+    if (files.length === 0 || this.roots.gitDirs.length === 0) return files;
+    const { stdout, exitCode } = await gitSpawn(
+      this.roots.checkout,
+      // A batch is capped at `maxFiles` entries, well inside any argv limit.
+      ["-c", "core.quotePath=false", "check-ignore", "--", ...files],
+      { timeoutMs: 5000 },
+    );
+    if (exitCode !== 0) return files;
+    const ignored = new Set(stdout.split("\n").filter((p) => p !== ""));
+    return ignored.size === 0 ? files : files.filter((file) => !ignored.has(file));
   }
 
   /** Idempotent. Anything pending is dropped rather than flushed: a task that

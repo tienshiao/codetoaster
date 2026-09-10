@@ -211,8 +211,11 @@ test("a delta whose row is now the most recent moves it to the top", () => {
   });
   expect(ids()).toEqual(["t1", "t2", "t3"]);
 
-  // A hook transition: the server writes the stamp and sends the one row, at
-  // its old index. Without the re-sort the list would still read t1, t2, t3.
+  // One row, at its old index, carrying a stamp fresher than the one the
+  // snapshot gave it — what any row broadcast that follows a PTY's activity
+  // write looks like: a title change, a shell tab's rising edge, a hook
+  // transition landing after one. Without the re-sort the list would still
+  // read t1, t2, t3.
   deliver({ type: "task", task: task("t3", { lastActiveAt: 99, agentState: "busy" }) });
   expect(ids()).toEqual(["t3", "t1", "t2"]);
 
@@ -344,9 +347,12 @@ test("a changed frame invalidates the task's file, diff and search queries", asy
   const keys = invalidate.mock.calls.map(([arg]) => arg?.queryKey);
   expect(keys).toEqual([
     ["tasks", "t1", "files"],
-    ["tasks", "t1", "diff"],
     ["tasks", "t1", "files-search"],
     ["tasks", "t1", "file", "src/a.ts"],
+    ["tasks", "t1", "symbols"],
+    ["tasks", "t1", "symbol-search"],
+    ["tasks", "t1", "backlog"],
+    ["tasks", "t1", "diff"],
   ]);
 });
 

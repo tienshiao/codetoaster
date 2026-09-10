@@ -426,9 +426,12 @@ export function TaskProvider({ children }: { children: ReactNode }) {
             // snapshot — between snapshots this delta and the `activity` stamp
             // below are the only carriers of recency, so a task that has been
             // busy for an hour would sit wherever it was when the last create
-            // happened (TASK-101). `byRecency` is a no-op, down to the array
-            // identity, when the row's rank did not change, so rows never
-            // shuffle under the pointer without cause.
+            // happened (TASK-101). The copy this updater has already made means
+            // a new array either way; what keeps the sidebar still is that
+            // `byRecency` moves a row only when its rank actually changed, and
+            // every row it does not move is the same object it was — so a delta
+            // about one task's state re-renders that row and nothing shuffles
+            // under the pointer.
             setTasks((prev) => {
               const i = prev.findIndex((t) => t.id === message.task.id);
               if (message.task.lifecycle === "archived") {
@@ -585,9 +588,16 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     // missing-task guard reads "loaded, and no such task" and bounces it
     // straight back to `/`, taking the typed prompt with it. The next
     // broadcast overwrites this row either way.
+    //
+    // Sorted like every other delta, and for the same reason: a bare append
+    // puts the newest task at the *bottom* of a list ordered by recency, where
+    // it sits looking like the oldest thing on screen until the next snapshot
+    // arrives to move it (TASK-101).
     if (result.ok) {
       const created = result.value;
-      setTasks((prev) => (prev.some((t) => t.id === created.id) ? prev : [...prev, created]));
+      setTasks((prev) =>
+        prev.some((t) => t.id === created.id) ? prev : byRecency([...prev, created]),
+      );
     }
     return result;
   }, []);
