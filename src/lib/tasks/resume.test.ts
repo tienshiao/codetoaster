@@ -506,6 +506,59 @@ describe("resuming a suspended task", () => {
     expect(ids).toEqual(["what-really-happened"]);
   });
 
+  // TASK-104: the task switched worktrees mid-session, so Claude Code relocated
+  // its conversation into the project folder for the new cwd, and the row's
+  // transcript_path still names the folder the file left. The stored id is
+  // exact and the file is one directory over — the ladder must resume it rather
+  // than land on could_not_resume with the work intact on disk.
+  test("resumes a conversation relocated to the cwd's folder by a worktree switch", async () => {
+    const { manager, store, agent } = newManager();
+    const task = suspendedTask(manager, store);
+
+    // Where the relocation actually put it: the folder derived from the current
+    // cwd, holding the stored conversation.
+    plantTranscripts(task.cwd, ["stored-session-id"]);
+
+    // The folder the row still points at: real and readable, but the
+    // conversation has left it — only a stranger's is there now.
+    const staleDir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-stale-"));
+    tempDirs.push(staleDir);
+    fs.writeFileSync(path.join(staleDir, "a-stranger.jsonl"), "{}");
+    store.update(task.id, { transcript_path: path.join(staleDir, "stored-session-id.jsonl") });
+
+    const resumed = await manager.resumeTask(task.id);
+
+    expect(resumed!.lifecycle).toBe("live");
+    const ids = (await agent.settled(1)).map((argv) => argv[argv.indexOf("--resume") + 1]);
+    expect(ids).toEqual(["stored-session-id"]);
+  });
+
+  // TASK-104, the compound case: the stored id has gone stale (a missed
+  // /clear) AND the task switched worktrees, so the reported id — the one the
+  // agent named in transcript_path — is the only one worth resuming, and its
+  // file was relocated into the cwd's folder too. The reported rung must be as
+  // relocation-aware as the stored-id rung, or the ladder empties.
+  test("resumes the reported conversation when both the stored id is stale and the file relocated", async () => {
+    const { manager, store, agent } = newManager();
+    const task = suspendedTask(manager, store, { agent_session_id: "stale-stored-id" });
+
+    // The relocated location holds the reported conversation; neither folder
+    // holds the stale stored id, so its rung declines and the reported one
+    // must carry the resume.
+    plantTranscripts(task.cwd, ["what-really-happened"]);
+
+    const staleDir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-stale-"));
+    tempDirs.push(staleDir);
+    fs.writeFileSync(path.join(staleDir, "a-stranger.jsonl"), "{}");
+    store.update(task.id, { transcript_path: path.join(staleDir, "what-really-happened.jsonl") });
+
+    const resumed = await manager.resumeTask(task.id);
+
+    expect(resumed!.lifecycle).toBe("live");
+    const ids = (await agent.settled(1)).map((argv) => argv[argv.indexOf("--resume") + 1]);
+    expect(ids).toEqual(["what-really-happened"]);
+  });
+
   test("a conversation older than the task is not this task's conversation", async () => {
     const { manager, store, agent } = newManager(["--resume", "--continue"]);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-transcripts-"));

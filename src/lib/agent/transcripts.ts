@@ -227,13 +227,27 @@ export function canResumeSessionId(
   task: { cwd: string; transcript_path: string | null },
   sessionId: string,
 ): boolean {
-  const dir = transcriptDirFor(task);
+  const recorded = transcriptDirFor(task);
   try {
-    if (!fs.statSync(dir).isDirectory()) return true;
+    if (!fs.statSync(recorded).isDirectory()) return true;
   } catch {
     return true;
   }
-  return transcriptExists(path.join(dir, `${sessionId}.jsonl`));
+  if (transcriptExists(path.join(recorded, `${sessionId}.jsonl`))) return true;
+
+  // The recorded directory is readable and does not hold the conversation —
+  // which is not the last word once a session has switched worktrees
+  // mid-flight. Claude Code relocates a conversation's transcript into the
+  // project folder for the new cwd, leaving `transcript_path` naming the
+  // folder the file left (TASK-104). So before declaring the id unresumable,
+  // look where the relocation would have put it: the folder derived from the
+  // current cwd. Only counted when it is a *different* directory that actually
+  // holds the file — a `stat` and no more, so this cannot resurrect the doomed
+  // `--resume` the check above exists to keep off the ladder. A row that never
+  // reported a transcript already searches this same derived folder as
+  // `recorded`, so the guard leaves that path untouched.
+  const relocated = projectsDirFor(task.cwd);
+  return relocated !== recorded && transcriptExists(path.join(relocated, `${sessionId}.jsonl`));
 }
 
 /** Whether the conversation the row names is still on disk. A missing

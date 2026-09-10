@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
+  canResumeSessionId,
   continueIsSafe,
   findResumableTranscript,
   runsInOwnWorktree,
@@ -186,6 +187,58 @@ describe("continueIsSafe", () => {
       { name: "ours.jsonl", ageMs: 60_000 },
     ]);
     expect(continueIsSafe({ cwd: "/x", transcript_path: path.join(dir, "ours.jsonl") })).toBe(false);
+  });
+});
+
+describe("canResumeSessionId", () => {
+  test("finds a conversation relocated to the cwd's directory after a worktree switch", () => {
+    // TASK-104 end to end. The row still points at the folder for the worktree
+    // the session started in — a real, readable folder that no longer holds
+    // the conversation — while the conversation now sits under the folder
+    // derived from the current cwd, where a mid-session worktree switch moved
+    // it. The stored-id rung of the resume ladder must still find it.
+    const recordedDir = transcriptDir([{ name: "a-stranger.jsonl" }]);
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-cwd-"));
+    dirs.push(cwd);
+    const relocatedDir = projectsDirFor(cwd);
+    fs.mkdirSync(relocatedDir, { recursive: true });
+    dirs.push(relocatedDir);
+    const sid = "65d02143-af94-4e5e-9e89-b1d9422b4fd0";
+    fs.writeFileSync(path.join(relocatedDir, `${sid}.jsonl`), "{}");
+
+    // The recorded path is readable but the file has left it.
+    const task = { cwd, transcript_path: path.join(recordedDir, `${sid}.jsonl`) };
+    expect(transcriptExists(task.transcript_path)).toBe(false);
+    expect(canResumeSessionId(task, sid)).toBe(true);
+  });
+
+  test("stays off when the recorded folder is readable and neither folder holds it", () => {
+    // The recorded folder is readable and lacks the conversation, and the
+    // cwd-derived folder exists but does not have it either. There is nothing
+    // to open, so the rung must stay off rather than spawn a --resume that
+    // prints "No conversation found" and, in a PTY, keeps running as if
+    // healthy. The derived folder is created and populated with a stranger, so
+    // this exercises the present-but-empty-of-ours branch of the fallback, not
+    // merely a missing directory.
+    const recordedDir = transcriptDir([{ name: "a-stranger.jsonl" }]);
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-cwd-"));
+    dirs.push(cwd);
+    const relocatedDir = projectsDirFor(cwd);
+    fs.mkdirSync(relocatedDir, { recursive: true });
+    dirs.push(relocatedDir);
+    fs.writeFileSync(path.join(relocatedDir, "also-a-stranger.jsonl"), "{}");
+
+    const task = { cwd, transcript_path: path.join(recordedDir, "ours.jsonl") };
+    expect(canResumeSessionId(task, "ours")).toBe(false);
+  });
+
+  test("an unreadable recorded folder cannot disprove the id", () => {
+    // Preserved from before relocation-awareness: a directory we cannot read
+    // is not evidence the conversation is absent, so the id still gets its
+    // rung — the path a degraded task whose agent never reported a transcript
+    // also takes.
+    const task = { cwd: "/x", transcript_path: "/no/such/dir/whatever.jsonl" };
+    expect(canResumeSessionId(task, "whatever")).toBe(true);
   });
 });
 

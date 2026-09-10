@@ -30,7 +30,6 @@ import {
   findResumableTranscript,
   runsInOwnWorktree,
   sessionIdFromTranscript,
-  transcriptExists,
 } from "../agent/transcripts";
 import { writeTaskSettings } from "../agent/settings";
 import {
@@ -1804,10 +1803,17 @@ export class TaskManager {
     // SessionStart and names its file directly. Resuming by id from that
     // filename is both precise and cheap, and it is the rung that recovers a
     // task whose stored id no longer means anything.
+    //
+    // Gated through `canResumeSessionId`, not a bare `transcriptExists` of the
+    // recorded path: the reported id's transcript is subject to the same
+    // mid-session relocation as the stored id's (TASK-104), so a worktree
+    // switch that moved it into `projectsDirFor(cwd)` leaves the recorded path
+    // naming a folder it has left. Sharing the one helper is what keeps both
+    // id rungs relocation-aware rather than patching only the first.
     const reported = sessionIdFromTranscript(row.transcript_path);
     if (
       capabilities.resume
-      && reported && reported !== row.agent_session_id && transcriptExists(row.transcript_path)
+      && reported && reported !== row.agent_session_id && canResumeSessionId(row, reported)
     ) {
       ladder.push({ mode: "resume", sessionId: reported });
     }
