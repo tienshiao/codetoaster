@@ -43,6 +43,7 @@ import {
 } from "../agent/hook-state";
 import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
+import { startTaskWatcher, type WatcherHandle } from "./watcher";
 import {
   applyWip,
   branchIsExpendable,
@@ -294,6 +295,9 @@ export class TaskManager {
    * is spawned identically whether or not anything ever called `setProfiles`. */
   private profiles = new ProfileRegistry(builtinProfiles());
   private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
+  // One checkout watcher per live task while a client is connected (TASK-103).
+  // Owned entirely by `reconcileWatchers`; nothing else writes it.
+  private watchers: Map<string, WatcherHandle> = new Map();
   // Which tasks have ever reported a hook, and the timers waiting to find out
   // (§9, risk 4). Both in memory on purpose: what they guard is a running
   // PTY's output activity, which is per-process by definition. A task with no
@@ -794,10 +798,12 @@ export class TaskManager {
 
   registerClient(clientId: string, ws: ServerWebSocket<WebSocketData>): void {
     this.connectedClients.set(clientId, ws);
+    this.reconcileWatchers();
   }
 
   unregisterClient(clientId: string): void {
     this.connectedClients.delete(clientId);
+    this.reconcileWatchers();
   }
 
   broadcastToAll(message: object): void {
@@ -827,6 +833,7 @@ export class TaskManager {
   /** The whole list — for a connect, or any change to which tasks exist. */
   broadcastTasks(): void {
     this.broadcastToAll(this.tasksSnapshot());
+    this.reconcileWatchers();
   }
 
   /** One row changed. Cheaper than a snapshot, and the reason the protocol has
@@ -834,6 +841,73 @@ export class TaskManager {
   broadcastTask(taskId: string): void {
     const info = this.taskInfo(taskId);
     if (info) this.broadcastToAll({ type: "task", task: info });
+    this.reconcileWatchers();
+  }
+
+  // -------------------------------------------------------------- watchers
+
+  /**
+   * Bring the set of checkout watchers (TASK-103) into line with what should
+   * be watched: every live task with a checkout on disk, while at least one
+   * client is connected.
+   *
+   * Reconciled rather than started and stopped at each lifecycle site, because
+   * the sites are many — resume, suspend, evict, archive, delete, boot
+   * adoption — and one forgotten is a watcher leaked for the daemon's lifetime.
+   * Every one of them ends in a `broadcastTask` or `broadcastTasks`, which is
+   * where this hangs; the cost of a call is a walk over the live rows and a
+   * `stat` each, against a list the harvester keeps short.
+   *
+   * The client condition is not an optimisation. A `changed` message has
+   * nobody to reach when no browser is attached, and a daemon left running
+   * over a large checkout should not hold an FSEvents stream per task for the
+   * hours between sessions to say so.
+   */
+  reconcileWatchers(): void {
+    const wanted = new Map<string, string>();
+    if (this.connectedClients.size > 0) {
+      for (const row of this.store.list({ lifecycle: "live" })) {
+        const root = row.worktree_path ?? row.cwd;
+        if (fs.existsSync(root)) wanted.set(row.id, root);
+      }
+    }
+    for (const [taskId, handle] of this.watchers) {
+      if (!wanted.has(taskId)) {
+        this.watchers.delete(taskId);
+        handle.stop();
+      }
+    }
+    for (const [taskId, root] of wanted) {
+      if (this.watchers.has(taskId)) continue;
+      const handle = startTaskWatcher(
+        root,
+        (batch) => this.broadcastToAll({ type: "changed", taskId, ...batch }),
+        {
+          // Logged and left. The handle stays in the map so the next
+          // reconcile does not restart a watch that just failed, and a
+          // lifecycle change — which is what fixes a vanished root — removes
+          // it the ordinary way.
+          onError: (error) => console.error(`Task ${taskId}: checkout watch ended:`, error.message),
+        },
+      );
+      this.watchers.set(taskId, handle);
+    }
+  }
+
+  /** The tasks currently watched. For tests; the set is otherwise nobody's
+   * business but `reconcileWatchers`'. */
+  watchedTaskIds(): string[] {
+    return [...this.watchers.keys()];
+  }
+
+  /** Shutdown: the process is about to exit and would take the streams with
+   * it, but a watcher mid-settle would otherwise try to send on sockets that
+   * are closing. */
+  stopWatchers(): void {
+    for (const [taskId, handle] of this.watchers) {
+      this.watchers.delete(taskId);
+      handle.stop();
+    }
   }
 
   // ------------------------------------------------------------------ tasks

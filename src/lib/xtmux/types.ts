@@ -158,7 +158,13 @@ export type ServerMessage =
   // close happened to provoke a snapshot. `at` is absent from an older daemon,
   // and from every falling edge.
   | { type: "activity"; taskId: string; active: boolean; at?: number }
-  | { type: "notification"; taskId: string; title: string; body: string };
+  | { type: "notification"; taskId: string; title: string; body: string }
+  // The task's checkout changed underneath whatever a client is showing of it
+  // (TASK-103). Coarse on purpose: it names what kind of thing moved and, when
+  // the burst was small enough for the list to mean anything, which files —
+  // `null` is "too many to name, assume everything". The client turns this
+  // into query invalidations; nothing is re-read on the server's behalf.
+  | { type: "changed"; taskId: string; files: string[] | null; history: boolean };
 
 /** A checkout on disk that no task accounts for (§5.6, TASK-32).
  *

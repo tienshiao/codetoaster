@@ -326,6 +326,30 @@ test("a user who has refused notifications is not asked again", () => {
   expect(stubs.playNotificationSound).toHaveBeenCalledTimes(1);
 });
 
+/**
+ * TASK-103: a `changed` frame reaches the query cache.
+ *
+ * `invalidationsFor` is tested as a function next door; what is pinned here is
+ * the wiring — that the branch exists in `onMessage`, and that it hands the
+ * keys to the shared `queryClient` rather than to a client of its own, which
+ * would invalidate nothing anything is subscribed to.
+ */
+test("a changed frame invalidates the task's file, diff and search queries", async () => {
+  const { queryClient } = await import("./query-client");
+  const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+  render(<TaskProvider>{null}</TaskProvider>);
+
+  deliver({ type: "changed", taskId: "t1", files: ["src/a.ts"], history: false });
+
+  const keys = invalidate.mock.calls.map(([arg]) => arg?.queryKey);
+  expect(keys).toEqual([
+    ["tasks", "t1", "files"],
+    ["tasks", "t1", "diff"],
+    ["tasks", "t1", "files-search"],
+    ["tasks", "t1", "file", "src/a.ts"],
+  ]);
+});
+
 // TASK-57. Where a mutation's failure is reported is decided once, in
 // `request`: it toasts unless the caller says it is showing the message itself.
 // The alternative — every caller doing its own reporting — is how the composer

@@ -10,6 +10,8 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { sessionDisplayNames } from "../lib/xtmux/naming";
+import { invalidationsFor } from "./change-invalidation";
+import { queryClient } from "./query-client";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { usePty } from "./PtyContext";
 import { retainLayouts } from "./layout-store";
@@ -487,6 +489,17 @@ export function TaskProvider({ children }: { children: ReactNode }) {
                 taskDisplayNames(tasksRef.current).get(taskId),
                 task?.title,
               );
+            }
+            return;
+          }
+
+          // The task's checkout moved under whatever is showing it (TASK-103).
+          // The server said what changed; `invalidationsFor` decides what that
+          // makes stale, and `invalidateQueries`' default `refetchType:
+          // "active"` means only mounted views actually refetch.
+          if (message.type === "changed") {
+            for (const queryKey of invalidationsFor(message)) {
+              void queryClient.invalidateQueries({ queryKey });
             }
             return;
           }
