@@ -8,6 +8,9 @@ export interface GitLogCommit {
   email: string;
   date: number;
   subject: string;
+  /** The rest of the message after the subject, trailing blank lines trimmed.
+   * `""` when the commit is a subject and nothing else. */
+  body: string;
 }
 
 export interface GitLogPage {

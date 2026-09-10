@@ -271,6 +271,7 @@ describe("the working tree, git and files", () => {
       email: "t@example.com",
       date: 0,
       subject: `commit ${i}`,
+      body: "",
     }));
 
     const entries = commitEntries(commits);
@@ -334,6 +335,7 @@ test("no two rows share an id, across every builder at once", () => {
         email: "t@example.com",
         date: 0,
         subject: "a commit",
+        body: "",
       },
     ]),
     ...refEntries({

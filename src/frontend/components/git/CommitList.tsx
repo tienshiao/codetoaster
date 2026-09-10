@@ -4,6 +4,7 @@ import { FileDiff, Loader2 } from "lucide-react";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
 import { assignLanes, type GraphRow, type GraphState } from "../../utils/commitGraph";
 import { CommitGraph } from "./CommitGraph";
+import { CommitHoverCard } from "./CommitHoverCard";
 import { RefChip, displayRefs, type RefSets } from "./RefChip";
 import type { GitLogCommit } from "../../types/git";
 
@@ -69,50 +70,67 @@ const CommitRow = memo(function CommitRow({
   const overflow = refs.length - shown.length;
 
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(commit.hash)}
-      className={`w-full h-7 flex items-center gap-2 px-2 text-left text-xs border-b border-border/50 ${
-        isSelected ? "bg-accent text-accent-foreground" : "hover:bg-accent/40 text-foreground/90"
-      }`}
-    >
-      <CommitGraph row={row} height={ROW_HEIGHT} globalLanes={globalLanes} />
-      {/* overflow-hidden, not just min-w-0: the chips are laid out inside this
-          span, so once it is squeezed to nothing they keep their own width and
-          paint over the column to the right rather than clipping. */}
-      <span className="flex-1 min-w-0 overflow-hidden flex items-center gap-2">
-        {shown.map((ref) => (
-          <RefChip
-            key={ref}
-            name={ref}
-            refSets={refSets}
-            // Narrow enough to leave a subject beside it, and allowed to shrink
-            // rather than hold its width against one.
-            className={
-              compact ? "min-w-0 shrink max-w-[88px] truncate" : "shrink-0 max-w-[140px] truncate"
-            }
-          />
-        ))}
-        {overflow > 0 && (
-          <span className="shrink-0 text-[10px] text-muted-foreground">+{overflow}</span>
-        )}
-        <span className="truncate">{commit.subject}</span>
-      </span>
-      {!compact && (
-        <span className="shrink-0 text-muted-foreground truncate max-w-[120px]">{commit.author}</span>
-      )}
-      <span
-        className={`shrink-0 truncate text-muted-foreground/70 text-right ${compact ? "w-14" : "w-16"}`}
-        title={absoluteDate(commit.date)}
+    // Every commit row gets a card — always, not only the truncated ones
+    // (TASK-102 AC #3).
+    //
+    // Two reasons, and the second is the one that settles it. The compact rail
+    // drops the author and the sha from every row, so the card always carries
+    // something the row does not, whatever the subject's length. And a rule
+    // conditioned on measured truncation would have to be re-measured as the
+    // panel resizes: rows would gain and lose their cards while the pointer sat
+    // on them, which is a worse thing to explain than a card that sometimes
+    // repeats a short subject.
+    //
+    // `commit` is referentially stable per commits array, so wrapping the row
+    // changes nothing about the memoization above it.
+    <CommitHoverCard commit={commit}>
+      <button
+        type="button"
+        onClick={() => onSelect(commit.hash)}
+        className={`w-full h-7 flex items-center gap-2 px-2 text-left text-xs border-b border-border/50 ${
+          isSelected ? "bg-accent text-accent-foreground" : "hover:bg-accent/40 text-foreground/90"
+        }`}
       >
-        {relativeDate(commit.date)}
-      </span>
-      {!compact && (
-        <span className="shrink-0 font-mono text-muted-foreground/60 w-16">
-          {commit.hash.slice(0, 8)}
+        <CommitGraph row={row} height={ROW_HEIGHT} globalLanes={globalLanes} />
+        {/* overflow-hidden, not just min-w-0: the chips are laid out inside this
+            span, so once it is squeezed to nothing they keep their own width and
+            paint over the column to the right rather than clipping. */}
+        <span className="flex-1 min-w-0 overflow-hidden flex items-center gap-2">
+          {shown.map((ref) => (
+            <RefChip
+              key={ref}
+              name={ref}
+              refSets={refSets}
+              // Narrow enough to leave a subject beside it, and allowed to
+              // shrink rather than hold its width against one.
+              className={
+                compact ? "min-w-0 shrink max-w-[88px] truncate" : "shrink-0 max-w-[140px] truncate"
+              }
+            />
+          ))}
+          {overflow > 0 && (
+            <span className="shrink-0 text-[10px] text-muted-foreground">+{overflow}</span>
+          )}
+          <span className="truncate">{commit.subject}</span>
         </span>
-      )}
-    </button>
+        {!compact && (
+          <span className="shrink-0 text-muted-foreground truncate max-w-[120px]">
+            {commit.author}
+          </span>
+        )}
+        <span
+          className={`shrink-0 truncate text-muted-foreground/70 text-right ${compact ? "w-14" : "w-16"}`}
+          title={absoluteDate(commit.date)}
+        >
+          {relativeDate(commit.date)}
+        </span>
+        {!compact && (
+          <span className="shrink-0 font-mono text-muted-foreground/60 w-16">
+            {commit.hash.slice(0, 8)}
+          </span>
+        )}
+      </button>
+    </CommitHoverCard>
   );
 });
 
@@ -248,7 +266,12 @@ export function CommitList({
   return (
     <div className="h-full flex flex-col">
       {/* Pinned, non-virtualized entry into the working-tree diff. Always shown;
-          the diff tab itself handles the no-changes case. */}
+          the diff tab itself handles the no-changes case.
+
+          No hover card, unlike every commit row below it (TASK-102 AC #5): its
+          label is two words that never truncate, and it has no sha, author or
+          message to be a second look at. A card here could only repeat the row
+          back. */}
       <button
         type="button"
         onClick={onLocalChanges}

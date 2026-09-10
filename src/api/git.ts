@@ -13,6 +13,9 @@ export interface GitLogCommit {
   email: string;
   date: number;
   subject: string;
+  /** The rest of the message after the subject (`%b`), trailing blank lines
+   * trimmed. `""` when the commit is a subject and nothing else. */
+  body: string;
 }
 
 /**
@@ -44,10 +47,16 @@ export function parseRefDecorations(decoration: string): string[] {
 }
 
 /**
- * Parse the output of `git log --format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e`.
+ * Parse the output of
+ * `git log --format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f%b%x1e`.
  * Records are terminated by \x1e; fields are separated by \x1f. Git emits a
  * newline after each record, which becomes the leading char of the next
  * record after the split — that is stripped here.
+ *
+ * The body is last and spans newlines, which is why it is last: it is whatever
+ * remains of the record, so anything inside it that looks like a separator
+ * rejoins rather than truncating the message. A seven-field record — the older
+ * format, or a fetch that predates this one — still parses, with an empty body.
  */
 export function parseLogOutput(stdout: string): GitLogCommit[] {
   const commits: GitLogCommit[] = [];
@@ -73,6 +82,9 @@ export function parseLogOutput(stdout: string): GitLogCommit[] {
       email,
       date: parseInt(at, 10),
       subject,
+      // `%b` ends in the newline git puts between the message and the record
+      // terminator; the leading structure is the message's own and is kept.
+      body: fields.slice(7).join("\x1f").replace(/\s+$/, ""),
     });
   }
   return commits;
@@ -125,7 +137,7 @@ export function sliceUntil(
 // the client didn't ask to render.
 const UNTIL_CAP = 50000;
 
-const LOG_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
+const LOG_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f%b%x1e";
 const COMMIT_META_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%D%x1f%B";
 
 // Strip any leading non-"diff --git" lines (git diff-tree prefixes its patch
