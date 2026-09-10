@@ -51,10 +51,19 @@ export function getImageMimeType(filePath: string): string {
 }
 
 export async function listGitFiles(dir: string, { cached = true }: { cached?: boolean } = {}): Promise<string[]> {
-  const result = await Bun.$`git -C ${dir} ls-files -z --others ${cached ? ["--cached"] : []} --exclude-standard`.quiet().nothrow();
-  if (result.exitCode !== 0) throw new Error("Failed to list files");
+  // gitSpawn rather than Bun.$ for the reason spelled out below: this lists a
+  // whole repository, and it is on a per-keystroke path now that the composer
+  // and the palette both search through it.
+  const { stdout, exitCode } = await gitSpawn(dir, [
+    "ls-files",
+    "-z",
+    "--others",
+    ...(cached ? ["--cached"] : []),
+    "--exclude-standard",
+  ]);
+  if (exitCode !== 0) throw new Error("Failed to list files");
   // -z outputs null-terminated paths, avoiding git's quoting of special characters
-  return result.text().split("\0").filter(Boolean);
+  return stdout.split("\0").filter(Boolean);
 }
 
 // Run git via Bun.spawn (not Bun.$) so large output streams through a pipe

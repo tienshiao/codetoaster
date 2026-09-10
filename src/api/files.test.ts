@@ -1,5 +1,11 @@
-import { test, expect } from "bun:test";
-import { serializeFileContent } from "./files";
+import { test, expect, describe, beforeAll, afterAll } from "bun:test";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import { fileRoutes, serializeFileContent } from "./files";
+import { initDatabase } from "../lib/db";
+import { taskManager } from "../lib/tasks/manager";
+import { cleanupRepos, tempDir, tempRepo } from "../../test/git-repo";
 import type { Frontmatter } from "../types/frontmatter";
 
 /**
@@ -109,4 +115,89 @@ test("a markdown file with no block carries no field", async () => {
   const result = (await serializeFileContent(buffer("# Title\n\nBody.\n"), "task.md")) as TextResult;
 
   expect("frontmatter" in result).toBe(false);
+});
+
+/**
+ * The project-scoped file search (TASK-100).
+ *
+ * The composer completes `@` before any task exists, so it cannot go through
+ * `resolveTaskRoot` — it names a project instead, and the three answers that
+ * are *about the project* rather than about the query are what these cover.
+ * Driven through a real `Bun.serve`, so the params and status codes are the
+ * ones a client gets.
+ */
+describe("GET /api/projects/:id/files/search", () => {
+  let server: ReturnType<typeof Bun.serve>;
+  let base: string;
+  let dbDir: string;
+  let repoRoot: string;
+
+  beforeAll(async () => {
+    dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-projfiles-"));
+    initDatabase(path.join(dbDir, "codetoaster.db"));
+    taskManager.loadProjects();
+
+    const repo = await tempRepo();
+    repoRoot = repo.root;
+    fs.mkdirSync(path.join(repoRoot, "src"));
+    fs.writeFileSync(path.join(repoRoot, "src", "parser.ts"), "export const x = 1;\n");
+
+    taskManager.createProject("web", "web", repoRoot);
+    taskManager.createProject("nodir", "No directory", "");
+    taskManager.createProject("notrepo", "Not a repo", tempDir("codetoaster-notrepo-"));
+
+    server = Bun.serve({
+      port: 0,
+      routes: fileRoutes as any,
+      fetch: () => new Response("", { status: 404 }),
+    });
+    base = `http://localhost:${server.port}`;
+  });
+
+  afterAll(() => {
+    server.stop(true);
+    cleanupRepos();
+    fs.rmSync(dbDir, { recursive: true, force: true });
+  });
+
+  function search(id: string, q: string) {
+    return fetch(`${base}/api/projects/${id}/files/search?q=${encodeURIComponent(q)}`);
+  }
+
+  test("finds the project's files, best match first", async () => {
+    const res = await search("web", "parser");
+    expect(res.status).toBe(200);
+
+    const { results } = (await res.json()) as { results: { path: string; name: string }[] };
+    expect(results[0]).toMatchObject({ path: "src/parser.ts", name: "parser.ts" });
+    // Relative to the project's directory, which is what the composer writes
+    // into the prompt.
+    expect(results.every((r) => !r.path.startsWith("/"))).toBe(true);
+  });
+
+  test("an empty query is an empty list, not every file", async () => {
+    const res = await search("web", "");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ results: [] });
+  });
+
+  test("a project nobody has heard of is a 404", async () => {
+    const res = await search("nope", "parser");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'Unknown project "nope"' });
+  });
+
+  test("a project with no directory has nowhere to look", async () => {
+    // "General" in practice: a task in it runs wherever the daemon does, and
+    // there is no repository to list.
+    const res = await search("nodir", "parser");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Project has no directory" });
+  });
+
+  test("a directory that is not a repository says so in the usual words", async () => {
+    const res = await search("notrepo", "parser");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Not a git repository" });
+  });
 });
