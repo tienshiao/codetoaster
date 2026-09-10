@@ -13,6 +13,7 @@ import { sessionDisplayNames } from "../lib/xtmux/naming";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { usePty } from "./PtyContext";
 import { retainLayouts } from "./layout-store";
+import { byRecency } from "./task-list";
 import { retainTaskViewStates } from "./view-state-store";
 import { generateUUID } from "./utils/uuid";
 import type { TaskState } from "./components/v2/StatusDot";
@@ -416,21 +417,46 @@ export function TaskProvider({ children }: { children: ReactNode }) {
             // straight back into the sidebar, as a second copy of a task now
             // also in the archived list. So an archived delta removes rather
             // than upserts: it is the server saying this row has left.
+            //
+            // And re-sorted after, because the upsert writes the row back at
+            // the index it already had. The list is the server's
+            // `last_active_at DESC`, but that order only arrives with a full
+            // snapshot — between snapshots this delta and the `activity` stamp
+            // below are the only carriers of recency, so a task that has been
+            // busy for an hour would sit wherever it was when the last create
+            // happened (TASK-101). `byRecency` is a no-op, down to the array
+            // identity, when the row's rank did not change, so rows never
+            // shuffle under the pointer without cause.
             setTasks((prev) => {
               const i = prev.findIndex((t) => t.id === message.task.id);
               if (message.task.lifecycle === "archived") {
                 return i === -1 ? prev : prev.filter((t) => t.id !== message.task.id);
               }
-              if (i === -1) return [...prev, message.task];
+              if (i === -1) return byRecency([...prev, message.task]);
               const next = [...prev];
               next[i] = message.task;
-              return next;
+              return byRecency(next);
             });
             return;
           }
 
           if (message.type === "activity") {
             setActivity((prev) => ({ ...prev, [message.taskId]: message.active }));
+            // The rising edge carries the stamp the server just wrote to
+            // `last_active_at` — no row comes with it, so this is the only
+            // chance to move the task up the list before the next snapshot.
+            // Absent from a falling edge, and from an older daemon, in which
+            // case the order simply stays as it was.
+            const { taskId, at } = message;
+            if (message.active && at !== undefined) {
+              setTasks((prev) => {
+                const i = prev.findIndex((t) => t.id === taskId);
+                if (i === -1 || at <= prev[i]!.lastActiveAt) return prev;
+                const next = [...prev];
+                next[i] = { ...prev[i]!, lastActiveAt: at };
+                return byRecency(next);
+              });
+            }
             return;
           }
 

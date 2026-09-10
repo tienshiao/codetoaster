@@ -10,9 +10,13 @@ import type { TaskInfo } from "@/lib/xtmux/types";
  * deleted — are much easier to state as inputs and outputs than as a mounted
  * component.
  *
- * Ordering is not here on purpose. `TaskInfo` arrives from the server already
- * sorted `last_active_at DESC` (§7.5's recency list), so every function below
- * preserves the order it is given rather than imposing one.
+ * The ordering is still the server's. `TaskInfo` arrives from a `tasks`
+ * snapshot already sorted `last_active_at DESC` (§7.5's recency list), and
+ * `selectTasks`/`groupByProject` preserve whatever order they are given rather
+ * than imposing one. `byRecency` is the single exception, and it does not
+ * invent an order either: it re-applies the server's between snapshots, for
+ * the two frames that move one row's recency without re-sending the list — a
+ * `task` delta and an `activity` stamp.
  */
 
 /** The fields the list logic reads. Narrow so a test can state a row in four
@@ -47,6 +51,30 @@ export interface TaskGroup<T> {
   id: string;
   name: string;
   tasks: T[];
+}
+
+/**
+ * The server's `last_active_at DESC`, re-applied to a list one frame has
+ * disturbed.
+ *
+ * Two properties matter more than the sort itself. It is *stable*, so rows
+ * that tie — everything a fresh daemon has not touched yet shares a stamp, and
+ * so does anything written inside the same millisecond — keep the order the
+ * server gave them instead of shuffling on every delta. And it returns the
+ * **same array instance** when nothing is out of order, so the common case
+ * (a delta that changes a row's state and not its rank) allocates nothing and
+ * re-renders nothing downstream: no row moves under a pointer that is mid-click
+ * unless the rank genuinely changed.
+ */
+export function byRecency<T extends { lastActiveAt: number }>(tasks: readonly T[]): T[] {
+  for (let i = 1; i < tasks.length; i++) {
+    if (tasks[i - 1]!.lastActiveAt < tasks[i]!.lastActiveAt) {
+      // `Array.prototype.sort` is stable per spec, so equal stamps keep the
+      // relative order of this copy — which is the order they arrived in.
+      return [...tasks].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+    }
+  }
+  return tasks as T[];
 }
 
 /** Case-folded once per query rather than once per row. */

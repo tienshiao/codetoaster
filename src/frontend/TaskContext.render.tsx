@@ -179,6 +179,74 @@ test("a delta for an archived task takes the row out rather than putting it back
   expect(ids).toEqual(["t2", "t4"]);
 });
 
+/**
+ * The list is `last_active_at DESC`, and between snapshots the only things
+ * that say so are a `task` delta and an `activity` stamp (TASK-101).
+ *
+ * A rendering test rather than a `task-list` one because what is being pinned
+ * is the store's *application* of the sort — that both frames reach it, and
+ * that the one carrying no stamp leaves the order alone. `byRecency` itself is
+ * covered as a function in `task-list.test.ts`.
+ */
+function renderList() {
+  let ids: string[] = [];
+  function Watch() {
+    ids = useTasks().tasks.map((t) => t.id);
+    return null;
+  }
+  render(
+    <TaskProvider>
+      <Watch />
+    </TaskProvider>,
+  );
+  return () => ids;
+}
+
+test("a delta whose row is now the most recent moves it to the top", () => {
+  const ids = renderList();
+  deliver({
+    type: "tasks",
+    list: [task("t1", { lastActiveAt: 30 }), task("t2", { lastActiveAt: 20 }), task("t3", { lastActiveAt: 10 })],
+    projects: [],
+  });
+  expect(ids()).toEqual(["t1", "t2", "t3"]);
+
+  // A hook transition: the server writes the stamp and sends the one row, at
+  // its old index. Without the re-sort the list would still read t1, t2, t3.
+  deliver({ type: "task", task: task("t3", { lastActiveAt: 99, agentState: "busy" }) });
+  expect(ids()).toEqual(["t3", "t1", "t2"]);
+
+  // A delta that does not change rank leaves the order alone.
+  deliver({ type: "task", task: task("t1", { lastActiveAt: 30, agentState: "busy" }) });
+  expect(ids()).toEqual(["t3", "t1", "t2"]);
+});
+
+test("an activity stamp moves the row without a row being sent", () => {
+  const ids = renderList();
+  deliver({
+    type: "tasks",
+    list: [task("t1", { lastActiveAt: 30 }), task("t2", { lastActiveAt: 20 })],
+    projects: [],
+  });
+
+  deliver({ type: "activity", taskId: "t2", active: true, at: 99 });
+  expect(ids()).toEqual(["t2", "t1"]);
+});
+
+test("an activity message with no stamp leaves the order as it was", () => {
+  // An older daemon, and every falling edge. The dot still moves; the list
+  // does not guess a time it was not given.
+  const ids = renderList();
+  deliver({
+    type: "tasks",
+    list: [task("t1", { lastActiveAt: 30 }), task("t2", { lastActiveAt: 20 })],
+    projects: [],
+  });
+
+  deliver({ type: "activity", taskId: "t2", active: true });
+  expect(ids()).toEqual(["t1", "t2"]);
+});
+
 test("a notification for the task on screen is acknowledged, not rung", () => {
   render(
     <TaskProvider>

@@ -1221,7 +1221,12 @@ export class TaskManager {
     pty.onActivityChange((_ptyId, active) => {
       // Recency is what the task list is ordered by, so it is worth a write —
       // but not a row broadcast, which is what the activity message is for.
-      if (active) this.store.update(taskId, { last_active_at: Date.now() });
+      // The same stamp rides that message as `at`, so a client can move the
+      // row without being sent one: the write below is otherwise invisible
+      // until the next full snapshot, which is how a busy task used to sink
+      // under shorter ones started after it (TASK-101).
+      const now = Date.now();
+      if (active) this.store.update(taskId, { last_active_at: now });
       // Degraded mode (§9, risk 4). An agent run with hooks disabled, or one
       // whose payloads a future version has changed, reports nothing — and a
       // task list that says `starting` forever is worse than v1's guess. So
@@ -1230,7 +1235,7 @@ export class TaskManager {
       // this goes back to being about recency alone, and never fights the
       // agent's own account of itself.
       if (!this.hookSeen.has(taskId)) this.inferState(taskId, active);
-      this.broadcastToAll({ type: "activity", taskId, active });
+      this.broadcastToAll({ type: "activity", taskId, active, ...(active ? { at: now } : {}) });
     });
     pty.onNotification((_ptyId, title, body) => {
       this.broadcastToAll({ type: "notification", taskId, title, body });
