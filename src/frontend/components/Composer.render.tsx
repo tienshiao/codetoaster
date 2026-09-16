@@ -266,16 +266,63 @@ test("Ctrl+⏎ is the same binding", async () => {
   await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
 });
 
-test("a whitespace-only prompt is not a task", async () => {
-  mount(<Composer />);
-  const box = type("   \n  ");
+describe("starting with no prompt", () => {
+  test("the button starts one on the chosen options", async () => {
+    stubs.projects = [project("general"), project("web", { defaultModel: "fable" })];
+    mount(<Composer projectId="web" />);
 
-  // Both halves: the button says so, and the keystroke that bypasses the button
-  // has to agree with it.
-  expect(startButton().disabled).toBe(true);
-  submitKey(box);
-  await Promise.resolve();
-  expect(stubs.createTask).not.toHaveBeenCalled();
+    expect(startButton().disabled).toBe(false);
+    fireEvent.click(startButton());
+
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    const sent = stubs.createTask.mock.calls[0]![0] as CreateTaskOptions;
+    expect(sent).toMatchObject({ projectId: "web", model: "fable" });
+    // Absent rather than blank: the server refuses `""`, and reads a missing
+    // prompt as a task started without one.
+    expect(sent.prompt).toBeUndefined();
+    await waitFor(() => expect(stubs.openTask).toHaveBeenCalledWith("task-1", { tab: "agent" }));
+  });
+
+  test("⌘⏎ in an empty box does the same", async () => {
+    mount(<Composer />);
+    submitKey(screen.getByLabelText("Prompt"));
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    expect((stubs.createTask.mock.calls[0]![0] as CreateTaskOptions).prompt).toBeUndefined();
+  });
+
+  test("a whitespace-only prompt is no prompt", async () => {
+    mount(<Composer />);
+    submitKey(type("   \n  "));
+    await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));
+    expect((stubs.createTask.mock.calls[0]![0] as CreateTaskOptions).prompt).toBeUndefined();
+  });
+
+  test("nothing starts before there is a project", async () => {
+    stubs.projects = [];
+    mount(<Composer />);
+
+    // Both halves: the button says so, and the keystroke that bypasses the
+    // button has to agree with it.
+    expect(startButton().disabled).toBe(true);
+    submitKey(type("ship it"));
+    await Promise.resolve();
+    expect(stubs.createTask).not.toHaveBeenCalled();
+  });
+
+  test("a second ⌘⏎ while the first is in flight starts nothing", async () => {
+    let finish!: (result: TaskResult<TaskInfo>) => void;
+    stubs.createTask.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    mount(<Composer />);
+    const box = screen.getByLabelText("Prompt");
+
+    submitKey(box);
+    await waitFor(() => expect(startButton().disabled).toBe(true));
+    submitKey(box);
+    await Promise.resolve();
+    expect(stubs.createTask).toHaveBeenCalledTimes(1);
+    finish({ ok: true, value: created });
+    await waitFor(() => expect(stubs.openTask).toHaveBeenCalledTimes(1));
+  });
 });
 
 test("a failed create keeps the prompt and says why", async () => {
@@ -690,14 +737,11 @@ describe("attachments", () => {
     expect(screen.queryByText("Drop files to attach")).toBeNull();
   });
 
-  test("an attachment on its own is a task, with the path as the whole prompt", async () => {
+  test("an attachment on its own is the whole prompt", async () => {
     mount(<Composer />);
-    expect(startButton().disabled).toBe(true);
-
     attach(png("shot.png"));
 
     // "Look at this" is a complete ask, and the path is what the agent needs.
-    expect(startButton().disabled).toBe(false);
     fireEvent.click(startButton());
 
     await waitFor(() => expect(stubs.createTask).toHaveBeenCalledTimes(1));

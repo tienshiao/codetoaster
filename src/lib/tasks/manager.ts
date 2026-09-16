@@ -1063,8 +1063,9 @@ export class TaskManager {
     // derived against the *project's* checkout rather than the worktree that
     // does not exist yet. That is the honest reading anyway: the fallback
     // label is "<dir> · <branch>", and the directory a task was started from
-    // is what it describes. Every path through the composer has a prompt, so
-    // the derived label loses to `titleFromPrompt` there regardless.
+    // is what it describes. A task with a prompt takes `titleFromPrompt`
+    // regardless; one started from the composer with none (TASK-107) keeps
+    // this label, and its branch is named from it.
     let worktree: CreatedWorktree | undefined;
     // Resolved once and reused by the row below, so what the checkout was
     // branched from and what `base_ref` records cannot disagree.

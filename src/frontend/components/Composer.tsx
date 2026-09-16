@@ -263,15 +263,16 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
     projectId: project?.initialPath ? project.id : undefined,
   });
 
-  // Attachments alone are enough. Dropping a screenshot in and pressing ⌘⏎ is
-  // a complete ask — "look at this" — and the prompt it builds is the path,
-  // which is what the agent needs anyway.
-  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !submitting;
+  // Nothing typed is still a task (TASK-107): the project, agent and worktree
+  // are chosen here, and the conversation starts in the agent's terminal. What
+  // it needs is a project — absent only before the list lands, when ⌘⏎ would
+  // otherwise send no project at all.
+  const canSubmit = project != null && !submitting;
 
   const submit = useCallback(async () => {
     const typed = prompt.trim();
-    // Nothing typed and nothing attached is not a task. The button is disabled
-    // for it, and this guard is what makes the keystroke inert too.
+    // The button is disabled for it, and this guard is what makes the
+    // keystroke inert too.
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
@@ -297,7 +298,9 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
     // where that is resolved — so the API and the CLI get the same answer.
     const result = await createTask(
       {
-        prompt: text,
+        // Absent, not blank, when there is nothing to ask: the server refuses a
+        // blank prompt and reads an absent one as a task started without one.
+        prompt: text || undefined,
         projectId: project?.id,
         model: model || undefined,
         // A name, never a command: the profile itself lives in the daemon's
