@@ -1,4 +1,5 @@
 import type { ILink, ILinkProvider } from "@xterm/xterm";
+import { columnMapper, linkRange, type LinkBuffer } from "./terminal-links";
 import type { BacklogResponse } from "../../types/backlog";
 
 /**
@@ -70,53 +71,6 @@ export function findBacklogLinks(text: string, index: BacklogLinkIndex): Backlog
   return matches;
 }
 
-/** The slice of xterm a provider actually reads. Typed structurally so a test
- * needs no terminal — the real `Terminal` satisfies it. */
-export interface BacklogLinkLine {
-  translateToString(trim?: boolean): string;
-  /** Columns in the row. Optional so a test's stand-in line need only translate. */
-  length?: number;
-  getCell?(x: number): { getChars(): string; getWidth(): number } | undefined;
-}
-
-export interface BacklogLinkBuffer {
-  buffer: {
-    active: {
-      getLine(y: number): BacklogLinkLine | undefined;
-    };
-  };
-}
-
-/**
- * String index → 0-based column, for the row a match was found in.
- *
- * Not the identity it looks like: a double-width cell (CJK, and the emoji an
- * agent writes beside a task id) is one character of the translated string but
- * two columns of the grid, so every id after one on the same line would
- * otherwise be underlined a column or more to its left — and a click on the id
- * itself would miss the link. Mirrors what `WebLinksAddon` does for the same
- * reason.
- *
- * Falls back to the identity when the line does not expose its cells, which is
- * only ever a test's stand-in.
- */
-function columnMapper(line: BacklogLinkLine): (index: number) => number {
-  const { length, getCell } = line;
-  if (typeof length !== "number" || typeof getCell !== "function") return (index) => index;
-
-  const columns: number[] = [];
-  for (let x = 0; x < length; x++) {
-    const cell = getCell.call(line, x);
-    if (!cell) break;
-    // Width 0 is the right half of a wide character: no string of its own.
-    if (cell.getWidth() === 0) continue;
-    // An empty cell translates to one space, so it still consumes one index.
-    const count = cell.getChars().length || 1;
-    for (let n = 0; n < count; n++) columns.push(x);
-  }
-  return (index) => columns[index] ?? index;
-}
-
 /**
  * The xterm provider, registered beside the web links addon.
  *
@@ -130,7 +84,7 @@ function columnMapper(line: BacklogLinkLine): (index: number) => number {
  * different gestures.
  */
 export function createBacklogLinkProvider(
-  terminal: BacklogLinkBuffer,
+  terminal: LinkBuffer,
   getIndex: () => BacklogLinkIndex | null,
   onOpen: (path: string) => void,
 ): ILinkProvider {
@@ -155,12 +109,7 @@ export function createBacklogLinkProvider(
       const columnOf = columnMapper(line);
       callback(
         matches.map((match) => ({
-          // xterm columns are 1-based and the range's end is inclusive, so the
-          // column of the match's last character is already its 1-based end.
-          range: {
-            start: { x: columnOf(match.start) + 1, y },
-            end: { x: columnOf(match.end - 1) + 1, y },
-          },
+          range: linkRange(columnOf, match.start, match.end, y),
           text: match.id,
           decorations: { pointerCursor: true, underline: true },
           activate: () => onOpen(match.path),

@@ -4,10 +4,12 @@ import { forwardRef, useImperativeHandle } from "react";
 import type { ILink } from "@xterm/xterm";
 import type { TaskInfo } from "../../../../lib/xtmux/types";
 import type { BacklogResponse } from "../../../../types/backlog";
+import type { FilesResponse } from "../../../types/file";
 import type { TabState } from "../../../layout-store";
 
 /**
- * Task-id links reaching the grid (TASK-86, AC #4).
+ * Task-id links (TASK-86, AC #4) and file-path links (TASK-108) reaching the
+ * grid.
  *
  * The registration itself lives in `XTerminal` and needs a real xterm, which
  * needs geometry happy-dom does not have — so the grid is stubbed and what is
@@ -54,6 +56,7 @@ const searchAddon = {
 const stubs = vi.hoisted(() => ({
   tasks: [] as TaskInfo[],
   backlog: undefined as BacklogResponse | undefined,
+  files: undefined as FilesResponse | undefined,
   /** Every `XTerminal` rendered, in order, with the props it was given. */
   terminals: [] as Array<Record<string, unknown>>,
   /** One entry per `focus()` the pane asked its grid for. */
@@ -61,7 +64,11 @@ const stubs = vi.hoisted(() => ({
 }));
 
 vi.mock("@/frontend/TaskContext", () => ({
-  useTasks: () => ({ tasks: stubs.tasks, resumeTask: vi.fn() }),
+  useTasks: () => ({
+    tasks: stubs.tasks,
+    taskById: (id: string) => stubs.tasks.find((t) => t.id === id),
+    resumeTask: vi.fn(),
+  }),
 }));
 vi.mock("@/frontend/PtyContext", () => ({
   usePty: () => ({
@@ -74,6 +81,9 @@ vi.mock("@/frontend/PtyContext", () => ({
 }));
 vi.mock("@/frontend/hooks/use-backlog", () => ({
   useBacklog: () => ({ data: stubs.backlog }),
+}));
+vi.mock("@/frontend/hooks/use-task-files", () => ({
+  useTaskFiles: () => ({ data: stubs.files }),
 }));
 // `AgentPane` reads the daemon's profile list for one label. It is a `useQuery`
 // and nothing here mounts a query client — the whole point of the mocks above
@@ -186,6 +196,7 @@ const DETECTED: BacklogResponse = {
 beforeEach(() => {
   stubs.tasks = [task()];
   stubs.backlog = undefined;
+  stubs.files = undefined;
   stubs.terminals = [];
   stubs.focuses = 0;
   searchListener = undefined;
@@ -244,6 +255,84 @@ test("a shell tab gets the same provider — it runs the same CLI", () => {
   const { props } = renderPane({ kind: "shell", ptyId: "pty-2" });
   expect(typeof props.linkProvider).toBe("function");
   expect(props.ptyId).toBe("pty-2");
+});
+
+// ── file paths (TASK-108) ───────────────────────────────────────────────────
+
+const REPO = "/Users/someone/projects/app";
+
+const FILES: FilesResponse = {
+  directory: REPO,
+  files: [
+    { path: "src", name: "src", isDirectory: true, depth: 0 },
+    { path: "src/main.ts", name: "main.ts", isDirectory: false, depth: 1 },
+  ],
+};
+
+type Factory = (term: unknown) => {
+  provideLinks(y: number, cb: (links: ILink[] | undefined) => void): void;
+};
+
+function linksFor(props: Record<string, unknown>, line: string) {
+  const factory = props.linkProvider as Factory | undefined;
+  expect(typeof factory).toBe("function");
+  let links: ILink[] | undefined;
+  factory!(terminalWith(line)).provideLinks(1, (result) => {
+    links = result;
+  });
+  return links;
+}
+
+test("with the file list loaded, a path in the agent's terminal opens at its line", () => {
+  stubs.files = FILES;
+  const { props, onOpenTab } = renderPane({ kind: "agent" });
+
+  const links = linksFor(props, "edited src/main.ts:42 and src/gone.ts");
+  expect(links?.map((l) => l.text)).toEqual(["src/main.ts:42"]);
+
+  links![0]!.activate(new MouseEvent("click"), "src/main.ts:42");
+  expect(onOpenTab).toHaveBeenCalledWith({ kind: "file", path: "src/main.ts", line: 42 });
+});
+
+test("a path with no line opens the file without one", () => {
+  stubs.files = FILES;
+  const { props, onOpenTab } = renderPane({ kind: "shell", ptyId: "pty-2" });
+
+  const links = linksFor(props, `cat ${REPO}/src/main.ts`);
+  links![0]!.activate(new MouseEvent("click"), links![0]!.text);
+  expect(onOpenTab).toHaveBeenCalledWith({ kind: "file", path: "src/main.ts" });
+});
+
+test("relative paths resolve against the task's cwd", () => {
+  stubs.tasks = [task({ cwd: `${REPO}/src` })];
+  stubs.files = FILES;
+  const { props } = renderPane({ kind: "agent" });
+  expect(linksFor(props, "see main.ts")?.map((l) => l.text)).toEqual(["main.ts"]);
+});
+
+test("in a Backlog.md repository both kinds of link come from the one provider", () => {
+  stubs.backlog = DETECTED;
+  stubs.files = FILES;
+  const { props } = renderPane({ kind: "agent" });
+  expect(linksFor(props, "TASK-82 touched src/main.ts")?.map((l) => l.text)).toEqual([
+    "TASK-82",
+    "src/main.ts",
+  ]);
+});
+
+test("the registration survives a re-render", () => {
+  // `XTerminal` re-registers whenever the factory's identity changes, so a
+  // combined factory rebuilt per render would churn the grid's providers.
+  stubs.backlog = DETECTED;
+  stubs.files = FILES;
+  const view = render(
+    <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
+  );
+  const first = stubs.terminals.at(-1)!.linkProvider;
+  view.rerender(
+    <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
+  );
+  expect(stubs.terminals.at(-1)!.linkProvider).toBe(first);
 });
 
 // ── the caret follows a keyboard navigation (TASK-34) ───────────────────────

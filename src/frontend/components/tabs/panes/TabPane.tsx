@@ -2,6 +2,8 @@ import { useCallback, useMemo, useRef, type ReactNode, type RefObject } from "re
 import { DiffView } from "@/frontend/DiffView";
 import { useBacklogLinkProvider } from "@/frontend/hooks/use-backlog-links";
 import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
+import { usePathLinkProvider } from "@/frontend/hooks/use-path-links";
+import { combineLinkProviders } from "@/frontend/utils/terminal-links";
 import { viewRef } from "@/frontend/view-state-store";
 import {
   isTerminalTab,
@@ -86,11 +88,19 @@ export function TabPane({
     [onOpenTab],
   );
 
-  // Task ids in the task's terminals, as links to the task files (TASK-86).
-  // Called unconditionally, above the switch, because the switch returns a
-  // different pane per descriptor and a hook cannot live behind that.
-  // Undefined outside a Backlog.md repository, which registers nothing.
-  const linkProvider = useBacklogLinkProvider(taskId, visible, onOpenTab);
+  // Task ids (TASK-86) and file paths (TASK-108) in the task's terminals, as
+  // links that open a file tab. Called unconditionally, above the switch,
+  // because the switch returns a different pane per descriptor and a hook
+  // cannot live behind that. Either is undefined when it has nothing to match
+  // against, and with neither nothing is registered. Memoised on the two
+  // factories, whose identities change only when one appears or goes, so the
+  // grid is not re-registered per render.
+  const backlogLinks = useBacklogLinkProvider(taskId, visible, onOpenTab);
+  const pathLinks = usePathLinkProvider(taskId, onOpenTab);
+  const linkProvider = useMemo(
+    () => combineLinkProviders(backlogLinks, pathLinks),
+    [backlogLinks, pathLinks],
+  );
 
   // Where the caret lands for a pane that has no terminal to hand it to. A
   // chord onto a diff or a file must still take focus *from* somewhere: in a
