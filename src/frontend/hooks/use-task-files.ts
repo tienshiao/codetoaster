@@ -22,10 +22,11 @@ async function fetchFileContent(taskId: string, filePath: string): Promise<FileC
   return res.json();
 }
 
-export function useTaskFiles(taskId: string) {
+export function useTaskFiles(taskId: string, { enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: taskKeys.files(taskId),
     queryFn: () => fetchFiles(taskId),
+    enabled,
   });
 }
 

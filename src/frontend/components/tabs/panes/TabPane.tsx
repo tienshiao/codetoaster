@@ -96,7 +96,11 @@ export function TabPane({
   // factories, whose identities change only when one appears or goes, so the
   // grid is not re-registered per render.
   const backlogLinks = useBacklogLinkProvider(taskId, visible, onOpenTab);
-  const pathLinks = usePathLinkProvider(taskId, onOpenTab);
+  const pathLinks = usePathLinkProvider(
+    taskId,
+    visible && isTerminalTab(tab.descriptor),
+    onOpenTab,
+  );
   const linkProvider = useMemo(
     () => combineLinkProviders(backlogLinks, pathLinks),
     [backlogLinks, pathLinks],

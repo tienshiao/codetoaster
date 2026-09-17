@@ -15,12 +15,19 @@ import { useTaskFiles } from "./use-task-files";
  * section has already loaded costs nothing more, and a change to the working
  * tree refreshes both (TASK-103). No poll of its own: the invalidation is
  * what keeps it current.
+ *
+ * `enabled` is false for a pane with no terminal on screen: a hidden terminal
+ * tab, or a diff or file tab that has no grid at all. Such a pane is then no
+ * active observer, so a burst of working-tree changes does not refetch the
+ * whole listing on its account (TASK-103 AC #6). Cached data is still read, so
+ * a hidden terminal keeps its links, and showing it refetches if stale.
  */
 export function usePathLinkProvider(
   taskId: string,
+  enabled: boolean,
   onOpenTab: (descriptor: TabDescriptor, options?: OpenOptions) => void,
 ): TerminalLinkProviderFactory | undefined {
-  const { data } = useTaskFiles(taskId);
+  const { data } = useTaskFiles(taskId, { enabled });
   // The agent's live cwd. A shell tab's own cwd is not something the client
   // knows, so it shares this one; the root is tried after it either way.
   const cwd = useTasks().taskById(taskId)?.cwd ?? null;

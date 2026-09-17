@@ -57,6 +57,8 @@ const stubs = vi.hoisted(() => ({
   tasks: [] as TaskInfo[],
   backlog: undefined as BacklogResponse | undefined,
   files: undefined as FilesResponse | undefined,
+  /** The `enabled` the pane last asked `useTaskFiles` for. */
+  filesEnabled: undefined as boolean | undefined,
   /** Every `XTerminal` rendered, in order, with the props it was given. */
   terminals: [] as Array<Record<string, unknown>>,
   /** One entry per `focus()` the pane asked its grid for. */
@@ -83,7 +85,10 @@ vi.mock("@/frontend/hooks/use-backlog", () => ({
   useBacklog: () => ({ data: stubs.backlog }),
 }));
 vi.mock("@/frontend/hooks/use-task-files", () => ({
-  useTaskFiles: () => ({ data: stubs.files }),
+  useTaskFiles: (_taskId: string, options?: { enabled?: boolean }) => {
+    stubs.filesEnabled = options?.enabled ?? true;
+    return { data: stubs.files };
+  },
 }));
 // `AgentPane` reads the daemon's profile list for one label. It is a `useQuery`
 // and nothing here mounts a query client — the whole point of the mocks above
@@ -197,6 +202,7 @@ beforeEach(() => {
   stubs.tasks = [task()];
   stubs.backlog = undefined;
   stubs.files = undefined;
+  stubs.filesEnabled = undefined;
   stubs.terminals = [];
   stubs.focuses = 0;
   searchListener = undefined;
@@ -333,6 +339,31 @@ test("the registration survives a re-render", () => {
     <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
   );
   expect(stubs.terminals.at(-1)!.linkProvider).toBe(first);
+});
+
+test("only a terminal on screen keeps the file list live", () => {
+  // Every pane mounts the link hook; only a visible grid may make the listing
+  // refetch on a change (TASK-103 AC #6). The rest read whatever is cached.
+  const draw = (descriptor: TabState["descriptor"], visible: boolean) => (
+    <TabPane taskId={TASK_ID} tab={tab(descriptor)} visible={visible} onOpenTab={vi.fn()} onSubmitReview={() => true} />
+  );
+  const view = render(draw({ kind: "agent" }, true));
+  expect(stubs.filesEnabled).toBe(true);
+
+  view.rerender(draw({ kind: "agent" }, false));
+  expect(stubs.filesEnabled).toBe(false);
+
+  view.rerender(draw({ kind: "history" }, true));
+  expect(stubs.filesEnabled).toBe(false);
+});
+
+test("a hidden terminal keeps the links from the cached list", () => {
+  stubs.files = FILES;
+  render(
+    <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible={false} onOpenTab={vi.fn()} onSubmitReview={() => true} />,
+  );
+  expect(stubs.filesEnabled).toBe(false);
+  expect(linksFor(stubs.terminals.at(-1)!, "src/main.ts")?.map((l) => l.text)).toEqual(["src/main.ts"]);
 });
 
 // ── the caret follows a keyboard navigation (TASK-34) ───────────────────────
