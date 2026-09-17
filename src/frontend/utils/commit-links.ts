@@ -55,7 +55,13 @@ export function findCommitLinks(text: string): CommitLinkMatch[] {
 
 /** Candidates per row. A row with more hex words than this is machine output
  * — a table of checksums, a hexdump — and asking about all of them would be
- * the only expensive thing this feature does. */
+ * the only expensive thing this feature does.
+ *
+ * Must not exceed `COMMITS_CAP` in `api/git.ts`, which the route enforces with
+ * a 400 — and a 400 is not one dead link but a whole row of them, since the
+ * request covers every hash on it. The two are not one constant because this
+ * file is DOM-free client code and that one is a server module; raise one and
+ * raise the other. */
 export const ROW_CAP = 32;
 
 /**
@@ -214,7 +220,21 @@ export function createCommitLinkProvider(
         return;
       }
       resolver.resolve(shas).then(
-        answer,
+        (commits) => {
+          // The offsets and the column mapping above were taken before the
+          // await, and this is the one provider that has one: a row a TUI
+          // redraws in place — a progress bar, a spinner, anything repainting
+          // at the same absolute buffer row — holds different text by the time
+          // the answer lands, and underlining the old offsets would put a link
+          // over characters that are not the hash, activating a commit the user
+          // cannot see. Re-read the row and offer nothing if it moved on; the
+          // answer is remembered either way, so the next hover is synchronous.
+          if (terminal.buffer.active.getLine(y - 1)?.translateToString(true) !== text) {
+            callback(undefined);
+            return;
+          }
+          answer(commits);
+        },
         // A repository that could not answer offers no links this time. The
         // resolver remembers nothing of a failure, so the next hover asks again
         // rather than leaving the row dead for the session.

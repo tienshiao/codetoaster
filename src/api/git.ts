@@ -164,8 +164,12 @@ function stripToFirstDiff(text: string): string {
 }
 
 /** How many revisions one `/git/commits` call may ask about. A terminal row
- * holding more hex words than this is machine output, not prose about
- * commits. */
+ * holding more hex words than this is machine output, not prose about commits.
+ *
+ * The client caps itself at the same number (`ROW_CAP` in
+ * `frontend/utils/commit-links.ts`) and so never trips this; keep this one the
+ * higher of the two, because exceeding it costs the hovered row every link it
+ * had, not just the hashes past the cap. */
 export const COMMITS_CAP = 32;
 
 /**

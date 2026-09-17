@@ -293,6 +293,27 @@ test("a resolver that rejects leaves the row unlinked rather than throwing", asy
   expect(await provide(createCommitLinkProvider(buffer(SHORT), broken, () => {}), 1)).toBeUndefined();
 });
 
+test("a row repainted while the answer was in flight is left alone", async () => {
+  // The offsets are taken before the await, and only this provider has one. A
+  // TUI repainting the same absolute row would otherwise be underlined at the
+  // old columns, and the link would open a commit nothing on screen names.
+  const lines = [`fixed in ${SHORT}`];
+  const repainting = {
+    buffer: {
+      active: {
+        getLine: (y: number) =>
+          lines[y] === undefined ? undefined : { translateToString: () => lines[y]! },
+      },
+    },
+  };
+  const late = unsettled(async (shas) => {
+    lines[0] = "Downloading 47% ############";
+    return new Map(shas.map((s) => [s, FULL]));
+  });
+
+  expect(await provide(createCommitLinkProvider(repainting, late, () => {}), 1)).toBeUndefined();
+});
+
 test("a row is asked about at most ROW_CAP hashes", async () => {
   let asked: string[] = [];
   const line = Array.from({ length: ROW_CAP + 5 }, (_, i) => `abcdef${i.toString(16)}0`).join(" ");
