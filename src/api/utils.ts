@@ -99,6 +99,13 @@ export interface GitSpawnOptions {
   // configuration and it fails there — and a snapshot of someone's scratch
   // work is ours rather than theirs, so it should not carry their name.
   env?: Record<string, string>;
+  // Text to feed the child on stdin, for the commands that take their input
+  // there rather than in argv — `cat-file --batch-check`, which answers a whole
+  // list of revisions in one spawn instead of one spawn each (TASK-110).
+  //
+  // Bun takes a Blob, not a string; with nothing here stdin is left at its
+  // default, which is what every other caller wants.
+  stdin?: string;
 }
 
 export async function gitSpawn(
@@ -110,6 +117,7 @@ export async function gitSpawn(
   const proc = Bun.spawn(["git", "-C", dir, ...args], {
     stdout: "pipe",
     stderr: capture ? "pipe" : "ignore",
+    ...(options?.stdin !== undefined ? { stdin: new Blob([options.stdin]) } : {}),
     // Merged rather than replaced: Bun takes `env` as the child's whole
     // environment, and a git that lost PATH, HOME and the ssh-agent socket
     // would fail in ways that have nothing to do with what was asked of it.

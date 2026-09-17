@@ -1,4 +1,4 @@
-import { test, expect, vi, beforeEach } from "vitest";
+import { test, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { forwardRef, useImperativeHandle } from "react";
 import type { ILink } from "@xterm/xterm";
@@ -63,6 +63,10 @@ const stubs = vi.hoisted(() => ({
   terminals: [] as Array<Record<string, unknown>>,
   /** One entry per `focus()` the pane asked its grid for. */
   focuses: 0,
+  /** What the stub repository knows as commits: abbreviation → full sha. */
+  commits: {} as Record<string, string>,
+  /** One entry per `/git/commits` request, holding the shas it asked about. */
+  commitAsks: [] as string[][],
 }));
 
 vi.mock("@/frontend/TaskContext", () => ({
@@ -198,6 +202,14 @@ const DETECTED: BacklogResponse = {
   ],
 };
 
+/**
+ * The one network call a pane makes on its own: commit links have no index to
+ * match against, so the repository is asked (TASK-110). Stubbed for every test
+ * in the file, not only the ones below — a pane that reached the real `fetch`
+ * would be a test talking to whatever is listening on the port.
+ */
+const realFetch = globalThis.fetch;
+
 beforeEach(() => {
   stubs.tasks = [task()];
   stubs.backlog = undefined;
@@ -205,7 +217,25 @@ beforeEach(() => {
   stubs.filesEnabled = undefined;
   stubs.terminals = [];
   stubs.focuses = 0;
+  stubs.commits = {};
+  stubs.commitAsks = [];
   searchListener = undefined;
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const query = /\/git\/commits\?sha=([^&]*)/.exec(url);
+    if (!query) throw new Error(`unexpected fetch: ${url}`);
+    const shas = decodeURIComponent(query[1]!).split(",");
+    stubs.commitAsks.push(shas);
+    const commits = Object.fromEntries(
+      shas.flatMap((sha) => (stubs.commits[sha] ? [[sha, stubs.commits[sha]!]] : [])),
+    );
+    return new Response(JSON.stringify({ commits }));
+  }) as typeof fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = realFetch;
 });
 
 function renderPane(descriptor: TabState["descriptor"], onOpenTab = vi.fn()) {
@@ -250,10 +280,14 @@ test("in a Backlog.md repository the agent's terminal links known ids to their f
   expect(onOpenTab).toHaveBeenCalledWith({ kind: "file", path: TASK_PATH });
 });
 
-test("outside a Backlog.md repository no provider is registered", () => {
+test("outside a Backlog.md repository an id is not a link (AC #3)", () => {
+  // The backlog provider is the one that is not registered. Something still is
+  // — commit hashes need no index and are always matched (TASK-110) — so what
+  // this pins is that the id comes back unlinked, not that the grid was handed
+  // nothing at all.
   stubs.backlog = { detected: false };
   const { props } = renderPane({ kind: "agent" });
-  expect(props.linkProvider).toBeUndefined();
+  expect(linksFor(props, "filed TASK-82")).toBeUndefined();
 });
 
 test("a shell tab gets the same provider — it runs the same CLI", () => {
@@ -412,6 +446,66 @@ test("a hidden terminal keeps the links from the cached list", () => {
   );
   expect(stubs.filesEnabled).toBe(false);
   expect(linksFor(stubs.terminals.at(-1)!, "src/main.ts")?.map((l) => l.text)).toEqual(["src/main.ts"]);
+});
+
+// ── commit hashes (TASK-110) ────────────────────────────────────────────────
+
+const SHORT = "31976f6";
+const FULL = "31976f69c26b2181b9e8bc402eff248db6435c88";
+
+/** `linksFor`'s asynchronous twin: the commit provider answers only once the
+ * repository has, so the links arrive a microtask later. */
+async function commitLinksFor(props: Record<string, unknown>, line: string) {
+  const factory = props.linkProvider as Factory | undefined;
+  expect(typeof factory).toBe("function");
+  let links: ILink[] | undefined;
+  await act(async () => {
+    factory!(terminalWith(line)).provideLinks(1, (result) => {
+      links = result;
+    });
+  });
+  return links;
+}
+
+test("a hash the repository knows opens the commit, at its full sha", async () => {
+  stubs.commits = { [SHORT]: FULL };
+  const { props, onOpenTab } = renderPane({ kind: "agent" });
+
+  const links = await commitLinksFor(props, `fixed in ${SHORT} today`);
+  expect(links?.map((l) => l.text)).toEqual([SHORT]);
+
+  act(() => links![0]!.activate(new MouseEvent("click"), links![0]!.text));
+  // Permanent, like the other two links, and keyed on the whole hash so the
+  // abbreviation and the full form share one tab.
+  expect(onOpenTab).toHaveBeenCalledWith({ kind: "commit", sha: FULL });
+});
+
+test("a hex word the repository does not know is left alone", async () => {
+  const { props } = renderPane({ kind: "shell", ptyId: "pty-2" });
+  expect(await commitLinksFor(props, "took 1234567 ms")).toBeUndefined();
+  // It was still asked about: only the repository can say (TASK-110).
+  expect(stubs.commitAsks).toEqual([["1234567"]]);
+});
+
+test("an answered hash is never asked about twice", async () => {
+  stubs.commits = { [SHORT]: FULL };
+  const { props } = renderPane({ kind: "agent" });
+
+  await commitLinksFor(props, `fixed in ${SHORT}`);
+  const again = await commitLinksFor(props, `${SHORT} again, on another row`);
+
+  expect(again?.map((l) => l.text)).toEqual([SHORT]);
+  expect(stubs.commitAsks).toHaveLength(1);
+});
+
+test("all three kinds of link come from the one provider", async () => {
+  stubs.backlog = DETECTED;
+  stubs.files = FILES;
+  stubs.commits = { [SHORT]: FULL };
+  const { props } = renderPane({ kind: "agent" });
+
+  const links = await commitLinksFor(props, `TASK-82 touched src/main.ts in ${SHORT}`);
+  expect(links?.map((l) => l.text)).toEqual(["TASK-82", "src/main.ts", SHORT]);
 });
 
 // ── the caret follows a keyboard navigation (TASK-34) ───────────────────────

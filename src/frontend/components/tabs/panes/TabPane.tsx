@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { DiffView } from "@/frontend/DiffView";
 import { useBacklogLinkProvider } from "@/frontend/hooks/use-backlog-links";
+import { useCommitLinkProvider } from "@/frontend/hooks/use-commit-links";
 import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
 import { usePathLinkProvider } from "@/frontend/hooks/use-path-links";
 import { PointMenu } from "@/frontend/components/v2/DropdownMenu";
@@ -89,22 +90,27 @@ export function TabPane({
     [onOpenTab],
   );
 
-  // Task ids (TASK-86) and file paths (TASK-108) in the task's terminals, as
-  // links that open a file tab. Called unconditionally, above the switch,
-  // because the switch returns a different pane per descriptor and a hook
-  // cannot live behind that. Either is undefined when it has nothing to match
-  // against, and with neither nothing is registered. Memoised on the two
-  // factories, whose identities change only when one appears or goes, so the
-  // grid is not re-registered per render.
+  // Task ids (TASK-86), file paths (TASK-108) and commit hashes (TASK-110) in
+  // the task's terminals, as links that open a tab. Called unconditionally,
+  // above the switch, because the switch returns a different pane per
+  // descriptor and a hook cannot live behind that. The first two are undefined
+  // when they have nothing to match against; the third needs no index and is
+  // always there. Memoised on the factories, whose identities change only when
+  // one appears or goes, so the grid is not re-registered per render.
   const backlogLinks = useBacklogLinkProvider(taskId, visible, onOpenTab);
   const pathLinks = usePathLinkProvider(
     taskId,
     visible && isTerminalTab(tab.descriptor),
     onOpenTab,
   );
+  // Last of the three: it is the only one that answers asynchronously, and the
+  // combined provider waits for every part, so a row holding a sha delays the
+  // other two by one round trip. Only a row with hex in it pays that, and only
+  // the first time the pointer crosses it.
+  const commitLinks = useCommitLinkProvider(taskId, onOpenTab);
   const linkProvider = useMemo(
-    () => combineLinkProviders(backlogLinks, pathLinks.provider),
-    [backlogLinks, pathLinks.provider],
+    () => combineLinkProviders(backlogLinks, pathLinks.provider, commitLinks),
+    [backlogLinks, pathLinks.provider, commitLinks],
   );
   // A name several files share opens this at the click (TASK-109). Portalled,
   // so it sits beside the grid without entering the pane's layout.

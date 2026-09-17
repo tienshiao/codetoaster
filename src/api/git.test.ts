@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseLogOutput, parseRefDecorations, applyAfterCheck, sliceUntil, LOG_BODY_CAP } from "./git";
+import { parseLogOutput, parseRefDecorations, applyAfterCheck, sliceUntil, parseBatchCheck, LOG_BODY_CAP } from "./git";
 import type { GitLogCommit } from "./git";
 import { buildFileListing } from "./utils";
 
@@ -267,4 +267,41 @@ test("buildFileListing: dedups shared prefixes across deeper trees, preserving f
     { path: "src/lib", name: "lib", isDirectory: true, depth: 1 },
     { path: "src/lib/x.ts", name: "x.ts", isDirectory: false, depth: 2 },
   ]);
+});
+
+// --- parseBatchCheck (TASK-110) ----------------------------------------------
+
+// `git cat-file --batch-check` writes one line per input, in order, whatever
+// happened — and a line that resolved leads with the peeled oid, so the input
+// it answers is nowhere in it. Position is the only way back.
+
+const A = "31976f69c26b2181b9e8bc402eff248db6435c88";
+const B = "9ceb5a62f7ec749be3a60280970eae131beb310b";
+
+test("parseBatchCheck: a resolved line maps its input to the full oid", () => {
+  expect(parseBatchCheck(`${A} commit 514\n`, ["31976f6"])).toEqual({ "31976f6": A });
+});
+
+test("parseBatchCheck: missing and ambiguous drop out, and the rest stay aligned", () => {
+  // `4f05` is an ambiguous abbreviation: git names the candidates on stderr and
+  // writes the same `missing` here, so both look alike from this side.
+  const stdout = [
+    "deadbeef^{commit} missing",
+    `${A} commit 514`,
+    "4f05^{commit} missing",
+    `${B} commit 773`,
+    "",
+  ].join("\n");
+  expect(parseBatchCheck(stdout, ["deadbeef", "31976f6", "4f05", "9ceb5a6"])).toEqual({
+    "31976f6": A,
+    "9ceb5a6": B,
+  });
+});
+
+test("parseBatchCheck: a non-commit object is missing too — ^{commit} will not peel it", () => {
+  expect(parseBatchCheck("93eb570^{commit} missing\n", ["93eb570"])).toEqual({});
+});
+
+test("parseBatchCheck: output shorter than the input list leaves the rest unanswered", () => {
+  expect(parseBatchCheck("", ["31976f6"])).toEqual({});
 });

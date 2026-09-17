@@ -163,6 +163,34 @@ function stripToFirstDiff(text: string): string {
   return idx === -1 ? "" : text.slice(idx);
 }
 
+/** How many revisions one `/git/commits` call may ask about. A terminal row
+ * holding more hex words than this is machine output, not prose about
+ * commits. */
+export const COMMITS_CAP = 32;
+
+/**
+ * `git cat-file --batch-check` output, back to the inputs that produced it
+ * (TASK-110).
+ *
+ * Mapped by position rather than by name, because it has to be: the inputs are
+ * `<sha>^{commit}`, and a line that resolved leads with the *peeled* oid, so
+ * the input is nowhere in it. git writes exactly one line per input, in order,
+ * whatever happened — a resolved object is `<oid> commit <size>`, and
+ * everything else (`missing` for an unknown sha, and for an ambiguous
+ * abbreviation, whose candidates go to stderr) is a line we skip. Anything that
+ * is not a commit — a tag that peels to none, a blob — is `missing` too, so
+ * only commits come back.
+ */
+export function parseBatchCheck(stdout: string, shas: string[]): Record<string, string> {
+  const lines = stdout.split("\n");
+  const commits: Record<string, string> = {};
+  shas.forEach((sha, i) => {
+    const [oid, type] = (lines[i] ?? "").split(" ");
+    if (type === "commit" && oid) commits[sha] = oid;
+  });
+  return commits;
+}
+
 export const gitRoutes = {
   "/api/tasks/:id/git/log": {
     async GET(req: Request & { params: { id: string } }) {
@@ -301,6 +329,53 @@ export const gitRoutes = {
       } catch (error) {
         return Response.json(
           { error: "Failed to get git refs", message: error instanceof Error ? error.message : String(error) },
+          { status: 500 },
+        );
+      }
+    },
+  },
+
+  // Which of these revisions this repository knows as commits (TASK-110).
+  //
+  // A sha is the one thing a terminal link cannot decide for itself: task ids
+  // and file paths are matched against a list the client already holds, while
+  // a run of hex is only a commit if git says so. So the matcher lets every
+  // hex word through and this answers the question, in one spawn for the whole
+  // row, and the client remembers the answer — a commit is immutable, and a
+  // sha reaches a terminal only after the commit exists.
+  "/api/tasks/:id/git/commits": {
+    async GET(req: Request & { params: { id: string } }) {
+      try {
+        const result = await resolveTaskRoot(req.params.id);
+        if ("error" in result) return result.error;
+        const { repoRoot: dir } = result;
+
+        const url = new URL(req.url);
+        const shas = (url.searchParams.get("sha") ?? "").split(",").filter(Boolean);
+        if (shas.length === 0) return Response.json({ commits: {} });
+        if (shas.length > COMMITS_CAP) {
+          return Response.json({ error: `At most ${COMMITS_CAP} shas` }, { status: 400 });
+        }
+        if (!shas.every((sha) => SHA_RE.test(sha))) {
+          return Response.json({ error: "Invalid sha" }, { status: 400 });
+        }
+
+        // `^{commit}` does the work of a `--verify`: it peels an annotated tag
+        // and rejects anything that is not a commit, so the answer needs no
+        // second pass over the types.
+        const { stdout, exitCode } = await gitSpawn(dir, ["cat-file", "--batch-check"], {
+          stdin: shas.map((sha) => `${sha}^{commit}\n`).join(""),
+        });
+        // An unknown sha is not a failure — it is a line saying `missing`, and
+        // git still exits 0. A non-zero exit is the repository itself failing
+        // to answer, which must not be cached as "none of these are commits".
+        if (exitCode !== 0) {
+          return Response.json({ error: "Failed to resolve commits" }, { status: 500 });
+        }
+        return Response.json({ commits: parseBatchCheck(stdout, shas) });
+      } catch (error) {
+        return Response.json(
+          { error: "Failed to resolve commits", message: error instanceof Error ? error.message : String(error) },
           { status: 500 },
         );
       }
