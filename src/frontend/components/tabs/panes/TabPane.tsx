@@ -3,6 +3,7 @@ import { DiffView } from "@/frontend/DiffView";
 import { useBacklogLinkProvider } from "@/frontend/hooks/use-backlog-links";
 import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
 import { usePathLinkProvider } from "@/frontend/hooks/use-path-links";
+import { PointMenu } from "@/frontend/components/v2/DropdownMenu";
 import { combineLinkProviders } from "@/frontend/utils/terminal-links";
 import { viewRef } from "@/frontend/view-state-store";
 import {
@@ -102,9 +103,12 @@ export function TabPane({
     onOpenTab,
   );
   const linkProvider = useMemo(
-    () => combineLinkProviders(backlogLinks, pathLinks),
-    [backlogLinks, pathLinks],
+    () => combineLinkProviders(backlogLinks, pathLinks.provider),
+    [backlogLinks, pathLinks.provider],
   );
+  // A name several files share opens this at the click (TASK-109). Portalled,
+  // so it sits beside the grid without entering the pane's layout.
+  const fileChooser = <PointMenu {...pathLinks.menu} />;
 
   // Where the caret lands for a pane that has no terminal to hand it to. A
   // chord onto a diff or a file must still take focus *from* somewhere: in a
@@ -120,14 +124,17 @@ export function TabPane({
   switch (descriptor.kind) {
     case "agent":
       return (
-        <AgentPane
-          taskId={taskId}
-          visible={visible}
-          focusRequest={focusRequest}
-          searchRequest={searchRequest}
-          active={active}
-          linkProvider={linkProvider}
-        />
+        <>
+          <AgentPane
+            taskId={taskId}
+            visible={visible}
+            focusRequest={focusRequest}
+            searchRequest={searchRequest}
+            active={active}
+            linkProvider={linkProvider}
+          />
+          {fileChooser}
+        </>
       );
 
     case "shell":
@@ -135,15 +142,18 @@ export function TabPane({
       // descriptor rather than by the task, since a task has one agent and
       // however many of these.
       return (
-        <ShellPane
-          taskId={taskId}
-          ptyId={descriptor.ptyId}
-          visible={visible}
-          focusRequest={focusRequest}
-          searchRequest={searchRequest}
-          active={active}
-          linkProvider={linkProvider}
-        />
+        <>
+          <ShellPane
+            taskId={taskId}
+            ptyId={descriptor.ptyId}
+            visible={visible}
+            focusRequest={focusRequest}
+            searchRequest={searchRequest}
+            active={active}
+            linkProvider={linkProvider}
+          />
+          {fileChooser}
+        </>
       );
 
     case "diffAll":

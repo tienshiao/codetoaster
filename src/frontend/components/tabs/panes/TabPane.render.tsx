@@ -1,5 +1,5 @@
 import { test, expect, vi, beforeEach } from "vitest";
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { forwardRef, useImperativeHandle } from "react";
 import type { ILink } from "@xterm/xterm";
 import type { TaskInfo } from "../../../../lib/xtmux/types";
@@ -339,6 +339,54 @@ test("the registration survives a re-render", () => {
     <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
   );
   expect(stubs.terminals.at(-1)!.linkProvider).toBe(first);
+});
+
+// ── names without their directory (TASK-109) ────────────────────────────────
+
+const SHARED_NAMES: FilesResponse = {
+  directory: REPO,
+  files: [
+    { path: "src/main.ts", name: "main.ts", isDirectory: false, depth: 1 },
+    { path: "lib/util/main.ts", name: "main.ts", isDirectory: false, depth: 2 },
+    { path: "src/ui/Composer.tsx", name: "Composer.tsx", isDirectory: false, depth: 2 },
+  ],
+};
+
+test("a bare name one file has opens that file", () => {
+  stubs.files = SHARED_NAMES;
+  const { props, onOpenTab } = renderPane({ kind: "agent" });
+  const [link] = linksFor(props, "edited Composer.tsx:7")!;
+  act(() => link!.activate(new MouseEvent("click"), link!.text));
+  expect(onOpenTab).toHaveBeenCalledWith({ kind: "file", path: "src/ui/Composer.tsx", line: 7 });
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+test("a bare name several files have offers them at the click, and opens the one chosen", () => {
+  stubs.files = SHARED_NAMES;
+  const { props, onOpenTab } = renderPane({ kind: "shell", ptyId: "pty-2" });
+  const [link] = linksFor(props, "util/main.ts or main.ts:3")!.slice(1);
+  act(() => link!.activate(new MouseEvent("click", { clientX: 40, clientY: 60 }), link!.text));
+
+  expect(onOpenTab).not.toHaveBeenCalled();
+  const menu = screen.getByRole("menu", { name: "Open file" });
+  const rows = within(menu).getAllByRole("menuitem");
+  // Shortest first.
+  expect(rows.map((row) => row.textContent)).toEqual(["src/main.ts", "lib/util/main.ts"]);
+
+  act(() => fireEvent.click(rows[1]!));
+  expect(onOpenTab).toHaveBeenCalledWith({ kind: "file", path: "lib/util/main.ts", line: 3 });
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+test("Escape closes the chooser without opening anything", () => {
+  stubs.files = SHARED_NAMES;
+  const { props, onOpenTab } = renderPane({ kind: "agent" });
+  const [link] = linksFor(props, "main.ts")!;
+  act(() => link!.activate(new MouseEvent("click"), link!.text));
+  const menu = screen.getByRole("menu");
+  act(() => fireEvent.keyDown(menu, { key: "Escape" }));
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(onOpenTab).not.toHaveBeenCalled();
 });
 
 test("only a terminal on screen keeps the file list live", () => {

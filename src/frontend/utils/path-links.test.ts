@@ -4,8 +4,8 @@ import {
   createPathLinkProvider,
   findPathLinks,
   indexFiles,
+  indexPaths,
   type PathLinkContext,
-  type PathLinkIndex,
 } from "./path-links";
 
 /**
@@ -16,20 +16,19 @@ import {
 
 const ROOT = "/repo";
 
-const INDEX: PathLinkIndex = {
-  root: ROOT,
-  files: new Set([
-    "README.md",
-    "package.json",
-    "src/api/files.ts",
-    "src/frontend/Terminal.tsx",
-    "web/src/app.ts",
-    "@scope/pkg/index.ts",
-  ]),
-};
+const INDEX = indexPaths(ROOT, [
+  "README.md",
+  "package.json",
+  "src/api/files.ts",
+  "src/frontend/Terminal.tsx",
+  "web/src/app.ts",
+  "@scope/pkg/index.ts",
+]);
 
-function paths(text: string, cwd: string | null = ROOT) {
-  return findPathLinks(text, INDEX, cwd).map((m) => m.path);
+/** One path per link that resolves; the candidates, in order, for one that
+ * does not. */
+function paths(text: string, cwd: string | null = ROOT, index = INDEX) {
+  return findPathLinks(text, index, cwd).map((m) => (m.paths.length === 1 ? m.paths[0] : m.paths));
 }
 
 describe("the forms agents print", () => {
@@ -39,7 +38,7 @@ describe("the forms agents print", () => {
 
   test("a ./-prefixed path, linked as written", () => {
     const [link] = findPathLinks("see ./src/api/files.ts", INDEX, ROOT);
-    expect(link?.path).toBe("src/api/files.ts");
+    expect(link?.paths).toEqual(["src/api/files.ts"]);
     expect(link?.text).toBe("./src/api/files.ts");
   });
 
@@ -57,7 +56,7 @@ describe("the forms agents print", () => {
 
   test("an @-mention links the file, not the @", () => {
     const [link] = findPathLinks("look at @src/api/files.ts", INDEX, ROOT);
-    expect(link?.path).toBe("src/api/files.ts");
+    expect(link?.paths).toEqual(["src/api/files.ts"]);
     expect(link?.text).toBe("src/api/files.ts");
     expect(link?.start).toBe(9);
   });
@@ -70,7 +69,7 @@ describe("the forms agents print", () => {
 describe(":line and :line:col", () => {
   test("a line is part of the link and carried", () => {
     const [link] = findPathLinks("src/api/files.ts:263 is the route", INDEX, ROOT);
-    expect(link).toMatchObject({ path: "src/api/files.ts", line: 263, text: "src/api/files.ts:263" });
+    expect(link).toMatchObject({ paths: ["src/api/files.ts"], line: 263, text: "src/api/files.ts:263" });
   });
 
   test("a column is part of the link and dropped", () => {
@@ -126,7 +125,7 @@ describe("what is not a link", () => {
         { path: "src/a.ts", name: "a.ts", isDirectory: false, depth: 1 },
       ],
     })!;
-    expect(findPathLinks("src and src/a.ts", withDirs, ROOT).map((m) => m.path)).toEqual(["src/a.ts"]);
+    expect(paths("src and src/a.ts", ROOT, withDirs)).toEqual(["src/a.ts"]);
   });
 
   test("an absolute path outside the root, even with a matching tail", () => {
@@ -165,12 +164,80 @@ describe("resolution against the cwd", () => {
   });
 
   test("a cwd outside the root resolves against the root alone", () => {
-    expect(paths("src/app.ts", "/tmp")).toEqual([]);
+    // From web this is the root's README; from /tmp it climbs out of the root.
+    expect(paths("../README.md", "/tmp")).toEqual([]);
     expect(paths("src/api/files.ts", "/tmp")).toEqual(["src/api/files.ts"]);
   });
 
   test("no cwd at all resolves against the root", () => {
     expect(paths("src/api/files.ts", null)).toEqual(["src/api/files.ts"]);
+  });
+});
+
+// ── names without their directory (TASK-109) ────────────────────────────────
+
+describe("a bare name or a partial path", () => {
+  const TREE = indexPaths(ROOT, [
+    "README.md",
+    "src/frontend/components/Composer.tsx",
+    "src/frontend/components/tabs/panes/TabPane.tsx",
+    "src/frontend/index.ts",
+    "src/lib/index.ts",
+    "web/index.ts",
+    "web/src/index.ts",
+    "web/src/lib/index.ts",
+    "web/.env",
+    "scripts/build",
+    "vendor/LICENSE",
+  ]);
+  const at = (text: string, cwd: string | null = ROOT) => paths(text, cwd, TREE);
+
+  test("one match is that file, and keeps its line", () => {
+    expect(at("edited Composer.tsx")).toEqual(["src/frontend/components/Composer.tsx"]);
+    const [link] = findPathLinks("Composer.tsx:42.", TREE, ROOT);
+    expect(link).toMatchObject({ text: "Composer.tsx:42", line: 42 });
+  });
+
+  test("a partial path matches on whole segments", () => {
+    expect(at("see panes/TabPane.tsx")).toEqual(["src/frontend/components/tabs/panes/TabPane.tsx"]);
+    expect(at("see anes/TabPane.tsx")).toEqual([]);
+    expect(at("see tabs/TabPane.tsx")).toEqual([]);
+  });
+
+  test("several matches are all offered, shortest first", () => {
+    expect(at("index.ts")).toEqual([
+      [
+        "web/index.ts",
+        "src/lib/index.ts",
+        "web/src/index.ts",
+        "web/src/lib/index.ts",
+        "src/frontend/index.ts",
+      ],
+    ]);
+    expect(at("lib/index.ts")).toEqual([["src/lib/index.ts", "web/src/lib/index.ts"]]);
+  });
+
+  test("the cwd's own files come first", () => {
+    expect(at("lib/index.ts", `${ROOT}/web`)).toEqual([["web/src/lib/index.ts", "src/lib/index.ts"]]);
+  });
+
+  test("a path that resolves is not second-guessed", () => {
+    // `src/index.ts` is `web/src/index.ts` from web, and only that.
+    expect(at("src/index.ts", `${ROOT}/web`)).toEqual(["web/src/index.ts"]);
+    expect(at("README.md")).toEqual(["README.md"]);
+  });
+
+  test("a dotfile counts as having an extension", () => {
+    expect(at("wrote .env")).toEqual(["web/.env"]);
+  });
+
+  test.each([
+    ["an extensionless word", "run build and read LICENSE"],
+    ["a path anchored with ./", "./TabPane.tsx"],
+    ["a path anchored with ../", "../Composer.tsx"],
+    ["a name nothing has", "Missing.tsx"],
+  ])("not %s", (_, line) => {
+    expect(at(line, `${ROOT}/web`)).toEqual([]);
   });
 });
 
@@ -212,11 +279,11 @@ function provide(provider: ILinkProvider, y: number) {
 const CONTEXT: PathLinkContext = { index: INDEX, cwd: ROOT };
 
 test("the provider maps a match to 1-based inclusive ranges, and opens at the line", () => {
-  const opened: Array<[string, number | undefined]> = [];
+  const opened: Array<[string[], number | undefined]> = [];
   const provider = createPathLinkProvider(
     buffer("see src/api/files.ts:263 and README.md"),
     () => CONTEXT,
-    (path, line) => opened.push([path, line]),
+    (paths, line) => opened.push([paths, line]),
   );
 
   const links = provide(provider, 1);
@@ -228,9 +295,22 @@ test("the provider maps a match to 1-based inclusive ranges, and opens at the li
   links![0]!.activate({} as MouseEvent, links![0]!.text);
   links![1]!.activate({} as MouseEvent, links![1]!.text);
   expect(opened).toEqual([
-    ["src/api/files.ts", 263],
-    ["README.md", undefined],
+    [["src/api/files.ts"], 263],
+    [["README.md"], undefined],
   ]);
+});
+
+test("the provider hands over every candidate and the click", () => {
+  const index = indexPaths(ROOT, ["a/index.ts", "b/index.ts"]);
+  const seen: Array<[string[], MouseEvent]> = [];
+  const provider = createPathLinkProvider(
+    buffer("index.ts"),
+    () => ({ index, cwd: ROOT }),
+    (paths, _line, event) => seen.push([paths, event]),
+  );
+  const click = { clientX: 3, clientY: 4 } as MouseEvent;
+  provide(provider, 1)![0]!.activate(click, "index.ts");
+  expect(seen).toEqual([[["a/index.ts", "b/index.ts"], click]]);
 });
 
 test("the provider offers nothing without a context, or for a missing line", () => {
@@ -240,10 +320,10 @@ test("the provider offers nothing without a context, or for a missing line", () 
 });
 
 test("the provider reads the context afresh, so a new file becomes a link", () => {
-  let context: PathLinkContext = { index: { root: ROOT, files: new Set() }, cwd: ROOT };
+  let context: PathLinkContext = { index: indexPaths(ROOT, []), cwd: ROOT };
   const provider = createPathLinkProvider(buffer("wrote NOTES.md"), () => context, () => {});
   expect(provide(provider, 1)).toBeUndefined();
 
-  context = { index: { root: ROOT, files: new Set(["NOTES.md"]) }, cwd: ROOT };
+  context = { index: indexPaths(ROOT, ["NOTES.md"]), cwd: ROOT };
   expect(provide(provider, 1)?.map((l) => l.text)).toEqual(["NOTES.md"]);
 });

@@ -25,13 +25,31 @@ export interface PathLinkIndex {
   /** Every file under it, relative to it. Directories are not links: a file tab
    * has nothing to show for one. */
   files: ReadonlySet<string>;
+  /** The same files by their last segment, for a name written without its
+   * directory (TASK-109). */
+  byName: ReadonlyMap<string, readonly string[]>;
+}
+
+/** An index over `root` holding `paths`, each relative to it. */
+export function indexPaths(root: string, paths: Iterable<string>): PathLinkIndex {
+  const files = new Set<string>();
+  const byName = new Map<string, string[]>();
+  for (const path of paths) {
+    files.add(path);
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    const same = byName.get(name);
+    if (same) same.push(path);
+    else byName.set(name, [path]);
+  }
+  return { root: root.replace(/\/+$/, ""), files, byName };
 }
 
 export function indexFiles(data: FilesResponse | undefined): PathLinkIndex | null {
   if (!data) return null;
-  const files = new Set<string>();
-  for (const file of data.files) if (!file.isDirectory) files.add(file.path);
-  return { root: data.directory.replace(/\/+$/, ""), files };
+  return indexPaths(
+    data.directory,
+    data.files.filter((file) => !file.isDirectory).map((file) => file.path),
+  );
 }
 
 export interface PathLinkMatch {
@@ -41,8 +59,10 @@ export interface PathLinkMatch {
   end: number;
   /** The link as it appeared in the line. */
   text: string;
-  /** Relative to the root — what a file tab takes. */
-  path: string;
+  /** Relative to the root — what a file tab takes. One entry for a path that
+   * resolves; for a name that only matches the ends of paths, every file it
+   * could be, best first (TASK-109). Never empty. */
+  paths: string[];
   line?: number;
 }
 
@@ -75,29 +95,61 @@ function normalize(path: string): string | null {
 }
 
 /**
- * The repository-relative path `raw` names, if it names a file of this task.
+ * The repository-relative paths `raw` names, if it names files of this task.
  *
  * Absolute paths count only inside the root: a worktree task's agent can
  * still print the main checkout's paths, and those are not this task's files.
  * Relative paths are tried against the task's cwd first — what the agent's
  * shell would resolve them against, which is a subdirectory for a project
  * pointing below the toplevel (TASK-65) — and then against the root, which is
- * how agents write paths regardless of where they are running.
+ * how agents write paths regardless of where they are running. Either way the
+ * answer is a single file.
+ *
+ * Failing both, a relative path is taken as the tail of one (TASK-109):
+ * agents write `Composer.tsx` or `panes/TabPane.tsx` and leave the directory
+ * to the reader. That can be several files, ordered by `rank`. Two shapes are
+ * kept out of it. A path that says where it starts (`./`, `../`) is not a
+ * tail. And the last segment must have an extension, because a bare word
+ * that happens to be a file somewhere — `build`, `test`, `LICENSE` — is far
+ * more often just a word.
  */
-function resolve(raw: string, index: PathLinkIndex, cwd: string | null): string | null {
+function resolve(raw: string, index: PathLinkIndex, cwd: string | null): string[] {
   if (raw.startsWith("/")) {
-    if (!raw.startsWith(`${index.root}/`)) return null;
+    if (!raw.startsWith(`${index.root}/`)) return [];
     const path = normalize(raw.slice(index.root.length + 1));
-    return path && index.files.has(path) ? path : null;
+    return path && index.files.has(path) ? [path] : [];
   }
   // The home directory is the daemon's, not something this side can expand.
-  if (raw.startsWith("~")) return null;
+  if (raw.startsWith("~")) return [];
   const bases = cwd ? [cwd, ""] : [""];
   for (const base of bases) {
     const path = normalize(base ? `${base}/${raw}` : raw);
-    if (path && index.files.has(path)) return path;
+    if (path && index.files.has(path)) return [path];
   }
-  return null;
+
+  if (raw.startsWith("./") || raw.startsWith("../")) return [];
+  const tail = normalize(raw);
+  if (!tail) return [];
+  const name = tail.slice(tail.lastIndexOf("/") + 1);
+  if (!EXTENSION.test(name)) return [];
+  const suffix = `/${tail}`;
+  const candidates = (index.byName.get(name) ?? []).filter((path) => path.endsWith(suffix));
+  return rank(candidates, cwd);
+}
+
+/** A dot with something other than a dot after it — `a.ts`, `.env` — so `..`
+ * and a trailing `.` are not extensions. */
+const EXTENSION = /\.[^.]/;
+
+/** Files under the cwd first, where the agent is working; then the shortest
+ * path, the one nearest the root; then by name, so the order is stable. `cwd`
+ * is relative to the root, and `""` is the root itself, which holds
+ * everything. */
+function rank(paths: string[], cwd: string | null): string[] {
+  const outside = (path: string) => (cwd && !path.startsWith(`${cwd}/`) ? 1 : 0);
+  return paths.sort(
+    (a, b) => outside(a) - outside(b) || a.length - b.length || (a < b ? -1 : a > b ? 1 : 0),
+  );
 }
 
 /** `cwd` relative to the root: `""` at the root, null outside it — where a
@@ -143,22 +195,22 @@ export function findPathLinks(
     const position = colon < 0 ? null : POSITION.exec(token.slice(colon));
     if (!raw) continue;
 
-    let path = resolve(raw, index, base);
-    if (!path && raw.startsWith("@") && raw.length > 1) {
-      path = resolve(raw.slice(1), index, base);
-      if (path) {
+    let paths = resolve(raw, index, base);
+    if (paths.length === 0 && raw.startsWith("@") && raw.length > 1) {
+      paths = resolve(raw.slice(1), index, base);
+      if (paths.length > 0) {
         raw = raw.slice(1);
         start += 1;
       }
     }
-    if (!path) continue;
+    if (paths.length === 0) continue;
 
     const end = start + raw.length + (position ? position[0].length : 0);
     matches.push({
       start,
       end,
       text: text.slice(start, end),
-      path,
+      paths,
       ...(position ? { line: Number(position[1]) } : {}),
     });
   }
@@ -178,12 +230,14 @@ export interface PathLinkContext {
  * The context arrives through `getContext()` for the reason the backlog
  * provider's index does: the registration outlives any one file list and any
  * one cwd, so it reads the current ones per call. Activation is the same plain
- * click every other link in the grid takes.
+ * click every other link in the grid takes; `onOpen` is handed every candidate
+ * and the click, and decides whether that is a file to open or a choice to
+ * offer at the pointer.
  */
 export function createPathLinkProvider(
   terminal: LinkBuffer,
   getContext: () => PathLinkContext | null,
-  onOpen: (path: string, line?: number) => void,
+  onOpen: (paths: string[], line: number | undefined, event: MouseEvent) => void,
 ): ILinkProvider {
   return {
     provideLinks(y: number, callback: (links: ILink[] | undefined) => void): void {
@@ -205,7 +259,7 @@ export function createPathLinkProvider(
           range: linkRange(columnOf, match.start, match.end, y),
           text: match.text,
           decorations: { pointerCursor: true, underline: true },
-          activate: () => onOpen(match.path, match.line),
+          activate: (event) => onOpen(match.paths, match.line, event),
         })),
       );
     },

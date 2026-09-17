@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { ContextMenu as RadixContextMenu, DropdownMenu as RadixDropdownMenu } from "radix-ui";
 import { Check, type LucideIcon } from "lucide-react";
 import { KeyHint } from "./KeyHint";
@@ -31,6 +32,8 @@ export type DropdownMenuItem =
       /** Hover text, for the words explaining why a row is greyed out — the
        * one moment the row cannot say them itself. */
       title?: string;
+      /** Set the label in the mono face, for a row that is a path. */
+      mono?: boolean;
       onSelect: () => void;
     };
 
@@ -111,7 +114,9 @@ function renderItems(items: readonly DropdownMenuItem[], parts: MenuParts): Reac
             className={cn("flex-none", item.destructive ? "text-destructive" : "text-muted-foreground")}
           />
         ) : null}
-        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+        <span className={cn("min-w-0 flex-1 truncate", item.mono && "font-mono tracking-mono")}>
+          {item.label}
+        </span>
         {item.checked ? <Check size={13} className="flex-none text-primary" /> : null}
         {item.keys ? <KeyHint keys={item.keys} className="flex-none" /> : null}
       </parts.Item>
@@ -161,6 +166,69 @@ export function DropdownMenu({
           sideOffset={4}
           aria-label={ariaLabel}
           className={CONTENT_CLASS}
+        >
+          {renderItems(items, RadixDropdownMenu)}
+        </RadixDropdownMenu.Content>
+      </RadixDropdownMenu.Portal>
+    </RadixDropdownMenu.Root>
+  );
+}
+
+export interface PointMenuProps {
+  items: readonly DropdownMenuItem[];
+  /** Where to open, in viewport coordinates; null is closed. */
+  at: { x: number; y: number } | null;
+  /** Escape, a press outside, or a row chosen — the host clears `at`. */
+  onDismiss: () => void;
+  "aria-label"?: string;
+}
+
+/**
+ * The same menu, opened by the host at a point rather than by a trigger — for
+ * a click the page does not own an element for, like a link drawn inside a
+ * terminal grid (TASK-109).
+ *
+ * The anchor is a zero-size box at `at`, portalled to the body so the host's
+ * layout never sees it. Focus goes back to whatever had it when the menu
+ * opened, not to the anchor: that is the terminal, and a click on a link
+ * there leaves the caret where it was.
+ */
+export function PointMenu({ items, at, onDismiss, "aria-label": ariaLabel }: PointMenuProps) {
+  // The last point, held while closed so the menu does not jump to the corner
+  // as it leaves.
+  const last = useRef({ x: 0, y: 0 });
+  if (at) last.current = at;
+  const returnTo = useRef<HTMLElement | null>(null);
+  const open = at != null;
+  useLayoutEffect(() => {
+    if (open) returnTo.current = document.activeElement as HTMLElement | null;
+  }, [open]);
+
+  return (
+    <RadixDropdownMenu.Root open={open} onOpenChange={(next) => !next && onDismiss()}>
+      {createPortal(
+        <RadixDropdownMenu.Trigger asChild>
+          <span
+            aria-hidden
+            style={{ position: "fixed", left: last.current.x, top: last.current.y, width: 0, height: 0 }}
+          />
+        </RadixDropdownMenu.Trigger>,
+        document.body,
+      )}
+      <RadixDropdownMenu.Portal>
+        <RadixDropdownMenu.Content
+          align="start"
+          sideOffset={4}
+          aria-label={ariaLabel}
+          // Radix names the menu after its trigger, which here is an empty box
+          // — and `aria-labelledby` would win over the label.
+          aria-labelledby={undefined}
+          className={cn(CONTENT_CLASS, "max-h-80 overflow-y-auto")}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            returnTo.current?.focus();
+            returnTo.current = null;
+          }}
         >
           {renderItems(items, RadixDropdownMenu)}
         </RadixDropdownMenu.Content>
