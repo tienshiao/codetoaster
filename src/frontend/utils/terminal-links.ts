@@ -1,9 +1,13 @@
-import type { ILink, ILinkProvider } from "@xterm/xterm";
+import type { ILink } from "@xterm/xterm";
 
 /**
  * What every link provider over a task's terminals shares: the slice of xterm
- * they read, the string-index-to-column mapping, and the combination of two
- * providers behind `XTerminal`'s one `linkProvider` prop.
+ * they read, and the string-index-to-column mapping.
+ *
+ * They are registered on the grid one by one rather than combined into a single
+ * provider — see `XTerminal`'s `linkProviders`, where the reason is that a
+ * provider which answers at once must not be made to wait for one that asks the
+ * server.
  *
  * DOM-free, like the providers themselves, so a test can hand them a plain
  * object for a buffer.
@@ -68,49 +72,5 @@ export function linkRange(
   return {
     start: { x: columnOf(start) + 1, y },
     end: { x: columnOf(end - 1) + 1, y },
-  };
-}
-
-type Factory<T> = (terminal: T) => ILinkProvider;
-
-/**
- * Several provider factories as one, for a terminal that takes one.
- *
- * Absent entries drop out, and a single survivor is returned as itself — so a
- * caller memoising on the result keeps the identity it had before a second
- * kind of link existed, and `XTerminal` does not re-register on that account.
- * Undefined when nothing is left, which registers nothing at all.
- *
- * The combined provider answers once every part has: xterm calls
- * `provideLinks` per hovered row and takes one callback, so the parts' links
- * are concatenated in the order the factories were given. Nothing here decides
- * between overlapping links — the parts are written not to produce any.
- */
-export function combineLinkProviders<T>(
-  ...factories: (Factory<T> | undefined)[]
-): Factory<T> | undefined {
-  const present = factories.filter((f): f is Factory<T> => f != null);
-  if (present.length <= 1) return present[0];
-  return (terminal) => {
-    const providers = present.map((factory) => factory(terminal));
-    return {
-      provideLinks(y, callback) {
-        const answers: (ILink[] | undefined)[] = new Array(providers.length);
-        let pending = providers.length;
-        providers.forEach((provider, i) => {
-          let answered = false;
-          provider.provideLinks(y, (links) => {
-            // A part that answers twice must not end the wait early for the
-            // others, nor call back a second time once everything is in.
-            if (answered) return;
-            answered = true;
-            answers[i] = links;
-            if (--pending > 0) return;
-            const all = answers.flatMap((a) => a ?? []);
-            callback(all.length > 0 ? all : undefined);
-          });
-        });
-      },
-    };
   };
 }

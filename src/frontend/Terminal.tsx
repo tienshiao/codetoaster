@@ -93,10 +93,23 @@ interface XTerminalProps {
    * come down. The phase is left from inside `handleMessage`, which nothing
    * outside can observe. */
   onRestoreEnd?: () => void;
-  /** An extra xterm link provider, registered beside the web links addon once
-   * the grid exists. Absent leaves nothing registered at all, which is what a
-   * repository with no task ids in it gets (TASK-86). */
-  linkProvider?: TerminalLinkProviderFactory;
+  /**
+   * Extra xterm link providers, registered beside the web links addon once the
+   * grid exists, in order. Empty or absent leaves nothing registered at all,
+   * which is what a repository with no task ids in it gets (TASK-86).
+   *
+   * Separately rather than folded into one, and the difference is visible to
+   * the user (TASK-110). xterm asks every provider per hovered row and lets one
+   * claim the link as soon as every provider before it has come back empty, so
+   * a provider that answers at once is captured on `mousedown` no matter what a
+   * later one is still waiting for. Combined into a single provider they would
+   * all answer at the speed of the slowest, and a row holding a hash nobody has
+   * asked about yet would hold its task-id and file-path links back behind a
+   * round trip — or, if that request hung, lose them entirely.
+   *
+   * So order is priority: cheapest and most specific first.
+   */
+  linkProviders?: readonly TerminalLinkProviderFactory[];
 }
 
 export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
@@ -110,7 +123,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       onSearchOpen,
       searchOpen,
       onRestoreEnd,
-      linkProvider,
+      linkProviders,
     },
     ref,
   ) {
@@ -626,17 +639,21 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       // that way.
     }, [fitIfVisible]);
 
-    // The caller's link provider, registered on the grid the init effect built
+    // The caller's link providers, registered on the grid the init effect built
     // (TASK-86). Kept out of that effect deliberately: this one rebinds when the
-    // factory changes, and putting it up there would rebuild the whole terminal
-    // instead. `ready` is what says the grid exists — the factory is handed the
+    // list changes, and putting it up there would rebuild the whole terminal
+    // instead. `ready` is what says the grid exists — each factory is handed the
     // instance, since a provider reads lines out of its buffer.
+    //
+    // The list's identity is what this keys on, so a caller assembling it must
+    // memoise: a fresh array per render would re-register every provider on the
+    // grid per render.
     useEffect(() => {
       const term = termRef.current;
-      if (!ready || !linkProvider || !term) return;
-      const disposable = term.registerLinkProvider(linkProvider(term));
-      return () => disposable.dispose();
-    }, [ready, linkProvider]);
+      if (!ready || !term || !linkProviders?.length) return;
+      const disposables = linkProviders.map((factory) => term.registerLinkProvider(factory(term)));
+      return () => disposables.forEach((disposable) => disposable.dispose());
+    }, [ready, linkProviders]);
 
     // Apply terminal theme changes reactively
     useEffect(() => {

@@ -5,7 +5,6 @@ import { useCommitLinkProvider } from "@/frontend/hooks/use-commit-links";
 import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
 import { usePathLinkProvider } from "@/frontend/hooks/use-path-links";
 import { PointMenu } from "@/frontend/components/v2/DropdownMenu";
-import { combineLinkProviders } from "@/frontend/utils/terminal-links";
 import { viewRef } from "@/frontend/view-state-store";
 import {
   isTerminalTab,
@@ -103,13 +102,16 @@ export function TabPane({
     visible && isTerminalTab(tab.descriptor),
     onOpenTab,
   );
-  // Last of the three: it is the only one that answers asynchronously, and the
-  // combined provider waits for every part, so a row holding a sha delays the
-  // other two by one round trip. Only a row with hex in it pays that, and only
-  // the first time the pointer crosses it.
   const commitLinks = useCommitLinkProvider(taskId, onOpenTab);
-  const linkProvider = useMemo(
-    () => combineLinkProviders(backlogLinks, pathLinks.provider, commitLinks),
+  // Registered as three, not folded into one, and last is where the commit
+  // provider belongs: it is the only one that may have to ask the server, and
+  // xterm lets each provider claim a link the moment the ones before it have
+  // come back empty. So the two that answer from an index they already hold are
+  // captured on `mousedown` whatever the third is waiting for — see
+  // `XTerminal`'s `linkProviders`. The absent ones drop out, and with all three
+  // absent nothing is registered.
+  const linkProviders = useMemo(
+    () => [backlogLinks, pathLinks.provider, commitLinks].filter((p) => p != null),
     [backlogLinks, pathLinks.provider, commitLinks],
   );
   // A name several files share opens this at the click (TASK-109). Portalled,
@@ -137,7 +139,7 @@ export function TabPane({
             focusRequest={focusRequest}
             searchRequest={searchRequest}
             active={active}
-            linkProvider={linkProvider}
+            linkProviders={linkProviders}
           />
           {fileChooser}
         </>
@@ -156,7 +158,7 @@ export function TabPane({
             focusRequest={focusRequest}
             searchRequest={searchRequest}
             active={active}
-            linkProvider={linkProvider}
+            linkProviders={linkProviders}
           />
           {fileChooser}
         </>

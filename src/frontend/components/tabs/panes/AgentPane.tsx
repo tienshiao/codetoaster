@@ -68,7 +68,7 @@ export interface AgentPaneProps {
   /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
    * This is the task's own terminal, so the ids the agent writes here are the
    * first place a link is wanted. */
-  linkProvider?: TerminalLinkProviderFactory;
+  linkProviders?: readonly TerminalLinkProviderFactory[];
 }
 
 export function AgentPane({
@@ -77,7 +77,7 @@ export function AgentPane({
   focusRequest = 0,
   searchRequest = 0,
   active = false,
-  linkProvider,
+  linkProviders,
 }: AgentPaneProps) {
   const { tasks, resumeTask } = useTasks();
   const { attach, detach, resize, send, isConnected } = usePty();
@@ -349,7 +349,7 @@ export function AgentPane({
           searchOpen={search.open}
           onFileDrop={drop.onFileDrop}
           onRestoreEnd={handleRestoreEnd}
-          linkProvider={linkProvider}
+          linkProviders={linkProviders}
         />
         {searchAddon ? (
           <TerminalSearchBar

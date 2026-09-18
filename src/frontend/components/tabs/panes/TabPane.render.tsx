@@ -259,16 +259,7 @@ test("in a Backlog.md repository the agent's terminal links known ids to their f
   stubs.backlog = DETECTED;
   const { props, onOpenTab } = renderPane({ kind: "agent" });
 
-  const factory = props.linkProvider as ((term: unknown) => {
-    provideLinks(y: number, cb: (links: ILink[] | undefined) => void): void;
-  }) | undefined;
-  expect(typeof factory).toBe("function");
-
-  const provider = factory!(terminalWith("filed TASK-82 and TASK-8"));
-  let links: ILink[] | undefined;
-  provider.provideLinks(1, (result) => {
-    links = result;
-  });
+  const links = linksFor(props, "filed TASK-82 and TASK-8");
 
   // TASK-8 is not in the list, and would not be matched inside TASK-82 anyway.
   expect(links?.length).toBe(1);
@@ -280,20 +271,20 @@ test("in a Backlog.md repository the agent's terminal links known ids to their f
   expect(onOpenTab).toHaveBeenCalledWith({ kind: "file", path: TASK_PATH });
 });
 
-test("outside a Backlog.md repository an id is not a link (AC #3)", () => {
-  // The backlog provider is the one that is not registered. Something still is
-  // — commit hashes need no index and are always matched (TASK-110) — so what
-  // this pins is that the id comes back unlinked, not that the grid was handed
-  // nothing at all.
+test("outside a Backlog.md repository the id provider is not registered (AC #3)", () => {
+  // With no file list either, the commit provider is the only one left — it
+  // needs no index (TASK-110) — so the count is the assertion, and the id
+  // coming back unlinked is the point of it.
   stubs.backlog = { detected: false };
   const { props } = renderPane({ kind: "agent" });
+  expect(providersOf(props)).toHaveLength(1);
   expect(linksFor(props, "filed TASK-82")).toBeUndefined();
 });
 
-test("a shell tab gets the same provider — it runs the same CLI", () => {
+test("a shell tab gets the same providers — it runs the same CLI", () => {
   stubs.backlog = DETECTED;
   const { props } = renderPane({ kind: "shell", ptyId: "pty-2" });
-  expect(typeof props.linkProvider).toBe("function");
+  expect(providersOf(props).length).toBeGreaterThan(1);
   expect(props.ptyId).toBe("pty-2");
 });
 
@@ -313,14 +304,29 @@ type Factory = (term: unknown) => {
   provideLinks(y: number, cb: (links: ILink[] | undefined) => void): void;
 };
 
+function providersOf(props: Record<string, unknown>): Factory[] {
+  const factories = props.linkProviders as Factory[] | undefined;
+  expect(Array.isArray(factories)).toBe(true);
+  return factories!;
+}
+
+/**
+ * Every link the grid would end up with for one row, from all of the pane's
+ * providers in registration order.
+ *
+ * They are registered separately and xterm asks each in turn (TASK-110), so
+ * gathering them here is what that side does — and the order the results come
+ * back in is the priority order, which is why these tests assert on it.
+ */
 function linksFor(props: Record<string, unknown>, line: string) {
-  const factory = props.linkProvider as Factory | undefined;
-  expect(typeof factory).toBe("function");
-  let links: ILink[] | undefined;
-  factory!(terminalWith(line)).provideLinks(1, (result) => {
-    links = result;
-  });
-  return links;
+  const term = terminalWith(line);
+  const links: ILink[] = [];
+  for (const factory of providersOf(props)) {
+    factory(term).provideLinks(1, (result) => {
+      if (result) links.push(...result);
+    });
+  }
+  return links.length > 0 ? links : undefined;
 }
 
 test("with the file list loaded, a path in the agent's terminal opens at its line", () => {
@@ -350,7 +356,7 @@ test("relative paths resolve against the task's cwd", () => {
   expect(linksFor(props, "see main.ts")?.map((l) => l.text)).toEqual(["main.ts"]);
 });
 
-test("in a Backlog.md repository both kinds of link come from the one provider", () => {
+test("in a Backlog.md repository both kinds of link reach the same grid", () => {
   stubs.backlog = DETECTED;
   stubs.files = FILES;
   const { props } = renderPane({ kind: "agent" });
@@ -361,18 +367,19 @@ test("in a Backlog.md repository both kinds of link come from the one provider",
 });
 
 test("the registration survives a re-render", () => {
-  // `XTerminal` re-registers whenever the factory's identity changes, so a
-  // combined factory rebuilt per render would churn the grid's providers.
+  // `XTerminal` re-registers whenever the list's identity changes, and now
+  // re-registers *every* provider on it, so a list rebuilt per render would
+  // churn the grid's providers three at a time.
   stubs.backlog = DETECTED;
   stubs.files = FILES;
   const view = render(
     <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
   );
-  const first = stubs.terminals.at(-1)!.linkProvider;
+  const first = stubs.terminals.at(-1)!.linkProviders;
   view.rerender(
     <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
   );
-  expect(stubs.terminals.at(-1)!.linkProvider).toBe(first);
+  expect(stubs.terminals.at(-1)!.linkProviders).toBe(first);
 });
 
 // ── names without their directory (TASK-109) ────────────────────────────────
@@ -453,18 +460,20 @@ test("a hidden terminal keeps the links from the cached list", () => {
 const SHORT = "31976f6";
 const FULL = "31976f69c26b2181b9e8bc402eff248db6435c88";
 
-/** `linksFor`'s asynchronous twin: the commit provider answers only once the
- * repository has, so the links arrive a microtask later. */
+/** `linksFor`'s asynchronous twin: on a row holding a hash nobody has asked
+ * about yet the commit provider answers only once the repository has, so its
+ * links arrive a microtask after the other providers'. */
 async function commitLinksFor(props: Record<string, unknown>, line: string) {
-  const factory = props.linkProvider as Factory | undefined;
-  expect(typeof factory).toBe("function");
-  let links: ILink[] | undefined;
+  const term = terminalWith(line);
+  const links: ILink[] = [];
   await act(async () => {
-    factory!(terminalWith(line)).provideLinks(1, (result) => {
-      links = result;
-    });
+    for (const factory of providersOf(props)) {
+      factory(term).provideLinks(1, (result) => {
+        if (result) links.push(...result);
+      });
+    }
   });
-  return links;
+  return links.length > 0 ? links : undefined;
 }
 
 test("a hash the repository knows opens the commit, at its full sha", async () => {
@@ -498,7 +507,7 @@ test("an answered hash is never asked about twice", async () => {
   expect(stubs.commitAsks).toHaveLength(1);
 });
 
-test("all three kinds of link come from the one provider", async () => {
+test("all three kinds of link reach the same grid, in priority order", async () => {
   stubs.backlog = DETECTED;
   stubs.files = FILES;
   stubs.commits = { [SHORT]: FULL };
@@ -506,6 +515,21 @@ test("all three kinds of link come from the one provider", async () => {
 
   const links = await commitLinksFor(props, `TASK-82 touched src/main.ts in ${SHORT}`);
   expect(links?.map((l) => l.text)).toEqual(["TASK-82", "src/main.ts", SHORT]);
+});
+
+test("an unresolved hash does not hold up the links beside it", () => {
+  // The whole reason the three are registered separately rather than combined.
+  // xterm captures the hovered link on mousedown, so a task id sharing a row
+  // with a hash nobody has asked about yet must be clickable at once — and must
+  // still be there if that request is slow, or never answers at all. Read
+  // synchronously, which is the state the grid is in at that moment.
+  stubs.backlog = DETECTED;
+  stubs.files = FILES;
+  stubs.commits = { [SHORT]: FULL };
+  const { props } = renderPane({ kind: "agent" });
+
+  const links = linksFor(props, `${SHORT} TASK-82 touched src/main.ts`);
+  expect(links?.map((l) => l.text)).toEqual(["TASK-82", "src/main.ts"]);
 });
 
 // ── the caret follows a keyboard navigation (TASK-34) ───────────────────────

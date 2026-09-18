@@ -31,9 +31,9 @@ export interface ShellPaneProps {
    * only its search bar answers a ⌘G typed outside every terminal. */
   active?: boolean;
   /** Extra links in the grid — task ids, in a Backlog.md repository (TASK-86).
-   * A shell tab gets the same one the agent does: it runs the same CLI in the
+   * A shell tab gets the same ones the agent does: it runs the same CLI in the
    * same repository, and prints the same ids. */
-  linkProvider?: TerminalLinkProviderFactory;
+  linkProviders?: readonly TerminalLinkProviderFactory[];
 }
 
 /**
@@ -64,7 +64,7 @@ export function ShellPane({
   focusRequest = 0,
   searchRequest = 0,
   active = false,
-  linkProvider,
+  linkProviders,
 }: ShellPaneProps) {
   const { attach, detach, resize, send, isConnected } = usePty();
   const drop = useTerminalDrop(taskId, ptyId);
@@ -126,7 +126,7 @@ export function ShellPane({
         onSearchOpen={search.openSearch}
         searchOpen={search.open}
         onFileDrop={drop.onFileDrop}
-        linkProvider={linkProvider}
+        linkProviders={linkProviders}
       />
       {searchAddon ? (
         <TerminalSearchBar
