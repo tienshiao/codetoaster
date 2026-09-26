@@ -151,13 +151,18 @@ export type ServerMessage =
   // One row changed. A delta rather than a fresh snapshot, so a busy agent
   // does not re-send every task on every state transition.
   | { type: "task"; task: TaskInfo }
-  // Liveness, and — when the PTY went from quiet to noisy — the recency stamp
-  // that write left on the row. The stamp rides this message because activity
-  // is the one recency change that never sends a row: without it the client's
-  // list would keep the order it was last given until some unrelated create or
-  // close happened to provoke a snapshot. `at` is absent from an older daemon,
-  // and from every falling edge.
-  | { type: "activity"; taskId: string; active: boolean; at?: number }
+  // Liveness, and the stamps that edge left on the row. They ride this
+  // message because activity is the one recency change that never sends a
+  // row: without them the client's list would keep the ages and the order it
+  // was last given until some unrelated create or close provoked a snapshot.
+  // `at` is the age stamp (`lastActiveAt`), written on both edges. `rankAt` is
+  // present only when the edge moved the task's rank — the agent waking after
+  // a real quiet gap (TASK-116) — and absent on every other edge. A rank moved
+  // by input arrives as a `task` delta instead, as does every shell stamp:
+  // this frame is the agent's alone. Both are absent from an older daemon,
+  // and from the bare falling edge a suspend, a delete or a discarded resume
+  // attempt sends for an agent it killed mid-burst, which stamped nothing.
+  | { type: "activity"; taskId: string; active: boolean; at?: number; rankAt?: number }
   | { type: "notification"; taskId: string; title: string; body: string }
   // The task's checkout changed underneath whatever a client is showing of it
   // (TASK-103). Coarse on purpose: it names what kind of thing moved and, when
@@ -338,6 +343,10 @@ export interface TaskInfo {
   size: { cols: number; rows: number };
   createdAt: number;
   lastActiveAt: number;
+  /** The sort key: the list is `rankAt` descending. Unlike `lastActiveAt` it
+   * advances only when the task wakes after a quiet gap, so busy tasks keep
+   * their places relative to each other (TASK-116). */
+  rankAt: number;
   exited: boolean;
   hasNotification: boolean;
 }

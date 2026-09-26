@@ -67,7 +67,7 @@ const TASK_COLUMNS = [
   "wip_ref", "wip_at",
   "setup_duration_ms", "pinned", "agent_session_id", "agent_profile", "transcript_path", "agent_state",
   "lifecycle", "last_message", "last_size_cols", "last_size_rows", "model",
-  "permission_mode", "created_at", "last_active_at", "idle_since", "exit_code",
+  "permission_mode", "created_at", "last_active_at", "rank_at", "idle_since", "exit_code",
 ];
 
 const PROJECT_V2_COLUMNS = [
@@ -82,10 +82,11 @@ describe("fresh database", () => {
     expect([...columnNames(db, "tasks")].sort()).toEqual([...TASK_COLUMNS].sort());
   });
 
-  test("has the recency index the task list reads through", () => {
+  test("has the rank index the task list reads through, and not the one it replaced", () => {
     const db = new Database(":memory:");
     applyMigrations(db);
-    expect(indexNames(db, "tasks").has("tasks_by_recency")).toBe(true);
+    expect(indexNames(db, "tasks").has("tasks_by_rank")).toBe(true);
+    expect(indexNames(db, "tasks").has("tasks_by_recency")).toBe(false);
   });
 
   test("projects gains the per-project task defaults", () => {
@@ -208,7 +209,7 @@ describe("upgrade from v1", () => {
 
     expect(() => applyMigrations(db)).not.toThrow();
     expect(columnNames(db, "tasks").size).toBe(TASK_COLUMNS.length);
-    expect(indexNames(db, "tasks").has("tasks_by_recency")).toBe(true);
+    expect(indexNames(db, "tasks").has("tasks_by_rank")).toBe(true);
   });
 
   // The oldest migration is the one most likely to be missing from a
@@ -239,7 +240,9 @@ describe("005_tasks_repo_root_nullable", () => {
     applyMigrations(db);
     expect(columnIsNullable(db, "tasks", "repo_root")).toBe(true);
     expect([...columnNames(db, "tasks")].sort()).toEqual([...TASK_COLUMNS].sort());
-    expect(indexNames(db, "tasks").has("tasks_by_recency")).toBe(true);
+    // The rebuild takes the table's indexes with it; what stands after the
+    // later migrations is the one the list reads through.
+    expect(indexNames(db, "tasks").has("tasks_by_rank")).toBe(true);
   });
 
   test("a task with no repository can say so", () => {
@@ -308,6 +311,34 @@ describe("005_tasks_repo_root_nullable", () => {
   });
 });
 
+describe("010_tasks_rank_at", () => {
+  // A genuine upgrade: the column dropped and the migration forgotten, so the
+  // rows it runs over were written by code that had never heard of rank_at.
+  test("backfills rank_at from last_active_at, so every task keeps its rank", () => {
+    const db = new Database(":memory:");
+    applyMigrations(db);
+    db.run("DROP INDEX tasks_by_rank");
+    db.run("ALTER TABLE tasks DROP COLUMN rank_at");
+    db.run("DELETE FROM applied_migrations WHERE name = '010_tasks_rank_at'");
+    db.run("CREATE INDEX tasks_by_recency ON tasks(last_active_at DESC)");
+    const insert = `INSERT INTO tasks (id, project_id, title, title_source, initial_prompt,
+      repo_root, cwd, worktree_state, agent_state, lifecycle, created_at, last_active_at)
+      VALUES (?, 'general', ?, 'derived', '', NULL, '/dir', 'none', 'idle', 'live', 1, ?)`;
+    db.run(insert, ["older", "Older", 100]);
+    db.run(insert, ["newer", "Newer", 200]);
+
+    applyMigrations(db);
+
+    expect(db.query("SELECT id, rank_at FROM tasks ORDER BY rank_at DESC").all()).toEqual([
+      { id: "newer", rank_at: 200 },
+      { id: "older", rank_at: 100 },
+    ]);
+    expect(indexNames(db, "tasks").has("tasks_by_rank")).toBe(true);
+    // Replaced, not joined: nothing reads by last_active_at in SQL any more.
+    expect(indexNames(db, "tasks").has("tasks_by_recency")).toBe(false);
+  });
+});
+
 describe("initDatabase", () => {
   test("creates the directory, migrates, and is idempotent across opens", () => {
     const dbPath = tempDbPath();
@@ -331,6 +362,7 @@ describe("initDatabase", () => {
       "007_tasks_worktree_subdir",
       "008_tasks_agent_profile",
       "009_projects_default_profile",
+      "010_tasks_rank_at",
     ]);
     db.close();
   });

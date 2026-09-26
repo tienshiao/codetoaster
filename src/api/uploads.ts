@@ -62,18 +62,21 @@ export function uploadRoutes(root: string) {
           return Response.json({ error: "No files" }, { status: 400 });
         }
         const paths = await saveUploads(files, root);
-        // Asked again after the write, because reading a multipart body and
-        // putting it on disk both take time and the terminal can die under
-        // them — and `Pty.write` no-ops on an exited PTY, so answering 200 here
-        // would report paths that were typed nowhere. The staged directory is
-        // harmless: nothing references it, and the harvester collects it by age.
-        if (session.exited) {
-          return Response.json({ error: "That terminal is gone" }, { status: 404 });
-        }
         // A trailing space, the way a drop into Terminal.app or iTerm leaves
         // one: it ends the token, so a second drop or the next word typed
         // starts its own rather than gluing onto the last path.
-        session.write(ptyPathList(paths) + " ");
+        //
+        // Through the manager rather than `session.write`, so the drop wakes
+        // the task the way typing does (TASK-116). It reports whether the
+        // terminal was still there to type into, which is asked after the
+        // save, because reading a multipart body and putting it on disk both
+        // take time and the terminal can die under them — and `Pty.write`
+        // no-ops on an exited PTY, so answering 200 then would report paths
+        // that were typed nowhere. The staged directory is harmless: nothing
+        // references it, and the harvester collects it by age.
+        if (!taskManager.typeIntoPty(session.id, ptyPathList(paths) + " ")) {
+          return Response.json({ error: "That terminal is gone" }, { status: 404 });
+        }
         return Response.json({ paths });
       },
     }),

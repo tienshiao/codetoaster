@@ -47,6 +47,14 @@ describe("create", () => {
     const row = store.create(seed({ id: "t1", created_at: 1000 }));
     expect(row.created_at).toBe(1000);
     expect(row.last_active_at).toBe(1000);
+    expect(row.rank_at).toBe(1000);
+  });
+
+  // TASK-116: the sort key starts where the age stamp does, so a task created
+  // with a back-dated last_active_at ranks by it rather than by now.
+  test("rank_at defaults to last_active_at, and an explicit one wins", () => {
+    expect(store.create(seed({ id: "t1", created_at: 10, last_active_at: 50 })).rank_at).toBe(50);
+    expect(store.create(seed({ id: "t2", last_active_at: 50, rank_at: 7 })).rank_at).toBe(7);
   });
 
   test("explicit values win over the defaults", () => {
@@ -112,8 +120,31 @@ describe("list", () => {
     store.create(seed({ id: "middle", last_active_at: 200, lifecycle: "archived" }));
   });
 
-  test("is ordered by last_active_at, most recent first", () => {
+  test("is ordered by rank, most recent first", () => {
     expect(store.list().map((t) => t.id)).toEqual(["newest", "middle", "old"]);
+  });
+
+  // TASK-116: a task that has been busy all along keeps its place even though
+  // its last_active_at is newer than everything above it.
+  test("rank_at decides the order over last_active_at", () => {
+    store.update("old", { last_active_at: 900 });
+    expect(store.list().map((t) => t.id)).toEqual(["newest", "middle", "old"]);
+    store.update("old", { rank_at: 400 });
+    expect(store.list().map((t) => t.id)).toEqual(["old", "newest", "middle"]);
+  });
+
+  // Only immutable keys break a tie, matching the client's stable sort on
+  // rankAt alone — a tie that fell to the age stamp would flip on each
+  // snapshot as the two tasks' ages leapfrogged.
+  test("a rank tie falls to created_at, whatever last_active_at says", () => {
+    store.update("old", { rank_at: 300, created_at: 20 });
+    store.update("newest", { created_at: 10 });
+    store.update("old", { last_active_at: 250 });
+    expect(store.list().map((t) => t.id)).toEqual(["old", "newest", "middle"]);
+    store.update("old", { last_active_at: 350 });
+    expect(store.list().map((t) => t.id)).toEqual(["old", "newest", "middle"]);
+    store.update("newest", { created_at: 30 });
+    expect(store.list().map((t) => t.id)).toEqual(["newest", "old", "middle"]);
   });
 
   test("includes archived tasks when no filter is given", () => {

@@ -29,6 +29,8 @@ export interface NewTask {
   pinned?: boolean;
   created_at?: number;
   last_active_at?: number;
+  /** Defaults to `last_active_at`: a new task ranks where it was last active. */
+  rank_at?: number;
 }
 
 export interface TaskFilter {
@@ -49,8 +51,8 @@ const UPDATABLE_COLUMNS: ReadonlySet<string> = new Set([
   "worktree_state", "wip_ref", "wip_at",
   "setup_duration_ms", "pinned", "agent_session_id", "agent_profile", "transcript_path",
   "agent_state", "lifecycle", "last_message", "last_size_cols", "last_size_rows",
-  "model", "permission_mode", "created_at", "last_active_at", "idle_since",
-  "exit_code",
+  "model", "permission_mode", "created_at", "last_active_at", "rank_at",
+  "idle_since", "exit_code",
 ]);
 
 const INSERT_COLUMNS = [
@@ -58,7 +60,7 @@ const INSERT_COLUMNS = [
   "cwd", "worktree_path", "worktree_repo", "worktree_subdir", "branch", "base_ref",
   "worktree_state", "pinned",
   "agent_session_id", "agent_profile", "agent_state", "lifecycle", "model",
-  "permission_mode", "created_at", "last_active_at",
+  "permission_mode", "created_at", "last_active_at", "rank_at",
 ] as const;
 
 // Pure data access over the `tasks` table (§5.2). It holds no processes, runs
@@ -72,6 +74,10 @@ export class TaskStore {
   constructor(private db: Database) {}
 
   create(task: NewTask): TaskRow {
+    const createdAt = task.created_at ?? Date.now();
+    // A brand-new task is the most recent thing that happened, so it sorts
+    // to the top of the list before anything has run in it.
+    const lastActiveAt = task.last_active_at ?? createdAt;
     const row = {
       id: task.id,
       project_id: task.project_id,
@@ -93,10 +99,9 @@ export class TaskStore {
       lifecycle: task.lifecycle ?? "live",
       model: task.model ?? null,
       permission_mode: task.permission_mode ?? null,
-      created_at: task.created_at ?? Date.now(),
-      // A brand-new task is the most recent thing that happened, so it sorts
-      // to the top of the list before anything has run in it.
-      last_active_at: task.last_active_at ?? task.created_at ?? Date.now(),
+      created_at: createdAt,
+      last_active_at: lastActiveAt,
+      rank_at: task.rank_at ?? lastActiveAt,
     };
     this.db.run(
       `INSERT INTO tasks (${INSERT_COLUMNS.join(", ")})
@@ -112,7 +117,13 @@ export class TaskStore {
     return (this.db.query("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | null) ?? undefined;
   }
 
-  /** Most recently active first — the only order the task list is ever shown in. */
+  /** Most recently ranked first — the only order the task list is ever shown
+   * in. `rank_at` rather than `last_active_at`, which moves on every burst of
+   * output and would reshuffle busy tasks against each other (TASK-116). Ties
+   * fall only to keys that never change, so the order is the same on every
+   * read — and agrees with the client, whose stable sort on `rankAt` alone
+   * keeps tied rows in the order this handed it. An age stamp in there would
+   * flip tied rows on each snapshot as their ages leapfrogged. */
   list(filter: TaskFilter = {}): TaskRow[] {
     const lifecycles = filter.lifecycle === undefined
       ? undefined
@@ -123,7 +134,7 @@ export class TaskStore {
       ? ` WHERE lifecycle IN (${lifecycles.map(() => "?").join(", ")})`
       : "";
     return this.db
-      .query(`SELECT * FROM tasks${where} ORDER BY last_active_at DESC`)
+      .query(`SELECT * FROM tasks${where} ORDER BY rank_at DESC, created_at DESC, id`)
       .all(...(lifecycles ?? [])) as TaskRow[];
   }
 

@@ -141,7 +141,9 @@ test("grouping preserves recency order inside a group", () => {
 
 /** `byRecency` — the server's order, re-applied to a list one frame disturbed. */
 
-const stamped = (id: string, lastActiveAt: number) => ({ id, lastActiveAt });
+// The age stamp defaults to the rank so the older cases read as they did; the
+// TASK-116 case below is the one that pulls them apart.
+const stamped = (id: string, rankAt: number, lastActiveAt = rankAt) => ({ id, rankAt, lastActiveAt });
 
 test("a task that just became more recent moves to the front", () => {
   // What a `task` delta or an `activity` stamp does to the list: one row's
@@ -164,4 +166,14 @@ test("an already-ordered list comes back as the same array", () => {
   // move rows under a pointer that is mid-click.
   const tasks = [stamped("a", 30), stamped("b", 20), stamped("b2", 20), stamped("c", 10)];
   expect(byRecency(tasks)).toBe(tasks);
+});
+
+test("the rank decides the order, not the age stamp", () => {
+  // TASK-116: two busy tasks whose last_active_at leapfrog each other several
+  // times a minute. Their ranks tie or stand still, so neither moves — and the
+  // list is the same instance, so nothing re-renders.
+  const tasks = [stamped("a", 20, 100), stamped("b", 20, 500), stamped("c", 10, 900)];
+  const sorted = byRecency(tasks);
+  expect(sorted).toBe(tasks);
+  expect(sorted.map((t) => t.id)).toEqual(["a", "b", "c"]);
 });

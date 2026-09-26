@@ -37,6 +37,7 @@ function task(over: Partial<TaskInfo> = {}): TaskInfo {
     size: { cols: 80, rows: 24 },
     createdAt: 1_000,
     lastActiveAt: 2_000,
+    rankAt: 2_000,
     exited: false,
     hasNotification: false,
     worktreeState: "none",

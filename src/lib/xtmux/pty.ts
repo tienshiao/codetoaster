@@ -3,7 +3,7 @@ import { readlink } from "node:fs/promises";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { InlineImages } from "./inline-images";
-import { isOnlyQueries } from "./query-output";
+import { isOnlyChatter } from "./query-output";
 import type { ClientInfo, ServerMessage } from "./types";
 
 // Validate a client-reported terminal size. Messages are parsed from the wire,
@@ -219,9 +219,11 @@ export class Pty {
           // Broadcast to all connected clients
           if (clients) this.broadcast({ type: "data", ptyId: this.id, data: clients });
           // Track activity — but not off a chunk that only asks the terminal
-          // something, which neither raises the edge nor holds it up
-          // (query-output.ts).
-          if (isOnlyQueries(str)) return;
+          // something or posts a notification, which neither raises the edge
+          // nor holds it up (query-output.ts). The notification still reaches
+          // `onNotification`: that is the OSC handlers' work, fed by the
+          // headless write above, not this path.
+          if (isOnlyChatter(str)) return;
           if (!this.isActive) {
             this.isActive = true;
             this.onActivityChangeCallback?.(this.id, true);

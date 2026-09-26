@@ -634,7 +634,7 @@ export function useTaskSidebar({
   );
 
   // Recency across projects, flat, and in the order the server sent: `TaskInfo`
-  // arrives sorted `last_active_at DESC`, so re-sorting here could only
+  // arrives sorted `rank_at DESC`, so re-sorting here could only
   // disagree with it.
   //
   // Archived rows are appended rather than merged by recency: they are their

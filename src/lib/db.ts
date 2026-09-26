@@ -113,6 +113,9 @@ export interface TaskRow {
   permission_mode: string | null;
   created_at: number;
   last_active_at: number;
+  /** The task list's sort key: moves only when the task wakes after a real
+   * pause, where `last_active_at` moves on every burst of output (TASK-116). */
+  rank_at: number;
   idle_since: number | null;
   exit_code: number | null;
 }
@@ -370,6 +373,29 @@ const migrations: Migration[] = [
     name: "009_projects_default_profile",
     up(db) {
       addColumn(db, "projects", "default_profile", "TEXT");
+    },
+  },
+  {
+    // The task list's sort key (TASK-116), kept apart from `last_active_at`.
+    // That stamp moves on every rising edge of PTY output, and an agent that
+    // pauses to think crosses the 300ms idle threshold several times a
+    // minute — so a list ordered by it had every busy task racing for the top
+    // slot. `rank_at` moves only when a task wakes after a real quiet gap;
+    // `last_active_at` keeps its job as the age column and the harvester's
+    // grace, which both want the true last moment of activity.
+    //
+    // Backfilled from `last_active_at` so every existing task keeps the rank
+    // it had. The `WHERE` makes a rerun over an already-migrated table a no-op
+    // rather than a reshuffle. The list now sorts on this column, so
+    // `tasks_by_rank` replaces `tasks_by_recency`: nothing orders or filters
+    // by `last_active_at` in SQL any more (the harvester filters its rows in
+    // JS), and an index nothing reads is only a cost on every activity edge.
+    name: "010_tasks_rank_at",
+    up(db) {
+      addColumn(db, "tasks", "rank_at", "INTEGER NOT NULL DEFAULT 0");
+      db.run("UPDATE tasks SET rank_at = last_active_at WHERE rank_at = 0");
+      db.run(`CREATE INDEX IF NOT EXISTS tasks_by_rank ON tasks(rank_at DESC)`);
+      db.run("DROP INDEX IF EXISTS tasks_by_recency");
     },
   },
 ];

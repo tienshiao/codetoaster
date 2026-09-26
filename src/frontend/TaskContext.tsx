@@ -423,7 +423,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
             //
             // And re-sorted after, because the upsert writes the row back at
             // the index it already had. The list is the server's
-            // `last_active_at DESC`, but that order only arrives with a full
+            // `rank_at DESC`, but that order only arrives with a full
             // snapshot — between snapshots this delta and the `activity` stamp
             // below are the only carriers of recency, so a task that has been
             // busy for an hour would sit wherever it was when the last create
@@ -448,18 +448,38 @@ export function TaskProvider({ children }: { children: ReactNode }) {
 
           if (message.type === "activity") {
             setActivity((prev) => ({ ...prev, [message.taskId]: message.active }));
-            // The rising edge carries the stamp the server just wrote to
-            // `last_active_at` — no row comes with it, so this is the only
-            // chance to move the task up the list before the next snapshot.
-            // Absent from a falling edge, and from an older daemon, in which
-            // case the order simply stays as it was.
-            const { taskId, at } = message;
-            if (message.active && at !== undefined) {
+            // Either edge carries the stamps the server just wrote — no row
+            // comes with them, so this is the only chance to update the task
+            // before the next snapshot. `at` is the age stamp and is on every
+            // edge; `rankAt` is there only when the task woke after a real
+            // quiet gap and should move up the list (TASK-116). Keeping a
+            // busy task where it is is what stops busy tasks racing each other
+            // for the top.
+            //
+            // The age is applied only where it can matter, since every write
+            // here is a new array and row: on the falling edge, which is when
+            // output stopped and so what the age column means, and alongside a
+            // rank move. A rising edge that moves nothing is left alone — its
+            // stamp is only 300ms stale by the time the next falling edge
+            // lands with a fresher one. Both stamps are absent from an older
+            // daemon, and a stamp no newer than the row's is a frame that lost
+            // a race with a snapshot — in either case the row is left alone
+            // and keeps its identity.
+            const { taskId, active, at, rankAt } = message;
+            if (at !== undefined || rankAt !== undefined) {
               setTasks((prev) => {
                 const i = prev.findIndex((t) => t.id === taskId);
-                if (i === -1 || at <= prev[i]!.lastActiveAt) return prev;
+                if (i === -1) return prev;
+                const row = prev[i]!;
+                const rank = rankAt !== undefined && rankAt > row.rankAt;
+                const age = (!active || rank) && at !== undefined && at > row.lastActiveAt;
+                if (!age && !rank) return prev;
                 const next = [...prev];
-                next[i] = { ...prev[i]!, lastActiveAt: at };
+                next[i] = {
+                  ...row,
+                  ...(age ? { lastActiveAt: at } : {}),
+                  ...(rank ? { rankAt } : {}),
+                };
                 return byRecency(next);
               });
             }

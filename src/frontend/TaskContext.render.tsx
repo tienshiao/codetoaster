@@ -65,6 +65,7 @@ function task(id: string, overrides: Partial<TaskInfo> = {}): TaskInfo {
     size: { cols: 80, rows: 24 },
     createdAt: 0,
     lastActiveAt: 0,
+    rankAt: 0,
     exited: false,
     hasNotification: false,
     worktreeState: "none",
@@ -180,18 +181,21 @@ test("a delta for an archived task takes the row out rather than putting it back
 });
 
 /**
- * The list is `last_active_at DESC`, and between snapshots the only things
- * that say so are a `task` delta and an `activity` stamp (TASK-101).
+ * The list is `rank_at DESC`, and between snapshots the only things that say
+ * so are a `task` delta and an `activity` stamp (TASK-101). The rank is apart
+ * from the age stamp (TASK-116): an activity frame always carries the age, and
+ * carries a rank only when the task woke after a real quiet gap. The client
+ * applies the age on a falling edge or alongside a rank move, and nowhere else.
  *
  * A rendering test rather than a `task-list` one because what is being pinned
  * is the store's *application* of the sort — that both frames reach it, and
- * that the one carrying no stamp leaves the order alone. `byRecency` itself is
+ * that the one carrying no rank leaves the order alone. `byRecency` itself is
  * covered as a function in `task-list.test.ts`.
  */
 function renderList() {
-  let ids: string[] = [];
+  let rows: TaskInfo[] = [];
   function Watch() {
-    ids = useTasks().tasks.map((t) => t.id);
+    rows = useTasks().tasks;
     return null;
   }
   render(
@@ -199,55 +203,99 @@ function renderList() {
       <Watch />
     </TaskProvider>,
   );
-  return () => ids;
+  const ids = () => rows.map((t) => t.id);
+  ids.rows = () => rows;
+  return ids;
 }
+
+/** A row whose age and rank agree, which is every row until something pulls
+ * them apart. */
+const ranked = (id: string, at: number, overrides: Partial<TaskInfo> = {}) =>
+  task(id, { lastActiveAt: at, rankAt: at, ...overrides });
 
 test("a delta whose row is now the most recent moves it to the top", () => {
   const ids = renderList();
   deliver({
     type: "tasks",
-    list: [task("t1", { lastActiveAt: 30 }), task("t2", { lastActiveAt: 20 }), task("t3", { lastActiveAt: 10 })],
+    list: [ranked("t1", 30), ranked("t2", 20), ranked("t3", 10)],
     projects: [],
   });
   expect(ids()).toEqual(["t1", "t2", "t3"]);
 
-  // One row, at its old index, carrying a stamp fresher than the one the
-  // snapshot gave it — what any row broadcast that follows a PTY's activity
-  // write looks like: a title change, a shell tab's rising edge, a hook
-  // transition landing after one. Without the re-sort the list would still
-  // read t1, t2, t3.
-  deliver({ type: "task", task: task("t3", { lastActiveAt: 99, agentState: "busy" }) });
+  // One row, at its old index, carrying a rank fresher than the one the
+  // snapshot gave it — what any row broadcast that follows a wake looks like:
+  // a title change, a shell tab's rising edge, a hook transition landing after
+  // one. Without the re-sort the list would still read t1, t2, t3.
+  deliver({ type: "task", task: ranked("t3", 99, { agentState: "busy" }) });
   expect(ids()).toEqual(["t3", "t1", "t2"]);
 
-  // A delta that does not change rank leaves the order alone.
-  deliver({ type: "task", task: task("t1", { lastActiveAt: 30, agentState: "busy" }) });
+  // A delta that does not change rank leaves the order alone — even one whose
+  // age stamp is now the newest in the list (TASK-116).
+  deliver({ type: "task", task: ranked("t1", 30, { lastActiveAt: 500, agentState: "busy" }) });
   expect(ids()).toEqual(["t3", "t1", "t2"]);
 });
 
-test("an activity stamp moves the row without a row being sent", () => {
+test("an activity frame with a rank moves the row without a row being sent", () => {
   const ids = renderList();
   deliver({
     type: "tasks",
-    list: [task("t1", { lastActiveAt: 30 }), task("t2", { lastActiveAt: 20 })],
+    list: [ranked("t1", 30), ranked("t2", 20)],
     projects: [],
   });
+
+  deliver({ type: "activity", taskId: "t2", active: true, at: 99, rankAt: 99 });
+  expect(ids()).toEqual(["t2", "t1"]);
+  expect(ids.rows()[0]).toMatchObject({ lastActiveAt: 99, rankAt: 99 });
+});
+
+test("a falling edge with only an age stamp updates the age and keeps the order", () => {
+  // TASK-116: a busy agent's edges, several a minute. The age column follows
+  // them — from the falling edge, when output stopped — and the list does not
+  // move.
+  const ids = renderList();
+  deliver({
+    type: "tasks",
+    list: [ranked("t1", 30), ranked("t2", 20)],
+    projects: [],
+  });
+  const before = ids.rows();
+
+  deliver({ type: "activity", taskId: "t2", active: false, at: 120 });
+  expect(ids()).toEqual(["t1", "t2"]);
+  expect(ids.rows()[1]).toMatchObject({ lastActiveAt: 120, rankAt: 20 });
+  // The row that did not change is the object it was.
+  expect(ids.rows()[0]).toBe(before[0]);
+});
+
+test("a rising edge with only an age stamp leaves the rows as they were", () => {
+  // Its stamp is 300ms from being overtaken by the falling edge's, so applying
+  // it would be a new array and row per burst for an age nobody could read.
+  const ids = renderList();
+  deliver({
+    type: "tasks",
+    list: [ranked("t1", 30), ranked("t2", 20)],
+    projects: [],
+  });
+  const before = ids.rows();
 
   deliver({ type: "activity", taskId: "t2", active: true, at: 99 });
-  expect(ids()).toEqual(["t2", "t1"]);
+  expect(ids.rows()).toBe(before);
 });
 
-test("an activity message with no stamp leaves the order as it was", () => {
-  // An older daemon, and every falling edge. The dot still moves; the list
-  // does not guess a time it was not given.
+test("an activity message with no stamp leaves the rows as they were", () => {
+  // An older daemon. The dot still moves; the list does not guess a time it
+  // was not given, and does not re-render for nothing.
   const ids = renderList();
   deliver({
     type: "tasks",
-    list: [task("t1", { lastActiveAt: 30 }), task("t2", { lastActiveAt: 20 })],
+    list: [ranked("t1", 30), ranked("t2", 20)],
     projects: [],
   });
+  const before = ids.rows();
 
   deliver({ type: "activity", taskId: "t2", active: true });
   expect(ids()).toEqual(["t1", "t2"]);
+  expect(ids.rows()).toBe(before);
 });
 
 test("a notification for the task on screen is acknowledged, not rung", () => {

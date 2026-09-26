@@ -285,12 +285,15 @@ describe("resuming a suspended task", () => {
 
   test("asks for the conversation the row remembers", async () => {
     const { manager, store, agent } = newManager();
-    const row = suspendedTask(manager, store);
+    const row = suspendedTask(manager, store, { last_active_at: 5, rank_at: 5 });
 
+    const before = Date.now();
     const resumed = await manager.resumeTask(row.id);
 
     expect(resumed!.lifecycle).toBe("live");
     expect(manager.primaryPty(row.id)).toBeDefined();
+    // A resume is the user opening the task, so it comes to the top (TASK-116).
+    expect(resumed!.rank_at).toBeGreaterThanOrEqual(before);
     const [first] = await agent.settled(1);
     expect(first).toContain("--resume");
     expect(first![first!.indexOf("--resume") + 1]).toBe("stored-session-id");
@@ -585,7 +588,7 @@ describe("resuming a suspended task", () => {
 
   test("when nothing opens, the task is a card with a button, not a dead terminal", async () => {
     const { manager, store, agent } = newManager(["--resume", "--continue"]);
-    const row = suspendedTask(manager, store);
+    const row = suspendedTask(manager, store, { last_active_at: 5, rank_at: 5 });
     // The task's own conversation, and only it, so both rungs are offered —
     // and both fail.
     plantTranscripts(row.cwd, ["stored-session-id"]);
@@ -596,6 +599,9 @@ describe("resuming a suspended task", () => {
     expect(resumed!.lifecycle).toBe("suspended");
     expect(manager.primaryPty(row.id)).toBeUndefined();
     expect(await agent.settled(2)).toHaveLength(2);
+    // Every rung was spawned and adopted, and none of them started the task,
+    // so it has not jumped the list (TASK-116).
+    expect(resumed!.rank_at).toBe(5);
   });
 
   // The retry overlay is reached from a *live* row too — an agent that exited on

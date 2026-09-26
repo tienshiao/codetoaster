@@ -6,7 +6,7 @@ import * as path from "path";
 import type { ServerWebSocket } from "bun";
 import { applyMigrations, updateProject } from "../db";
 import { TaskStore } from "./store";
-import { TaskManager } from "./manager";
+import { RERANK_QUIET_MS, TaskManager } from "./manager";
 import type { ServerMessage, WebSocketData } from "../xtmux/types";
 import { buildAgentCommand, taskDir, taskScrollbackPath, taskSettingsPath } from "../agent/spawn";
 import { writeTaskSettings } from "../agent/settings";
@@ -841,16 +841,20 @@ describe("task info", () => {
   // grouping is a toggle over it. Asserted here rather than left to the client
   // because the client sorting a list it was handed in some other order is the
   // arrangement that made v1's sidebar disagree with itself.
-  test("the list is ordered by last activity, most recent first", async () => {
+  //
+  // By rank, not by the age stamp (TASK-116): the stamps here run the other
+  // way, and the rank still wins.
+  test("the list is ordered by rank, most recent first", async () => {
     const { manager, store } = newManager();
     await manager.createTask({ id: "old", command: shell() });
     await manager.createTask({ id: "middle", command: shell() });
     await manager.createTask({ id: "recent", command: shell() });
-    store.update("old", { last_active_at: 1_000 });
-    store.update("middle", { last_active_at: 2_000 });
-    store.update("recent", { last_active_at: 3_000 });
+    store.update("old", { rank_at: 1_000, last_active_at: 3_000 });
+    store.update("middle", { rank_at: 2_000, last_active_at: 2_000 });
+    store.update("recent", { rank_at: 3_000, last_active_at: 1_000 });
 
     expect(manager.listTasks().map((t) => t.id)).toEqual(["recent", "middle", "old"]);
+    expect(manager.taskInfo("recent")).toMatchObject({ rankAt: 3_000, lastActiveAt: 1_000 });
   });
 
   // The project a task belongs to travels on the task, so grouping does not
@@ -865,6 +869,479 @@ describe("task info", () => {
     expect(manager.taskInfo("t1")!.projectId).toBe("repo");
   });
 
+});
+
+// TASK-116. The PTY goes idle after 300ms of silence, so a working agent's
+// output rises and falls several times a minute; only a wake after
+// RERANK_QUIET_MS of quiet may move the task's rank. Each case back-dates the
+// manager's own records rather than waiting out the threshold: a PTY's last
+// output edge (`setOutputEdgeAt`) and the task's rank (`setRankAt`, which
+// writes the row and the manager's copy of it together).
+describe("rank hysteresis", () => {
+  const RANK = 5;
+
+  /** A task whose agent is `cat` — silent until written to, then echoing —
+   * and a client watching its activity frames. */
+  async function quietTask() {
+    const { manager, store } = newManager();
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    await manager.createTask({ id: "t1", command: ["cat"] });
+    const pty = manager.primaryPty("t1")!;
+    const rising = () => client.of("activity").filter((m) => m.active);
+    const falling = () => client.of("activity").filter((m) => !m.active);
+    return { manager, store, pty, client, rising, falling };
+  }
+
+  /** A client attached to `ptyId`, so `writeToPty` accepts its input. */
+  function typistOn(manager: TaskManager, ptyId: string) {
+    const typist = fakeClient("c2");
+    manager.registerClient(typist.id, typist.ws);
+    manager.attachClient(ptyId, typist.id, typist.ws, 80, 24);
+    return typist;
+  }
+
+  test("waking after a real quiet gap moves the rank, and the frame says so", async () => {
+    const { manager, store, pty, rising } = await quietTask();
+    manager.setOutputEdgeAt(pty.id, Date.now() - 2 * RERANK_QUIET_MS);
+    manager.setRankAt("t1", RANK);
+
+    pty.write("x\n");
+    expect(await waitFor(() => rising().length > 0)).toBe(true);
+    const frame = rising()[0];
+    expect(frame.at).toBeNumber();
+    expect(frame.rankAt).toBe(frame.at);
+    expect(store.get("t1")!.rank_at).toBe(frame.at);
+    expect(store.get("t1")!.last_active_at).toBeGreaterThanOrEqual(frame.at);
+  });
+
+  test("waking after a short pause stamps the age and leaves the rank alone", async () => {
+    const { manager, store, pty, rising } = await quietTask();
+    const recent = Date.now() - 1_000;
+    manager.setOutputEdgeAt(pty.id, recent);
+    manager.setRankAt("t1", RANK);
+
+    pty.write("x\n");
+    expect(await waitFor(() => rising().length > 0)).toBe(true);
+    const frame = rising()[0];
+    expect(frame.at).toBeGreaterThan(recent);
+    expect(frame).not.toHaveProperty("rankAt");
+    expect(store.get("t1")!.rank_at).toBe(RANK);
+  });
+
+  // The quiet gap is measured from when output stopped. Without the falling
+  // edge a task that streamed for ten minutes would count as quiet the moment
+  // it paused, and jump to the top on the next burst.
+  test("the falling edge stamps last_active_at and carries it", async () => {
+    const { manager, store, pty, falling } = await quietTask();
+    store.update("t1", { last_active_at: Date.now() - 1_000 });
+    manager.setRankAt("t1", RANK);
+
+    pty.write("x\n");
+    expect(await waitFor(() => falling().length > 0)).toBe(true);
+    const frame = falling()[0];
+    expect(frame.at).toBeNumber();
+    expect(frame).not.toHaveProperty("rankAt");
+    expect(store.get("t1")!.last_active_at).toBe(frame.at);
+    expect(manager.outputEdgeOf(pty.id)).toBe(frame.at);
+    expect(store.get("t1")!.rank_at).toBe(RANK);
+  });
+
+  // A dev server or `watch` in a shell tab logs every minute or two; ranked,
+  // it would bounce its task to the top on every burst. Shell output moves the
+  // age and never the rank, however long the gap before it.
+  test("a shell's output never moves the rank", async () => {
+    const { manager, store, pty, client } = await quietTask();
+    const opened = manager.openShell("t1")!;
+    // Let the prompt's own burst rise and fall before back-dating anything,
+    // or its falling edge would overwrite the stamp this test sets.
+    expect(await waitFor(() => opened.serialize().includes("$") && !opened.isActive)).toBe(true);
+
+    const old = Date.now() - 2 * RERANK_QUIET_MS;
+    manager.setOutputEdgeAt(opened.id, old);
+    manager.setOutputEdgeAt(pty.id, old);
+    store.update("t1", { last_active_at: old });
+    manager.setRankAt("t1", RANK);
+    client.received.length = 0;
+    // `Pty.write`, not `writeToPty`: this is the process speaking, not a user.
+    opened.write("echo one\n");
+    expect(await waitFor(() => opened.serialize().includes("one") && !opened.isActive)).toBe(true);
+    expect(store.get("t1")!.last_active_at).toBeGreaterThan(old);
+    expect(store.get("t1")!.rank_at).toBe(RANK);
+    // The shell's edges are its own: the agent's is where it was.
+    expect(manager.outputEdgeOf(opened.id)).toBeGreaterThan(old);
+    expect(manager.outputEdgeOf(pty.id)).toBe(old);
+    // The falling edge's row carries the age, and no row carries a new rank.
+    expect(await waitFor(() => client.of("task").length > 0)).toBe(true);
+    expect(client.of("task").every((m) => m.task.rankAt === RANK)).toBe(true);
+    expect(client.of("activity")).toHaveLength(0);
+  });
+
+  // The agent's quiet is its own. Measured per task, a shell logging every
+  // thirty seconds kept the agent from ever waking — and a shell mid-burst
+  // vetoed the wake outright. Marked active by hand, because holding a real
+  // PTY mid-burst is not deterministic.
+  test("the agent wakes while a shell tab's output is fresh and mid-burst", async () => {
+    const { manager, store, pty, rising } = await quietTask();
+    const opened = manager.openShell("t1")!;
+    expect(await waitFor(() => opened.serialize().includes("$") && !opened.isActive)).toBe(true);
+
+    manager.setOutputEdgeAt(opened.id, Date.now());
+    manager.setOutputEdgeAt(pty.id, Date.now() - 2 * RERANK_QUIET_MS);
+    manager.setRankAt("t1", RANK);
+    opened.isActive = true;
+    try {
+      // `Pty.write`: the agent's output, not a user's input.
+      const before = rising().length;
+      pty.write("x\n");
+      expect(await waitFor(() => rising().length > before)).toBe(true);
+      const frame = rising()[before];
+      expect(frame.rankAt).toBe(frame.at);
+      expect(store.get("t1")!.rank_at).toBe(frame.at);
+    } finally {
+      opened.isActive = false;
+    }
+  });
+
+  // Typing is the user being here, which a shell's output is not.
+  test("input to a shell moves the rank once", async () => {
+    const { manager, store, client } = await quietTask();
+    const opened = manager.openShell("t1")!;
+    expect(await waitFor(() => opened.serialize().includes("$") && !opened.isActive)).toBe(true);
+    const typist = typistOn(manager, opened.id);
+
+    manager.setRankAt("t1", RANK);
+    client.received.length = 0;
+    const before = Date.now();
+    expect(manager.writeToPty(typist.id, opened.id, "e")).toBe(true);
+    // Synchronous: the write, the stamps and the delta all happen in the call.
+    const ranked = store.get("t1")!.rank_at;
+    expect(ranked).toBeGreaterThanOrEqual(before);
+    expect(client.of("task").some((m) => m.task.rankAt === ranked)).toBe(true);
+
+    // The rest of the burst, and the echo, find the rank fresh.
+    expect(manager.writeToPty(typist.id, opened.id, "cho hi\n")).toBe(true);
+    expect(await waitFor(() => opened.serialize().includes("hi") && !opened.isActive)).toBe(true);
+    expect(store.get("t1")!.rank_at).toBe(ranked);
+    expect(client.of("activity")).toHaveLength(0);
+  });
+
+  // A file dropped on a terminal has its path typed by the server
+  // (`api/uploads.ts`), with no client behind the write — and it is the user
+  // here all the same.
+  test("a path dropped into a shell moves the rank once", async () => {
+    const { manager, store, client } = await quietTask();
+    const opened = manager.openShell("t1")!;
+    expect(await waitFor(() => opened.serialize().includes("$") && !opened.isActive)).toBe(true);
+
+    manager.setRankAt("t1", RANK);
+    client.received.length = 0;
+    const before = Date.now();
+    expect(manager.typeIntoPty(opened.id, "'/tmp/a b.png' ")).toBe(true);
+    const ranked = store.get("t1")!.rank_at;
+    expect(ranked).toBeGreaterThanOrEqual(before);
+    expect(client.of("task").some((m) => m.task.rankAt === ranked)).toBe(true);
+
+    // A second drop inside the window finds the rank fresh.
+    expect(manager.typeIntoPty(opened.id, "/tmp/c.png ")).toBe(true);
+    expect(store.get("t1")!.rank_at).toBe(ranked);
+    expect(await waitFor(() => opened.serialize().includes("c.png"))).toBe(true);
+
+    // Nothing is typed into a terminal that is gone, and nothing wakes.
+    expect(manager.closeShell("t1", opened.id)).toBe(true);
+    manager.setRankAt("t1", RANK);
+    expect(manager.typeIntoPty(opened.id, "/tmp/d.png ")).toBe(false);
+    expect(store.get("t1")!.rank_at).toBe(RANK);
+  });
+
+  // A task started moments ago is already at the top; typing into it has
+  // nothing to move. And a keystroke turned away for that leaves nothing
+  // behind: once the rank has aged out, the very next one wakes the task.
+  test("input leaves a fresh rank alone, and a keystroke refused for it does not hold back the next", async () => {
+    const { manager, store, pty, client } = await quietTask();
+    const typist = typistOn(manager, pty.id);
+
+    const started = store.get("t1")!.rank_at;
+    client.received.length = 0;
+    expect(manager.writeToPty(typist.id, pty.id, "a")).toBe(true);
+    expect(store.get("t1")!.rank_at).toBe(started);
+    expect(client.of("task")).toHaveLength(0);
+
+    manager.setRankAt("t1", RANK);
+    const before = Date.now();
+    expect(manager.writeToPty(typist.id, pty.id, "b")).toBe(true);
+    const woke = store.get("t1")!.rank_at;
+    expect(woke).toBeGreaterThanOrEqual(before);
+
+    // And the rest of that burst is turned away again.
+    expect(manager.writeToPty(typist.id, pty.id, "c")).toBe(true);
+    expect(store.get("t1")!.rank_at).toBe(woke);
+  });
+
+  // xterm.js reports focus through the same `input` message a keystroke uses,
+  // once the program asks for it (DECSET 1004, which Claude Code sets). A blur
+  // is the user leaving for another task, and must not wake this one.
+  test("a focus report is not the user typing", async () => {
+    const { manager, store, pty, client } = await quietTask();
+    const typist = typistOn(manager, pty.id);
+
+    manager.setRankAt("t1", RANK);
+    client.received.length = 0;
+    expect(manager.writeToPty(typist.id, pty.id, "\x1b[O")).toBe(true);
+    expect(store.get("t1")!.rank_at).toBe(RANK);
+    expect(client.of("task")).toHaveLength(0);
+
+    // And it did not spend the window: the next real keystroke still wakes.
+    const before = Date.now();
+    expect(manager.writeToPty(typist.id, pty.id, "x")).toBe(true);
+    expect(store.get("t1")!.rank_at).toBeGreaterThanOrEqual(before);
+  });
+
+  // Escape interrupts the agent and Shift+Tab flips its mode: a person at a
+  // prompt, even though both keys send escape sequences.
+  test("Escape and Shift+Tab wake the task, and a focus report still does not", async () => {
+    const { manager, store, pty } = await quietTask();
+    const typist = typistOn(manager, pty.id);
+
+    manager.setRankAt("t1", RANK);
+    expect(manager.writeToPty(typist.id, pty.id, "\x1b[I")).toBe(true);
+    expect(store.get("t1")!.rank_at).toBe(RANK);
+
+    let before = Date.now();
+    expect(manager.writeToPty(typist.id, pty.id, "\x1b")).toBe(true);
+    expect(store.get("t1")!.rank_at).toBeGreaterThanOrEqual(before);
+
+    manager.setRankAt("t1", RANK);
+    before = Date.now();
+    expect(manager.writeToPty(typist.id, pty.id, "\x1b[Z")).toBe(true);
+    expect(store.get("t1")!.rank_at).toBeGreaterThanOrEqual(before);
+  });
+
+  // The keystroke's echo is the agent's output rising after a long quiet, so
+  // by the output rule alone it would wake the task a second time, a few
+  // milliseconds after the input did. The rank's own age is what stops it.
+  test("the echo of a keystroke that woke the task does not rerank it again", async () => {
+    const { manager, store, pty, rising, falling } = await quietTask();
+    const typist = typistOn(manager, pty.id);
+
+    manager.setOutputEdgeAt(pty.id, Date.now() - 2 * RERANK_QUIET_MS);
+    manager.setRankAt("t1", RANK);
+    expect(manager.writeToPty(typist.id, pty.id, "x\n")).toBe(true);
+    const woke = store.get("t1")!.rank_at;
+    expect(woke).not.toBe(RANK);
+
+    expect(await waitFor(() => falling().length > 0)).toBe(true);
+    expect(rising().length).toBeGreaterThan(0);
+    expect(rising().every((m) => !("rankAt" in m))).toBe(true);
+    expect(store.get("t1")!.rank_at).toBe(woke);
+  });
+
+  // Input is measured from the rank, never from output: a shell tab logging
+  // every twenty seconds keeps its terminal busy for as long as it runs, and
+  // would otherwise keep the user typing into the task from ever moving it.
+  test("input reranks while a shell is mid-burst and output is recent", async () => {
+    const { manager, store, pty } = await quietTask();
+    const opened = manager.openShell("t1")!;
+    expect(await waitFor(() => opened.serialize().includes("$") && !opened.isActive)).toBe(true);
+    const typist = typistOn(manager, pty.id);
+
+    manager.setOutputEdgeAt(opened.id, Date.now());
+    manager.setOutputEdgeAt(pty.id, Date.now());
+    manager.setRankAt("t1", Date.now() - 2 * RERANK_QUIET_MS);
+    opened.isActive = true;
+    try {
+      const before = Date.now();
+      expect(manager.writeToPty(typist.id, pty.id, "x")).toBe(true);
+      expect(store.get("t1")!.rank_at).toBeGreaterThanOrEqual(before);
+    } finally {
+      opened.isActive = false;
+    }
+  });
+
+  /** Fire a shell's activity edge by hand, the way the PTY would: the flag,
+   * then the manager's handler. A real burst's two edges are 300ms apart and
+   * racing a poll, and these tests are about which of them sends a row. */
+  function edge(pty: { isActive: boolean; id: string }, active: boolean): void {
+    pty.isActive = active;
+    (pty as unknown as { onActivityChangeCallback: (id: string, a: boolean) => void })
+      .onActivityChangeCallback(pty.id, active);
+  }
+
+  // A build in a shell tab of a task untouched for hours has no falling edge
+  // until it ends, and without a row on the rising one the sidebar says "2h
+  // ago" for the whole build.
+  test("a shell's rising edge after a long gap sends the row, and after a short one does not", async () => {
+    const { manager, store, client } = await quietTask();
+    const opened = manager.openShell("t1")!;
+    expect(await waitFor(() => opened.serialize().includes("$") && !opened.isActive)).toBe(true);
+
+    const old = Date.now() - 2 * RERANK_QUIET_MS;
+    manager.setOutputEdgeAt(opened.id, old);
+    store.update("t1", { last_active_at: old });
+    manager.setRankAt("t1", RANK);
+    client.received.length = 0;
+    edge(opened, true);
+    expect(client.of("task")).toHaveLength(1);
+    expect(client.of("task")[0].task.lastActiveAt).toBeGreaterThan(old);
+    expect(client.of("task")[0].task.rankAt).toBe(RANK);
+    edge(opened, false);
+    expect(client.of("task")).toHaveLength(2);
+
+    // The edge just recorded is moments old: the next rising edge is silent,
+    // and only its falling edge sends the row.
+    client.received.length = 0;
+    edge(opened, true);
+    expect(client.of("task")).toHaveLength(0);
+    edge(opened, false);
+    expect(client.of("task")).toHaveLength(1);
+  });
+
+  // The shell's edge is seeded when it opens, as the agent's is, so the
+  // prompt drawn on open is not a long gap: only its falling edge sends the
+  // row. Fired by hand straight after the open, before the real prompt can
+  // arrive, which no spawn does synchronously.
+  test("a shell's first rising edge on open sends no row", async () => {
+    const { manager, client } = await quietTask();
+    const before = Date.now();
+    const opened = manager.openShell("t1")!;
+    expect(manager.outputEdgeOf(opened.id)).toBeGreaterThanOrEqual(before);
+
+    client.received.length = 0;
+    edge(opened, true);
+    expect(client.of("task")).toHaveLength(0);
+    edge(opened, false);
+    expect(client.of("task")).toHaveLength(1);
+  });
+
+  // `kill` fires a mid-burst shell's falling edge from inside the call; the
+  // close already sends the row, so that edge must not send one of its own.
+  test("closing a shell mid-burst sends one row", async () => {
+    const { manager, store, client } = await quietTask();
+    const opened = manager.openShell("t1")!;
+    expect(await waitFor(() => opened.serialize().includes("$") && !opened.isActive)).toBe(true);
+
+    const stamp = store.get("t1")!.last_active_at;
+    opened.isActive = true;
+    client.received.length = 0;
+    expect(manager.closeShell("t1", opened.id)).toBe(true);
+    // Long enough for the exit callback, which the ownership guard also stops.
+    await Bun.sleep(200);
+    expect(client.of("task")).toHaveLength(1);
+    expect(store.get("t1")!.last_active_at).toBe(stamp);
+    expect(manager.outputEdgeOf(opened.id)).toBeUndefined();
+  });
+
+  // The suspended delta puts the busy dot out (lifecycle wins over agent
+  // state), so the agent's kill-time edge is not needed for that — only to
+  // tell clients its terminal went quiet, which a bare frame does.
+  test("suspending an agent mid-burst stamps nothing and sends a bare falling edge", async () => {
+    const { manager, store, pty, client } = await quietTask();
+    const stamp = store.get("t1")!.last_active_at;
+    pty.isActive = true;
+    client.received.length = 0;
+    expect(await manager.closeTask("t1")).toBe(true);
+    expect(client.of("activity")).toEqual([{ type: "activity", taskId: "t1", active: false }]);
+    expect(store.get("t1")!.last_active_at).toBe(stamp);
+    expect(store.get("t1")!.lifecycle).toBe("suspended");
+    expect(manager.outputEdgeOf(pty.id)).toBeUndefined();
+  });
+
+  // `kill` fires a mid-burst PTY's falling edge from inside the call. The
+  // ownership guard keeps it from re-recording an output edge for a task that
+  // no longer exists; the bare frame keeps clients from holding the task as
+  // active until they drop it.
+  test("deleting a task mid-output sends one bare falling edge and leaves no output edge behind", async () => {
+    const { manager, store, pty, client } = await quietTask();
+    pty.write("x\n");
+    expect(await waitFor(() => pty.isActive)).toBe(true);
+    client.received.length = 0;
+    // Everything from here to the kill is synchronous, so the burst cannot
+    // end first; set by hand only so a slow poll cannot have ended it already.
+    pty.isActive = true;
+
+    expect(await manager.deleteTask("t1")).not.toBeNull();
+    await Bun.sleep(200);
+    expect(client.of("activity")).toEqual([{ type: "activity", taskId: "t1", active: false }]);
+    expect(manager.outputEdgeOf(pty.id)).toBeUndefined();
+    expect(store.get("t1")).toBeUndefined();
+  });
+
+  // The task starting is when its rank is stamped, and adopting the agent
+  // seeds the edge its first output is measured from.
+  // (That adoption alone stamps no rank is the resume ladder's concern: a
+  // resume whose every rung fails must not move the task; see resume.test.ts.)
+  test("starting a task stamps the rank, and adopting its agent seeds the edge", async () => {
+    const { manager, store } = newManager();
+    const client = fakeClient();
+    manager.registerClient(client.id, client.ws);
+    const before = Date.now();
+    await manager.createTask({ id: "t1", command: ["cat"] });
+    const row = store.get("t1")!;
+    const pty = manager.primaryPty("t1")!;
+    expect(row.rank_at).toBeGreaterThanOrEqual(before);
+    expect(row.last_active_at).toBe(row.rank_at);
+    expect(manager.outputEdgeOf(pty.id)).toBeGreaterThanOrEqual(before);
+    expect(manager.outputEdgeOf(pty.id)).toBeLessThanOrEqual(row.rank_at);
+
+    // However old the row's age stamp and the rank, a first burst right
+    // after the spawn is measured from the seeded edge, and does not rerank.
+    store.update("t1", { last_active_at: before - 2 * RERANK_QUIET_MS });
+    manager.setRankAt("t1", RANK);
+    pty.write("x\n");
+    const rising = () => client.of("activity").filter((m) => m.active);
+    expect(await waitFor(() => rising().length > 0)).toBe(true);
+    expect(rising()[0]).not.toHaveProperty("rankAt");
+    expect(store.get("t1")!.rank_at).toBe(RANK);
+  });
+
+  // The falling edge's age stamp reaches the sidebar as a row, not only the
+  // database, or the age column lags until an unrelated delta.
+  test("a shell's falling edge broadcasts the row", async () => {
+    const { manager, store, client } = await quietTask();
+    const opened = manager.openShell("t1")!;
+    expect(await waitFor(() => opened.serialize().includes("$") && !opened.isActive)).toBe(true);
+
+    client.received.length = 0;
+    opened.write("echo done\n");
+    expect(await waitFor(() => opened.serialize().includes("done") && !opened.isActive)).toBe(true);
+    const stamp = store.get("t1")!.last_active_at;
+    expect(await waitFor(() => client.of("task").some((m) => m.task.lastActiveAt === stamp))).toBe(true);
+  });
+
+  // Hooks stamp `last_active_at` too, and Claude Code's `idle_prompt`
+  // Notification lands about a minute into a silent prompt. Quiet is measured
+  // from output, so that stamp must not close the gap.
+  test("a hook stamp inside the quiet gap does not suppress the wake", async () => {
+    const { manager, store, pty, rising, falling } = await quietTask();
+    pty.write("x\n");
+    expect(await waitFor(() => falling().length > 0)).toBe(true);
+
+    manager.setOutputEdgeAt(pty.id, Date.now() - 2 * RERANK_QUIET_MS);
+    store.update("t1", { last_active_at: Date.now() });
+    manager.setRankAt("t1", RANK);
+    const before = rising().length;
+    pty.write("y\n");
+    expect(await waitFor(() => rising().length > before)).toBe(true);
+    const frame = rising()[before];
+    expect(frame.rankAt).toBe(frame.at);
+    expect(store.get("t1")!.rank_at).toBe(frame.at);
+  });
+
+  // The other way round: output on record is what counts, so a row stamp
+  // that looks old does not make a task that has been talking look quiet.
+  test("recent output holds the rank however old the row's stamp", async () => {
+    const { manager, store, pty, rising, falling } = await quietTask();
+    pty.write("x\n");
+    expect(await waitFor(() => falling().length > 0)).toBe(true);
+
+    store.update("t1", { last_active_at: Date.now() - 2 * RERANK_QUIET_MS });
+    manager.setRankAt("t1", RANK);
+    const before = rising().length;
+    pty.write("y\n");
+    expect(await waitFor(() => rising().length > before)).toBe(true);
+    expect(rising()[before]).not.toHaveProperty("rankAt");
+    expect(store.get("t1")!.rank_at).toBe(RANK);
+  });
 });
 
 // TASK-16. Chat products have no "close", so closing a task suspends it (§6):

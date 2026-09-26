@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { isOnlyQueries } from "./query-output";
+import { isOnlyChatter } from "./query-output";
 
 const QUERIES: Array<[name: string, chunk: string]> = [
   ["DECXCPR, as Claude Code polls it", "\x1b[?6n"],
@@ -18,10 +18,18 @@ const QUERIES: Array<[name: string, chunk: string]> = [
   ["a palette query", "\x1b]4;1;?\x1b\\"],
   // fish's opening burst, as pty-queries.test.ts sends it (TASK-83)
   ["fish's opening burst", "\x1b[?u\x1b[>0q\x1b]11;?\x1b\\\x1bP+q544e\x1b\\\x1b[0c"],
+  // Notifications: Claude Code's idle one arrives ~60s after the prompt went
+  // quiet, and counted as output it reranked an untouched task (TASK-116).
+  ["an OSC 9 notification", "\x1b]9;Claude is waiting for your input\x07"],
+  ["an OSC 9 notification with ST", "\x1b]9;Claude is waiting for your input\x1b\\"],
+  ["an OSC 777 notification", "\x1b]777;notify;Claude Code;Claude is waiting for your input\x07"],
+  ["an OSC 99 notification", "\x1b]99;i=1:d=0;Claude Code\x1b\\\x1b]99;i=1:p=body;waiting\x1b\\"],
+  ["a bare BEL", "\x07"],
+  ["a notification with a query", "\x1b[?6n\x1b]9;done\x07\x07"],
 ];
 
 test.each(QUERIES)("%s is only a query", (_name, chunk) => {
-  expect(isOnlyQueries(chunk)).toBe(true);
+  expect(isOnlyChatter(chunk)).toBe(true);
 });
 
 const OUTPUT: Array<[name: string, chunk: string]> = [
@@ -32,8 +40,10 @@ const OUTPUT: Array<[name: string, chunk: string]> = [
   // Neither of these is a question, though each shares a query's final byte.
   ["a cursor restore", "\x1b[u"],
   ["a window resize", "\x1b[8;24;80t"],
+  ["a BEL followed by text", "\x07hello"],
+  ["a notification with real output", "\x1b]9;done\x07\x1b[2K\r> "],
 ];
 
 test.each(OUTPUT)("%s is output", (_name, chunk) => {
-  expect(isOnlyQueries(chunk)).toBe(false);
+  expect(isOnlyChatter(chunk)).toBe(false);
 });

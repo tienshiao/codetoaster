@@ -114,6 +114,7 @@ const task = (id: string): TaskInfo => ({
   size: { cols: 80, rows: 24 },
   createdAt: 0,
   lastActiveAt: 0,
+  rankAt: 0,
   exited: false,
   hasNotification: false,
   worktreeState: "none",

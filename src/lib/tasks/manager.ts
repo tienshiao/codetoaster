@@ -18,10 +18,11 @@ import type {
   WebSocketData,
 } from "../xtmux/types";
 import { uniqueName } from "../xtmux/naming";
+import { isUserInput } from "../xtmux/user-input";
 import { expandTilde } from "../tilde";
 import * as db from "../db";
 import type { ProjectRow, TaskRow } from "../db";
-import { TaskStore } from "./store";
+import { TaskStore, type TaskUpdate } from "./store";
 import { buildAgentCommand, removeTaskDir, taskDir, taskEnv, type AgentMode } from "../agent/spawn";
 import { builtinProfiles, profileCapabilities, type AgentProfile } from "../agent/profile";
 import { DEFAULT_PROFILE, ProfileRegistry, UnknownProfileError } from "../agent/profiles";
@@ -209,6 +210,15 @@ function keptReason(branch: string, baseRef: string | null, status: BranchStatus
  * a ref costs a commit object, which is the cheapest thing in the design. */
 export const WIP_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
+/** The window of the rank rule (TASK-116). The agent's output moves a task to
+ * the top of the list only when the agent's terminal has produced none for
+ * this long; typing into any of the task's terminals moves it; and either way
+ * a rank never moves twice inside it. A shell's output never moves it at all.
+ * Well past the PTY's 300ms idle threshold, which an agent pausing to think
+ * crosses several times a minute, and short enough that coming back to a task
+ * after a coffee still reads as "this just happened". */
+export const RERANK_QUIET_MS = 60_000;
+
 // `ArchiveOutcome`, `ArchivePreview` and `DeleteOutcome` used to be declared
 // here. They are serialized straight out of the archive and delete routes and
 // read by the sidebar's confirmations, which makes them wire shapes — so they
@@ -308,6 +318,24 @@ export class TaskManager {
   // a restart is not missing anything — and a resumed task genuinely is
   // unknown again until its agent reports in.
   private hookSeen: Set<string> = new Set();
+  /** When each PTY last changed activity state — the last moment it started
+   * or stopped producing output — keyed by PTY id. The agent's entry is what
+   * the rank rule measures quiet from (TASK-116), and is seeded when the agent
+   * is spawned (`adopt`), so its first burst is measured from then. A shell's
+   * entry, seeded the same way in `adoptShell`, only times its own age
+   * broadcast: measured per task, a dev server logging every thirty seconds
+   * in a shell tab kept the agent from ever counting as quiet. Never set by input: typing is not output. Not
+   * the row's `last_active_at`: hooks stamp that too, and a hook is not
+   * output. In memory because it is about the processes; an entry goes when
+   * its PTY is unmapped. */
+  private outputEdgeAt: Map<string, number> = new Map();
+  /** Each task's `rank_at`, as last written — `stampRank`, the column's one
+   * writer, sets both — or read from the row on a miss. It is what both wake
+   * rules check the rank's freshness against, so the rest of a keystroke
+   * burst, or the echo of the keystroke that woke the task, is turned away
+   * without a row read. Cleared when the task is deleted; a suspended task's
+   * entry is still true. */
+  private rankAt: Map<string, number> = new Map();
   /** Which tasks are running a *restart* rather than a resume (TASK-89.4).
    *
    * A restart is what a profile that can neither `--resume` nor `--continue`
@@ -1243,6 +1271,11 @@ export class TaskManager {
     }
     this.spawnedAt.set(id, Date.now());
     this.adopt(pty, id);
+    // The task starting, so this is where its rank is stamped (TASK-116) —
+    // not at row creation, which can precede the spawn by a worktree setup's
+    // worth of minutes. Not in `adopt`, which a resume rung that fails passes
+    // through too; the resume ladder stamps on the rung that works.
+    this.stampRank(id, Date.now());
     // A fresh process on a fresh id: nothing about it is a restart, and an
     // entry left by a task that held this id before it would say otherwise.
     this.restarted.delete(id);
@@ -1348,6 +1381,17 @@ export class TaskManager {
       return;
     }
     this.agentPtys.set(taskId, pty.id);
+    // The seeded edge is what the agent's first burst is measured from
+    // (TASK-116), and why an agent PTY always has one: its first output right
+    // after the spawn is not a wake. Keyed by this PTY, so a rung that fails
+    // takes its entry with it (`discardPty`) and the next one seeds its own.
+    //
+    // Only the edge. The rank is stamped where the task is known to have
+    // started — `createTask`, and the resume ladder's successful rung — and
+    // not here, because every rung of a resume is adopted, and a resume whose
+    // every rung fails leaves the task suspended: it did not start, and must
+    // not jump the list as if it had.
+    this.outputEdgeAt.set(pty.id, Date.now());
 
     pty.onExit((code) => {
       // Only if this is still the task's terminal. A rung of the resume ladder
@@ -1366,14 +1410,32 @@ export class TaskManager {
       this.broadcastTask(taskId);
     });
     pty.onActivityChange((_ptyId, active) => {
-      // Recency is what the task list is ordered by, so it is worth a write —
-      // but not a row broadcast, which is what the activity message is for.
-      // The same stamp rides that message as `at`, so a client can move the
-      // row without being sent one: the write below is otherwise invisible
-      // until the next full snapshot, which is how a busy task used to sink
-      // under shorter ones started after it (TASK-101).
+      // Same guard as `onExit`, and for a synchronous reason: `kill` sends a
+      // falling edge from inside the call, and every site that kills a PTY
+      // unmaps it first (`unmapAndKill`) so that edge cannot stamp, re-record
+      // an output edge for, or announce a PTY that is on its way out.
+      if (this.ptyToTask.get(pty.id) !== taskId) return;
+      // Recency is worth a write — but not a row broadcast, which is what the
+      // activity message is for. The stamps ride that message, so a client can
+      // update the row without being sent one: the write is otherwise
+      // invisible until the next full snapshot, which is how a busy task used
+      // to sink under shorter ones started after it (TASK-101).
+      //
+      // Two stamps, because these edges are far too frequent to sort by: the
+      // PTY goes idle after 300ms of silence, so an agent pausing to think or
+      // run a tool rises again several times a minute, and a list ordered by
+      // every rising edge had its busy tasks racing each other for the top
+      // (TASK-116). `last_active_at` still moves on every edge and is what the
+      // age column and the harvester read; `rank_at`, the sort key, moves only
+      // on a wake after `RERANK_QUIET_MS` in which this terminal produced no
+      // output, and only if the rank itself is that old. Output, not
+      // `last_active_at`: hooks stamp that as well, and Claude Code's
+      // `idle_prompt` Notification fires about a minute into a silent prompt —
+      // counted as activity, it would restart the gap just as it closed and
+      // keep the task the user comes back to from rising. See `stampActivity`.
+      // Typing into the task wakes it too, through `writeToPty`.
       const now = Date.now();
-      if (active) this.store.update(taskId, { last_active_at: now });
+      const { rankAt } = this.stampActivity(taskId, pty.id, active, now, true);
       // Degraded mode (§9, risk 4). An agent run with hooks disabled, or one
       // whose payloads a future version has changed, reports nothing — and a
       // task list that says `starting` forever is worse than v1's guess. So
@@ -1382,7 +1444,10 @@ export class TaskManager {
       // this goes back to being about recency alone, and never fights the
       // agent's own account of itself.
       if (!this.hookSeen.has(taskId)) this.inferState(taskId, active);
-      this.broadcastToAll({ type: "activity", taskId, active, ...(active ? { at: now } : {}) });
+      this.broadcastToAll({
+        type: "activity", taskId, active, at: now,
+        ...(rankAt !== undefined ? { rankAt } : {}),
+      });
     });
     pty.onNotification((_ptyId, title, body) => {
       this.broadcastToAll({ type: "notification", taskId, title, body });
@@ -1394,10 +1459,9 @@ export class TaskManager {
    * The much smaller half of `adopt`: what a shell tab is allowed to report.
    *
    * A shell is a process in the task's directory, not a voice for the task. So
-   * it moves the task up the recency list — a user running a build in a shell
-   * tab is working on that task, and a list ordered by recency that says
-   * otherwise is wrong — and it tells clients when it dies, because a tab bound
-   * to a PTY that is gone has to stop being drawn (§5.5, and `pruneShellTabs`).
+   * its output moves the task's age — something happened there — and it tells
+   * clients when it dies, because a tab bound to a PTY that is gone has to stop
+   * being drawn (§5.5, and `pruneShellTabs`).
    * It does not touch `agent_state`, does not become the task's
    * `terminalTitle`, does not feed the degraded-mode inference, and raises no
    * notifications: those are all claims about the conversation.
@@ -1408,15 +1472,38 @@ export class TaskManager {
    * the other's dot, so a build finishing would put out the light on an agent
    * still mid-turn.
    *
-   * A row broadcast, though, on the rising edge — because between full
-   * snapshots that is the only carrier the recency stamp has (TASK-101). The
-   * write below is what the list is ordered by; without a `task` delta behind
-   * it, a build in a shell tab moved the task in the database and nowhere a
-   * user could see, until the next `tasks` snapshot happened along. It is safe
-   * where an `activity` frame would not be: a `task` delta says what the row is
-   * now, and has no falling edge to clear the agent's dot with.
+   * Its output never moves the task's rank (TASK-116). A dev server or a
+   * `watch` in a shell tab logs every minute or two for as long as it runs,
+   * and ranked like the agent's output it would bounce its task to the top on
+   * every burst — the very shuffle the rank exists to stop. Shell output says
+   * a process is running, not that the user is here. Typing is the user being
+   * here, and input to any of the task's terminals, shells included, wakes it
+   * through `writeToPty`. Nor does it keep the agent from waking: the agent's
+   * quiet is measured from the agent's own edges, or a dev server logging
+   * every thirty seconds would hold its task in place for as long as it ran.
+   *
+   * A row broadcast, though, on the falling edge — because between full
+   * snapshots that is the only carrier the age stamp has (TASK-101), and the
+   * falling edge's is the one the age column shows: when output stopped.
+   * Without it the sidebar's age lags until some unrelated delta happens
+   * along. It is safe where an `activity` frame would not be: a `task` delta
+   * says what the row is now, and has no falling edge to clear the agent's dot
+   * with.
+   *
+   * And on a rising edge that follows a long gap in this shell's own output,
+   * because otherwise a three-minute build in a task last touched two hours
+   * ago has no falling edge until it ends, and the sidebar says "2h ago" for
+   * the whole of it. That is the only thing the shell's entry in
+   * `outputEdgeAt` is for. It is seeded when the shell is adopted, as the
+   * agent's is, so the prompt drawn on open is not a long gap: its falling
+   * edge 300ms later already carries the stamp, and a rising-edge broadcast
+   * too would only send the same row twice.
+   * Not on a rising edge after a short one, which is most of them: the age
+   * column would move by seconds at most, and the falling edge 300ms later
+   * carries a fresher stamp anyway.
    */
   private adoptShell(pty: Pty, taskId: string): void {
+    this.outputEdgeAt.set(pty.id, Date.now());
     pty.onExit(() => {
       // Only if the task still holds it: `discardPty` and `doSuspend` both kill
       // shells on their way past, and an exit callback landing after the task
@@ -1425,10 +1512,168 @@ export class TaskManager {
       this.broadcastTask(taskId);
     });
     pty.onActivityChange((_ptyId, active) => {
-      if (!active) return;
-      this.store.update(taskId, { last_active_at: Date.now() });
-      this.broadcastTask(taskId);
+      // The agent handler's guard, for the same synchronous kill-time edge.
+      if (this.ptyToTask.get(pty.id) !== taskId) return;
+      const { longGap } = this.stampActivity(taskId, pty.id, active, Date.now(), false);
+      if (!active || longGap) this.broadcastTask(taskId);
     });
+  }
+
+  /**
+   * Write an activity edge's stamps, and say whether it moved the task's rank.
+   *
+   * Quiet means no output from the agent, and it is measured from the agent
+   * PTY's previous edge (`outputEdgeAt`), on either side. From the falling
+   * edge because measured from the last rising one, an agent that streamed
+   * output for ten minutes and stopped would count as quiet the moment it
+   * stopped. And not
+   * from `last_active_at`, because hooks write that too: Claude Code's
+   * `idle_prompt` Notification fires about a minute into a silent prompt,
+   * and a gap it could reset would close just as it reached the threshold, so
+   * the task the user comes back to would never rise. Only when the previous
+   * edge is `RERANK_QUIET_MS` behind does `rank_at` move — and only when
+   * `rank_at` itself is that old, so a rank moves at most once per window:
+   * the echo of a keystroke that just woke the task does not wake it again a
+   * few milliseconds later. A task working continuously therefore never
+   * moves, tasks working side by side keep their order, and one that wakes
+   * after a real pause still comes to the top (TASK-116).
+   *
+   * Per PTY, so a shell tab has no say in it. Measured per task, a dev server
+   * logging every thirty seconds kept the agent from ever counting as quiet;
+   * and a shell's output no longer ranks, so there is nothing left for its
+   * edges, or its being mid-burst, to guard against — only a wake for them to
+   * veto.
+   *
+   * The agent's edges may rerank (`rank`); a shell's never do (see
+   * `adoptShell`), and are recorded for the shell's own `longGap`. Input is
+   * the other way a task wakes, in `wakeOnInput`, by a rule of its own.
+   *
+   * `last_active_at` is still written on both edges: it is the age column and
+   * the harvester's grace, and both want the last moment anything happened.
+   *
+   * Off SQL where it can be, since this runs on every edge of every PTY: the
+   * edge and the rank are both in memory (`rankAt`), so a falling edge, or a
+   * rising one that does not rerank, is one write.
+   *
+   * Returns the new `rank_at` when the rank moved, and whether this PTY's
+   * previous edge was missing or at least `RERANK_QUIET_MS` back (`longGap`)
+   * — which is when the age column visibly jumps, and what `adoptShell`
+   * broadcasts on.
+   */
+  private stampActivity(
+    taskId: string,
+    ptyId: string,
+    active: boolean,
+    now: number,
+    rank: boolean,
+  ): { rankAt?: number; longGap: boolean } {
+    const lastEdge = this.outputEdgeAt.get(ptyId);
+    const longGap = lastEdge === undefined || now - lastEdge >= RERANK_QUIET_MS;
+    const rerank = active && rank && this.isQuiet(taskId, lastEdge, now);
+    this.outputEdgeAt.set(ptyId, now);
+    // The write's own read-back is what confirms the row is still there, so
+    // a rank is never cached or reported for a task that is gone.
+    const row = rerank ? this.stampRank(taskId, now) : this.store.update(taskId, { last_active_at: now });
+    if (!row) return { longGap: false };
+    return rerank ? { rankAt: now, longGap } : { longGap };
+  }
+
+  /** The one writer of `rank_at` (TASK-116): the column and `rankAt` together,
+   * with `last_active_at` at the same moment — every rank move is also the
+   * task being active — and whatever else the caller's write carries
+   * (`extra`, e.g. the resume's `lifecycle`), so it stays one statement.
+   * `extra` may say otherwise about `last_active_at` (only the test seam
+   * does), never about `rank_at`. Nothing is cached for a row that is gone.
+   * Returns the updated row. */
+  private stampRank(taskId: string, at: number, extra: TaskUpdate = {}): TaskRow | undefined {
+    const row = this.store.update(taskId, { last_active_at: at, ...extra, rank_at: at });
+    if (row) this.rankAt.set(taskId, at);
+    return row;
+  }
+
+  /** Whether the agent's rising edge at `now` may move the task's rank: its
+   * previous edge `RERANK_QUIET_MS` back, and the rank at least that old too,
+   * so that it never moves twice inside one window.
+   *
+   * An agent PTY with no edge on record is not quiet. It always has one,
+   * seeded by `adopt`; the row's `last_active_at` is not a stand-in, because
+   * hooks stamp it without output, and re-admitting them is the bug this rule
+   * exists to remove. */
+  private isQuiet(taskId: string, lastEdge: number | undefined, now: number): boolean {
+    if (lastEdge === undefined || now - lastEdge < RERANK_QUIET_MS) return false;
+    const rankAt = this.rankOf(taskId);
+    return rankAt !== undefined && now - rankAt >= RERANK_QUIET_MS;
+  }
+
+  /** The task's `rank_at`, from `rankAt` or, on a miss, the row — which is
+   * then remembered. Undefined when there is no row. */
+  private rankOf(taskId: string): number | undefined {
+    const cached = this.rankAt.get(taskId);
+    if (cached !== undefined) return cached;
+    const row = this.store.get(taskId);
+    if (!row) return undefined;
+    this.rankAt.set(taskId, row.rank_at);
+    return row.rank_at;
+  }
+
+  /**
+   * Input is the user being here, so typing into any of a task's terminals
+   * wakes it (TASK-116) — and is the only thing that wakes it from a shell
+   * tab, whose output never reranks.
+   *
+   * Only input a person produced: xterm.js writes focus reports, colour-query
+   * answers and mouse reports through the same message, and a blur — clicking
+   * away to another task — would otherwise wake the task being left
+   * (`isUserInput`). Keys that send sequences — Escape, Shift+Tab, the arrows
+   * — are a person, and count.
+   *
+   * Measured from the rank alone, not from output. Output is the wrong clock
+   * here: a shell tab logging every twenty seconds keeps its terminal busy for
+   * as long as it runs, and gated on that the user typing into the task could
+   * never move it — the one unambiguous "user is here" signal, suppressed in
+   * exactly the case it is for. What holds it back is a rank already fresh —
+   * the task woke, or was started, less than `RERANK_QUIET_MS` ago — so a rank
+   * still moves at most once per window.
+   *
+   * The rank comes from `rankAt`, so the rest of a keystroke burst returns
+   * before any SQL. Nothing is remembered about a keystroke turned away, so it
+   * cannot hold back the next one once the rank has aged out. Input never
+   * touches `outputEdgeAt` — typing is not output — so the echo that follows
+   * is an ordinary output edge, and `isQuiet`'s rank freshness check is what
+   * stops it waking the task a second time.
+   *
+   * A `task` delta rather than an `activity` frame, for `adoptShell`'s reason:
+   * the frame's `active` is the agent's dot, and input says nothing about it.
+   */
+  private wakeOnInput(ptyId: string, data: string): void {
+    if (!isUserInput(data)) return;
+    const taskId = this.ptyToTask.get(ptyId);
+    if (taskId === undefined) return;
+    const now = Date.now();
+    const rankAt = this.rankOf(taskId);
+    if (rankAt === undefined || now - rankAt < RERANK_QUIET_MS) return;
+    if (this.stampRank(taskId, now)) this.broadcastTask(taskId);
+  }
+
+  /** Back-date a PTY's last output edge. For tests: the rank rule waits on
+   * `RERANK_QUIET_MS` of real silence, which nothing else can age. */
+  setOutputEdgeAt(ptyId: string, at: number): void {
+    this.outputEdgeAt.set(ptyId, at);
+  }
+
+  /** Back-date a task's rank. Exists for tests, for the same reason as
+   * `setOutputEdgeAt`; through `stampRank`, because a rank written to the row
+   * alone would be shadowed by the one the manager remembers. Unlike a real
+   * rank move it leaves `last_active_at` as it was, so a test can age the two
+   * apart. */
+  setRankAt(taskId: string, at: number): void {
+    const row = this.store.get(taskId);
+    if (row) this.stampRank(taskId, at, { last_active_at: row.last_active_at });
+  }
+
+  /** The PTY's last output edge, if one is on record. For tests. */
+  outputEdgeOf(ptyId: string): number | undefined {
+    return this.outputEdgeAt.get(ptyId);
   }
 
   /** The heuristic's answer, for a task that has no better one. Confined to
@@ -1607,11 +1852,40 @@ export class TaskManager {
     });
   }
 
+  /**
+   * Kill some of a task's PTYs, each unmapped before its kill.
+   *
+   * `kill` fires a mid-burst PTY's falling edge from inside the call, and the
+   * activity handlers' ownership guard is what keeps that edge from stamping
+   * the age, recording an output edge, and — for a shell — sending a `task`
+   * delta that every caller is about to send, or has no row left to send.
+   * Nothing needs that edge but one thing, which this sends instead: if the
+   * agent's terminal was among them and mid-burst, a bare falling edge, so
+   * the liveness clients hold per task (`useGitHistory` refetches refs on its
+   * falling edge) does not stay stuck on for a process that is gone. Bare —
+   * no stamps — because nothing was stamped.
+   *
+   * Leaves `agentPtys` to the caller, which knows whether the slot empties.
+   */
+  private unmapAndKill(taskId: string, ptyIds: readonly string[]): void {
+    const agentPty = this.agentPtys.get(taskId);
+    const agentWasActive = agentPty !== undefined && ptyIds.includes(agentPty)
+      && this.ptys.get(agentPty)?.isActive === true;
+    for (const ptyId of ptyIds) {
+      this.ptyToTask.delete(ptyId);
+      this.taskPtys.get(taskId)?.delete(ptyId);
+      this.outputEdgeAt.delete(ptyId);
+      this.ptys.kill(ptyId);
+    }
+    if (agentWasActive) this.broadcastToAll({ type: "activity", taskId, active: false });
+  }
+
   /** Take back a PTY that did not work out, so the next rung starts clean. */
   private discardPty(pty: Pty, taskId: string): void {
-    this.ptys.kill(pty.id);
-    this.ptyToTask.delete(pty.id);
-    this.taskPtys.get(taskId)?.delete(pty.id);
+    // Unmapped before the kill, like everywhere else: nothing here wants the
+    // kill-time edge's stamps, and `onExit`'s guard already expects the
+    // unmapping.
+    this.unmapAndKill(taskId, [pty.id]);
     // Only if it was the one: this is reached with the agent's terminal, and
     // clearing the slot unconditionally would be right today and wrong the
     // moment anything discards a shell through here.
@@ -1845,7 +2119,12 @@ export class TaskManager {
         // before the broadcast, so the very first `TaskInfo` a client sees for
         // the reopened task already carries it.
         if (attempt.mode === "restart") this.restarted.add(taskId);
-        this.store.update(taskId, { lifecycle: "live", last_active_at: Date.now() });
+        // A resume is the user opening the task, so it comes to the top
+        // (TASK-116). Stamped here, on the rung that worked, rather than in
+        // `adopt`, which every rung passes through: a ladder whose every rung
+        // fails leaves the task suspended, and it must not have jumped the
+        // list on the way.
+        this.stampRank(taskId, Date.now(), { lifecycle: "live" });
         // The in-memory grouping only ever held the tasks *this* run created,
         // and a task worth resuming is by definition one it did not. Without
         // this the task is live and has a terminal, but `listTasks` — which
@@ -2201,9 +2480,10 @@ export class TaskManager {
   closeShell(taskId: string, ptyId: string): boolean {
     if (this.ptyToTask.get(ptyId) !== taskId) return false;
     if (this.agentPtys.get(taskId) === ptyId) return false;
-    this.ptys.kill(ptyId);
-    this.ptyToTask.delete(ptyId);
-    this.taskPtys.get(taskId)?.delete(ptyId);
+    // Unmapped before the kill: a mid-burst shell's kill-time falling edge
+    // would otherwise stamp the row and send a `task` delta of its own ahead
+    // of the one below.
+    this.unmapAndKill(taskId, [ptyId]);
     this.broadcastTask(taskId);
     return true;
   }
@@ -2485,13 +2765,16 @@ export class TaskManager {
     // the task really had, the task stays live, and the next tick will write
     // another. Nothing was killed, which is the whole point.
     if (stillHarvestable && !stillHarvestable()) return false;
-    for (const ptyId of [...(this.taskPtys.get(taskId) ?? [])]) {
-      // Every terminal the task holds, not just the agent's: a shell tab
-      // (TASK-27) is a process in the task's directory like any other, and §5.5
-      // harvests the task, not one of its processes.
-      this.ptys.kill(ptyId);
-      this.ptyToTask.delete(ptyId);
-    }
+    // Every terminal the task holds, not just the agent's: a shell tab
+    // (TASK-27) is a process in the task's directory like any other, and §5.5
+    // harvests the task, not one of its processes.
+    //
+    // Their kill-time edges run no handler (`unmapAndKill`), and nothing here
+    // needs them. The busy dot is `taskStateOf`, where a `suspended` lifecycle
+    // wins over whatever `agent_state` says, so the delta below puts it out;
+    // and a hookless agent's inferred `busy` is overwritten with `starting` by
+    // the resume that next spawns one.
+    this.unmapAndKill(taskId, [...(this.taskPtys.get(taskId) ?? [])]);
     this.taskPtys.delete(taskId);
     this.agentPtys.delete(taskId);
     // What a task without a process cannot have: a clock waiting for an agent's
@@ -3263,10 +3546,12 @@ export class TaskManager {
     // reported one never spends it, and without this the map keeps an entry
     // per such task for the life of the daemon.
     this.spawnedAt.delete(taskId);
-    for (const ptyId of [...(this.taskPtys.get(taskId) ?? [])]) {
-      this.ptys.kill(ptyId);
-      this.ptyToTask.delete(ptyId);
-    }
+    // Unmapped before the kills, so a mid-burst PTY's kill-time edge cannot
+    // stamp or announce a task about to be dropped; an agent killed mid-burst
+    // still gets its bare falling edge, or a client would hold the task as
+    // active for as long as it held the task at all.
+    this.unmapAndKill(taskId, [...(this.taskPtys.get(taskId) ?? [])]);
+    this.rankAt.delete(taskId);
     this.taskPtys.delete(taskId);
     this.agentPtys.delete(taskId);
     this.store.delete(taskId);
@@ -3399,7 +3684,28 @@ export class TaskManager {
    * attachment is the authorization, so the caller can report it rather than
    * dropping the keystroke silently. */
   writeToPty(clientId: string, ptyId: string, data: string): boolean {
-    return this.ptys.write(clientId, ptyId, data);
+    // After the write, and only when it went through: a keystroke refused for
+    // want of an attach is nobody being here. The data goes along because not
+    // all of it is typed — xterm.js answers queries and reports focus through
+    // this same door. See `wakeOnInput`.
+    const ok = this.ptys.write(clientId, ptyId, data);
+    if (ok) this.wakeOnInput(ptyId, data);
+    return ok;
+  }
+
+  /** Type into a terminal on the user's behalf — what the server writes for
+   * something they did elsewhere, like the paths of files dropped on a task's
+   * terminal (`api/uploads.ts`). No client check: the route that calls it has
+   * already scoped the PTY to the task. It wakes the task as `writeToPty`
+   * does, because a drop is as much the user being here as a keystroke.
+   * False when the terminal is gone or has exited, since `Pty.write` drops
+   * the data silently then. */
+  typeIntoPty(ptyId: string, data: string): boolean {
+    const pty = this.ptys.get(ptyId);
+    if (!pty || pty.exited) return false;
+    pty.write(data);
+    this.wakeOnInput(ptyId, data);
+    return true;
   }
 
   /** False on the same unattached-client check as writeToPty. A stale resize
@@ -3515,6 +3821,7 @@ export class TaskManager {
       },
       createdAt: row.created_at,
       lastActiveAt: row.last_active_at,
+      rankAt: row.rank_at,
       exited: pty?.exited ?? false,
       hasNotification: pty?.hasNotification ?? false,
     };
@@ -3535,8 +3842,8 @@ export class TaskManager {
    * with nothing to say it was. The rows are the tasks; the grouping is one
    * view of them, and §7.5 demotes it to a toggle over a recency list anyway.
    *
-   * That recency ordering is `store.list`'s own `last_active_at DESC`, which is
-   * the order the sidebar wants and the order project grouping never gave it.
+   * That recency ordering is `store.list`'s own `rank_at DESC`, which is the
+   * order the sidebar wants and the order project grouping never gave it.
    */
   listTasks(): TaskInfo[] {
     const result: TaskInfo[] = [];
@@ -3555,7 +3862,7 @@ export class TaskManager {
    * close and project change, and a year of finished tasks would ride each one
    * to every attached client. The toggle is what asks.
    *
-   * Same `last_active_at DESC` as the live list, so the archived rows are in
+   * Same `rank_at DESC` as the live list, so the archived rows are in
    * the order the sidebar would have put them in anyway.
    */
   listArchivedTasks(): TaskInfo[] {

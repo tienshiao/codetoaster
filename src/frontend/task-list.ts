@@ -11,7 +11,9 @@ import type { TaskInfo } from "@/lib/xtmux/types";
  * component.
  *
  * The ordering is still the server's. `TaskInfo` arrives from a `tasks`
- * snapshot already sorted `last_active_at DESC` (§7.5's recency list), and
+ * snapshot already sorted `rank_at DESC` (§7.5's recency list, with the
+ * hysteresis of TASK-116: `last_active_at` moves on every burst of output, so
+ * sorting by it had busy tasks racing each other for the top), and
  * `selectTasks`/`groupByProject` preserve whatever order they are given rather
  * than imposing one. `byRecency` is the single exception, and it does not
  * invent an order either: it re-applies the server's between snapshots, for
@@ -54,8 +56,12 @@ export interface TaskGroup<T> {
 }
 
 /**
- * The server's `last_active_at DESC`, re-applied to a list one frame has
- * disturbed.
+ * The server's `rank_at DESC`, re-applied to a list one frame has disturbed.
+ *
+ * `rankAt`, never `lastActiveAt`: the age stamp moves on every rising edge of
+ * output, several times a minute for a working agent, and a list sorted by it
+ * reshuffles whenever two tasks are busy at once (TASK-116). The rank moves
+ * only when a task wakes after a real quiet gap.
  *
  * Two properties matter more than the sort itself. It is *stable*, so rows
  * that tie — everything a fresh daemon has not touched yet shares a stamp, and
@@ -66,12 +72,12 @@ export interface TaskGroup<T> {
  * re-renders nothing downstream: no row moves under a pointer that is mid-click
  * unless the rank genuinely changed.
  */
-export function byRecency<T extends { lastActiveAt: number }>(tasks: readonly T[]): T[] {
+export function byRecency<T extends { rankAt: number }>(tasks: readonly T[]): T[] {
   for (let i = 1; i < tasks.length; i++) {
-    if (tasks[i - 1]!.lastActiveAt < tasks[i]!.lastActiveAt) {
+    if (tasks[i - 1]!.rankAt < tasks[i]!.rankAt) {
       // `Array.prototype.sort` is stable per spec, so equal stamps keep the
       // relative order of this copy — which is the order they arrived in.
-      return [...tasks].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+      return [...tasks].sort((a, b) => b.rankAt - a.rankAt);
     }
   }
   return tasks as T[];
