@@ -1,6 +1,13 @@
 import { useMemo, type ReactNode } from "react";
-import type { RepoRoot } from "@/frontend/repo-root";
-import { Badge, ExplorerTabs, SectionLabel } from "@/frontend/components/v2";
+import { ArrowDownUp } from "lucide-react";
+import { rootId, type RepoRoot } from "@/frontend/repo-root";
+import {
+  Badge,
+  ExplorerTabs,
+  FilterInput,
+  SectionLabel,
+  Select,
+} from "@/frontend/components/v2";
 import {
   ExplorerError,
   ExplorerLoading,
@@ -9,6 +16,17 @@ import {
 import { BACKLOG_TABS, type BacklogTab } from "@/frontend/explorer-store";
 import { useBacklog } from "@/frontend/hooks/use-backlog";
 import { useHoverPointer } from "@/frontend/hooks/use-hover-pointer";
+import { useViewState } from "@/frontend/hooks/use-view-state";
+import { viewRef } from "@/frontend/view-state-store";
+import {
+  BACKLOG_SORTS,
+  BACKLOG_SORT_LABELS,
+  defaultBacklogSort,
+  groupBacklog,
+  isBacklogSort,
+  resolveBacklogSort,
+  type BacklogSort,
+} from "./backlog-list";
 import { BacklogHoverCard } from "./BacklogHoverCard";
 import { cn } from "@/frontend/lib/utils";
 import type { TabDescriptor } from "@/frontend/layout-store";
@@ -16,7 +34,9 @@ import type { BacklogTask } from "@/types/backlog";
 
 /**
  * The Explorer's Backlog section (TASK-85): the repository's Backlog.md tasks,
- * split into Open and Closed, each card opening the task's own `.md`.
+ * split into Open and Closed, each card opening the task's own `.md`. A filter
+ * and a per-tab sort sit under the tabs (TASK-118); what they do to the list is
+ * `backlog-list.ts`, which this only wires to the view-state store.
  *
  * The rail only offers this section when the route reported `detected`, so the
  * undetected branch below is the one narrow case where a *stored* section names
@@ -38,6 +58,8 @@ export interface BacklogSectionProps {
  * section is hidden without anything having to tell it. */
 const POLL_MS = 3000;
 
+const SORT_OPTIONS = BACKLOG_SORTS.map((value) => ({ value, label: BACKLOG_SORT_LABELS[value] }));
+
 export function BacklogSection({
   root,
   backlogTab,
@@ -47,7 +69,22 @@ export function BacklogSection({
 }: BacklogSectionProps): ReactNode {
   const { data, error, refetch } = useBacklog(root, { refetchInterval: POLL_MS });
 
-  const grouped = useMemo(() => groupBacklog(data?.detected ? data : null), [data]);
+  // Per root, in the Explorer's own slot, so the filter and sorts outlive the
+  // section unmounting (the Explorer mounts one section at a time) and each
+  // task keeps its own.
+  const view = useMemo(() => viewRef(rootId(root), "explorer"), [root]);
+  const [storedFilter, setFilter] = useViewState("explorer", view, "backlogFilter");
+  const [storedOpenSort, setOpenSort] = useViewState("explorer", view, "backlogOpenSort");
+  const [storedClosedSort, setClosedSort] = useViewState("explorer", view, "backlogClosedSort");
+  // Persisted values come back unchecked; a non-string is a corrupt entry.
+  const filter = typeof storedFilter === "string" ? storedFilter : "";
+  const openSort = resolveBacklogSort("Open", storedOpenSort);
+  const closedSort = resolveBacklogSort("Closed", storedClosedSort);
+
+  const grouped = useMemo(
+    () => groupBacklog(data?.detected ? data : null, { filter, openSort, closedSort }),
+    [data, filter, openSort, closedSort],
+  );
 
   // "Nothing has answered yet", rather than `isLoading`: React Query's
   // `isLoading` is `isPending && isFetching`, so a first load the browser has
@@ -77,7 +114,16 @@ export function BacklogSection({
 
   if (!data?.detected) return <ExplorerNote>Not a Backlog.md repository.</ExplorerNote>;
 
-  const showing = backlogTab === "Closed" ? grouped.closed : grouped.open;
+  const closedTab = backlogTab === "Closed";
+  const showing = closedTab ? grouped.closed : grouped.open;
+  const sort = closedTab ? closedSort : openSort;
+  // The tab's default is stored as null rather than as itself, so a later build
+  // that changes a default moves everyone who never chose.
+  const setSort = (next: BacklogSort) => {
+    const value = next === defaultBacklogSort(backlogTab) ? null : next;
+    if (closedTab) setClosedSort(value);
+    else setOpenSort(value);
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col" {...handlers}>
@@ -99,9 +145,38 @@ export function BacklogSection({
           if (label === "Open" || label === "Closed") onBacklogTabChange(label);
         }}
       />
+      {/* One filter for both tabs, so switching tabs while hunting for a task
+          keeps the hunt; the sort is the showing tab's own. */}
+      <div
+        className="flex flex-none items-center gap-1 px-2 pt-2 pb-1"
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && filter) {
+            e.stopPropagation();
+            setFilter("");
+          }
+        }}
+      >
+        <FilterInput
+          className="min-w-0 flex-1"
+          placeholder="Filter tasks"
+          shortcut={null}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        <Select
+          size="sm"
+          icon={ArrowDownUp}
+          aria-label="Sort"
+          options={SORT_OPTIONS}
+          value={sort}
+          onValueChange={(next) => {
+            if (isBacklogSort(next)) setSort(next);
+          }}
+        />
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
         {showing.length === 0 ? (
-          <ExplorerNote>No tasks.</ExplorerNote>
+          <ExplorerNote>{filter.trim() ? "No matching tasks." : "No tasks."}</ExplorerNote>
         ) : (
           showing.map((group) => (
             <div key={group.status}>
@@ -121,70 +196,6 @@ export function BacklogSection({
       </div>
     </div>
   );
-}
-
-// ── grouping ────────────────────────────────────────────────────────────────
-
-interface StatusGroup {
-  status: string;
-  header: boolean;
-  tasks: BacklogTask[];
-}
-
-interface Grouped {
-  open: StatusGroup[];
-  closed: StatusGroup[];
-  openCount: number;
-  closedCount: number;
-}
-
-const EMPTY: Grouped = { open: [], closed: [], openCount: 0, closedCount: 0 };
-
-/**
- * The response's tasks, split at the terminal status and grouped for display.
- *
- * The order within a status is the response's own — Backlog.md's board order —
- * so nothing here sorts. What it does decide is the order of the *headers*:
- * the configured statuses reversed with the terminal one dropped, which puts In
- * Progress above To Do for the default configuration and does the equivalent
- * for a longer one without naming a status.
- *
- * A status the configuration does not list still gets a header, at the end: a
- * hand-edited file with a typo'd status would otherwise take its task off both
- * tabs, and a task list that silently loses a row is worse than an odd header.
- */
-function groupBacklog(data: { statuses: string[]; tasks: BacklogTask[] } | null): Grouped {
-  if (!data) return EMPTY;
-  const terminal = data.statuses[data.statuses.length - 1];
-
-  const byStatus = new Map<string, BacklogTask[]>();
-  for (const task of data.tasks) {
-    const bucket = byStatus.get(task.status);
-    if (bucket) bucket.push(task);
-    else byStatus.set(task.status, [task]);
-  }
-
-  const openGroups: StatusGroup[] = [];
-  for (const status of [...data.statuses].reverse()) {
-    if (status === terminal) continue;
-    const tasks = byStatus.get(status);
-    if (tasks?.length) openGroups.push({ status, header: true, tasks });
-  }
-  for (const [status, tasks] of byStatus) {
-    if (status === terminal || data.statuses.includes(status)) continue;
-    openGroups.push({ status, header: true, tasks });
-  }
-
-  const closedTasks = terminal ? (byStatus.get(terminal) ?? []) : [];
-  const closed: StatusGroup[] =
-    closedTasks.length === 0 ? [] : [{ status: terminal!, header: false, tasks: closedTasks }];
-
-  return {
-    open: openGroups,
-    closed,
-    openCount: openGroups.reduce((n, g) => n + g.tasks.length, 0),
-    closedCount: closedTasks.length,
-  };
 }
 
 // ── the card ────────────────────────────────────────────────────────────────

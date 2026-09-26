@@ -130,6 +130,12 @@ export interface ExplorerViewState {
   refsHeadExpandedFor: string | null;
   refsExpanded: Map<string, Set<string>>;
   commitsScrollTop: number;
+  /** The Backlog section's filter text, shared by both tabs (TASK-118). */
+  backlogFilter: string;
+  /** Each Backlog tab's sort, null for that tab's default. Stored unchecked:
+   * `resolveBacklogSort` in `backlog-list.ts` is what validates it. */
+  backlogOpenSort: string | null;
+  backlogClosedSort: string | null;
 }
 
 /** `prefs`: task-wide toggles that are a preference rather than a view's own
@@ -191,6 +197,9 @@ const DEFAULTS: { [K in ViewSlotKind]: () => ViewStateShapes[K] } = {
     refsHeadExpandedFor: null,
     refsExpanded: new Map(),
     commitsScrollTop: 0,
+    backlogFilter: "",
+    backlogOpenSort: null,
+    backlogClosedSort: null,
   }),
   prefs: () => ({ treeLineWrap: false }),
 };
@@ -236,6 +245,9 @@ const PERSISTED: { [K in ViewSlotKind]: ReadonlyArray<keyof ViewStateShapes[K] &
     "refsHeadExpandedFor",
     "refsExpanded",
     "commitsScrollTop",
+    "backlogFilter",
+    "backlogOpenSort",
+    "backlogClosedSort",
   ],
   prefs: ["treeLineWrap"],
 };

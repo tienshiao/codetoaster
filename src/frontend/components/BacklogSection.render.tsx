@@ -8,6 +8,7 @@ import type { TabDescriptor } from "@/frontend/layout-store";
 import { taskRoot } from "@/frontend/repo-root";
 import { BacklogSection } from "./BacklogSection";
 import { useExplorerRail } from "./Explorer";
+import { chooseOption, selectValue } from "../../../test/v2-select";
 
 /**
  * The Backlog section's grouping and its one gesture (TASK-85), plus the rail
@@ -357,4 +358,116 @@ test("a detected repository outranks the section showing", async () => {
   await waitFor(() =>
     expect(screen.getByTestId("rail").textContent).toBe("Changes,Files,History,Refs"),
   );
+});
+
+// ── filter and sort (TASK-118) ──────────────────────────────────────────────
+
+/** Each test its own root: the filter and sorts live in the view-state store,
+ * which is module state, so a shared root would carry one test's filter into
+ * the next. */
+let rootSeq = 0;
+
+function mountFresh(backlogTab: "Open" | "Closed", id = `filter-${++rootSeq}`) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const node = (tab: "Open" | "Closed") => (
+    <QueryClientProvider client={client}>
+      <BacklogSection
+        root={taskRoot(id)}
+        backlogTab={tab}
+        onBacklogTabChange={vi.fn()}
+        open={vi.fn()}
+        handlers={{ onClick: () => {}, onDoubleClick: () => {} }}
+      />
+    </QueryClientProvider>
+  );
+  const view = render(node(backlogTab));
+  return { ...view, id, node };
+}
+
+function withDates() {
+  body = response();
+  if (!body.detected) throw new Error("fixture");
+  const dates: Record<string, [string | null, string | null]> = {
+    "TASK-13": ["2026-09-01", "2026-09-26 16:00"],
+    "TASK-14": ["2026-09-02", "2026-09-10"],
+  };
+  for (const t of body.tasks) {
+    const d = dates[t.id];
+    if (d) [t.createdDate, t.updatedDate] = d;
+  }
+}
+
+test("typing a filter narrows the cards and both counts follow", async () => {
+  mountFresh("Open");
+  await screen.findByText("TASK-12");
+
+  fireEvent.change(screen.getByPlaceholderText("Filter tasks"), { target: { value: "FRONTEND" } });
+
+  expect(screen.getByText("TASK-12")).toBeTruthy();
+  expect(screen.queryByText("TASK-10")).toBeNull();
+  expect(screen.queryByText("To Do")).toBeNull();
+  expect(screen.getByRole("tab", { name: /Open/ }).textContent).toContain("1");
+  expect(screen.getByRole("tab", { name: /Closed/ }).textContent).toContain("0");
+
+  // Escape clears it, and everything is back.
+  fireEvent.keyDown(screen.getByPlaceholderText("Filter tasks"), { key: "Escape" });
+  expect(screen.getByText("TASK-10")).toBeTruthy();
+  expect(screen.getByRole("tab", { name: /Open/ }).textContent).toContain("3");
+});
+
+test("a filter nothing matches says so", async () => {
+  mountFresh("Open");
+  await screen.findByText("TASK-12");
+  fireEvent.change(screen.getByPlaceholderText("Filter tasks"), { target: { value: "zzz" } });
+  expect(screen.getByText("No matching tasks.")).toBeTruthy();
+});
+
+test("Closed opens on recently updated, the latest finished task first", async () => {
+  withDates();
+  const { container } = mountFresh("Closed");
+  await screen.findByText("TASK-13");
+
+  expect(selectValue("Sort")).toBe("Recently updated");
+  order(container, "TASK-13", "TASK-14");
+});
+
+test("Open opens on board order, and a sort keeps the headers", async () => {
+  const { container } = mountFresh("Open");
+  await screen.findByText("TASK-12");
+  expect(selectValue("Sort")).toBe("Board order");
+
+  chooseOption("Sort", "Newest ID");
+  expect(selectValue("Sort")).toBe("Newest ID");
+  order(container, "In Progress", "TASK-12", "To Do", "TASK-11", "TASK-10");
+});
+
+test("the filter and sort survive the section unmounting", async () => {
+  const first = mountFresh("Open");
+  await screen.findByText("TASK-12");
+  fireEvent.change(screen.getByPlaceholderText("Filter tasks"), { target: { value: "todo" } });
+  chooseOption("Sort", "Newest ID");
+  first.unmount();
+
+  // The Explorer showing another section, then Backlog again.
+  const { container } = render(first.node("Open"));
+  await screen.findByText("TASK-11");
+  expect((screen.getByPlaceholderText("Filter tasks") as HTMLInputElement).value).toBe("todo");
+  expect(selectValue("Sort")).toBe("Newest ID");
+  expect(screen.queryByText("TASK-12")).toBeNull();
+  order(container, "TASK-11", "TASK-10");
+});
+
+test("each tab keeps its own sort, and each root its own filter", async () => {
+  const a = mountFresh("Open");
+  await screen.findByText("TASK-12");
+  chooseOption("Sort", "Newest ID");
+  fireEvent.change(screen.getByPlaceholderText("Filter tasks"), { target: { value: "todo" } });
+  a.rerender(a.node("Closed"));
+  expect(selectValue("Sort")).toBe("Recently updated");
+  a.unmount();
+
+  mountFresh("Open");
+  await screen.findByText("TASK-12");
+  expect((screen.getByPlaceholderText("Filter tasks") as HTMLInputElement).value).toBe("");
+  expect(selectValue("Sort")).toBe("Board order");
 });
