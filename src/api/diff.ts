@@ -1,6 +1,28 @@
-import { resolveTaskRoot, listGitFiles, safePath, diffUntrackedFile } from "./utils";
+import { resolveTaskRoot, safePath, diffUntrackedFiles, gitSpawn, coalesce } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
 import type { LineTokens } from "../types/highlight";
+
+/** `git diff` with the given arguments, or a throw the route turns into a 500:
+ * a diff that could not be taken is not an empty diff, and git's own account
+ * of why is the only useful part of the message. */
+async function diffOrThrow(dir: string, args: string[]): Promise<string> {
+  const { stdout, stderr, exitCode } = await gitSpawn(dir, ["diff", ...args], { captureStderr: true });
+  if (exitCode !== 0) {
+    throw new Error(`git diff ${args.join(" ")} exited ${exitCode}: ${stderr.trim()}`);
+  }
+  return stdout;
+}
+
+/** The working-tree diff: unstaged, then staged, then every untracked file as
+ * an addition. */
+async function workingTreeDiff(dir: string): Promise<string> {
+  const [unstaged, staged, untracked] = await Promise.all([
+    diffOrThrow(dir, []),
+    diffOrThrow(dir, ["--cached"]),
+    diffUntrackedFiles(dir),
+  ]);
+  return unstaged + staged + untracked;
+}
 
 export const diffRoutes = {
   "/api/tasks/:id/diff": {
@@ -10,15 +32,13 @@ export const diffRoutes = {
         if ("error" in result) return result.error;
         const { repoRoot: dir } = result;
 
-        const [unstagedDiff, stagedDiff, untrackedDiffs] = await Promise.all([
-          Bun.$`git -C ${dir} diff`.quiet().text(),
-          Bun.$`git -C ${dir} diff --cached`.quiet().text(),
-          listGitFiles(dir, { cached: false }).then(async (untrackedFiles) => {
-            return Promise.all(untrackedFiles.map((file) => diffUntrackedFile(dir, file)));
-          }),
-        ]);
-
-        const diff = unstagedDiff + stagedDiff + untrackedDiffs.join("");
+        // Coalesced per task: the Explorer rail, the Changes panel and an open
+        // diff tab all hold this query, and one watcher batch invalidates it
+        // for every client at once. Each of those wants the same bytes. The
+        // directory is in the key because the root is re-resolved per request
+        // and can move under a task whose agent has changed repository; a
+        // caller with the new root must not be handed the old tree's diff.
+        const diff = await coalesce(`diff:${req.params.id}:${dir}`, () => workingTreeDiff(dir));
         const hash = Bun.hash(diff).toString(16);
         return Response.json({ diff, directory: dir, hash });
       } catch (error) {
