@@ -9,6 +9,7 @@ import {
   requestComposerProject,
   resetComposerDraft,
   setComposerDraftProject,
+  setComposerSubmitting,
   subscribeComposerDraft,
 } from "./composer-draft-store";
 
@@ -83,11 +84,31 @@ test("moving the project clears the overrides and nothing the user typed", () =>
   expect(draft.urlProject).toBe("web");
 });
 
-test("a + press moves the project and records the address it goes to", () => {
+test("a + press moves the project and leaves the address to the arrival", () => {
   requestComposerProject("web");
 
   expect(getComposerDraft().projectId).toBe("web");
-  expect(getComposerDraft().urlProject).toBe("web");
+  // Recorded where it is applied, not where the navigation is begun: one that
+  // is refused must not leave the address marked as already applied.
+  expect(getComposerDraft().urlProject).toBeNull();
+});
+
+test("moving to the project already selected writes nothing", () => {
+  setComposerDraftProject("web");
+  patchComposerDraft({ model: "sonnet" });
+  const before = getComposerDraft();
+  let heard = 0;
+  const unsubscribe = subscribeComposerDraft(() => {
+    heard += 1;
+  });
+
+  setComposerDraftProject("web");
+  requestComposerProject("web");
+  unsubscribe();
+
+  expect(getComposerDraft()).toBe(before);
+  expect(getComposerDraft().model).toBe("sonnet");
+  expect(heard).toBe(0);
 });
 
 test("the same address applied twice moves nothing the second time", () => {
@@ -127,6 +148,36 @@ test("an address with no project is recorded and moves nothing", () => {
   expect(getComposerDraft().projectId).toBe("web");
 });
 
+test("an address naming the selected project after a plain / keeps the overrides", () => {
+  applyComposerUrlProject("web");
+  applyComposerUrlProject(undefined);
+  patchComposerDraft({ model: "sonnet" });
+
+  applyComposerUrlProject("web");
+
+  const draft = getComposerDraft();
+  expect(draft.urlProject).toBe("web");
+  expect(draft.projectId).toBe("web");
+  expect(draft.model).toBe("sonnet");
+});
+
+test("an address that moves the project is one write", () => {
+  setComposerDraftProject("general");
+  patchComposerDraft({ model: "sonnet" });
+  const seen: Array<[string, string | null]> = [];
+  const unsubscribe = subscribeComposerDraft(() => {
+    const d = getComposerDraft();
+    seen.push([d.projectId, d.urlProject]);
+  });
+
+  applyComposerUrlProject("web");
+  unsubscribe();
+
+  // No snapshot with the address ahead of the project, or the other way round.
+  expect(seen).toEqual([["web", "web"]]);
+  expect(getComposerDraft().model).toBeNull();
+});
+
 test("attachments join the draft, and one taken off releases its URL", () => {
   addComposerAttachments([png("a.png"), png("b.png")]);
   const [a, b] = getComposerDraft().attachments;
@@ -150,7 +201,7 @@ test("adding nothing and removing an unknown id write nothing", () => {
 });
 
 test("clearing empties the draft, releases every URL, and keeps the project", () => {
-  requestComposerProject("web");
+  applyComposerUrlProject("web");
   addComposerAttachments([png("a.png"), png("b.png")]);
   patchComposerDraft({ prompt: "ship it", model: "sonnet", profile: "pi", worktree: true, baseRef: "main" });
 
@@ -182,4 +233,37 @@ test("a listener hears every write, and nothing once unsubscribed", () => {
   patchComposerDraft({ prompt: "b" });
 
   expect(heard).toBe(3);
+});
+
+test("a submit in flight locks the draft until it settles", () => {
+  let heard = 0;
+  const unsubscribe = subscribeComposerDraft(() => {
+    heard += 1;
+  });
+
+  setComposerSubmitting(true);
+  setComposerSubmitting(true);
+  expect(heard).toBe(1);
+  expect(getComposerDraft().submitting).toBe(true);
+
+  // Files refused: the submit already snapshotted what it will upload.
+  const before = getComposerDraft();
+  expect(addComposerAttachments([png()])).toBe(before);
+  expect(getComposerDraft()).toBe(before);
+  expect(minted).toEqual([]);
+
+  // The success path clears the draft, and the lock goes with it.
+  clearComposerDraft();
+  expect(getComposerDraft().submitting).toBe(false);
+  const heardAfterClear = heard;
+  setComposerSubmitting(false);
+  expect(heard).toBe(heardAfterClear);
+  unsubscribe();
+
+  addComposerAttachments([png()]);
+  expect(getComposerDraft().attachments).toHaveLength(1);
+});
+
+test("a fresh draft is not submitting", () => {
+  expect(getComposerDraft().submitting).toBe(false);
 });

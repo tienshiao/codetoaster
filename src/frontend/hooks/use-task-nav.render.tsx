@@ -68,15 +68,17 @@ test("a project group's New task carries the project in the URL", async () => {
 });
 
 test("a project group's New task moves the draft's project, and the header's does not", async () => {
-  // TASK-82, TASK-112. The press writes the draft directly, together with the
-  // address it is about to navigate to, so the arrival does not apply it twice.
+  // TASK-82, TASK-112. The press writes the draft's project directly, and only
+  // that: the address is recorded where it is applied, on arrival, since a
+  // navigation can be refused. The arrival then finds the project already
+  // there and moves nothing again.
   const { result } = renderHook(() => useOpenComposer());
 
   await act(async () => {
     result.current({ projectId: "web" });
   });
   expect(getComposerDraft().projectId).toBe("web");
-  expect(getComposerDraft().urlProject).toBe("web");
+  expect(getComposerDraft().urlProject).toBeNull();
 
   // Moved by hand, then web's `+` again: the second navigation is to the URL
   // already showing and says nothing, so the write is what makes it land.

@@ -18,6 +18,7 @@ import {
   patchComposerDraft,
   removeComposerAttachment,
   setComposerDraftProject,
+  setComposerSubmitting,
   subscribeComposerDraft,
 } from "@/frontend/composer-draft-store";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
@@ -92,18 +93,20 @@ export interface ComposerProps {
  * moved by hand in between.
  *
  * A project group's `+` does not go through the prop at all. It writes the
- * store directly, moving the draft's project whether or not this is mounted,
- * and records the address it is about to navigate to so the arrival is not a
- * second ask. A second press of the project already named is therefore a real
+ * store directly, moving the draft's project whether or not this is mounted;
+ * the arrival that follows finds the project already there and moves nothing
+ * again. A second press of the project already named is therefore a real
  * move even though its navigation goes to the address already showing
  * (TASK-82). Whichever way the ask arrives, only the project moves: the prompt
  * and the attachments are the user's.
  *
  * The option chips are overrides, `null` until touched, and what each shows is
- * derived every render against the selected project's own columns. Moving the
- * project re-seeds them by clearing the overrides in the store, so there is no
- * record of which project they were seeded from and nothing to re-run when the
- * project list lands late over the socket.
+ * derived every render against the selected project's own columns. Moving to
+ * a different project re-seeds them by clearing the overrides in the store, so
+ * there is no record of which project they were seeded from and nothing to
+ * re-run when the project list lands late over the socket. Being asked for
+ * the project already selected — by hand, by `+`, or by an address naming it
+ * after a detour through a plain `/` — is not a move and clears nothing.
  */
 export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) {
   const { projects, createTask } = useTasks();
@@ -117,8 +120,14 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   const PROFILES = profileOptions(profiles, "Project default");
 
   const draft = useSyncExternalStore(subscribeComposerDraft, getComposerDraft, getComposerDraft);
+  // In the draft and not here, because the submit outlives this: it awaits an
+  // upload and a create, and a composer mounted again in the meantime must
+  // find the draft locked rather than the same prompt ready to send twice.
+  const submitting = draft.submitting;
+  // The message is not: it belongs under the control that failed, on the
+  // mount that pressed ⌘⏎, and a failure that lands after the user has left
+  // has the intact draft to show for itself when they come back.
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
 
   // The address, handed to the store, which moves the selection only when it
   // differs from the last one applied. A layout effect and not a plain one:
@@ -143,16 +152,9 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   const [dragDepth, setDragDepth] = useState(0);
   const dragOver = dragDepth > 0;
 
-  const addFiles = useCallback(
-    (files: File[]) => {
-      // Nothing joins the list once the submit is under way: it snapshotted
-      // the attachments before awaiting the upload, so a file added now would
-      // be uploaded by nobody and named in no prompt — silently dropped.
-      if (submitting) return;
-      addComposerAttachments(files);
-    },
-    [submitting],
-  );
+  // The store refuses files while a submit is in flight, and it holds the
+  // flag, so the guard is there and not here.
+  const addFiles = addComposerAttachments;
 
   const setPrompt = useCallback((value: string) => patchComposerDraft({ prompt: value }), []);
 
@@ -161,6 +163,19 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   // a project was deleted elsewhere is no longer a choice either — and neither
   // is a `?project=` naming one that never existed, which lands here too.
   const project = projects.find((p) => p.id === draft.projectId) ?? projects[0];
+
+  // Written back when the two differ, which is the draft naming nothing yet or
+  // naming a project that is gone. Recorded as a move so the overrides set
+  // against the project that was deleted — a base ref that only it had — are
+  // not sent for the one standing in for it. Read from the store and not from
+  // this render's snapshot: the address effect above may just have moved the
+  // project in the same commit, and a settle against the snapshot would move
+  // it back. A layout effect for the reason the address effect is one.
+  useLayoutEffect(() => {
+    const live = getComposerDraft();
+    const resolved = projects.find((p) => p.id === live.projectId) ?? projects[0];
+    if (resolved) setComposerDraftProject(resolved.id);
+  }, [projects, draft.projectId]);
 
   // Each chip is the user's override if there is one, else the selected
   // project's own answer. Derived every render rather than seeded when the
@@ -227,7 +242,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
     // The button is disabled for it, and this guard is what makes the
     // keystroke inert too.
     if (!canSubmit) return;
-    setSubmitting(true);
+    setComposerSubmitting(true);
     setError(null);
 
     // Before the create, because the prompt names the paths this answers with
@@ -240,7 +255,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
         paths = await uploadStaged(attachments.map((a) => a.file));
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "Could not upload the attachments");
-        setSubmitting(false);
+        setComposerSubmitting(false);
         return;
       }
     }
@@ -301,13 +316,17 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
       // The prompt stays exactly as typed. It is the only copy of it, and a
       // failed create is precisely when the user needs it back.
       setError(result.error.message);
-      setSubmitting(false);
+      setComposerSubmitting(false);
       return;
     }
     // The draft is spent, and goes: prompt, attachments (their object URLs
-    // released) and overrides. The project stays, since the next task is more
-    // often than not in the same one. Left submitting: the navigation unmounts
-    // this, and until it does the button must not take a second ⌘⏎.
+    // released), overrides and the lock. The project stays, since the next
+    // task is more often than not in the same one. The lock cannot be left on
+    // — the next mount at `/` would inherit it — so between here and the
+    // navigation unmounting this, an empty draft is briefly sendable. That is
+    // a keystroke landing inside one microtask, and it would start a
+    // promptless task on the same project, which is a thing the button offers
+    // anyway.
     clearComposerDraft();
     openTask(result.value.id, { tab: "agent" });
   }, [

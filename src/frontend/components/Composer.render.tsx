@@ -922,6 +922,76 @@ describe("the draft outlives the composer", () => {
     expect(selectValue("project")).toBe("web");
   });
 
+  test("a submit in flight locks the draft on the next mount too", async () => {
+    let finish!: (result: TaskResult<TaskInfo>) => void;
+    stubs.createTask.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const view = mount(<Composer />);
+    submitKey(type("ship it"));
+    await waitFor(() => expect(startButton().disabled).toBe(true));
+
+    // Away and back while the create is still out.
+    view.unmount();
+    mount(<Composer />);
+
+    // The same prompt is there, but it is already being sent: neither the
+    // button nor a file may act on it a second time.
+    expect(promptValue()).toBe("ship it");
+    expect(startButton().disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Attach files" }) as HTMLButtonElement).disabled).toBe(true);
+    attach(png("late.png"));
+    expect(chips()).toEqual([]);
+    expect(getComposerDraft().attachments).toEqual([]);
+
+    await act(async () => finish({ ok: true, value: created }));
+    await waitFor(() => expect(stubs.openTask).toHaveBeenCalledTimes(1));
+
+    expect(promptValue()).toBe("");
+    expect(startButton().disabled).toBe(false);
+    expect(stubs.createTask).toHaveBeenCalledTimes(1);
+  });
+
+  test("Back to the address of the project already selected keeps the chips", () => {
+    const view = mount(<Composer projectId="web" />);
+    view.unmount();
+
+    // The header's `+`: `/` with no preference, the draft still on web.
+    const plain = mount(<Composer />);
+    chooseOption("model", "Sonnet");
+    type("ship it");
+    plain.unmount();
+
+    // Back to `/?project=web`. The address differs from the last one applied,
+    // so it is applied — but it names the project already selected, which is
+    // no move, and the chip the user set stands.
+    mount(<Composer projectId="web" />);
+
+    expect(selectValue("project")).toBe("web");
+    expect(selectValue("model")).toBe("Sonnet");
+    expect(promptValue()).toBe("ship it");
+  });
+
+  test("a deleted project's overrides are not sent for the one that stands in", () => {
+    stubs.projects = [project("general"), project("web", { initialPath: "/tmp/web" })];
+    const view = mount(<Composer projectId="web" />);
+    fireEvent.click(screen.getByLabelText("worktree"));
+    fireEvent.change(screen.getByLabelText("Base ref"), { target: { value: "release/2.0" } });
+    expect(getComposerDraft().baseRef).toBe("release/2.0");
+
+    // Deleted on another client: the list the socket delivers no longer has
+    // it. The stub reads `stubs.projects` at render time, so a re-render is
+    // the list arriving.
+    stubs.projects = [project("general")];
+    view.rerender(<Composer projectId="web" />);
+
+    expect(selectValue("project")).toBe("general");
+    // General has no directory, so its worktree is off and there is no base
+    // ref to show — and none left in the draft to send.
+    expect(screen.queryByLabelText("Base ref")).toBeNull();
+    expect(getComposerDraft().projectId).toBe("general");
+    expect(getComposerDraft().worktree).toBeNull();
+    expect(getComposerDraft().baseRef).toBeNull();
+  });
+
   test("an unmount releases no object URL; leaving the draft does", async () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
     try {
