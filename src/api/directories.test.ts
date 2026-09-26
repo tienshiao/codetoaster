@@ -126,6 +126,16 @@ describe("GET /api/directories", () => {
     expect(body.entries!.filter((e) => e.isDirectory)).toHaveLength(50);
   });
 
+  test("all=1 lists every directory, for the browser that has no prefix to narrow by", async () => {
+    // Capped, the folder browser stopped partway through the alphabet.
+    const capped = await list(`path=${encodeURIComponent(crowded + "/")}`);
+    const body = await list(`path=${encodeURIComponent(crowded + "/")}&all=1`);
+
+    expect(capped.directories).toHaveLength(50);
+    expect(body.directories).toHaveLength(55);
+    expect(body.directories.at(-1)).toBe("d54");
+  });
+
   test("a path it cannot read is an empty listing, not a failure", async () => {
     // The field is typed into character by character, so most prefixes name
     // nothing yet. An empty `home` is how "could not read this" is said, and

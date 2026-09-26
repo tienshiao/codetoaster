@@ -6,7 +6,7 @@ import type { DirectoryEntry } from "../types/files";
 
 /** How many names one answer carries, applied to each group on its own: a
  * directory with fifty subdirectories still offers its files, which a ceiling
- * over the concatenation would have eaten. */
+ * over the concatenation would have eaten. `all=1` lifts it — see the route. */
 const LIMIT = 50;
 
 /**
@@ -35,6 +35,10 @@ async function isDirectoryEntry(dir: string, name: string): Promise<boolean> {
  * trailing slash is the whole distinction, which is why accepting a suggestion
  * appends one.
  *
+ * `all=1` drops the ceiling. The ceiling is for completion, where a prefix
+ * narrows the list as you type; the folder browser has no prefix to type, so
+ * a capped listing there simply ends partway through the alphabet.
+ *
  * `files=1` adds `entries` — every non-hidden child, directories first — for
  * the composer, which completes paths to files as well. `parent`,
  * `directories` and `home` are untouched by it, so the path field reads the
@@ -50,6 +54,7 @@ export const directoryRoutes = {
     async GET(req: Request) {
       const url = new URL(req.url);
       const wantsFiles = url.searchParams.get("files") === "1";
+      const limit = url.searchParams.get("all") === "1" ? Infinity : LIMIT;
       try {
         const home = homedir();
         let rawPath = expandTilde(url.searchParams.get("path") ?? "", home);
@@ -108,9 +113,9 @@ export const directoryRoutes = {
         // exists for; a file ends the token.
         const entries: DirectoryEntry[] | undefined = wantsFiles
           ? [
-              ...directories.slice(0, LIMIT).map((name) => ({ name, isDirectory: true })),
+              ...directories.slice(0, limit).map((name) => ({ name, isDirectory: true })),
               ...sorted((e) => !isDir(e))
-                .slice(0, LIMIT)
+                .slice(0, limit)
                 .map((name) => ({ name, isDirectory: false })),
             ]
           : undefined;
@@ -120,7 +125,7 @@ export const directoryRoutes = {
         // directory with no children.
         return Response.json({
           parent,
-          directories: directories.slice(0, LIMIT),
+          directories: directories.slice(0, limit),
           home,
           ...(entries ? { entries } : {}),
         });

@@ -367,7 +367,7 @@ function DirChildren({
   depth: number;
   tree: TreeContext;
 }) {
-  const { data, isPending, isError } = useDirectories(listingPath(absolute));
+  const { data, isPending, isError } = useDirectories(listingPath(absolute), { all: true });
   const indent = { paddingLeft: 8 + depth * 12 + 20 };
 
   if (isPending) {
@@ -430,7 +430,7 @@ export function DirectoryBrowser({
   // The root listing carries `home`, which is the only way to turn the `~` the
   // field holds into a path the tree can address — so the seeding below waits
   // for it rather than guessing.
-  const { data: root } = useDirectories("/");
+  const { data: root } = useDirectories("/", { all: true });
   const home = root?.home ?? "";
 
   const typed = initialPath.trim();
@@ -442,6 +442,7 @@ export function DirectoryBrowser({
   // finds out, and it is a request it would have made anyway to draw that
   // level, so the answer is normally already in the cache.
   const { data: parentListing } = useDirectories(listingPath(parent || "/"), {
+    all: true,
     enabled: !!parent,
   });
 

@@ -16,9 +16,13 @@ interface DirResult {
   entries?: DirectoryEntry[];
 }
 
-async function fetchDirectories(path: string, files: boolean): Promise<DirResult> {
+async function fetchDirectories(
+  path: string,
+  files: boolean,
+  all: boolean,
+): Promise<DirResult> {
   const res = await fetch(
-    `/api/directories?path=${encodeURIComponent(path)}${files ? "&files=1" : ""}`,
+    `/api/directories?path=${encodeURIComponent(path)}${files ? "&files=1" : ""}${all ? "&all=1" : ""}`,
   );
   if (!res.ok) throw new Error("Failed to fetch directories");
   return res.json();
@@ -26,15 +30,23 @@ async function fetchDirectories(path: string, files: boolean): Promise<DirResult
 
 export function useDirectories(
   path: string,
-  options?: { enabled?: boolean; files?: boolean },
+  options?: {
+    enabled?: boolean;
+    files?: boolean;
+    /** Every child rather than the first fifty — for a caller that browses a
+     * directory instead of completing a prefix typed into it. */
+    all?: boolean;
+  },
 ) {
   const files = options?.files ?? false;
+  const all = options?.all ?? false;
   return useQuery({
     // `files` is in the key because it changes the body: two callers listing the
     // same directory want different answers, and the one that asked for files
-    // must not be handed the cached listing without them.
-    queryKey: ["directories", path, files],
-    queryFn: () => fetchDirectories(path, files),
+    // must not be handed the cached listing without them. `all` likewise: a
+    // capped listing cached by the completer would truncate the browser.
+    queryKey: ["directories", path, files, all],
+    queryFn: () => fetchDirectories(path, files, all),
     staleTime: 60_000,
     enabled: options?.enabled ?? true,
   });
