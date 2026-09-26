@@ -33,6 +33,11 @@ export interface FileDiff {
   deletions: number;
   isBinary?: boolean;
   isImage?: boolean;
+  /** Set when the server replaced this file's hunks with an oversized marker
+   * (`lib/diff/oversized.ts`): the file has no hunks, and `additions` and
+   * `deletions` come from the marker. `longestLine` is a file line's length,
+   * without the diff prefix. */
+  oversized?: { bytes: number; longestLine: number };
 }
 
 export interface HunkExpansionState {

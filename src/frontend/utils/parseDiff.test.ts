@@ -1,5 +1,77 @@
 import { test, expect } from "bun:test";
 import { parseDiff } from "./parseDiff";
+import { formatOversizedMarker } from "../../lib/diff/oversized";
+
+// The server's oversized marker (TASK-117) stands where the hunks were; the
+// status still comes from the header lines the cap keeps.
+test.each([
+  ["modified", "a/big.json", "b/big.json", []],
+  ["added", "/dev/null", "b/big.json", ["new file mode 100644"]],
+  ["deleted", "a/big.json", "/dev/null", ["deleted file mode 100644"]],
+] as const)("an oversized marker on a %s file sets the flag and the counts", (status, from, to, modeLines) => {
+  const diff = [
+    "diff --git a/big.json b/big.json",
+    ...modeLines,
+    "index 1234567..89abcde",
+    `--- ${from}`,
+    `+++ ${to}`,
+    formatOversizedMarker({ bytes: 46_000_000, additions: 4, deletions: 3, longestLine: 22_000_000 }),
+    "diff --git a/small.ts b/small.ts",
+    "--- a/small.ts",
+    "+++ b/small.ts",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+    "",
+  ].join("\n");
+
+  const [big, small] = parseDiff(diff);
+  expect(big!.status).toBe(status);
+  expect(big!.newPath).toBe("big.json");
+  expect(big!.hunks).toHaveLength(0);
+  expect(big!.additions).toBe(4);
+  expect(big!.deletions).toBe(3);
+  expect(big!.oversized).toEqual({ bytes: 46_000_000, longestLine: 22_000_000 });
+  expect(small!.oversized).toBeUndefined();
+  expect(small!.hunks).toHaveLength(1);
+});
+
+test("an oversized marker on a renamed file keeps the rename", () => {
+  const diff = [
+    "diff --git a/old.json b/new.json",
+    "similarity index 90%",
+    "rename from old.json",
+    "rename to new.json",
+    "index 1234567..89abcde 100644",
+    "--- a/old.json",
+    "+++ b/new.json",
+    formatOversizedMarker({ bytes: 2_000_000, additions: 1, deletions: 1, longestLine: 1_999_000 }),
+    "",
+  ].join("\n");
+  const [file] = parseDiff(diff);
+  expect(file!.status).toBe("renamed");
+  expect(file!.oldPath).toBe("old.json");
+  expect(file!.newPath).toBe("new.json");
+  expect(file!.oversized).toEqual({ bytes: 2_000_000, longestLine: 1_999_000 });
+  expect(file!.hunks).toHaveLength(0);
+});
+
+test("a content line that reads like the marker is still content inside a hunk", () => {
+  const marker = formatOversizedMarker({ bytes: 1, additions: 9, deletions: 9, longestLine: 1 });
+  const diff = [
+    "diff --git a/notes.txt b/notes.txt",
+    "--- a/notes.txt",
+    "+++ b/notes.txt",
+    "@@ -1 +1,2 @@",
+    " " + marker,
+    "+x",
+    "",
+  ].join("\n");
+  const [file] = parseDiff(diff);
+  expect(file!.oversized).toBeUndefined();
+  expect(file!.additions).toBe(1);
+  expect(file!.hunks[0]!.lines[1]!.content).toBe(marker);
+});
 
 test("parses quoted paths with octal escapes and trailing tab", () => {
   // Real git output for a modified file whose name contains spaces and an

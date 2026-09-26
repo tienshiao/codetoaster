@@ -4,8 +4,10 @@ import {
   applySyntaxToSegments,
   enhanceWithWordDiff,
   computeWordDiff,
+  MAX_WORD_DIFF_CHARS,
   type DiffFileTokens,
 } from "./wordDiff";
+import { MAX_TOKENIZE_CHARS } from "./syntaxHighlight";
 import type { LineTokens } from "../../types/highlight";
 import type { FileDiff, TextSegment } from "../types/diff";
 
@@ -99,4 +101,48 @@ test("computeWordDiff still marks changed tokens (unchanged behavior)", () => {
   const { deletionSegments, additionSegments } = computeWordDiff("a b c", "a x c");
   expect(deletionSegments.some((s) => s.highlighted && s.text.includes("b"))).toBe(true);
   expect(additionSegments.some((s) => s.highlighted && s.text.includes("x"))).toBe(true);
+});
+
+// TASK-117: the O(m·n) LCS table is skipped for lines it would freeze on.
+test("computeWordDiff leaves a line past MAX_WORD_DIFF_CHARS as one plain segment per side", () => {
+  const del = "a".repeat(MAX_WORD_DIFF_CHARS + 1);
+  const add = "b c";
+  expect(computeWordDiff(del, add)).toEqual({
+    deletionSegments: [{ text: del, highlighted: false }],
+    additionSegments: [{ text: add, highlighted: false }],
+  });
+  expect(computeWordDiff(add, del).additionSegments).toEqual([{ text: del, highlighted: false }]);
+});
+
+test("computeWordDiff skips a pair whose token table would pass a million cells", () => {
+  // Both well within the length budget, but 2,000 tokens a side: 4M cells.
+  const del = "a ".repeat(1_000);
+  const add = "b ".repeat(1_000);
+  expect(del.length).toBeLessThan(MAX_WORD_DIFF_CHARS);
+  expect(computeWordDiff(del, add)).toEqual({
+    deletionSegments: [{ text: del, highlighted: false }],
+    additionSegments: [{ text: add, highlighted: false }],
+  });
+});
+
+test("the length budget is the client tokenizer's, not a lower one", () => {
+  expect(MAX_WORD_DIFF_CHARS).toBe(MAX_TOKENIZE_CHARS);
+});
+
+test("computeWordDiff still diffs a mid-length pair with few tokens", () => {
+  // 3,000 characters a side: past the old 2,000 limit, a handful of tokens.
+  const del = "y".repeat(2_996) + " old";
+  const add = "y".repeat(2_996) + " new";
+  expect(del.length).toBe(3_000);
+  const { deletionSegments, additionSegments } = computeWordDiff(del, add);
+  expect(deletionSegments.some((s) => s.highlighted && s.text === "old")).toBe(true);
+  expect(additionSegments.some((s) => s.highlighted && s.text === "new")).toBe(true);
+  expect(additionSegments.some((s) => !s.highlighted && s.text.startsWith("yyy"))).toBe(true);
+});
+
+test("computeWordDiff still diffs a line at the length budget with few tokens", () => {
+  const del = "x".repeat(MAX_WORD_DIFF_CHARS - 4) + " old";
+  const add = "x".repeat(MAX_WORD_DIFF_CHARS - 4) + " new";
+  const { additionSegments } = computeWordDiff(del, add);
+  expect(additionSegments.some((s) => s.highlighted && s.text === "new")).toBe(true);
 });

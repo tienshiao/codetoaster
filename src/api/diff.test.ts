@@ -12,6 +12,9 @@ import {
   withoutGitlinks,
 } from "./utils";
 import { diffRoutes } from "./diff";
+import { gitRoutes } from "./git";
+import { MAX_DIFF_LINE_CHARS } from "./diff-cap";
+import { parseDiff } from "../frontend/utils/parseDiff";
 import { initDatabase, getDatabase } from "../lib/db";
 import { TaskStore } from "../lib/tasks/store";
 import { taskManager } from "../lib/tasks/manager";
@@ -219,7 +222,7 @@ describe("GET /api/tasks/:id/diff", () => {
     taskManager.loadProjects();
     server = Bun.serve({
       port: 0,
-      routes: diffRoutes as any,
+      routes: { ...diffRoutes, ...gitRoutes } as any,
       fetch: () => new Response("", { status: 404 }),
     });
   });
@@ -259,6 +262,80 @@ describe("GET /api/tasks/:id/diff", () => {
     expect(at("+staged")).toBeGreaterThan(at("+modified"));
     expect(at("+untracked")).toBeGreaterThan(at("+staged"));
     expect(one.diff.endsWith("+untracked\n")).toBe(true);
+  });
+
+  // TASK-117: one single-line data file used to be most of a 50 MB payload.
+  test("a file with a megabyte line is headers and a marker; its neighbours keep their hunks", async () => {
+    const { root } = await tempRepo();
+    fs.writeFileSync(path.join(root, "big.json"), "[]\n");
+    await git(root, "add", "big.json");
+    await git(root, "commit", "-qm", "small big.json");
+    fs.writeFileSync(path.join(root, "big.json"), "[" + "1,".repeat(750_000) + "1]");
+    fs.writeFileSync(path.join(root, "README.md"), "modified\n");
+    new TaskStore(getDatabase()).create({
+      id: "oversized",
+      project_id: "general",
+      title: "oversized",
+      initial_prompt: "",
+      repo_root: root,
+      cwd: root,
+      lifecycle: "suspended",
+    });
+
+    const res = await fetch(`http://localhost:${server.port}/api/tasks/oversized/diff`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body.length).toBeLessThan(20_000);
+    const { diff } = JSON.parse(body) as { diff: string };
+    expect(diff).toContain("Oversized diff omitted: ");
+
+    const files = parseDiff(diff);
+    const big = files.find((f) => f.newPath === "big.json")!;
+    // "[" + 1.5M + "1]": the file's line, without the diff line's "+".
+    expect(big.oversized?.longestLine).toBe(1_500_003);
+    expect(big.hunks).toHaveLength(0);
+    expect(big.additions).toBe(1);
+    expect(big.deletions).toBe(1);
+    const readme = files.find((f) => f.newPath === "README.md")!;
+    expect(readme.oversized).toBeUndefined();
+    expect(readme.hunks).toHaveLength(1);
+
+    // The commit that lands the file is capped the same way in History.
+    await git(root, "commit", "-qam", "big big.json");
+    const sha = await git(root, "rev-parse", "HEAD");
+    const commitRes = await fetch(`http://localhost:${server.port}/api/tasks/oversized/git/commit?sha=${sha}`);
+    expect(commitRes.status).toBe(200);
+    const commitBody = await commitRes.text();
+    expect(commitBody.length).toBeLessThan(20_000);
+    const commitFiles = parseDiff((JSON.parse(commitBody) as { diff: string }).diff);
+    expect(commitFiles.find((f) => f.newPath === "big.json")!.oversized).toBeDefined();
+    expect(commitFiles.find((f) => f.newPath === "README.md")!.hunks).toHaveLength(1);
+  });
+
+  test("hunk expansion cuts a line past the length budget and marks it cut", async () => {
+    const { root } = await tempRepo();
+    const long = "z".repeat(30_000);
+    fs.writeFileSync(path.join(root, "wide.ts"), `const a = 1;\n${long}\nconst b = 2;\n`);
+    new TaskStore(getDatabase()).create({
+      id: "context-cap",
+      project_id: "general",
+      title: "context-cap",
+      initial_prompt: "",
+      repo_root: root,
+      cwd: root,
+      lifecycle: "suspended",
+    });
+
+    const res = await fetch(`http://localhost:${server.port}/api/tasks/context-cap/context?file=wide.ts&start=1&end=3`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { lines: { lineNum: number; content: string }[]; tokens: unknown[] | null };
+    const suffix = ` … (+${30_000 - MAX_DIFF_LINE_CHARS} chars)`;
+    expect(body.lines.map((l) => l.lineNum)).toEqual([1, 2, 3]);
+    expect(body.lines[0]!.content).toBe("const a = 1;");
+    expect(body.lines[1]!.content.length).toBeLessThanOrEqual(MAX_DIFF_LINE_CHARS + suffix.length);
+    expect(body.lines[1]!.content).toBe("z".repeat(MAX_DIFF_LINE_CHARS) + suffix);
+    expect(body.lines[2]!.content).toBe("const b = 2;");
+    if (body.tokens) expect(body.tokens[1]).toEqual([]);
   });
 
   test("a task nobody has heard of is a 404", async () => {

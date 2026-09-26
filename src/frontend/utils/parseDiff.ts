@@ -1,4 +1,5 @@
 import type { FileDiff, DiffHunk } from "../types/diff";
+import { parseOversizedMarker } from "../../lib/diff/oversized";
 
 // Unescape C-style escapes in git quoted paths
 function unescapeGitPath(path: string): string {
@@ -192,6 +193,18 @@ export function parseDiff(diffText: string): FileDiff[] {
         currentFile.isImage = true;
       }
       continue;
+    }
+
+    // The server's stand-in for an oversized file's hunks (TASK-117). It sits
+    // where the first @@ would, so it is never inside a hunk.
+    if (!currentHunk) {
+      const oversized = parseOversizedMarker(line);
+      if (oversized) {
+        currentFile.oversized = { bytes: oversized.bytes, longestLine: oversized.longestLine };
+        currentFile.additions = oversized.additions;
+        currentFile.deletions = oversized.deletions;
+        continue;
+      }
     }
 
     // Old file path

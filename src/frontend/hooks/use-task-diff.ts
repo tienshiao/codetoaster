@@ -19,7 +19,7 @@ export async function fetchDiffTokens(
   sha?: string,
 ): Promise<Map<string, DiffFileTokens> | null> {
   const requestFiles = files
-    .filter((f) => !f.isBinary && !f.isImage)
+    .filter((f) => !f.isBinary && !f.isImage && !f.oversized)
     .map((f) => ({
       path: f.newPath,
       oldPath: f.oldPath,

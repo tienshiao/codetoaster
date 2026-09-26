@@ -5,6 +5,7 @@ import { CommentInput } from "./CommentInput";
 import { CommentDisplay } from "./CommentDisplay";
 import { ImageDiff } from "./ImageDiff";
 import { DiffStat } from "./DiffStat";
+import { formatSize } from "../../utils/formatSize";
 import type { FileDiff, DiffHunk, HunkExpansionState, DiffLine, LineComment } from "../../types/diff";
 import type { UseCommentsReturn } from "../../hooks/use-comments";
 
@@ -319,7 +320,9 @@ export function DiffFile({
         <div className="overflow-x-auto @container">
           {file.hunks.length === 0 ? (
             <div className="px-4 py-3 text-xs text-muted-foreground italic">
-              {file.isBinary
+              {file.oversized
+                ? `Diff not shown: ${formatSize(file.oversized.bytes)}, longest line ${file.oversized.longestLine.toLocaleString("en-US")} characters`
+                : file.isBinary
                 ? "Binary file"
                 : file.status === "renamed"
                   ? "Renamed without content changes"

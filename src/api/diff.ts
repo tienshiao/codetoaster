@@ -1,5 +1,6 @@
 import { rootRoutes, safePath, diffUntrackedFiles, gitSpawn, coalesce } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
+import { capDiff, MAX_DIFF_LINE_CHARS } from "./diff-cap";
 import type { LineTokens } from "../types/highlight";
 
 /** `git diff` with the given arguments, or a throw the route turns into a 500:
@@ -14,14 +15,33 @@ async function diffOrThrow(dir: string, args: string[]): Promise<string> {
 }
 
 /** The working-tree diff: unstaged, then staged, then every untracked file as
- * an addition. */
+ * an addition, with any file over the size budgets reduced to its headers and
+ * an oversized marker (`diff-cap.ts`). */
 async function workingTreeDiff(dir: string): Promise<string> {
   const [unstaged, staged, untracked] = await Promise.all([
     diffOrThrow(dir, []),
     diffOrThrow(dir, ["--cached"]),
     diffUntrackedFiles(dir),
   ]);
-  return unstaged + staged + untracked;
+  return capDiff(unstaged + staged + untracked);
+}
+
+/** A file line for hunk expansion, cut to the per-line diff budget with a
+ * suffix that says how much is missing; a line within budget is returned as
+ * it is.
+ *
+ * The diff routes never ship such a line, but expansion reads the file itself,
+ * so a 20 MB line below an otherwise small file's hunk would reach the DOM the
+ * moment the user expanded down to it (TASK-117). Truncated rather than
+ * refused: the user asked for the surrounding context, and the lines around
+ * the long one are still what they wanted to see. */
+function capContextLine(line: string): string {
+  if (line.length <= MAX_DIFF_LINE_CHARS) return line;
+  let cut = MAX_DIFF_LINE_CHARS;
+  // Do not leave half a surrogate pair at the cut.
+  const last = line.charCodeAt(cut - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut--;
+  return `${line.slice(0, cut)} … (+${line.length - cut} chars)`;
 }
 
 export const diffRoutes = {
@@ -78,7 +98,7 @@ export const diffRoutes = {
 
         const lines: { lineNum: number; content: string }[] = [];
         for (let i = clampedStart; i <= clampedEnd; i++) {
-          lines.push({ lineNum: i, content: allLines[i - 1] ?? "" });
+          lines.push({ lineNum: i, content: capContextLine(allLines[i - 1] ?? "") });
         }
 
         // Tree-sitter tokens for the returned lines (null => client regex
@@ -86,7 +106,13 @@ export const diffRoutes = {
         let tokens: (LineTokens)[] | null = null;
         try {
           const fileTokens = await highlightFile(content, filePath);
-          if (fileTokens) tokens = lines.map((l) => fileTokens[l.lineNum - 1] ?? []);
+          // A truncated line gets none: its tokens describe the whole line,
+          // and would ship the size the cut just saved.
+          if (fileTokens) {
+            tokens = lines.map((l) =>
+              l.content.length > MAX_DIFF_LINE_CHARS ? [] : fileTokens[l.lineNum - 1] ?? [],
+            );
+          }
         } catch {
           tokens = null;
         }

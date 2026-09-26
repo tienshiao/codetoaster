@@ -108,8 +108,17 @@ function buildPatterns(config: LanguageConfig): TokenPattern[] {
   return patterns;
 }
 
+/** The longest line the regex tokenizer will scan.
+ *
+ * `tokenizeLine` tries every pattern at every position and slices the
+ * remainder after each match, synchronously in render; over a megabyte line
+ * that scan is what froze the page (TASK-117). Past this length the line is
+ * one plain token. Matches the server's per-line diff cap
+ * (`MAX_DIFF_LINE_CHARS` in `api/diff-cap.ts`). */
+export const MAX_TOKENIZE_CHARS = 20_000;
+
 export function tokenizeLine(line: string, config: LanguageConfig | null): SyntaxToken[] {
-  if (!config) {
+  if (!config || line.length > MAX_TOKENIZE_CHARS) {
     return [{ text: line, type: null }];
   }
 

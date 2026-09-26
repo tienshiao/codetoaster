@@ -1,5 +1,5 @@
 import type { TextSegment, FileDiff } from "../types/diff";
-import { tokenizeLine, mergeTokens } from "./syntaxHighlight";
+import { tokenizeLine, mergeTokens, MAX_TOKENIZE_CHARS } from "./syntaxHighlight";
 import { getLanguageFromPath } from "./languageDetection";
 import type { LanguageConfig } from "./languageDetection";
 import type { SyntaxToken, LineTokens, FileTokens } from "../../types/highlight";
@@ -87,13 +87,35 @@ function computeLCS(a: string[], b: string[]): string[] {
   return lcs;
 }
 
+/** The longest line, on either side, that gets a word-level diff: the client
+ * tokenizer's budget, which is the server's per-line diff cap.
+ *
+ * Only a backstop. `tokenize` is linear, so length alone costs little; the
+ * superlinear cost is `computeLCS`'s m·n table over the two lines' tokens,
+ * built synchronously in render, and `MAX_LCS_CELLS` is what bounds it. Over a
+ * minified or single-line data file that table is what froze the page
+ * (TASK-117). A lower length limit would drop word highlighting for every
+ * 2k–20k line the server deliberately still ships, however few its tokens. */
+export const MAX_WORD_DIFF_CHARS = MAX_TOKENIZE_CHARS;
+
+/** The largest LCS table, in cells, worth building for one line pair: the
+ * real protection against a slow word diff. */
+const MAX_LCS_CELLS = 1_000_000;
+
 // Compute word-level diff between deletion and addition lines
 export function computeWordDiff(
   deletion: string,
   addition: string
 ): { deletionSegments: TextSegment[]; additionSegments: TextSegment[] } {
+  const plain = () => ({
+    deletionSegments: [{ text: deletion, highlighted: false }],
+    additionSegments: [{ text: addition, highlighted: false }],
+  });
+  if (deletion.length > MAX_WORD_DIFF_CHARS || addition.length > MAX_WORD_DIFF_CHARS) return plain();
+
   const delTokens = tokenize(deletion);
   const addTokens = tokenize(addition);
+  if (delTokens.length * addTokens.length > MAX_LCS_CELLS) return plain();
   const lcs = computeLCS(delTokens, addTokens);
 
   const deletionSegments: TextSegment[] = [];

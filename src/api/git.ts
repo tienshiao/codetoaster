@@ -1,5 +1,6 @@
 import { rootRoutes, gitSpawn, gitSpawnRaw, parseNonNegInt, safePath, buildFileListing, IMAGE_MIME_TYPES, SHA_RE } from "./utils";
 import { serializeFileContent } from "./files";
+import { capDiff } from "./diff-cap";
 
 // ---------------------------------------------------------------------------
 // Pure parsers (exported for unit tests — no repo required)
@@ -410,7 +411,10 @@ export const gitRoutes = {
             ? await gitSpawn(dir, ["diff", "-M", `${resolvedSha}^1`, resolvedSha])
             : await gitSpawn(dir, ["diff-tree", "--patch", "--root", "-M", resolvedSha]);
 
-        const diff = stripToFirstDiff(diffResult.stdout);
+        // Capped like the working-tree diff, so History cannot freeze on the
+        // commit that lands a multi-megabyte single-line file. The hash covers
+        // the capped text, which is what the client parses.
+        const diff = capDiff(stripToFirstDiff(diffResult.stdout));
         const hashOfDiff = Bun.hash(diff).toString(16);
 
         return Response.json({
