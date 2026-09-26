@@ -30,8 +30,20 @@ function asStringOrNull(value: unknown): string | null {
 /** What the card can afford to carry per task, `…` included. */
 export const DESCRIPTION_CAP = 500;
 
-/** A fenced code block's opening or closing line. */
-const FENCE = /^\s*(`{3,}|~{3,})/;
+/** A fenced code block's opening line: the fence, then anything (an info
+ * string). Captures the fence so the close can be matched against it. */
+const FENCE_OPEN = /^\s*(`{3,}|~{3,})/;
+
+/**
+ * Whether `line` closes the fence `open` started. CommonMark's rule: the same
+ * character, at least as long, and nothing after it. Without it a ```` block
+ * quoting ``` lines would flip a bare toggle on each of them, and the real
+ * headings after the block would be read as fenced.
+ */
+function closesFence(line: string, open: string): boolean {
+  const match = /^\s*(`{3,}|~{3,})\s*$/.exec(line);
+  return match !== null && match[1]![0] === open[0] && match[1]!.length >= open.length;
+}
 
 /**
  * The lines under a `## <name>` heading, up to the next `## ` heading or the end
@@ -45,15 +57,20 @@ const FENCE = /^\s*(`{3,}|~{3,})/;
  */
 function section(bodyLines: string[], name: string): string[] | null {
   const heading = new RegExp(`^##\\s+${name}\\s*$`, "i");
-  let fenced = false;
+  // The fence currently open, or null: the closing line has to match it.
+  let fence: string | null = null;
   let start = -1;
   for (let i = 0; i < bodyLines.length; i++) {
     const line = bodyLines[i]!.trim();
-    if (FENCE.test(line)) {
-      fenced = !fenced;
+    if (fence !== null) {
+      if (closesFence(line, fence)) fence = null;
       continue;
     }
-    if (fenced) continue;
+    const opening = FENCE_OPEN.exec(line);
+    if (opening) {
+      fence = opening[1]!;
+      continue;
+    }
     if (start === -1) {
       if (heading.test(line)) start = i + 1;
     } else if (/^##\s/.test(line)) {

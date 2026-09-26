@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-26 04:35'
-updated_date: '2026-09-26 04:55'
+updated_date: '2026-09-26 05:14'
 labels:
   - frontend
   - ui
@@ -42,6 +42,8 @@ HoverCardParts: card class z-50 -> z-40 with the layer rule stated beside it. Di
 Browser (isolated server :4599, scratch db): hovered a shell task row and clicked its Archive icon in the same hover. Dialog opened with activeElement = Cancel inside role=dialog; the hover card still mounted after the scrim (portal order: scrim z-50, then card z-40) but is drawn under the shade, dimmed. Escape closed the dialog; task not archived.
 
 Review pass (code-review high) fixed five findings: the field selector skips disabled and hidden inputs; the dialog records document.activeElement on open and focuses it again on close when still connected, so Tab resumes from the opener instead of the top of the document; the last-resort focus target is the form, not Cancel, and a second effect hands focus to the confirm when it enables while the panel still has it, so Enter in the archive confirmation no longer depends on how fast the cost preview lands; DiffLayout's sticky prev/next pill drops to z-30 so it no longer paints over a hover card; the comment no longer claims Escape depended on focus (its listener is on document). Also fixed a fused class the first pass left (outline-noneborder) that dropped the panel border. Tests: Dialog.render.tsx covers the panel fallback, the confirm taking focus on enable, not stealing it from Cancel, a disabled first field skipped, focus returned to the opener, and an unmounted opener left alone. After the fixes: test:render 405 pass, test:unit 1713 pass, tsc clean.
+
+Follow-up from the user's code-review --fix run: HoverCardShell's trigger no longer opens on focus (onFocus preventDefault, which Radix checks before its own handler), since the dialog's focus return landed on the archive icon inside the trigger and reopened the card with the pointer elsewhere; TaskHoverCard.render.tsx drives the delay with fake timers to show the pointer still opens it and focus does not. read.ts's fence detector now tracks the opening fence's character and length per CommonMark, with a test for a four-backtick block quoting three-backtick fences and a tilde block holding a backtick line. Verified with the verify skill on an isolated server: hover, Archive, Cancel by mouse, and hover, Archive, Escape; in both, no card portal exists after the dialog closes, focus is back on the archive icon, and the row is still listed.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

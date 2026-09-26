@@ -72,7 +72,17 @@ export function HoverCardShell({ open, card, children }: HoverCardShellProps) {
       {/* `asChild`: the row stays the element the list laid out, with its own
           classes and its own `onClick` — the card wraps the row, it does not
           replace it, and nothing about its box changes for having a card. */}
-      <HoverCard.Trigger asChild>{children}</HoverCard.Trigger>
+      {/* Not on focus. Radix opens the card when its trigger gains focus, and
+          the row's own controls sit inside the trigger: a dialog handing focus
+          back to the archive icon on close (TASK-115) opened the card anchored
+          to a row the pointer had long left, and it stayed until something else
+          took focus. `preventDefault` here is what Radix checks before its own
+          handler runs. A hover card is a pointer affordance — everything on it
+          is reachable elsewhere, which is the standing rule — so keyboard focus
+          was never a way in that anyone was promised. Blur still closes it. */}
+      <HoverCard.Trigger asChild onFocus={(event) => event.preventDefault()}>
+        {children}
+      </HoverCard.Trigger>
       <HoverCard.Portal>
         <HoverCard.Content
           // Off the rail and into the pane: the lists these hang off are narrow,

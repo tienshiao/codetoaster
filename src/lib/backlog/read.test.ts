@@ -345,6 +345,37 @@ Second paragraph.
     expect(task.acceptance).toEqual({ done: 0, total: 1 });
   });
 
+  test("a fence closes only on its own character and at least its own length", () => {
+    // A four-backtick block quoting three-backtick fences, and a tilde block
+    // with a backtick line inside: a bare toggle would flip on each inner
+    // line and read the real headings after the block as fenced.
+    const file = [
+      "---",
+      "id: TASK-5",
+      "---",
+      "",
+      "## Description",
+      "",
+      "````md",
+      "```sh",
+      "## not a heading",
+      "```",
+      "````",
+      "~~~",
+      "```",
+      "~~~",
+      "after both.",
+      "",
+      "## Acceptance Criteria",
+      "- [x] #1 one",
+      "- [ ] #2 two",
+      "",
+    ].join("\n");
+    const task = parseTaskFile(file, "p.md")!;
+    expect(task.description.endsWith("after both.")).toBe(true);
+    expect(task.acceptance).toEqual({ done: 1, total: 2 });
+  });
+
   test("a checklist outside the criteria section is not counted", () => {
     const file = "---\nid: TASK-5\n---\n\n## Description\n\n- [x] looks like one\n";
     expect(parseTaskFile(file, "p.md")!.acceptance).toEqual({ done: 0, total: 0 });

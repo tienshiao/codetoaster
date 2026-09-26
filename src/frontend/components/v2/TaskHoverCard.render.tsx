@@ -1,5 +1,5 @@
-import { test, expect, describe, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { test, expect, describe, vi, afterEach } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { AppShell } from "./AppShell";
 import { TaskHoverCard, type TaskRowDetails } from "./TaskHoverCard";
 import { absoluteTime } from "@/frontend/utils/taskTimes";
@@ -236,6 +236,41 @@ describe("in the shell", () => {
     // alone drawn, until one row is pointed at.
     expect(screen.queryByText("Project")).toBeNull();
     expect(screen.queryByText("Created")).toBeNull();
+  });
+});
+
+describe("what opens it", () => {
+  // Uncontrolled, with the clock in hand: Radix opens after its delay, so the
+  // question "did this open it" is asked 500ms later. This is the one place
+  // the delay is driven in a test, because the claim is about the trigger's
+  // event handling, not the delay's length.
+  function mountLive() {
+    vi.useFakeTimers();
+    render(
+      <TaskHoverCard details={details()}>
+        <button type="button">row</button>
+      </TaskHoverCard>,
+    );
+    return screen.getByRole("button", { name: "row" });
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  test("the pointer does (the control for the test below)", () => {
+    const row = mountLive();
+    fireEvent.pointerEnter(row, { pointerType: "mouse" });
+    act(() => void vi.advanceTimersByTime(500));
+
+    screen.getByText("Project");
+  });
+
+  test("focus does not: a dialog handing focus back to a row control must not open it (TASK-115)", () => {
+    const row = mountLive();
+    act(() => row.focus());
+    act(() => void vi.advanceTimersByTime(500));
+
+    expect(document.activeElement).toBe(row);
+    expect(screen.queryByText("Project")).toBeNull();
   });
 });
 
