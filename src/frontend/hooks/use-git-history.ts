@@ -6,6 +6,7 @@ import { useRefSets } from "../components/git/RefChip";
 import { useTasks } from "../TaskContext";
 import { queryClient } from "../query-client";
 import { gitKeys } from "../query-keys";
+import { rootId, type RepoRoot } from "../repo-root";
 import type { RefSets } from "../components/git/RefChip";
 import type { GitLogCommit } from "../types/git";
 
@@ -39,16 +40,21 @@ export interface GitHistory {
  * "select a commit" means — a navigation there, a new tab here — so the choice
  * arrives as `onSelect` rather than being made in here.
  *
+ * Takes a `RepoRoot`, so the composer's Explorer can draw a project's history
+ * before there is a task (TASK-106). Every per-selection guard below is keyed by
+ * the root's id (`rootId`), which for a task is the task id itself.
+ *
  * `onReset` fires when a refs change invalidates the loaded log. v1 hangs its
  * `attemptedShas` clear off it; v2 has nothing to clear.
  */
 export function useGitHistory(
-  taskId: string,
+  root: RepoRoot,
   onSelect: (sha: string) => void,
   onReset?: () => void,
 ): GitHistory {
-  const logQuery = useGitLog(taskId);
-  const refsQuery = useGitRefs(taskId);
+  const key = rootId(root);
+  const logQuery = useGitLog(root);
+  const refsQuery = useGitRefs(root);
   const refSets = useRefSets(refsQuery.data);
   const { fetchUntil } = logQuery;
   const { activity } = useTasks();
@@ -59,25 +65,25 @@ export function useGitHistory(
   // across a switch left the new task's sidebar spinning on a ref it had never
   // been asked to seek. React's "adjust state when a prop changes", as in
   // `use-task-layout`.
-  const [pending, setPending] = useState<{ taskId: string; sha: string | null }>({
-    taskId,
+  const [pending, setPending] = useState<{ key: string; sha: string | null }>({
+    key,
     sha: null,
   });
-  if (pending.taskId !== taskId) setPending({ taskId, sha: null });
-  const pendingRefSha = pending.taskId === taskId ? pending.sha : null;
+  if (pending.key !== key) setPending({ key, sha: null });
+  const pendingRefSha = pending.key === key ? pending.sha : null;
   const setPendingRefSha = useCallback<Dispatch<SetStateAction<string | null>>>(
     (next) =>
       setPending((prev) => ({
-        taskId: prev.taskId,
+        key: prev.key,
         sha: typeof next === "function" ? next(prev.sha) : next,
       })),
     [],
   );
 
   // What the selection is *now*, for the async seek below to compare against;
-  // its own `taskId` is the one it closed over when the click happened.
-  const taskIdRef = useRef(taskId);
-  taskIdRef.current = taskId;
+  // its own `key` is the one it closed over when the click happened.
+  const keyRef = useRef(key);
+  keyRef.current = key;
 
   const commits = useMemo(
     () => logQuery.data?.pages.flatMap((p) => p.commits) ?? [],
@@ -117,21 +123,21 @@ export function useGitHistory(
       // tab in a layout whose repository has no such commit, leaving the pane
       // fetching a sha that cannot resolve, and the clear would take down a
       // spinner the new task had started for itself.
-      const startedFor = taskId;
-      setPending({ taskId: startedFor, sha });
+      const startedFor = key;
+      setPending({ key: startedFor, sha });
       try {
         const status = await fetchUntil(sha);
-        if (taskIdRef.current !== startedFor) return;
+        if (keyRef.current !== startedFor) return;
         if (status === "found") {
           onSelect(sha);
         } else {
           reportSeekFailure(status);
         }
       } finally {
-        if (taskIdRef.current === startedFor) setPending({ taskId: startedFor, sha: null });
+        if (keyRef.current === startedFor) setPending({ key: startedFor, sha: null });
       }
     },
-    [taskId, commits, fetchUntil, onSelect, reportSeekFailure],
+    [key, commits, fetchUntil, onSelect, reportSeekFailure],
   );
 
   // Refetch refs when the task's PTY activity settles (true→false). The 300ms
@@ -141,17 +147,20 @@ export function useGitHistory(
   //
   // Keyed to the task, because this hook is not remounted per task: the
   // Explorer renders its History and Refs sections at a fixed position with no
-  // `key`, so `taskId` changes underneath one instance. Unkeyed, the previous
+  // `key`, so the root changes underneath one instance. Unkeyed, the previous
   // task's `true` followed by the new task's `false` read as a command settling
   // and refetched refs that were never stale.
-  const active = activity[taskId] ?? false;
-  const prevActiveRef = useRef<{ taskId: string; active: boolean }>({ taskId, active });
+  //
+  // Only a task has a PTY to be active; a project root's refs are refetched on
+  // window focus like any other root's, and never on this signal.
+  const active = root.kind === "task" ? (activity[root.id] ?? false) : false;
+  const prevActiveRef = useRef<{ key: string; active: boolean }>({ key, active });
   const refsRefetch = refsQuery.refetch;
   useEffect(() => {
     const previous = prevActiveRef.current;
-    prevActiveRef.current = { taskId, active };
-    if (previous.taskId === taskId && previous.active && !active) refsRefetch();
-  }, [taskId, active, refsRefetch]);
+    prevActiveRef.current = { key, active };
+    if (previous.key === key && previous.active && !active) refsRefetch();
+  }, [key, active, refsRefetch]);
 
   // Held in a ref so a caller passing an inline closure does not re-run — and
   // so re-reset — the effect below on every render.
@@ -171,19 +180,19 @@ export function useGitHistory(
   // task reset the log it had just restored, throwing away several hundred
   // paged-in commits and landing the restored scroll offset nowhere.
   const refsHash = refsQuery.data?.hash;
-  const prevRefsHashRef = useRef<{ taskId: string; hash: string | undefined }>({
-    taskId,
+  const prevRefsHashRef = useRef<{ key: string; hash: string | undefined }>({
+    key,
     hash: refsHash,
   });
   useEffect(() => {
     const previous = prevRefsHashRef.current;
-    prevRefsHashRef.current = { taskId, hash: refsHash };
-    if (previous.taskId !== taskId) return;
+    prevRefsHashRef.current = { key, hash: refsHash };
+    if (previous.key !== key) return;
     if (previous.hash !== undefined && refsHash !== undefined && previous.hash !== refsHash) {
-      queryClient.resetQueries({ queryKey: gitKeys.log(taskId) });
+      queryClient.resetQueries({ queryKey: gitKeys.log(key) });
       onResetRef.current?.();
     }
-  }, [refsHash, taskId]);
+  }, [refsHash, key]);
 
   return {
     logQuery,

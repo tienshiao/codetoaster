@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { taskKeys } from "../query-keys";
+import { refetchOnFocusFor, rootApi, rootId, type RepoRoot } from "../repo-root";
 import type { SymbolLookupResult } from "../../lib/symbols/types";
 
-async function fetchSymbol(taskId: string, name: string): Promise<SymbolLookupResult> {
+async function fetchSymbol(root: RepoRoot, name: string): Promise<SymbolLookupResult> {
   const res = await fetch(
-    `/api/tasks/${taskId}/symbols?name=${encodeURIComponent(name)}`,
+    `${rootApi(root)}/symbols?name=${encodeURIComponent(name)}`,
   );
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -13,11 +14,12 @@ async function fetchSymbol(taskId: string, name: string): Promise<SymbolLookupRe
   return res.json();
 }
 
-export function useSymbolLookup(taskId: string, name: string | null) {
+export function useSymbolLookup(root: RepoRoot, name: string | null) {
   return useQuery({
-    queryKey: taskKeys.symbol(taskId, name),
-    queryFn: () => fetchSymbol(taskId, name!),
+    queryKey: taskKeys.symbol(rootId(root), name),
+    queryFn: () => fetchSymbol(root, name!),
     enabled: !!name,
     staleTime: 5000,
+    refetchOnWindowFocus: refetchOnFocusFor(root),
   });
 }

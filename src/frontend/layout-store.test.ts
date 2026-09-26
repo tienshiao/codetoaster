@@ -41,6 +41,7 @@ import {
   saveLayout,
   clearLayout,
   retainLayouts,
+  moveLayout,
 } from "./layout-store";
 import type { TabDescriptor, TabGroup, TaskLayout } from "./layout-store";
 import { SHELL_COMMANDS } from "./keymap";
@@ -1224,11 +1225,44 @@ test("retainLayouts drops layouts for unknown task ids and leaves everything els
   expect(data.get("unrelated")).toBe("untouched");
 });
 
+test("retainLayouts keeps a project root's layout in the valid set and drops one that is not", () => {
+  const data = installStorage();
+  saveLayout("project:web", openTab(createLayout(), file("a.ts")));
+  saveLayout("project:gone", openTab(createLayout(), file("b.ts")));
+
+  retainLayouts(new Set(["task-1", "project:web"]));
+
+  expect(data.has("codetoaster:layout:project:web")).toBe(true);
+  expect(data.has("codetoaster:layout:project:gone")).toBe(false);
+});
+
+test("moveLayout re-homes a stored layout and clears the source", () => {
+  const data = installStorage();
+  saveLayout("project:web", openTab(createLayout(), file("a.ts")));
+
+  moveLayout("project:web", "task-1");
+
+  expect(keyGrid(loadLayout("task-1"))).toEqual([["agent", "file:a.ts"]]);
+  expect(data.has("codetoaster:layout:project:web")).toBe(false);
+  expect(keyGrid(loadLayout("project:web"))).toEqual([["agent"]]);
+});
+
+test("moveLayout is a no-op when nothing is stored under the source", () => {
+  const data = installStorage();
+  saveLayout("task-1", openTab(createLayout(), commit("abc")));
+
+  moveLayout("project:web", "task-1");
+
+  expect(keyGrid(loadLayout("task-1"))).toEqual([["agent", "commit:abc"]]);
+  expect(data.has("codetoaster:layout:project:web")).toBe(false);
+});
+
 test("persistence degrades quietly when storage throws", () => {
   installBrokenStorage();
   expect(() => saveLayout("task-1", createLayout())).not.toThrow();
   expect(() => clearLayout("task-1")).not.toThrow();
   expect(() => retainLayouts(new Set(["task-1"]))).not.toThrow();
+  expect(() => moveLayout("task-1", "task-2")).not.toThrow();
   expect(keyGrid(loadLayout("task-1"))).toEqual([["agent"]]);
 });
 

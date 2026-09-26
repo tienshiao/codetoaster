@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { RepoRoot } from "@/frontend/repo-root";
 import { Eye, WrapText } from "lucide-react";
 import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
@@ -9,7 +10,7 @@ import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-stat
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
 
 interface FilePaneProps {
-  taskId: string;
+  root: RepoRoot;
   /** The `file:<path>` slot. */
   view: ViewRef;
   path: string;
@@ -29,11 +30,11 @@ interface FilePaneProps {
  * file tab it opens, so a pane that carried one would be drawing the same tree
  * once per open file.
  */
-export function FilePane({ taskId, view, path, line, onOpenFile }: FilePaneProps) {
+export function FilePane({ root, view, path, line, onOpenFile }: FilePaneProps) {
   const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const [lineWrap, setLineWrap] = useViewState("file", view, "lineWrap");
   const [markdownPreview, setMarkdownPreview] = useViewState("file", view, "markdownPreview");
-  const { data: content = null, isLoading } = useFileContent(taskId, path);
+  const { data: content = null, isLoading } = useFileContent(root, path);
 
   const isMarkdown = getLanguageFromPath(path)?.name === "Markdown";
   const previewActive = isMarkdown && markdownPreview;
@@ -70,7 +71,7 @@ export function FilePane({ taskId, view, path, line, onOpenFile }: FilePaneProps
       <FileContent
         key={scrollKey}
         filePath={path}
-        taskId={taskId}
+        root={root}
         content={content}
         loading={isLoading}
         lineWrap={lineWrap}
@@ -84,7 +85,7 @@ export function FilePane({ taskId, view, path, line, onOpenFile }: FilePaneProps
         onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}
       />
       <SymbolPopover
-        taskId={taskId}
+        root={root}
         target={symbolTarget}
         onClose={() => setSymbolTarget(null)}
         onGo={(entry) => onOpenFile(entry.path, entry.line)}

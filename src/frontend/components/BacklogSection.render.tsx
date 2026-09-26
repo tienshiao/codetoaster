@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import type { BacklogResponse } from "@/types/backlog";
 import type { ExplorerSection } from "@/frontend/explorer-store";
 import type { TabDescriptor } from "@/frontend/layout-store";
+import { taskRoot } from "@/frontend/repo-root";
 import { BacklogSection } from "./BacklogSection";
 import { useExplorerRail } from "./Explorer";
 
@@ -95,7 +96,7 @@ function mountSection(
 ) {
   const view = mount(
     <BacklogSection
-      taskId="t1"
+      root={taskRoot("t1")}
       backlogTab={backlogTab}
       onBacklogTabChange={onBacklogTabChange}
       open={open}
@@ -241,7 +242,7 @@ function mountSectionWithClient() {
   const view = render(
     <QueryClientProvider client={client}>
       <BacklogSection
-        taskId="t1"
+        root={taskRoot("t1")}
         backlogTab="Open"
         onBacklogTabChange={vi.fn()}
         open={vi.fn()}
@@ -307,7 +308,7 @@ function Rail({
   taskId?: string | null;
   section?: ExplorerSection;
 }) {
-  const items = useExplorerRail(taskId, section);
+  const items = useExplorerRail(taskId == null ? null : taskRoot(taskId), section);
   return <div data-testid="rail">{items.map((i) => i.label).join(",")}</div>;
 }
 

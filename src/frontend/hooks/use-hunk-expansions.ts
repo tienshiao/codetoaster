@@ -5,6 +5,7 @@ import { applySyntaxToLine } from "../utils/wordDiff";
 import { getLanguageFromPath } from "../utils/languageDetection";
 import type { DiffHunk, DiffLine, FileDiff, HunkExpansionState } from "../types/diff";
 import type { LineTokens } from "../../types/highlight";
+import { rootApi, type RepoRoot } from "../repo-root";
 
 const CONTEXT_LINES = 20;
 
@@ -39,11 +40,14 @@ export interface HunkExpansions {
  * diff, even for a single-file tab, since an expansion's key carries its path.
  */
 export function useHunkExpansions(
-  taskId: string,
+  root: RepoRoot,
   kind: "diffAll" | "diffFile",
   view: ViewRef,
   files: FileDiff[] | undefined,
 ): HunkExpansions {
+  // The prefix as a string, so a caller building its root inline does not
+  // rebuild `expandContext` every render.
+  const api = rootApi(root);
   const [hunkExpansions, setHunkExpansions] = useViewState(kind, view, "hunkExpansions");
   /** The range each in-flight request has claimed, keyed
    * `${filePath}:${hunkIndex}:${direction}` — see `expandContext`. */
@@ -155,7 +159,7 @@ export function useHunkExpansions(
 
       try {
         const res = await fetch(
-          `/api/tasks/${taskId}/context?file=${encodeURIComponent(filePath)}&start=${startLine}&end=${endLine}`,
+          `${api}/context?file=${encodeURIComponent(filePath)}&start=${startLine}&end=${endLine}`,
         );
         if (!res.ok) return;
         const data = await res.json();
@@ -225,7 +229,7 @@ export function useHunkExpansions(
         inFlight.current.delete(inFlightKey);
       }
     },
-    [taskId, kind, slotTask, slotKey, setHunkExpansions],
+    [api, kind, slotTask, slotKey, setHunkExpansions],
   );
 
   return { hunkExpansions, expandContext };

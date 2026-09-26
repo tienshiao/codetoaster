@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { rootId, type RepoRoot } from "@/frontend/repo-root";
 import { toast } from "sonner";
 import { generatePrompt } from "./utils/generatePrompt";
 import { useComments } from "./hooks/use-comments";
@@ -25,7 +26,7 @@ import { SymbolPopover, type SymbolTarget } from "./components/SymbolPopover";
 import { Copy, Check, Loader2, RefreshCw, Send } from "lucide-react";
 
 interface DiffViewProps {
-  taskId: string;
+  root: RepoRoot;
   /** False when the prompt could not be delivered — a task whose agent has
    * exited has no terminal to send it to. The review is kept in that case
    * rather than cleared, since the user's comments are the only copy. */
@@ -34,17 +35,36 @@ interface DiffViewProps {
    * opening tabs, so this arrives as a callback rather than being navigated to
    * from inside the diff. */
   onOpenFile: (path: string, line: number) => void;
+  /** Where `onSubmit` puts the review, which is what the confirmation has to
+   * say: a task's agent terminal, or — for a diff opened at the composer,
+   * where there is no agent yet — the prompt being written (TASK-106). */
+  destination?: "terminal" | "prompt";
 }
 
-export function DiffView({ taskId, onSubmit, onOpenFile }: DiffViewProps) {
-  const { data, isLoading: loading, error: queryError, refetch } = useTaskDiff(taskId);
+/** The confirmation's wording, per destination. */
+const SUBMIT_COPY = {
+  terminal: {
+    title: "Send review to terminal?",
+    body: "This will send the following prompt to the terminal's stdin as a single write:",
+    confirm: "Send to Terminal",
+  },
+  prompt: {
+    title: "Add review to prompt?",
+    body: "The following will be appended to the prompt you are writing.",
+    confirm: "Add to prompt",
+  },
+} as const;
+
+export function DiffView({ root, onSubmit, onOpenFile, destination = "terminal" }: DiffViewProps) {
+  const submitCopy = SUBMIT_COPY[destination];
+  const { data, isLoading: loading, error: queryError, refetch } = useTaskDiff(root);
   const files = useMemo(() => data ?? [], [data]);
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
 
   // The whole-working-tree diff's slot. The review it feeds is a separate,
   // task-wide slot: comments left here and on a per-file diff are one review.
-  const view = useMemo(() => viewRef(taskId, "diffAll"), [taskId]);
-  const review = useMemo(() => viewRef(taskId, "review"), [taskId]);
+  const view = useMemo(() => viewRef(rootId(root), "diffAll"), [root]);
+  const review = useMemo(() => viewRef(rootId(root), "review"), [root]);
 
   // Persistence-backed state supplied to the shared diff layout.
   const [selectedFile, setSelectedFile] = useViewState("diffAll", view, "selectedFile");
@@ -53,7 +73,7 @@ export function DiffView({ taskId, onSubmit, onOpenFile }: DiffViewProps) {
   // default stays live across refetches; the toggle buttons set it explicitly.
   const [viewModeOverride, setViewModeOverride] = useViewState("diffAll", view, "viewModeOverride");
   const [treeCollapsedPaths, setTreeCollapsedPaths] = useViewState("diffAll", view, "treeCollapsedPaths");
-  const { hunkExpansions, expandContext } = useHunkExpansions(taskId, "diffAll", view, data);
+  const { hunkExpansions, expandContext } = useHunkExpansions(root, "diffAll", view, data);
 
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [promptText, setPromptText] = useState("");
@@ -164,7 +184,7 @@ export function DiffView({ taskId, onSubmit, onOpenFile }: DiffViewProps) {
     <>
       <DiffLayout
         files={files}
-        taskId={taskId}
+        root={root}
         viewModeOverride={viewModeOverride}
         onViewModeOverride={setViewModeOverride}
         selectedFile={selectedFile}
@@ -197,10 +217,8 @@ export function DiffView({ taskId, onSubmit, onOpenFile }: DiffViewProps) {
       <AlertDialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
         <AlertDialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
           <AlertDialogHeader>
-            <AlertDialogTitle>Send review to terminal?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will send the following prompt to the terminal's stdin as a single write:
-            </AlertDialogDescription>
+            <AlertDialogTitle>{submitCopy.title}</AlertDialogTitle>
+            <AlertDialogDescription>{submitCopy.body}</AlertDialogDescription>
           </AlertDialogHeader>
           <pre className="flex-1 overflow-auto bg-muted rounded-md p-3 text-xs text-foreground whitespace-pre-wrap border border-border">
             {promptText}
@@ -219,15 +237,13 @@ export function DiffView({ taskId, onSubmit, onOpenFile }: DiffViewProps) {
               {copied ? <Check size={14} /> : <Copy size={14} />}
               {copied ? "Copied" : "Copy"}
             </Button>
-            <AlertDialogAction onClick={handleConfirmSubmit}>
-              Send to Terminal
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleConfirmSubmit}>{submitCopy.confirm}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       <SymbolPopover
-        taskId={taskId}
+        root={root}
         target={symbolTarget}
         onClose={() => setSymbolTarget(null)}
         onGo={(entry) => onOpenFile(entry.path, entry.line)}

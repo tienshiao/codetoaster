@@ -1,24 +1,25 @@
 import type { FileDiff } from "../../types/diff";
+import { rootApi, type RepoRoot } from "@/frontend/repo-root";
 
 interface ImageDiffProps {
   file: FileDiff;
-  taskId: string;
+  root: RepoRoot;
   // When present (git commit view) both sides are read from git at these full
   // SHAs (old = first parent, new = the commit). When absent (working-tree diff)
   // the "after" side is the file on disk and "before" comes from HEAD.
   imageRefs?: { old: string; new: string };
 }
 
-export function ImageDiff({ file, taskId, imageRefs }: ImageDiffProps) {
+export function ImageDiff({ file, root, imageRefs }: ImageDiffProps) {
   const { status, oldPath, newPath } = file;
 
   const gitUrl = (path: string, ref: string) =>
-    `/api/tasks/${taskId}/image/git?file=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
+    `${rootApi(root)}/image/git?file=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`;
 
   // "after"/new side.
   const currentImageUrl = imageRefs
     ? gitUrl(newPath, imageRefs.new)
-    : `/api/tasks/${taskId}/image?file=${encodeURIComponent(newPath)}`;
+    : `${rootApi(root)}/image?file=${encodeURIComponent(newPath)}`;
   // "before"/old side.
   const beforeImageUrl = imageRefs
     ? gitUrl(oldPath, imageRefs.old)

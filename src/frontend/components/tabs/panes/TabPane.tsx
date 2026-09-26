@@ -6,6 +6,7 @@ import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
 import { usePathLinkProvider } from "@/frontend/hooks/use-path-links";
 import { PointMenu } from "@/frontend/components/v2/DropdownMenu";
 import { viewRef } from "@/frontend/view-state-store";
+import { rootId, type RepoRoot } from "@/frontend/repo-root";
 import {
   isTerminalTab,
   type OpenOptions,
@@ -20,7 +21,13 @@ import { HistoryPane } from "./HistoryPane";
 import { ShellPane } from "./ShellPane";
 
 export interface TabPaneProps {
-  taskId: string;
+  /** What the pane reads: a task's checkout, or — at the composer (TASK-106) —
+   * a project's directory, which has no terminal to show. */
+  root: RepoRoot;
+  /** What the `agent` tab shows when the root is not a task — the composer.
+   * A project has no agent yet; the tab is where the prompt that will start
+   * one is written. Ignored for a task root. */
+  agentContent?: ReactNode;
   tab: TabState;
   /** Opening a tab is the layout's business, not a pane's: a commit row here
    * and a commit row in the command palette both go through `openTab`. */
@@ -60,7 +67,8 @@ export interface TabPaneProps {
  * scroll offset is this" stop being two questions that can disagree.
  */
 export function TabPane({
-  taskId,
+  root,
+  agentContent,
   tab,
   onOpenTab,
   onSubmitReview,
@@ -69,7 +77,11 @@ export function TabPane({
   searchRequest = 0,
   active = false,
 }: TabPaneProps) {
-  const view = useMemo(() => viewRef(taskId, tab.key), [taskId, tab.key]);
+  // Only a task has terminals; the agent and shell kinds need one, and the
+  // link providers below are a terminal's.
+  const taskId = root.kind === "task" ? root.id : null;
+  const id = rootId(root);
+  const view = useMemo(() => viewRef(id, tab.key), [id, tab.key]);
 
   // A preview open: clicking through a commit graph or a file tree replaces the
   // italic tab in place rather than leaving thirty behind. A double-click on the
@@ -94,8 +106,9 @@ export function TabPane({
   // above the switch, because the switch returns a different pane per
   // descriptor and a hook cannot live behind that. The first two are undefined
   // when they have nothing to match against; the third needs no index and is
-  // always there. Memoised on the factories, whose identities change only when
-  // one appears or goes, so the grid is not re-registered per render.
+  // there for every task. All three are undefined for a project root, which
+  // has no terminal. Memoised on the factories, whose identities change only
+  // when one appears or goes, so the grid is not re-registered per render.
   const backlogLinks = useBacklogLinkProvider(taskId, visible, onOpenTab);
   const pathLinks = usePathLinkProvider(
     taskId,
@@ -125,12 +138,21 @@ export function TabPane({
   // textarea has focus — is typed into that PTY instead. The wrapper is
   // focusable but not tabbable, so the Tab key's order is what it was.
   // Unused by the terminal kinds, which pass the pulse to their grid.
+  //
+  // A terminal kind with no task behind it — the composer in a project root's
+  // agent tab — has no grid to hand the pulse to, so the frame takes it: a
+  // chord onto that tab lands the caret on the composer's side of the screen
+  // rather than leaving it wherever it was.
   const frame = useRef<HTMLDivElement>(null);
-  useFocusRequest(isTerminalTab(tab.descriptor) ? 0 : focusRequest, frame);
+  const terminal = isTerminalTab(tab.descriptor) && taskId !== null;
+  useFocusRequest(terminal ? 0 : focusRequest, frame);
 
   const { descriptor } = tab;
   switch (descriptor.kind) {
     case "agent":
+      // A project root's agent tab is the composer (TASK-106): there is no
+      // agent until the prompt written there starts one.
+      if (taskId === null) return <Frame ref={frame}>{agentContent ?? null}</Frame>;
       return (
         <>
           <AgentPane
@@ -148,7 +170,9 @@ export function TabPane({
     case "shell":
       // A second PTY in the task, spawned at its cwd (§3). Named by the
       // descriptor rather than by the task, since a task has one agent and
-      // however many of these.
+      // however many of these. Cannot arise without a task: the `+` that opens
+      // one is withheld from a project root.
+      if (taskId === null) return null;
       return (
         <>
           <ShellPane
@@ -171,14 +195,20 @@ export function TabPane({
       // two props.
       return (
         <Frame ref={frame}>
-          <DiffView taskId={taskId} onSubmit={onSubmitReview} onOpenFile={openFile} />
+          <DiffView
+            root={root}
+            onSubmit={onSubmitReview}
+            onOpenFile={openFile}
+            // At the composer a review is appended to the prompt, not sent.
+            destination={taskId ? "terminal" : "prompt"}
+          />
         </Frame>
       );
 
     case "diff":
       return (
         <Frame ref={frame}>
-          <DiffFilePane taskId={taskId} view={view} path={descriptor.path} onOpenFile={openFile} />
+          <DiffFilePane root={root} view={view} path={descriptor.path} onOpenFile={openFile} />
         </Frame>
       );
 
@@ -186,7 +216,7 @@ export function TabPane({
       return (
         <Frame ref={frame}>
           <FilePane
-            taskId={taskId}
+            root={root}
             view={view}
             path={descriptor.path}
             line={descriptor.line}
@@ -198,7 +228,7 @@ export function TabPane({
     case "commit":
       return (
         <Frame ref={frame}>
-          <CommitPane taskId={taskId} view={view} sha={descriptor.sha} onOpenCommit={openCommit} />
+          <CommitPane root={root} view={view} sha={descriptor.sha} onOpenCommit={openCommit} />
         </Frame>
       );
 
@@ -206,7 +236,7 @@ export function TabPane({
       return (
         <Frame ref={frame}>
           <HistoryPane
-            taskId={taskId}
+            root={root}
             view={view}
             onOpenCommit={openCommit}
             onOpenChanges={openChanges}

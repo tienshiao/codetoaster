@@ -9,6 +9,7 @@ import {
   requestComposerProject,
   resetComposerDraft,
 } from "../composer-draft-store";
+import { clearLayout, createLayout, loadLayout, openTab, saveLayout } from "../layout-store";
 import type { CreateTaskOptions, TaskResult } from "../TaskContext";
 import type { ProjectInfo, TaskInfo } from "../../lib/xtmux/types";
 
@@ -167,6 +168,20 @@ test("⌘⏎ starts the task and opens its agent tab", async () => {
   // `request` not to toast them a second time (TASK-57).
   expect(stubs.createTask.mock.calls[0]![1]).toEqual({ inline: true });
   await waitFor(() => expect(stubs.openTask).toHaveBeenCalledWith("task-1", { tab: "agent" }));
+});
+
+test("the tabs opened from the project while writing become the new task's (TASK-106)", async () => {
+  saveLayout("project:general", openTab(createLayout(), { kind: "file", path: "a.ts" }));
+  clearLayout("task-1");
+  mount(<Composer />);
+  submitKey(type("ship it"));
+
+  await waitFor(() => expect(stubs.openTask).toHaveBeenCalledWith("task-1", { tab: "agent" }));
+  const keys = (id: string) => loadLayout(id).groups.flatMap((g) => g.tabs.map((t) => t.key));
+  expect(keys("task-1")).toEqual(["agent", "file:a.ts"]);
+  // The project's composer starts fresh for the next task.
+  expect(keys("project:general")).toEqual(["agent"]);
+  clearLayout("task-1");
 });
 
 describe("the worktree options", () => {

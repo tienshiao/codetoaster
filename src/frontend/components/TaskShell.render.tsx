@@ -35,6 +35,7 @@ vi.mock("@/frontend/TaskContext", () => ({
   useTasks: () => ({
     tasks: stubs.tasks,
     loaded: true,
+    projects: [],
     openShell: stubs.openShell,
     closeShell: stubs.closeShell,
     setViewedTask: stubs.setViewedTask,
@@ -49,6 +50,7 @@ vi.mock("@/frontend/TaskContext", () => ({
 vi.mock("sonner", () => ({ toast: Object.assign(stubs.toast, { error: vi.fn() }) }));
 vi.mock("@/frontend/PtyContext", () => ({ usePty: () => ({ sendInput: vi.fn() }) }));
 vi.mock("@/frontend/hooks/use-task-nav", () => ({
+  COMPOSER_PROMPT_ID: "composer-prompt",
   useOpenTask: () => vi.fn(),
   useOpenComposer: () => vi.fn(),
 }));

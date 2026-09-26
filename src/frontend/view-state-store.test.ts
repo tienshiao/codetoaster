@@ -295,6 +295,16 @@ test("retainTaskViewStates forgets tasks no longer in the list", () => {
   resetViewStates("task-gone");
 });
 
+test("retainTaskViewStates keeps a project root in the valid set and drops one that is not", () => {
+  setViewField("prefs", viewRef("project:web", "prefs"), "treeLineWrap", true);
+  setViewField("prefs", viewRef("project:gone", "prefs"), "treeLineWrap", true);
+  retainTaskViewStates(new Set(["task-alive", "project:web"]));
+  expect(getViewState("prefs", viewRef("project:web", "prefs")).treeLineWrap).toBe(true);
+  expect(getViewState("prefs", viewRef("project:gone", "prefs")).treeLineWrap).toBe(false);
+  resetViewStates("project:web");
+  resetViewStates("project:gone");
+});
+
 // ── persistence ─────────────────────────────────────────────────────────────
 
 test("flushViewStates writes before the debounce elapses", () => {

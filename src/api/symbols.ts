@@ -1,17 +1,13 @@
-import { resolveTaskRoot } from "./utils";
+import { rootRoutes } from "./utils";
 import { lookupSymbol, searchSymbolNames } from "../lib/symbols/store";
 
 export const symbolRoutes = {
   // Fuzzy/prefix search over symbol names (the palette "Find Symbol…" flow).
   // Registered before the exact route below; the extra path segment keeps them
   // from colliding.
-  "/api/tasks/:id/symbols/search": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("symbols/search", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const q = new URL(req.url).searchParams.get("q") ?? "";
         const search = await searchSymbolNames(dir, q);
         return Response.json(search);
@@ -22,16 +18,12 @@ export const symbolRoutes = {
         );
       }
     },
-  },
+  }),
 
   // Exact-name lookup (the click-to-go-to-definition popover).
-  "/api/tasks/:id/symbols": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("symbols", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const name = new URL(req.url).searchParams.get("name");
         if (!name) {
           return Response.json({ error: "Missing name parameter" }, { status: 400 });
@@ -46,5 +38,5 @@ export const symbolRoutes = {
         );
       }
     },
-  },
-} as const;
+  }),
+};

@@ -1,7 +1,13 @@
-import * as fs from "node:fs";
-import { resolveTaskRoot, getImageMimeType, IMAGE_MIME_TYPES, listGitFiles, safePath, buildFileListing } from "./utils";
-import { taskManager } from "../lib/tasks/manager";
-import { expandTilde } from "../lib/tilde";
+import {
+  rootRoutes,
+  cachedPromise,
+  getImageMimeType,
+  IMAGE_MIME_TYPES,
+  listGitFiles,
+  safePath,
+  buildFileListing,
+  type CachedPromise,
+} from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
 import { extractFrontmatter } from "../lib/frontmatter";
 import type { FileTokens } from "../types/highlight";
@@ -50,39 +56,23 @@ const FILE_LIST_TTL_MS = 3000;
  *
  * Here rather than in `listGitFiles`, deliberately: the diff routes and the
  * symbol store ask it about a tree they have just changed and need the real
- * answer.
- *
- * The *promise* is cached, not the array, so the keystrokes that arrive while
- * one spawn is in flight share it instead of starting their own. A rejection —
- * `dir` is not a repository, most often — is evicted, or the first failure
- * would be the answer for three seconds after it stopped being true.
+ * answer. The caching itself is `cachedPromise`'s.
  */
-const fileListCache = new Map<string, { at: number; files: Promise<string[]> }>();
+const fileListCache = new Map<string, CachedPromise<string[]>>();
 
 function cachedGitFiles(dir: string): Promise<string[]> {
-  const hit = fileListCache.get(dir);
-  if (hit && Date.now() - hit.at < FILE_LIST_TTL_MS) return hit.files;
-
-  const files = listGitFiles(dir);
-  fileListCache.set(dir, { at: Date.now(), files });
-  files.catch(() => {
-    // Only if it is still ours: a later request may already have replaced it.
-    if (fileListCache.get(dir)?.files === files) fileListCache.delete(dir);
-  });
-  return files;
+  return cachedPromise(fileListCache, dir, FILE_LIST_TTL_MS, () => listGitFiles(dir));
 }
 
 /**
  * The tracked files of `dir` that fuzzy-match `q`, best first.
  *
- * Shared by the task-scoped route and the project-scoped one, which differ only
- * in how they find the directory: the matcher, the ceiling and the shape of a
- * hit are the same question asked from two places, and a composer whose
- * suggestions ranked differently from the palette's would be the drift worth
- * avoiding.
+ * One matcher for the palette (task scope) and the composer (project scope):
+ * a composer whose suggestions ranked differently from the palette's would be
+ * the drift worth avoiding.
  *
- * Throws when `dir` is not a repository — `listGitFiles` does — and each caller
- * says so in its own words.
+ * Throws when `dir` is not a repository — `listGitFiles` does — which the
+ * route's resolved root makes unlikely but not impossible.
  */
 export async function searchFiles(dir: string, q: string): Promise<FileSearchResult[]> {
   const filePaths = await cachedGitFiles(dir);
@@ -199,13 +189,9 @@ export async function serializeFileContent(buffer: ArrayBuffer, filePath: string
 }
 
 export const fileRoutes = {
-  "/api/tasks/:id/files": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("files", {
+    async GET({ repoRoot: dir }) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const filePaths = await listGitFiles(dir);
 
         // Shared directory-synthesis derivation; layer the per-file stat size on
@@ -227,19 +213,28 @@ export const fileRoutes = {
         );
       }
     },
-  },
+  }),
 
-  "/api/tasks/:id/files/search": {
-    async GET(req: Request & { params: { id: string } }) {
+  /**
+   * Fuzzy file search, for the palette (task) and the composer's `@`
+   * completion (project — there is no task while the prompt is being written).
+   *
+   * The root is resolved before the query is looked at, so an id that cannot
+   * be resolved is its 404/400 whatever was typed: those are answers about the
+   * task or project, not about the query, and the composer's hook is what
+   * decides they are not worth showing the user.
+   */
+  ...rootRoutes("files/search", {
+    async GET(root, req, scope) {
       try {
-        const url = new URL(req.url);
-        const q = url.searchParams.get("q") || "";
+        const q = new URL(req.url).searchParams.get("q") || "";
         if (!q) return Response.json({ results: [] });
-
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
+        // Relative to where the reader will use them. The composer writes a
+        // project hit into a prompt for an agent that starts in the project's
+        // directory (or the matching subdirectory of its worktree, TASK-65),
+        // so a project searches from its `cwd`; the palette opens a task hit
+        // as a file tab, and those are repo-relative.
+        const dir = scope === "projects" ? root.cwd : root.repoRoot;
         return Response.json({ results: await searchFiles(dir, q) });
       } catch (error) {
         return Response.json(
@@ -248,68 +243,11 @@ export const fileRoutes = {
         );
       }
     },
-  },
+  }),
 
-  /**
-   * The same search against a *project*, for the composer's `@` completion
-   * (TASK-100): there is no task yet when the prompt is being written, so the
-   * task route's `resolveTaskRoot` has nothing to resolve.
-   *
-   * A project with no directory ("General") and one whose directory is not a
-   * repository are both 400s rather than empty lists, because they are answers
-   * about the project rather than about the query — the composer's hook is what
-   * decides they are not worth showing the user.
-   */
-  "/api/projects/:id/files/search": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("file", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const project = taskManager.getProjects().find((p) => p.id === req.params.id);
-        if (!project) {
-          return Response.json({ error: `Unknown project "${req.params.id}"` }, { status: 404 });
-        }
-        if (!project.initialPath) {
-          return Response.json({ error: "Project has no directory" }, { status: 400 });
-        }
-
-        const url = new URL(req.url);
-        const q = url.searchParams.get("q") || "";
-        if (!q) return Response.json({ results: [] });
-
-        const dir = expandTilde(project.initialPath);
-        let results: FileSearchResult[];
-        try {
-          results = await searchFiles(dir, q);
-        } catch {
-          // `git ls-files` fails the same way for a directory that is not a
-          // repository and one that is not there at all, and the second is
-          // worth its own words: a project whose path has been moved or
-          // deleted is a thing the user can fix, and "not a git repository"
-          // sends them looking for the wrong problem.
-          if (!fs.existsSync(dir)) {
-            return Response.json({ error: "Project directory does not exist" }, { status: 400 });
-          }
-          // Otherwise the directory is there and git had nothing to say about
-          // it — said in the same words `resolveTaskRoot` uses for a task in
-          // the same position.
-          return Response.json({ error: "Not a git repository" }, { status: 400 });
-        }
-        return Response.json({ results });
-      } catch (error) {
-        return Response.json(
-          { error: "Failed to search files", message: error instanceof Error ? error.message : String(error) },
-          { status: 500 }
-        );
-      }
-    },
-  },
-
-  "/api/tasks/:id/file": {
-    async GET(req: Request & { params: { id: string } }) {
-      try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const url = new URL(req.url);
         const filePath = url.searchParams.get("file");
         if (!filePath) {
@@ -346,15 +284,11 @@ export const fileRoutes = {
         );
       }
     },
-  },
+  }),
 
-  "/api/tasks/:id/image": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("image", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const url = new URL(req.url);
         const filePath = url.searchParams.get("file");
         if (!filePath) {
@@ -382,15 +316,11 @@ export const fileRoutes = {
         );
       }
     },
-  },
+  }),
 
-  "/api/tasks/:id/image/git": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("image/git", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const url = new URL(req.url);
         const filePath = url.searchParams.get("file");
         const ref = url.searchParams.get("ref") || "HEAD";
@@ -417,5 +347,5 @@ export const fileRoutes = {
         );
       }
     },
-  },
-} as const;
+  }),
+};

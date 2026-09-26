@@ -2,13 +2,15 @@ import { useMemo, useRef } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalLinkProviderFactory } from "../Terminal";
 import type { OpenOptions, TabDescriptor } from "../layout-store";
+import { taskRoot } from "../repo-root";
 import { createBacklogLinkProvider, indexBacklog } from "../utils/backlog-links";
 import { useBacklog } from "./use-backlog";
 
 /**
  * The link provider a task's terminals hand to `XTerminal` (TASK-86), or
  * undefined outside a Backlog.md repository — where nothing is registered at
- * all (AC #3).
+ * all (AC #3). Also undefined for a null `taskId`: a pane read from a project
+ * rather than a task (a project root at the composer, TASK-106) has no terminal.
  *
  * The poll follows visibility rather than mounting: a terminal tab stays
  * mounted while another tab is showing, so an invisible one would otherwise go
@@ -18,11 +20,11 @@ import { useBacklog } from "./use-backlog";
  * refetches.
  */
 export function useBacklogLinkProvider(
-  taskId: string,
+  taskId: string | null,
   visible: boolean,
   onOpenTab: (descriptor: TabDescriptor, options?: OpenOptions) => void,
 ): TerminalLinkProviderFactory | undefined {
-  const { data } = useBacklog(taskId, { refetchInterval: visible ? 15_000 : false });
+  const { data } = useBacklog(taskId == null ? null : taskRoot(taskId), { refetchInterval: visible ? 15_000 : false });
 
   const index = useMemo(() => indexBacklog(data), [data]);
   // Both read through refs, and for the same reason: the factory's identity is

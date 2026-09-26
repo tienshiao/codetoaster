@@ -1,4 +1,5 @@
 import { memo, useMemo, useState, useCallback, useEffect } from "react";
+import { rootApi, type RepoRoot } from "@/frontend/repo-root";
 import { Loader2, Copy, Check, WrapText } from "lucide-react";
 import { useGitCommit } from "../../hooks/use-git-commit";
 import { useGitTree, useGitFile } from "../../hooks/use-git-tree";
@@ -19,7 +20,7 @@ import type { GitCommitMeta, GitViewMode } from "../../types/git";
 
 interface CommitDetailProps {
   /** API identity: drives the git query endpoints, not the state slots. */
-  taskId: string;
+  root: RepoRoot;
   /** The `commit:<sha>` slot this detail's state lives in. */
   view: ViewRef;
   sha: string | undefined;
@@ -32,20 +33,20 @@ interface CommitDetailProps {
 }
 
 // Memoized so toggling one file's expansion re-renders only that row. Props are
-// stable: `file`/`taskId`/`imageRefs` are referentially stable per commit and
+// stable: `file`/`root`/`imageRefs` are referentially stable per commit and
 // `onToggle` is a stable callback taking the path, so `isExpanded` is the only
 // prop that changes — and only for the toggled row.
 const CommitFileRow = memo(function CommitFileRow({
   file,
   isExpanded,
   onToggle,
-  taskId,
+  root,
   imageRefs,
 }: {
   file: FileDiff;
   isExpanded: boolean;
   onToggle: (path: string) => void;
-  taskId: string;
+  root: RepoRoot;
   imageRefs: { old: string; new: string };
 }) {
   const handleToggle = useCallback(() => onToggle(file.newPath), [onToggle, file.newPath]);
@@ -54,7 +55,7 @@ const CommitFileRow = memo(function CommitFileRow({
       file={file}
       isExpanded={isExpanded}
       onToggle={handleToggle}
-      taskId={taskId}
+      root={root}
       imageRefs={imageRefs}
     />
   );
@@ -111,7 +112,7 @@ function ModeBar({ mode, onSelectMode }: { mode: GitViewMode; onSelectMode: (mod
 function CommitMode({
   meta,
   files,
-  taskId,
+  root,
   view,
   imageRefs,
   onSelectCommit,
@@ -119,7 +120,7 @@ function CommitMode({
 }: {
   meta: GitCommitMeta;
   files: FileDiff[];
-  taskId: string;
+  root: RepoRoot;
   view: ViewRef;
   imageRefs: { old: string; new: string };
   onSelectCommit: (sha: string) => void;
@@ -201,7 +202,7 @@ function CommitMode({
               file={file}
               isExpanded={expandedPaths.has(file.newPath)}
               onToggle={toggleFile}
-              taskId={taskId}
+              root={root}
               imageRefs={imageRefs}
             />
           ))
@@ -216,12 +217,12 @@ function CommitMode({
 // never touches the diff tab's — the instance is keyed by the full hash
 // upstream, so the mount-time bind is always for the commit on screen.
 function ChangesMode({
-  taskId,
+  root,
   view,
   files,
   imageRefs,
 }: {
-  taskId: string;
+  root: RepoRoot;
   view: ViewRef;
   files: FileDiff[];
   imageRefs: { old: string; new: string };
@@ -244,7 +245,7 @@ function ChangesMode({
   return (
     <DiffLayout
       files={files}
-      taskId={taskId}
+      root={root}
       viewModeOverride={viewModeOverride}
       onViewModeOverride={setViewModeOverride}
       selectedFile={selectedFile}
@@ -263,20 +264,20 @@ function ChangesMode({
 // file view's layout, out of the commit's own slot so it never touches the file
 // view's expansion set.
 function TreeMode({
-  taskId,
+  root,
   view,
   sha,
   file,
   onSelectFile,
 }: {
-  taskId: string;
+  root: RepoRoot;
   view: ViewRef;
   // Full 40-char hash — resolved from commit meta so query keys are stable.
   sha: string;
   file: string | undefined;
   onSelectFile: (path: string | null) => void;
 }) {
-  const { data: treeData, isLoading, error } = useGitTree(taskId, sha);
+  const { data: treeData, isLoading, error } = useGitTree(root, sha);
   // Expanded folders are per-commit; word wrap is a task-wide Tree-mode
   // preference, so it must not be re-answered for every commit opened.
   const [expandedPaths, setExpandedPaths] = useViewState("commit", view, "treeExpandedPaths");
@@ -288,7 +289,7 @@ function TreeMode({
     data: fileContent = null,
     isLoading: contentLoading,
     error: fileError,
-  } = useGitFile(taskId, sha, selectedFile);
+  } = useGitFile(root, sha, selectedFile);
 
   // selectCommit deliberately preserves ?file= so the same file stays selected
   // across commits when it exists; this effect handles the miss. Once the tree
@@ -328,7 +329,7 @@ function TreeMode({
   }
 
   const imageUrl = selectedFile
-    ? `/api/tasks/${taskId}/image/git?ref=${sha}&file=${encodeURIComponent(selectedFile)}`
+    ? `${rootApi(root)}/image/git?ref=${sha}&file=${encodeURIComponent(selectedFile)}`
     : undefined;
 
   return (
@@ -378,7 +379,7 @@ function TreeMode({
           <FileContent
             key={selectedFile || ""}
             filePath={selectedFile || ""}
-            taskId={taskId}
+            root={root}
             content={fileContent}
             loading={contentLoading}
             lineWrap={lineWrap}
@@ -390,10 +391,10 @@ function TreeMode({
   );
 }
 
-export function CommitDetail({ taskId, view, sha, mode, onSelectMode, onSelectCommit, file, onSelectFile, refSets }: CommitDetailProps) {
+export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectCommit, file, onSelectFile, refSets }: CommitDetailProps) {
   // Tree mode renders no diff, so skip the token fetch until a diff-rendering
   // mode needs it.
-  const { data, isLoading, error } = useGitCommit(taskId, sha, mode !== "tree");
+  const { data, isLoading, error } = useGitCommit(root, sha, mode !== "tree");
 
   const meta = data?.meta;
   const files = data?.files;
@@ -437,7 +438,7 @@ export function CommitDetail({ taskId, view, sha, mode, onSelectMode, onSelectCo
       return (
         <TreeMode
           key={meta.hash}
-          taskId={taskId}
+          root={root}
           view={view}
           sha={meta.hash}
           file={file}
@@ -448,7 +449,7 @@ export function CommitDetail({ taskId, view, sha, mode, onSelectMode, onSelectCo
 
     if (mode === "changes") {
       return (
-        <ChangesMode key={meta.hash} taskId={taskId} view={view} files={files} imageRefs={imageRefs} />
+        <ChangesMode key={meta.hash} root={root} view={view} files={files} imageRefs={imageRefs} />
       );
     }
 
@@ -457,7 +458,7 @@ export function CommitDetail({ taskId, view, sha, mode, onSelectMode, onSelectCo
         key={meta.hash}
         meta={meta}
         files={files}
-        taskId={taskId}
+        root={root}
         view={view}
         imageRefs={imageRefs}
         onSelectCommit={onSelectCommit}

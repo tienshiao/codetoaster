@@ -10,16 +10,17 @@ import { WipNotice } from "@/frontend/components/WipNotice";
 import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { CommandPaletteHost } from "@/frontend/components/CommandPalette";
+import { useComposerProject } from "@/frontend/hooks/use-composer-project";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { useProfiles } from "@/frontend/hooks/use-profiles";
 // From `profile.ts`, which imports nothing — the registry beside it reads the
 // daemon's configuration off disk.
 import { DEFAULT_PROFILE } from "@/lib/agent/profile";
-import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
+import { COMPOSER_PROMPT_ID, useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { useShellKeymap } from "@/frontend/hooks/use-shell-keymap";
 import { pathLabel } from "@/frontend/utils/path-label";
-import { TabArea, TabPane, useTaskLayout } from "@/frontend/components/tabs";
+import { TabArea, TabPane, presentComposerTab, useTaskLayout } from "@/frontend/components/tabs";
 import {
   activeTab,
   allTabs,
@@ -32,6 +33,9 @@ import {
   type TabState,
   type TaskLayout,
 } from "@/frontend/layout-store";
+import { projectRoot, rootId, taskRoot, type RepoRoot } from "@/frontend/repo-root";
+import { patchComposerDraft, getComposerDraft } from "@/frontend/composer-draft-store";
+import type { ExplorerSection } from "@/frontend/explorer-store";
 
 export interface TaskShellProps {
   /** The task the URL names, or null at `/`. */
@@ -44,7 +48,10 @@ export interface TaskShellProps {
    * layout: leaving `?tab=` in the URL would reopen a tab the user then closed,
    * on the next render that touched the layout. */
   onTabEnsured?: () => void;
-  /** The main area when there is no task — the composer at `/` (§7.5). */
+  /** The main area when there is no task — the composer at `/` (§7.5). With
+   * a browsable project chosen it is what that project's agent tab shows, so
+   * whatever the Explorer opens sits beside it as ordinary tabs (TASK-106);
+   * without one there is no layout and it fills the main area on its own. */
   children?: ReactNode;
 }
 
@@ -101,23 +108,50 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
    * the same rule. */
   const env = useMemo<LayoutEnv>(() => ({ singleGroup: isMobile }), [isMobile]);
   const explorerPanel = useExplorerPanel();
-  const explorerSections = useExplorerRail(taskId, explorerPanel.section);
+  // What the Explorer and the read-only panes read (TASK-106). A task's
+  // checkout when one is selected; at the composer, the project the draft is
+  // for, so the panel browses the repository the prompt is about to be sent
+  // to — as long as that project has a directory to browse. Memoised on the
+  // two facts it is made of: the sections and panes key their view slots and
+  // memos on its identity. The project is consulted only without a task, so a
+  // project-list change does not rebuild a task's root.
+  const composerProject = useComposerProject();
+  const browsableProject = taskId ? null : composerProject?.initialPath ? composerProject : null;
+  const browsableProjectId = browsableProject?.id;
+  const root = useMemo<RepoRoot | null>(
+    () =>
+      taskId ? taskRoot(taskId) : browsableProjectId ? projectRoot(browsableProjectId) : null,
+    [taskId, browsableProjectId],
+  );
+  const explorerPlaceholder =
+    !taskId && composerProject && !browsableProject
+      ? `${composerProject.name} has no directory to browse.`
+      : "Pick a task to see its files.";
+  const explorerSections = useExplorerRail(root, explorerPanel.section);
   // The Explorer's section is per device and the Backlog one only exists for a
   // Backlog.md repository (TASK-85), so a user who left the panel on Backlog
   // and moved to a task without one would open onto a section whose rail item
   // is gone — nothing to click back out of.
   //
   // Read off the rail rather than re-derived from the same query: two
-  // predicates over one `detected` disagreed about the undecided case, so at
-  // the composer — where the query is disabled and so never answers `false` —
-  // the rail dropped the item while this went on showing the section, and the
+  // predicates over one `detected` disagreed about the undecided case, so with
+  // no root — where the query is disabled and so never answers `false` — the
+  // rail dropped the item while this went on showing the section, and the
   // panel was titled Backlog with nothing under it to close.
+  //
+  // The fallback is the first item offered rather than a fixed Changes: a
+  // project browsed from the composer with a clean tree has no Changes item
+  // (TASK-106), and falling back to it would strand the panel the same way.
   const explorerSection = explorerSections.some((s) => s.label === explorerPanel.section)
     ? explorerPanel.section
-    : "Changes";
-  // A real layout for the selected task, persisted per task id, and held to
-  // the device's policy on both sides of the store.
-  const { layout, setLayout, editLayout } = useTaskLayout(taskId, env);
+    : ((explorerSections[0]?.label as ExplorerSection | undefined) ?? "Changes");
+  // A real layout for the selected root, persisted per root id, and held to
+  // the device's policy on both sides of the store. A task's is keyed by its
+  // id as it always was; the composer's project gets its own
+  // (`project:<id>`), whose agent tab is the composer, so moving the draft to
+  // another project swaps layouts exactly as moving between tasks does
+  // (TASK-106). No root, no layout: the composer then stands alone.
+  const { layout, setLayout, editLayout } = useTaskLayout(root ? rootId(root) : null, env);
   // Wrapped rather than passed straight through: picking a row or pressing a
   // `+` is the sheet's job done, and on a phone the sheet is what the
   // destination is behind.
@@ -510,6 +544,23 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
     [canDeliver, ptyId, sendInput, layout, reduceLayout],
   );
 
+  /** A review finished in a diff opened at the composer (TASK-106). There is
+   * no agent yet to send it to, so it goes into the prompt the user is
+   * writing — appended, never over what is there — and the composer's tab
+   * comes to the front so the caret can follow it. The focus waits a frame:
+   * the tab is hidden until the layout write commits, and a hidden textarea
+   * cannot take the caret. */
+  const submitReviewToComposer = useCallback(
+    (text: string): boolean => {
+      const existing = getComposerDraft().prompt;
+      patchComposerDraft({ prompt: existing.trim() ? `${existing.trimEnd()}\n\n${text}` : text });
+      reduceLayout((current) => openTab(current, { kind: "agent" }));
+      requestAnimationFrame(() => document.getElementById(COMPOSER_PROMPT_ID)?.focus());
+      return true;
+    },
+    [reduceLayout],
+  );
+
   return (
     <>
       <AppShell
@@ -540,11 +591,15 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                   onLayoutChange={applyLayout}
                   onNewShell={taskId ? handleNewShell : undefined}
                   onCloseTab={handleCloseTab}
-                  onSearchTab={(tab) => requestSearch(tab.id)}
+                  // A project root's only terminal-kind tab is the composer,
+                  // which has nothing to search.
+                  onSearchTab={taskId ? (tab) => requestSearch(tab.id) : undefined}
+                  // At the composer the agent tab is the composer, and says so.
+                  presentTab={taskId ? undefined : presentComposerTab}
                   env={env}
                   leading={leading}
                   renderPane={(tab, group, visible) => (
-                    // Keyed by task *and* tab. The tab key alone was not enough:
+                    // Keyed by root *and* tab. The tab key alone was not enough:
                     // every task's agent tab keys as "agent", so switching tasks
                     // handed the same React position the same key and the same
                     // component type, and the previous task's terminal — grid,
@@ -555,12 +610,22 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                     // from one file tab to another without a key would draw the
                     // second file's contents under the first file's scroll offset
                     // and toggles, and write them back to the first file's slot.
+                    //
+                    // A project root's panes key the same way under its root
+                    // id (TASK-106), so the composer's tabs and a task's never
+                    // share a component either.
                     <TabPane
-                      key={`${taskId}:${tab.key}`}
-                      taskId={taskId!}
+                      key={`${rootId(root!)}:${tab.key}`}
+                      root={root!}
+                      // What a project root's agent tab shows: the composer.
+                      agentContent={children}
                       tab={tab}
                       onOpenTab={handleOpenTab}
-                      onSubmitReview={handleSubmitReview}
+                      // No agent to deliver a review to at the composer, so it
+                      // lands in the prompt being written instead.
+                      onSubmitReview={
+                        root!.kind === "task" ? handleSubmitReview : submitReviewToComposer
+                      }
                       visible={visible}
                       // Whether this pane's group is the one the leader chords
                       // act on — what a terminal's search bar answers ⌘G for
@@ -648,7 +713,8 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         onExplorerOpenChange={changeExplorerOpen}
         explorer={
           <Explorer
-            taskId={taskId}
+            root={root}
+            placeholder={explorerPlaceholder}
             section={explorerSection}
             backlogTab={explorerPanel.backlogTab}
             onBacklogTabChange={explorerPanel.setBacklogTab}
@@ -658,6 +724,8 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         // No "Commit" button beside it: every route under `src/api/git.ts` is a
         // read-only GET, so there is nothing behind one.
         explorerFooter={
+          // A project root at the composer has a layout too (TASK-106), so
+          // "Review all" opens its working-tree diff as a tab there as well.
           explorerSection === "Changes" && layout ? (
             <Button
               variant="outline"
@@ -669,6 +737,8 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
           ) : undefined
         }
       >
+        {/* Only drawn when there is no tab area — no root to hold a layout.
+            With one, `children` is the project's agent tab instead. */}
         {children}
       </AppShell>
       {/* A sibling of the shell, not one of its children: `AppShell` renders
@@ -691,6 +761,8 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
         taskId={taskId}
+        root={root}
+        presentTab={taskId ? undefined : presentComposerTab}
         layout={layout}
         env={env}
         onLayoutChange={applyLayout}

@@ -40,6 +40,7 @@ import {
   setGroupFlex,
   splitTab,
   type LayoutEnv,
+  type TabDescriptor,
   type TabGroup,
   type TabState,
   type TaskLayout,
@@ -50,7 +51,7 @@ import type { DropdownMenuItem } from "@/frontend/components/v2/DropdownMenu";
 import { Tab, TabStrip, type TabProps } from "@/frontend/components/v2/TabStrip";
 import { cn } from "@/frontend/lib/utils";
 import { dropIndexAt, moveIndexFor, resizeFlex, type TabBox } from "./drag";
-import { presentTab } from "./tab-labels";
+import { presentTab as defaultPresentTab, type TabPresentation } from "./tab-labels";
 
 /**
  * The tabbed main area (§7.1, §7.2): a flat row of groups, each with its own
@@ -102,6 +103,10 @@ export interface TabAreaProps {
   /** The shell's device policy — see `LayoutEnv`. Absent is a desktop: every
    * rule at its default. */
   env?: LayoutEnv;
+  /** How a descriptor reads in the strip and the drag proxy. Defaults to
+   * `presentTab`; the composer screen passes `presentComposerTab`, whose agent
+   * tab is the composer rather than a terminal (TASK-106). */
+  presentTab?: (descriptor: TabDescriptor) => TabPresentation;
   className?: string;
 }
 
@@ -162,6 +167,7 @@ export function TabArea({
   onCloseTab,
   onSearchTab,
   env,
+  presentTab = defaultPresentTab,
   className,
 }: TabAreaProps) {
   const rowRef = useRef<HTMLDivElement>(null);

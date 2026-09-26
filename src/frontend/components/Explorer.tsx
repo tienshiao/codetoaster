@@ -29,6 +29,7 @@ import {
   type ExplorerSection,
 } from "@/frontend/explorer-store";
 import type { OpenOptions, TabDescriptor } from "@/frontend/layout-store";
+import { rootId, type RepoRoot } from "@/frontend/repo-root";
 import { getViewState, setViewField, viewRef } from "@/frontend/view-state-store";
 
 /**
@@ -44,6 +45,10 @@ import { getViewState, setViewField, viewRef } from "@/frontend/view-state-store
  * the only thing this file adds to them is preview/pin and a descriptor. And
  * a selection is a *tab*, not a pane below the tree: that is what makes two
  * files, or a commit and the working tree, comparable side by side.
+ *
+ * It reads a `RepoRoot`: a task's checkout, or at the composer — before there
+ * is a task — the chosen project's directory (TASK-106). The sections neither
+ * know nor care which; the prefix and the cache identity come from the root.
  */
 
 const SECTION_ICONS: Record<ExplorerSection, LucideIcon> = {
@@ -55,7 +60,7 @@ const SECTION_ICONS: Record<ExplorerSection, LucideIcon> = {
 };
 
 /**
- * The rail's items for a task. The glyphs are the ones the tab kinds each
+ * The rail's items for a root. The glyphs are the ones the tab kinds each
  * section opens already use, so a rail icon and the tab it produces read as
  * the same thing — and the changed-file count rides the rail rather than the
  * panel header precisely so it still reads with the panel shut.
@@ -64,35 +69,49 @@ const SECTION_ICONS: Record<ExplorerSection, LucideIcon> = {
  * Backlog.md one (TASK-85): a permanently greyed rail item is a promise about a
  * feature this repository will never have, and the rail is four icons tall.
  *
+ * Changes follows the same rule for a project root (TASK-106). A task always
+ * has it — the task exists to change the tree, and "No changes." is news
+ * there — but a project browsed from the composer is usually clean, and an
+ * item that always opens onto nothing is the same false promise.
+ *
  * `section` is the section the panel is showing, and it is what decides the
- * undecided case — the query has no answer while it is in flight, and never
- * gets one at the composer, where there is no task to ask about. Dropping the
- * item on `undefined` therefore stranded a stored Backlog section with no rail
- * item to click back out of, while the panel's title went on naming it; keeping
- * it on `undefined` would flash an item onto every repository that has no
- * backlog. So while the answer is out the item survives exactly as long as it
- * is the section showing, which is neither.
+ * undecided case — a query has no answer while it is in flight, and never
+ * gets one with no root at all. Dropping an item on `undefined` therefore
+ * stranded a stored section with no rail item to click back out of, while the
+ * panel's title went on naming it; keeping it on `undefined` would flash an
+ * item onto every repository that turns out not to have it. So while the
+ * answer is out the item survives exactly as long as it is the section
+ * showing, which is neither.
  */
 export function useExplorerRail(
-  taskId: string | null,
+  root: RepoRoot | null,
   section?: ExplorerSection,
 ): ExplorerRailItem[] {
-  const { data } = useTaskDiff(taskId ?? "", taskId != null);
+  // The count only, so no tokens: see `TaskDiffOptions.tokens`.
+  const { data } = useTaskDiff(root, { tokens: false });
   const count = data?.length;
-  const backlog = useBacklog(taskId).data?.detected ?? section === "Backlog";
+  const backlog = useBacklog(root).data?.detected ?? section === "Backlog";
+  const changes =
+    root?.kind !== "project" || (count === undefined ? section === "Changes" : count > 0);
   return useMemo(
     () =>
-      EXPLORER_SECTIONS.filter((label) => label !== "Backlog" || backlog).map((label) => ({
+      EXPLORER_SECTIONS.filter(
+        (label) => (label !== "Backlog" || backlog) && (label !== "Changes" || changes),
+      ).map((label) => ({
         label,
         icon: SECTION_ICONS[label],
         count: label === "Changes" ? count : undefined,
       })),
-    [count, backlog],
+    [count, backlog, changes],
   );
 }
 
 export interface ExplorerProps {
-  taskId: string | null;
+  /** What the sections read. Null when there is nothing to browse: no task
+   * selected and no project with a directory. */
+  root: RepoRoot | null;
+  /** Shown in place of the sections while `root` is null. */
+  placeholder: string;
   section: ExplorerSection;
   /** The Backlog section's Open/Closed split, held by the panel so it survives
    * the section being unmounted (TASK-85). */
@@ -103,7 +122,8 @@ export interface ExplorerProps {
 }
 
 export function Explorer({
-  taskId,
+  root,
+  placeholder,
   section,
   backlogTab,
   onBacklogTabChange,
@@ -111,10 +131,10 @@ export function Explorer({
 }: ExplorerProps): ReactNode {
   const preview = usePreviewOpen(onOpenTab);
 
-  if (taskId == null) {
+  if (root == null) {
     return (
       <div className="grid h-full place-items-center px-3 text-center text-xs text-subtle-foreground">
-        Pick a task to see its files.
+        {placeholder}
       </div>
     );
   }
@@ -124,17 +144,17 @@ export function Explorer({
   // for a panel showing one of them.
   switch (section) {
     case "Changes":
-      return <ChangesSection taskId={taskId} {...preview} />;
+      return <ChangesSection root={root} {...preview} />;
     case "Files":
-      return <FilesSection taskId={taskId} {...preview} />;
+      return <FilesSection root={root} {...preview} />;
     case "History":
-      return <HistorySection taskId={taskId} onOpenTab={onOpenTab} {...preview} />;
+      return <HistorySection root={root} onOpenTab={onOpenTab} {...preview} />;
     case "Refs":
-      return <RefsSection taskId={taskId} {...preview} />;
+      return <RefsSection root={root} {...preview} />;
     case "Backlog":
       return (
         <BacklogSection
-          taskId={taskId}
+          root={root}
           backlogTab={backlogTab}
           onBacklogTabChange={onBacklogTabChange}
           {...preview}
@@ -190,7 +210,7 @@ function usePreviewOpen(onOpenTab: (d: TabDescriptor, o?: OpenOptions) => void):
   return { open, handlers };
 }
 
-type SectionProps = PreviewOpen & { taskId: string };
+type SectionProps = PreviewOpen & { root: RepoRoot };
 
 // ── sections ────────────────────────────────────────────────────────────────
 
@@ -198,9 +218,9 @@ type SectionProps = PreviewOpen & { taskId: string };
 // checks whether that descriptor is already open, because `openTab` focuses the
 // tab with a matching `tabKey` rather than opening a second one.
 
-function ChangesSection({ taskId, open, handlers }: SectionProps) {
-  const { data, isLoading, error, refetch } = useTaskDiff(taskId);
-  const view = useMemo(() => viewRef(taskId, "explorer"), [taskId]);
+function ChangesSection({ root, open, handlers }: SectionProps) {
+  const { data, isLoading, error, refetch } = useTaskDiff(root);
+  const view = useMemo(() => viewRef(rootId(root), "explorer"), [root]);
   const [selectedFile, setSelectedFile] = useViewState("explorer", view, "changesSelectedFile");
   const [collapsedPaths, setCollapsedPaths] = useViewState(
     "explorer",
@@ -247,12 +267,12 @@ function ChangesSection({ taskId, open, handlers }: SectionProps) {
   );
 }
 
-function FilesSection({ taskId, open, handlers }: SectionProps) {
-  const { data, isLoading, error, refetch } = useTaskFiles(taskId);
+function FilesSection({ root, open, handlers }: SectionProps) {
+  const { data, isLoading, error, refetch } = useTaskFiles(root);
   // The `files` slot, shared with the tree v1's file route still draws: it is
   // the same tree over the same working copy, so a directory collapsed in one
   // has no business springing open in the other.
-  const view = useMemo(() => viewRef(taskId, "files"), [taskId]);
+  const view = useMemo(() => viewRef(rootId(root), "files"), [root]);
   const [selectedFile, setSelectedFile] = useViewState("files", view, "selectedFile");
   const [expandedPaths, setExpandedPaths] = useViewState("files", view, "expandedPaths");
 
@@ -287,14 +307,14 @@ function FilesSection({ taskId, open, handlers }: SectionProps) {
 }
 
 function HistorySection({
-  taskId,
+  root,
   open,
   handlers,
   onOpenTab,
 }: SectionProps & { onOpenTab: (d: TabDescriptor, o?: OpenOptions) => void }) {
-  const view = useMemo(() => viewRef(taskId, "explorer"), [taskId]);
+  const view = useMemo(() => viewRef(rootId(root), "explorer"), [root]);
   const openCommit = useCallback((sha: string) => open({ kind: "commit", sha }), [open]);
-  const { logQuery, refsQuery, refSets, commits, pendingRefSha } = useGitHistory(taskId, openCommit);
+  const { logQuery, refsQuery, refSets, commits, pendingRefSha } = useGitHistory(root, openCommit);
 
   if (logQuery.isLoading) return <ExplorerLoading>Loading history…</ExplorerLoading>;
 
@@ -344,13 +364,13 @@ function HistorySection({
   );
 }
 
-function RefsSection({ taskId, open, handlers }: SectionProps) {
-  const view = useMemo(() => viewRef(taskId, "explorer"), [taskId]);
+function RefsSection({ root, open, handlers }: SectionProps) {
+  const view = useMemo(() => viewRef(rootId(root), "explorer"), [root]);
   const openCommit = useCallback((sha: string) => open({ kind: "commit", sha }), [open]);
   // The same hook the History section holds. react-query dedupes the log and
   // refs queries by key, so two sections asking for them is one fetch — and
   // only one of the two is ever mounted anyway.
-  const { refsQuery, pendingRefSha, selectRef } = useGitHistory(taskId, openCommit);
+  const { refsQuery, pendingRefSha, selectRef } = useGitHistory(root, openCommit);
 
   const [refsClosedSections, setRefsClosedSections] = useViewState(
     "explorer",

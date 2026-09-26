@@ -6,6 +6,7 @@ import type { TaskInfo } from "../../../../lib/xtmux/types";
 import type { BacklogResponse } from "../../../../types/backlog";
 import type { FilesResponse } from "../../../types/file";
 import type { TabState } from "../../../layout-store";
+import { projectRoot, taskRoot } from "../../../repo-root";
 
 /**
  * Task-id links (TASK-86, AC #4) and file-path links (TASK-108) reaching the
@@ -89,7 +90,7 @@ vi.mock("@/frontend/hooks/use-backlog", () => ({
   useBacklog: () => ({ data: stubs.backlog }),
 }));
 vi.mock("@/frontend/hooks/use-task-files", () => ({
-  useTaskFiles: (_taskId: string, options?: { enabled?: boolean }) => {
+  useTaskFiles: (_root: unknown, options?: { enabled?: boolean }) => {
     stubs.filesEnabled = options?.enabled ?? true;
     return { data: stubs.files };
   },
@@ -248,7 +249,7 @@ function renderPane(descriptor: TabState["descriptor"], onOpenTab = vi.fn()) {
   act(() => {
     render(
       <TabPane
-        taskId={TASK_ID}
+        root={taskRoot(TASK_ID)}
         tab={tab(descriptor)}
         visible
         onOpenTab={onOpenTab}
@@ -379,11 +380,11 @@ test("the registration survives a re-render", () => {
   stubs.backlog = DETECTED;
   stubs.files = FILES;
   const view = render(
-    <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
+    <TabPane root={taskRoot(TASK_ID)} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
   );
   const first = stubs.terminals.at(-1)!.linkProviders;
   view.rerender(
-    <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
+    <TabPane root={taskRoot(TASK_ID)} tab={tab({ kind: "agent" })} visible onOpenTab={vi.fn()} onSubmitReview={() => true} />,
   );
   expect(stubs.terminals.at(-1)!.linkProviders).toBe(first);
 });
@@ -440,7 +441,7 @@ test("only a terminal on screen keeps the file list live", () => {
   // Every pane mounts the link hook; only a visible grid may make the listing
   // refetch on a change (TASK-103 AC #6). The rest read whatever is cached.
   const draw = (descriptor: TabState["descriptor"], visible: boolean) => (
-    <TabPane taskId={TASK_ID} tab={tab(descriptor)} visible={visible} onOpenTab={vi.fn()} onSubmitReview={() => true} />
+    <TabPane root={taskRoot(TASK_ID)} tab={tab(descriptor)} visible={visible} onOpenTab={vi.fn()} onSubmitReview={() => true} />
   );
   const view = render(draw({ kind: "agent" }, true));
   expect(stubs.filesEnabled).toBe(true);
@@ -455,7 +456,7 @@ test("only a terminal on screen keeps the file list live", () => {
 test("a hidden terminal keeps the links from the cached list", () => {
   stubs.files = FILES;
   render(
-    <TabPane taskId={TASK_ID} tab={tab({ kind: "agent" })} visible={false} onOpenTab={vi.fn()} onSubmitReview={() => true} />,
+    <TabPane root={taskRoot(TASK_ID)} tab={tab({ kind: "agent" })} visible={false} onOpenTab={vi.fn()} onSubmitReview={() => true} />,
   );
   expect(stubs.filesEnabled).toBe(false);
   expect(linksFor(stubs.terminals.at(-1)!, "src/main.ts")?.map((l) => l.text)).toEqual(["src/main.ts"]);
@@ -544,7 +545,7 @@ test("an unresolved hash does not hold up the links beside it", () => {
 function renderFocusable(descriptor: TabState["descriptor"], initial = 0) {
   const draw = (focusRequest: number) => (
     <TabPane
-      taskId={TASK_ID}
+      root={taskRoot(TASK_ID)}
       tab={tab(descriptor)}
       visible
       focusRequest={focusRequest}
@@ -606,7 +607,7 @@ test("a non-terminal pane mounted by a chord takes the caret in its frame", () =
   // other group's terminal.
   render(
     <TabPane
-      taskId={TASK_ID}
+      root={taskRoot(TASK_ID)}
       tab={tab({ kind: "history" })}
       visible
       focusRequest={1}
@@ -629,7 +630,7 @@ test("a non-terminal pane mounted by a chord takes the caret in its frame", () =
 function renderSearchable(descriptor: TabState["descriptor"], initial = 0) {
   const draw = (searchRequest: number) => (
     <TabPane
-      taskId={TASK_ID}
+      root={taskRoot(TASK_ID)}
       tab={tab(descriptor)}
       visible
       searchRequest={searchRequest}
@@ -732,7 +733,7 @@ beforeEach(() => {
 function renderWithBar(active: boolean) {
   const view = render(
     <TabPane
-      taskId={TASK_ID}
+      root={taskRoot(TASK_ID)}
       tab={tab({ kind: "agent" })}
       visible
       searchRequest={1}
@@ -815,4 +816,25 @@ test("the terminal is told whether a bar is up, so it yields ⌃G to nobody", ()
 
   pane.pulse(1);
   expect(stubs.terminals.at(-1)!.searchOpen).toBe(true);
+});
+
+test("a project root's agent tab shows the composer, not a terminal (TASK-106)", () => {
+  const terminalsBefore = stubs.terminals.length;
+  render(
+    <TabPane
+      root={projectRoot("web")}
+      agentContent={<p>the composer</p>}
+      tab={tab({ kind: "agent" })}
+      visible
+      focusRequest={1}
+      onOpenTab={vi.fn()}
+      onSubmitReview={() => true}
+    />,
+  );
+  const composer = screen.getByText("the composer");
+  expect(stubs.terminals.length).toBe(terminalsBefore);
+  // A chord onto the tab lands the caret on the composer's frame: there is no
+  // grid to hand the pulse to, and taking it nowhere would leave it wherever
+  // it was.
+  expect(document.activeElement).toBe(composer.parentElement);
 });

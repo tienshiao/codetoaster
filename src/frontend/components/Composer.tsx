@@ -24,6 +24,7 @@ import {
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { uploadStaged } from "@/frontend/lib/upload-api";
 import { useProfiles } from "@/frontend/hooks/use-profiles";
+import { useComposerProject } from "@/frontend/hooks/use-composer-project";
 import { COMPOSER_PROMPT_ID, useOpenTask } from "@/frontend/hooks/use-task-nav";
 import { AttachmentStrip } from "@/frontend/components/AttachmentStrip";
 import { promptWithAttachments } from "@/frontend/lib/attachments";
@@ -43,6 +44,8 @@ import {
 import { DEFAULT_PROFILE } from "@/lib/agent/profile";
 import { TextInput } from "@/frontend/components/v2/TextInput";
 import { Textarea } from "@/frontend/components/v2/Textarea";
+import { moveLayout } from "@/frontend/layout-store";
+import { projectRoot, rootId } from "@/frontend/repo-root";
 
 const MODELS = modelOptions("Project default");
 
@@ -162,7 +165,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   // projects at all and the selection has to survive it: an id held from before
   // a project was deleted elsewhere is no longer a choice either — and neither
   // is a `?project=` naming one that never existed, which lands here too.
-  const project = projects.find((p) => p.id === draft.projectId) ?? projects[0];
+  const project = useComposerProject();
 
   // Written back when the two differ, which is the draft naming nothing yet or
   // naming a project that is gone. Recorded as a move so the overrides set
@@ -328,6 +331,15 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
     // promptless task on the same project, which is a thing the button offers
     // anyway.
     clearComposerDraft();
+    // The tabs opened from the project's Explorer while this prompt was being
+    // written become the task's (TASK-106), and the project's composer starts
+    // fresh for the next one. The `?tab=agent` below then brings the agent to
+    // the front of the moved layout. Only the layout moves: the view-state
+    // slots (scroll offsets, toggles) stay keyed by the project root and are
+    // not carried over. And a `diff` tab moved into a worktree task reads "No
+    // longer in the working-tree diff" until the agent touches that file —
+    // the new checkout has not changed it, which is the honest answer.
+    if (project) moveLayout(rootId(projectRoot(project.id)), result.value.id);
     openTask(result.value.id, { tab: "agent" });
   }, [
     prompt, canSubmit, createTask, project, model, profile, worktree, baseRef, canWorktree,

@@ -1,5 +1,17 @@
 import { test, expect } from "bun:test";
-import { basename, presentTab } from "./tab-labels";
+import { basename, presentComposerTab, presentTab } from "./tab-labels";
+
+test("at the composer the agent tab reads as a new task, and nothing else changes", () => {
+  expect(presentComposerTab({ kind: "agent" })).toEqual({
+    kind: "agent",
+    label: "New task",
+    title: "Start a task in this project",
+    closable: false,
+  });
+  const file = { kind: "file", path: "src/a.ts", line: 3 } as const;
+  expect(presentComposerTab(file)).toEqual(presentTab(file));
+  expect(presentComposerTab({ kind: "diffAll" })).toEqual(presentTab({ kind: "diffAll" }));
+});
 
 test("basename takes the last segment and tolerates a trailing slash", () => {
   expect(basename("src/lib/xtmux/pty.ts")).toBe("pty.ts");

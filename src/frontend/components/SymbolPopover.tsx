@@ -1,4 +1,5 @@
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
+import type { RepoRoot } from "@/frontend/repo-root";
 import { useSymbolLookup } from "../hooks/use-symbol-lookup";
 import type { SymbolEntry } from "../../lib/symbols/types";
 import { Loader2 } from "lucide-react";
@@ -10,7 +11,7 @@ export interface SymbolTarget {
 }
 
 interface SymbolPopoverProps {
-  taskId: string;
+  root: RepoRoot;
   target: SymbolTarget | null;
   onClose: () => void;
   /** Where a chosen definition or reference goes. A callback rather than a
@@ -20,8 +21,8 @@ interface SymbolPopoverProps {
   onGo: (entry: SymbolEntry) => void;
 }
 
-export function SymbolPopover({ taskId, target, onClose, onGo }: SymbolPopoverProps) {
-  const { data, isLoading } = useSymbolLookup(taskId, target?.name ?? null);
+export function SymbolPopover({ root, target, onClose, onGo }: SymbolPopoverProps) {
+  const { data, isLoading } = useSymbolLookup(root, target?.name ?? null);
 
   // Choosing an entry always dismisses: the popover is anchored to the click
   // that opened it, so leaving it up over a pane that has moved on is never

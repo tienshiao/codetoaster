@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import type { RepoRoot } from "@/frontend/repo-root";
 import { ChevronDown, ChevronRight, ChevronUp, MessageCircle, MessageSquare, MessageSquarePlus, MoreHorizontal } from "lucide-react";
 import { CommentInput } from "./CommentInput";
 import { CommentDisplay } from "./CommentDisplay";
@@ -23,7 +24,7 @@ interface DiffFileProps {
     nextHunk: DiffHunk | null
   ) => void;
   commentState?: UseCommentsReturn;
-  taskId?: string;
+  root?: RepoRoot;
   // When present (git commit view) both image sides are resolved from git refs;
   // absent means the working-tree diff, where the "after" side is the file on disk.
   imageRefs?: { old: string; new: string };
@@ -157,7 +158,7 @@ export function DiffFile({
   hunkExpansions: hunkExpansionsProp,
   onExpandContext,
   commentState,
-  taskId,
+  root,
   imageRefs,
 }: DiffFileProps) {
   const hunkExpansions = hunkExpansionsProp ?? EMPTY_EXPANSIONS;
@@ -309,8 +310,8 @@ export function DiffFile({
       })()}
 
       {/* Image diff */}
-      {isExpanded && file.isImage && taskId && (
-        <ImageDiff file={file} taskId={taskId} imageRefs={imageRefs} />
+      {isExpanded && file.isImage && root && (
+        <ImageDiff file={file} root={root} imageRefs={imageRefs} />
       )}
 
       {/* Diff content */}

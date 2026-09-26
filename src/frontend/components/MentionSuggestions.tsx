@@ -11,7 +11,8 @@ import {
 } from "react";
 import { File, Folder } from "lucide-react";
 import { useDirectories } from "@/frontend/hooks/use-directories";
-import { useProjectFileSearch } from "@/frontend/hooks/use-project-file-search";
+import { useFileSearch } from "@/frontend/hooks/use-file-search";
+import { projectRoot } from "@/frontend/repo-root";
 import {
   childPath,
   expandTilde,
@@ -116,7 +117,11 @@ export function useMention({
   // not.
   const absolute = isAbsoluteQuery(query);
   const listing = useDirectories(query, { enabled: absolute, files: true });
-  const search = useProjectFileSearch(absolute ? undefined : projectId, absolute ? "" : query);
+  const search = useFileSearch(
+    !absolute && projectId ? projectRoot(projectId) : null,
+    absolute ? "" : query,
+    { quietRefusals: true },
+  );
 
   const rows = useMemo<MentionRow[]>(() => {
     if (!query) return [];

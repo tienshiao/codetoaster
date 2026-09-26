@@ -7,6 +7,8 @@ import { useGitLog } from "@/frontend/hooks/use-git-log";
 import { useGitRefs } from "@/frontend/hooks/use-git-refs";
 import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
 import { useOpenComposer, useOpenTask } from "@/frontend/hooks/use-task-nav";
+import type { RepoRoot } from "@/frontend/repo-root";
+import type { TabPresentation } from "@/frontend/components/tabs/tab-labels";
 import type { ShellCommand } from "@/frontend/keymap";
 import {
   activeTab,
@@ -43,8 +45,17 @@ import {
 export interface CommandPaletteHostProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The task on screen, or null at the composer. */
+  /** The task on screen, or null at the composer. Decides the task-only rows:
+   * opening, closing and resuming it, a new shell, terminal search. */
   taskId: string | null;
+  /** What the Explorer beside the palette is browsing — the task's checkout,
+   * or at the composer the chosen project (TASK-106) — and so what the
+   * Changes, History, Refs and Files sections search. Null when there is
+   * nothing to browse. */
+  root: RepoRoot | null;
+  /** How a tab reads — the projection the strip was handed, so the palette's
+   * "Open tabs" agree with it. Defaults to `presentTab`. */
+  presentTab?: (descriptor: TabDescriptor) => TabPresentation;
   layout: TaskLayout | null;
   /** The shell's device policy — see `LayoutEnv`. Forwarded to `actionEntries`
    * so the palette lists no row the chord behind it would refuse. */
@@ -160,6 +171,8 @@ const COMMIT_LIMIT = 50;
 function OpenPalette({
   onOpenChange,
   taskId,
+  root,
+  presentTab,
   layout,
   env,
   onLayoutChange,
@@ -208,13 +221,16 @@ function OpenPalette({
     [],
   );
 
-  const hasTask = taskId !== null;
-  const { data: changes } = useTaskDiff(taskId ?? "", hasTask);
+  // Searched through the shell's root rather than the task, so at the
+  // composer the palette finds what the Explorer beside it shows. The diff
+  // needs only its file list here, so no tokens are asked for.
+  const browsable = root !== null;
+  const { data: changes } = useTaskDiff(root, { tokens: false });
   // Both are gated on a query: at an empty box these are lists, not answers,
   // and a hundred commits under the actions would bury the rows the palette
   // is opened for. Typed, they are what the box is searching.
-  const log = useGitLog(taskId ?? "", hasTask && searching);
-  const refs = useGitRefs(taskId ?? "", hasTask && searching);
+  const log = useGitLog(root, searching);
+  const refs = useGitRefs(root, searching);
 
   // The file search is a request per query, so it waits for the typing to
   // pause; everything else filters in place and does not.
@@ -223,7 +239,7 @@ function OpenPalette({
     const handle = setTimeout(() => setDebounced(query.trim()), 200);
     return () => clearTimeout(handle);
   }, [query]);
-  const files = useFileSearch(hasTask ? taskId : null, debounced);
+  const files = useFileSearch(root, debounced);
 
   const selectedTask = tasks.find((t) => t.id === taskId) ?? null;
 
@@ -249,7 +265,7 @@ function OpenPalette({
     const fileResults = debounced ? (files.data?.results ?? []) : [];
 
     return [
-      { id: "tabs", label: "Open tabs", items: tabEntries(layout) },
+      { id: "tabs", label: "Open tabs", items: tabEntries(layout, presentTab) },
       {
         id: "tasks",
         label: "Tasks",
@@ -281,6 +297,7 @@ function OpenPalette({
     tasks,
     projects,
     layout,
+    presentTab,
     env,
     taskId,
     selectedTask,
@@ -338,14 +355,14 @@ function OpenPalette({
   };
 
   const footer: ReactNode =
-    hasTask && debounced && files.isFetching ? "Searching files…" : undefined;
+    browsable && debounced && files.isFetching ? "Searching files…" : undefined;
 
   return (
     <CommandPalette
       open
       query={query}
       onQueryChange={setQuery}
-      placeholder={hasTask ? "Search tasks, tabs, files, actions…" : "Search tasks and actions…"}
+      placeholder={browsable ? "Search tasks, tabs, files, actions…" : "Search tasks and actions…"}
       groups={groups}
       onSelect={handleSelect}
       onDismiss={() => onOpenChange(false)}

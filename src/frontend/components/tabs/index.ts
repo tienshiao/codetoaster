@@ -3,7 +3,7 @@
 export { TabArea } from "./TabArea";
 export type { TabAreaProps } from "./TabArea";
 
-export { presentTab, basename } from "./tab-labels";
+export { presentTab, presentComposerTab, basename } from "./tab-labels";
 export type { TabPresentation } from "./tab-labels";
 
 export { useTaskLayout } from "./use-task-layout";

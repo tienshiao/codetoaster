@@ -34,7 +34,11 @@ import {
   type TabDescriptor,
   type TaskLayout,
 } from "@/frontend/layout-store";
-import { basename, presentTab } from "@/frontend/components/tabs/tab-labels";
+import {
+  basename,
+  presentTab,
+  type TabPresentation,
+} from "@/frontend/components/tabs/tab-labels";
 import { isMac } from "@/frontend/utils/platform";
 import { TAB_KINDS } from "@/frontend/components/v2/TabStrip";
 import type { PaletteItem } from "@/frontend/components/v2/CommandPalette";
@@ -137,8 +141,10 @@ export function taskEntries(
 /**
  * Every open tab of the current task, across every group.
  *
- * Labels come from `presentTab`, so a tab reads in the palette exactly as it
- * does in the strip. The detail slot takes what the strip had no room for: a
+ * Labels come from `present` — the same projection the strip was handed, so a
+ * tab reads in the palette exactly as it does there: `presentTab` for a task,
+ * `presentComposerTab` at the composer, whose agent tab is the composer
+ * (TASK-106). The detail slot takes what the strip had no room for: a
  * file's path, a commit's full sha — the `title` the strip hid behind a
  * tooltip. Only for those kinds: the fixed tabs' titles are prose ("The agent
  * terminal"), and a gloss in the mono slot reads as an identifier that is not
@@ -149,10 +155,13 @@ export function taskEntries(
  * a description. */
 const ADDRESSED_KINDS: ReadonlySet<string> = new Set(["file", "diff", "commit"]);
 
-export function tabEntries(layout: TaskLayout | null): PaletteEntry[] {
+export function tabEntries(
+  layout: TaskLayout | null,
+  present: (descriptor: TabDescriptor) => TabPresentation = presentTab,
+): PaletteEntry[] {
   if (!layout) return [];
   return allTabs(layout).map((tab) => {
-    const presented = presentTab(tab.descriptor);
+    const presented = present(tab.descriptor);
     const addressed = ADDRESSED_KINDS.has(presented.kind) && presented.title !== presented.label;
     return {
       id: `tab:${tab.id}`,
@@ -289,7 +298,9 @@ export function actionEntries({
   // listed here anyway, because the palette is where a user finds out a chord
   // exists at all. Offered only in front of a terminal: there is nothing for it
   // to search otherwise, and a row that does nothing teaches that rows may.
-  const front = layout ? activeTab(layout) : null;
+  // And only with a task: at the composer the one terminal-kind tab is the
+  // composer itself (TASK-106), which has no terminal to search.
+  const front = task && layout ? activeTab(layout) : null;
   if (front && canSearch(layout!, front.id)) {
     entries.push({
       id: "action:search-terminal",

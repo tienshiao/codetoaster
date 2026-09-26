@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { rootId, type RepoRoot } from "@/frontend/repo-root";
 import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/frontend/components/v2";
 import { DiffLayout, type DiffLayoutScroll } from "@/frontend/components/diff/DiffLayout";
@@ -17,7 +18,7 @@ import { getViewState, setViewField, viewRef, type ViewRef } from "@/frontend/vi
 const EMPTY_SET: Set<string> = new Set();
 
 interface DiffFilePaneProps {
-  taskId: string;
+  root: RepoRoot;
   /** The `diff:<path>` slot. */
   view: ViewRef;
   path: string;
@@ -35,21 +36,21 @@ interface DiffFilePaneProps {
  * review, gathered by the same Submit, because they address the same `review`
  * slot rather than one per tab.
  */
-export function DiffFilePane({ taskId, view, path, onOpenFile }: DiffFilePaneProps) {
-  const { data, isLoading, error: queryError, refetch } = useTaskDiff(taskId);
+export function DiffFilePane({ root, view, path, onOpenFile }: DiffFilePaneProps) {
+  const { data, isLoading, error: queryError, refetch } = useTaskDiff(root);
   const error = queryError
     ? queryError instanceof Error
       ? queryError.message
       : String(queryError)
     : null;
 
-  const review = useMemo(() => viewRef(taskId, "review"), [taskId]);
+  const review = useMemo(() => viewRef(rootId(root), "review"), [root]);
   const commentState = useComments(review);
 
   // The whole diff, not just this file: an expansion's key carries its path, so
   // the prune wants the full picture — and this pane's slot only ever holds
   // keys for its own file anyway.
-  const { hunkExpansions, expandContext } = useHunkExpansions(taskId, "diffFile", view, data);
+  const { hunkExpansions, expandContext } = useHunkExpansions(root, "diffFile", view, data);
 
   const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const modHeld = useModifierHeld();
@@ -107,7 +108,7 @@ export function DiffFilePane({ taskId, view, path, onOpenFile }: DiffFilePanePro
     <>
       <DiffLayout
         files={files}
-        taskId={taskId}
+        root={root}
         showFileTree={false}
         showViewModeToggle={false}
         // Not a mode the user can leave: there is one file, and "all" of it is
@@ -132,7 +133,7 @@ export function DiffFilePane({ taskId, view, path, onOpenFile }: DiffFilePanePro
         }}
       />
       <SymbolPopover
-        taskId={taskId}
+        root={root}
         target={symbolTarget}
         onClose={() => setSymbolTarget(null)}
         onGo={(entry) => onOpenFile(entry.path, entry.line)}

@@ -4,6 +4,7 @@ import { parseDiff } from "../utils/parseDiff";
 import { enhanceWithWordDiff, type DiffFileTokens } from "../utils/wordDiff";
 import { sortFiles } from "../utils/sortFiles";
 import { taskKeys } from "../query-keys";
+import { refetchOnFocusFor, rootApi, rootId, type RepoRoot } from "../repo-root";
 import type { FileDiff } from "../types/diff";
 
 // Fetch server tree-sitter tokens for both sides of each file's diff. This runs
@@ -13,7 +14,7 @@ import type { FileDiff } from "../types/diff";
 // With `sha` (git commit view), the server reads new = `git show sha:path`,
 // old = `git show sha^1:path`; without it, the working tree / index.
 export async function fetchDiffTokens(
-  taskId: string,
+  root: RepoRoot,
   files: FileDiff[],
   sha?: string,
 ): Promise<Map<string, DiffFileTokens> | null> {
@@ -28,7 +29,7 @@ export async function fetchDiffTokens(
   if (requestFiles.length === 0) return null;
 
   try {
-    const res = await fetch(`/api/tasks/${taskId}/diff-tokens`, {
+    const res = await fetch(`${rootApi(root)}/diff-tokens`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(sha ? { sha, files: requestFiles } : { files: requestFiles }),
@@ -42,8 +43,8 @@ export async function fetchDiffTokens(
   }
 }
 
-async function fetchDiff(taskId: string): Promise<{ diff: string; hash: string }> {
-  const res = await fetch(`/api/tasks/${taskId}/diff`);
+async function fetchDiff(root: RepoRoot): Promise<{ diff: string; hash: string }> {
+  const res = await fetch(`${rootApi(root)}/diff`);
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || "Failed to fetch diff");
@@ -51,14 +52,32 @@ async function fetchDiff(taskId: string): Promise<{ diff: string; hash: string }
   return res.json();
 }
 
-// `enabled` exists for the Explorer rail, which wants the changed-file count
-// before a task is selected: with no task there is no id, and a query keyed on
-// an empty one would fetch `/api/tasks//diff`.
-export function useTaskDiff(taskId: string, enabled = true) {
+export interface TaskDiffOptions {
+  enabled?: boolean;
+  /**
+   * Whether to ask the server for syntax tokens. False for a caller that
+   * reads only the file list — the Explorer rail's count, the palette's
+   * Changes rows — which would otherwise POST the whole working tree to be
+   * tokenized with no diff on screen. Nothing is lost by it: the tokens query
+   * is keyed by the diff's content hash with `staleTime: Infinity`, so a
+   * Changes panel or diff tab opening later asks for them itself.
+   */
+  tokens?: boolean;
+}
+
+// A null root is the Explorer rail or the palette with nothing to read yet: the
+// query stays disabled, keyed on `null`, rather than fetching a route with no id.
+export function useTaskDiff(
+  root: RepoRoot | null,
+  { enabled = true, tokens = true }: TaskDiffOptions = {},
+) {
+  const id = root && rootId(root);
   const diffQuery = useQuery({
-    queryKey: taskKeys.diff(taskId),
-    queryFn: () => fetchDiff(taskId),
-    enabled,
+    queryKey: taskKeys.diff(id),
+    queryFn: () => fetchDiff(root!),
+    enabled: enabled && root != null,
+    // Unwatched when it is a project root — see `refetchOnFocusFor`.
+    refetchOnWindowFocus: refetchOnFocusFor(root),
   });
 
   // The app has no error boundary, so a throw from parseDiff must degrade like a
@@ -75,12 +94,12 @@ export function useTaskDiff(taskId: string, enabled = true) {
   // Tokens are content-addressed on the server and keyed here by the diff hash,
   // so the result is stable for a given diff; never blocks the diff paint below.
   const tokensQuery = useQuery({
-    queryKey: ["tasks", taskId, "diff-tokens", diffQuery.data?.hash],
+    queryKey: ["tasks", id, "diff-tokens", diffQuery.data?.hash],
     queryFn: () => {
       if (!Array.isArray(parsed)) throw new Error("no parsed diff");
-      return fetchDiffTokens(taskId, parsed);
+      return fetchDiffTokens(root!, parsed);
     },
-    enabled: enabled && Array.isArray(parsed) && parsed.length > 0,
+    enabled: tokens && enabled && root != null && Array.isArray(parsed) && parsed.length > 0,
     staleTime: Infinity,
   });
 

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { taskKeys } from "../query-keys";
 import type { FilesResponse } from "../types/file";
+import { taskRoot } from "../repo-root";
 import { useTaskFiles } from "./use-task-files";
 
 // A rendering test, so Vitest's, not `bun test`'s — see CLAUDE.md, "Testing".
@@ -40,7 +41,7 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 function mount(enabled: boolean) {
-  return renderHook(({ enabled }) => useTaskFiles(TASK_ID, { enabled }), {
+  return renderHook(({ enabled }) => useTaskFiles(taskRoot(TASK_ID), { enabled }), {
     wrapper,
     initialProps: { enabled },
   });

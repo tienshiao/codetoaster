@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from "react";
+import type { RepoRoot } from "@/frontend/repo-root";
 import { Badge, ExplorerTabs, SectionLabel } from "@/frontend/components/v2";
 import {
   ExplorerError,
@@ -24,7 +25,7 @@ import type { BacklogTask } from "@/types/backlog";
  */
 
 export interface BacklogSectionProps {
-  taskId: string;
+  root: RepoRoot;
   backlogTab: BacklogTab;
   onBacklogTabChange: (tab: BacklogTab) => void;
   open: (descriptor: TabDescriptor) => void;
@@ -38,13 +39,13 @@ export interface BacklogSectionProps {
 const POLL_MS = 3000;
 
 export function BacklogSection({
-  taskId,
+  root,
   backlogTab,
   onBacklogTabChange,
   open,
   handlers,
 }: BacklogSectionProps): ReactNode {
-  const { data, error, refetch } = useBacklog(taskId, { refetchInterval: POLL_MS });
+  const { data, error, refetch } = useBacklog(root, { refetchInterval: POLL_MS });
 
   const grouped = useMemo(() => groupBacklog(data?.detected ? data : null), [data]);
 

@@ -41,8 +41,14 @@ interface Held {
 }
 
 /**
- * The selected task's layout, read from storage and written back on every
+ * The selected root's layout, read from storage and written back on every
  * change (§7.2).
+ *
+ * `layoutId` is opaque here: the shell passes a root id (`rootId` in
+ * `repo-root.ts`) — the bare task id for a task, `project:<id>` for the
+ * project the composer is browsing (TASK-106) — and null when there is no
+ * root, which holds no layout. A project root's default is the same as a
+ * task's, the agent tab alone, which the composer fills.
  *
  * Loaded during render rather than in an effect: a layout that arrives one
  * frame late means the shell paints an empty main area first, and the layout is
@@ -56,7 +62,7 @@ interface Held {
  * would otherwise sit in storage forever. It rides along with the load rather
  * than waiting for an effect because it is idempotent — pruning the same
  * layout twice prunes nothing the second time — so a discarded render or
- * StrictMode's double invoke costs nothing and cannot prune the wrong task.
+ * StrictMode's double invoke costs nothing and cannot prune the wrong root.
  *
  * ## The fold is a projection
  *
@@ -97,7 +103,7 @@ interface Held {
  * already shown, so a caller can compare by identity.
  */
 export function useTaskLayout(
-  taskId: string | null,
+  layoutId: string | null,
   env: LayoutEnv = {},
 ): {
   layout: TaskLayout | null;
@@ -112,7 +118,7 @@ export function useTaskLayout(
     return { id, stored, shown: project(stored, single), single };
   };
 
-  const [held, setHeld] = useState<Held>(() => load(taskId));
+  const [held, setHeld] = useState<Held>(() => load(layoutId));
   // The latest committed state, for the two writers below: they are stable
   // callbacks and a `held` closed over at render time is stale by the second
   // write inside one event — `⌘K ] ⌘K ]` typed at speed.
@@ -121,12 +127,12 @@ export function useTaskLayout(
 
   // React's own "adjust state when a prop changes" pattern: the set during
   // render is discarded and re-run before anything is committed, so nothing
-  // ever paints the previous task's tabs under the new task's name — and, by
+  // ever paints the previous root's tabs under the new root's name — and, by
   // the same pattern, a viewport that crosses the breakpoint re-projects the
   // stored layout before the next paint rather than after one. Neither branch
   // runs twice: the second sets `single` to what it is being compared with.
-  if (held.id !== taskId) {
-    setHeld(load(taskId));
+  if (held.id !== layoutId) {
+    setHeld(load(layoutId));
   } else if (held.single !== single) {
     setHeld({ ...held, shown: project(held.stored, single), single });
   }
@@ -147,7 +153,7 @@ export function useTaskLayout(
   const setLayout = useCallback(
     (next: TaskLayout): TaskLayout => {
       const current = heldRef.current;
-      if (!taskId || current.id !== taskId || !current.stored || !current.shown) {
+      if (!layoutId || current.id !== layoutId || !current.stored || !current.shown) {
         return project(next, single)!;
       }
       if (next === current.shown) return current.shown;
@@ -159,21 +165,21 @@ export function useTaskLayout(
             ? focusTab(current.stored, front.id)
             : mergeGroups(next);
       }
-      return commit(taskId, stored);
+      return commit(layoutId, stored);
     },
-    [taskId, single, commit],
+    [layoutId, single, commit],
   );
 
   const editLayout = useCallback(
     (fn: (stored: TaskLayout) => TaskLayout): TaskLayout | null => {
       const current = heldRef.current;
-      if (!taskId || current.id !== taskId || !current.stored) return null;
+      if (!layoutId || current.id !== layoutId || !current.stored) return null;
       const stored = fn(current.stored);
       if (stored === current.stored) return current.shown;
-      return commit(taskId, stored);
+      return commit(layoutId, stored);
     },
-    [taskId, commit],
+    [layoutId, commit],
   );
 
-  return { layout: held.id === taskId ? held.shown : null, setLayout, editLayout };
+  return { layout: held.id === layoutId ? held.shown : null, setLayout, editLayout };
 }

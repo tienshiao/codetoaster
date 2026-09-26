@@ -256,6 +256,11 @@ const PRUNABLE: ReadonlySet<ViewSlotKind> = new Set<ViewSlotKind>([
 /** A view's address: the task it belongs to, and the key of the view within
  * that task (a `tabKey`, or one of the non-tab keys above). */
 export interface ViewRef {
+  /** A root id (`rootId` in `repo-root.ts`), not strictly a task id: the bare
+   * task id for a task — so every existing slot keeps its address — or
+   * `project:<id>` for a project the composer's Explorer is browsing
+   * (TASK-106). Everything in this store that says "task" means such a root;
+   * the name stays because renaming it would touch every caller for nothing. */
   taskId: string;
   key: string;
 }
@@ -407,7 +412,11 @@ export function dropTaskViewStates(taskId: string): void {
 }
 
 /** Drop state for tasks no longer present, so entries for tasks that exit on
- * their own or are killed by another client don't leak. */
+ * their own or are killed by another client don't leak.
+ *
+ * The valid set holds root ids, not only task ids: the caller adds every live
+ * project's `project:<id>` (TASK-106), so a project's Explorer state is kept
+ * for as long as the project is and dropped with it. */
 export function retainTaskViewStates(validTaskIds: ReadonlySet<string>): void {
   const seen = new Set<string>();
   for (const id of store.keys()) seen.add(taskIdOf(id));

@@ -1,4 +1,4 @@
-import { resolveTaskRoot, gitSpawn, gitSpawnRaw, parseNonNegInt, safePath, buildFileListing, IMAGE_MIME_TYPES, SHA_RE } from "./utils";
+import { rootRoutes, gitSpawn, gitSpawnRaw, parseNonNegInt, safePath, buildFileListing, IMAGE_MIME_TYPES, SHA_RE } from "./utils";
 import { serializeFileContent } from "./files";
 
 // ---------------------------------------------------------------------------
@@ -196,13 +196,9 @@ export function parseBatchCheck(stdout: string, shas: string[]): Record<string, 
 }
 
 export const gitRoutes = {
-  "/api/tasks/:id/git/log": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("git/log", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const url = new URL(req.url);
         const skip = parseNonNegInt(url.searchParams.get("skip"), 0);
         const limitRaw = parseNonNegInt(url.searchParams.get("limit"), 200);
@@ -280,15 +276,11 @@ export const gitRoutes = {
         );
       }
     },
-  },
+  }),
 
-  "/api/tasks/:id/git/refs": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("git/refs", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const [forEach, symbolic, revParse] = await Promise.all([
           gitSpawn(dir, [
             "for-each-ref",
@@ -337,7 +329,7 @@ export const gitRoutes = {
         );
       }
     },
-  },
+  }),
 
   // Which of these revisions this repository knows as commits (TASK-110).
   //
@@ -347,13 +339,9 @@ export const gitRoutes = {
   // hex word through and this answers the question, in one spawn for the whole
   // row, and the client remembers the answer — a commit is immutable, and a
   // sha reaches a terminal only after the commit exists.
-  "/api/tasks/:id/git/commits": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("git/commits", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const url = new URL(req.url);
         const shas = (url.searchParams.get("sha") ?? "").split(",").filter(Boolean);
         if (shas.length === 0) return Response.json({ commits: {} });
@@ -384,15 +372,11 @@ export const gitRoutes = {
         );
       }
     },
-  },
+  }),
 
-  "/api/tasks/:id/git/commit": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("git/commit", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const url = new URL(req.url);
         const sha = url.searchParams.get("sha") ?? "";
         if (!SHA_RE.test(sha)) {
@@ -451,15 +435,11 @@ export const gitRoutes = {
         );
       }
     },
-  },
+  }),
 
-  "/api/tasks/:id/git/tree": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("git/tree", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const url = new URL(req.url);
         const sha = url.searchParams.get("sha") ?? "";
         if (!SHA_RE.test(sha)) {
@@ -481,15 +461,11 @@ export const gitRoutes = {
         );
       }
     },
-  },
+  }),
 
-  "/api/tasks/:id/git/file": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("git/file", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const url = new URL(req.url);
         const sha = url.searchParams.get("sha") ?? "";
         if (!SHA_RE.test(sha)) {
@@ -533,5 +509,5 @@ export const gitRoutes = {
         );
       }
     },
-  },
-} as const;
+  }),
+};

@@ -1,4 +1,5 @@
 import { useMemo, useRef, useEffect, useLayoutEffect, type MouseEvent } from "react";
+import { rootApi, type RepoRoot } from "@/frontend/repo-root";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { syntaxTokensFor } from "../../utils/wordDiff";
 import { getLanguageFromPath } from "../../utils/languageDetection";
@@ -13,7 +14,7 @@ import { maybeShowSymbolTip } from "../../utils/tips";
 
 interface FileContentProps {
   filePath: string;
-  taskId: string;
+  root: RepoRoot;
   content: FileContentResponse | null;
   loading: boolean;
   lineWrap: boolean;
@@ -29,7 +30,7 @@ interface FileContentProps {
 
 export function FileContent({
   filePath,
-  taskId,
+  root,
   content,
   loading,
   lineWrap,
@@ -134,7 +135,7 @@ export function FileContent({
 
   if (content.isBinary) {
     if (content.isImage) {
-      const imageUrl = imageUrlProp ?? `/api/tasks/${taskId}/image?file=${encodeURIComponent(filePath)}`;
+      const imageUrl = imageUrlProp ?? `${rootApi(root)}/image?file=${encodeURIComponent(filePath)}`;
       return (
         <div className="flex flex-col items-center justify-center p-8 h-full">
           <img

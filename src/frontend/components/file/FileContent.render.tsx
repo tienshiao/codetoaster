@@ -1,4 +1,5 @@
 import { test, expect } from "vitest";
+import { taskRoot } from "@/frontend/repo-root";
 import { render, screen } from "@testing-library/react";
 import { FileContent } from "./FileContent";
 import type { FileContentResponse } from "@/frontend/types/file";
@@ -26,7 +27,7 @@ const content: FileContentResponse = {
 
 test("the preview draws the block as a header and drops it from the body", () => {
   const { container } = render(
-    <FileContent filePath="task.md" taskId="t1" content={content} loading={false} lineWrap markdownPreview />,
+    <FileContent filePath="task.md" root={taskRoot("t1")} content={content} loading={false} lineWrap markdownPreview />,
   );
 
   // Header: the keys, once each, in the definition list.
@@ -40,7 +41,7 @@ test("the preview draws the block as a header and drops it from the body", () =>
 
 test("the source view is untouched, block and all", () => {
   const { container } = render(
-    <FileContent filePath="task.md" taskId="t1" content={content} loading={false} lineWrap />,
+    <FileContent filePath="task.md" root={taskRoot("t1")} content={content} loading={false} lineWrap />,
   );
 
   expect(container.querySelector("dl")).toBeNull();

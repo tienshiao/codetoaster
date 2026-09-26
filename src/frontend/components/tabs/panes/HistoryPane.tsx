@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { RepoRoot } from "@/frontend/repo-root";
 import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/frontend/components/v2";
 import { CommitList } from "@/frontend/components/git/CommitList";
@@ -8,7 +9,7 @@ import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, setViewField, type ViewRef } from "@/frontend/view-state-store";
 
 interface HistoryPaneProps {
-  taskId: string;
+  root: RepoRoot;
   /** The `history` slot. */
   view: ViewRef;
   /** Selecting a commit opens its own tab. There is no detail pane below the
@@ -28,9 +29,9 @@ interface HistoryPaneProps {
  * of its own and nothing here is addressed from outside, which leaves the graph
  * as what it always was — a list you pick from.
  */
-export function HistoryPane({ taskId, view, onOpenCommit, onOpenChanges }: HistoryPaneProps) {
+export function HistoryPane({ root, view, onOpenCommit, onOpenChanges }: HistoryPaneProps) {
   const { logQuery, refsQuery, refSets, commits, pendingRefSha, selectRef } = useGitHistory(
-    taskId,
+    root,
     onOpenCommit,
   );
 

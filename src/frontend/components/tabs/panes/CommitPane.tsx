@@ -1,11 +1,12 @@
 import { CommitDetail } from "@/frontend/components/git/CommitDetail";
+import type { RepoRoot } from "@/frontend/repo-root";
 import { useRefSets } from "@/frontend/components/git/RefChip";
 import { useGitRefs } from "@/frontend/hooks/use-git-refs";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import type { ViewRef } from "@/frontend/view-state-store";
 
 interface CommitPaneProps {
-  taskId: string;
+  root: RepoRoot;
   /** The `commit:<sha>` slot. */
   view: ViewRef;
   sha: string;
@@ -22,14 +23,14 @@ interface CommitPaneProps {
  * they are plain state here — and per-commit rather than per-view, because two
  * commit tabs open side by side are two independent readings.
  */
-export function CommitPane({ taskId, view, sha, onOpenCommit }: CommitPaneProps) {
+export function CommitPane({ root, view, sha, onOpenCommit }: CommitPaneProps) {
   const [mode, setMode] = useViewState("commit", view, "mode");
   const [file, setFile] = useViewState("commit", view, "file");
-  const refSets = useRefSets(useGitRefs(taskId).data);
+  const refSets = useRefSets(useGitRefs(root).data);
 
   return (
     <CommitDetail
-      taskId={taskId}
+      root={root}
       view={view}
       sha={sha}
       mode={mode}

@@ -1,7 +1,9 @@
+import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { taskManager } from "../lib/tasks/manager";
+import { expandTilde } from "../lib/tilde";
 
 export interface TaskRoot {
   /** The repository the task's work lives in — where every git route runs. */
@@ -32,6 +34,154 @@ export async function resolveTaskRoot(taskId: string): Promise<TaskRoot | { erro
     return { error: Response.json({ error: "Not a git repository" }, { status: 400 }) };
   }
   return { repoRoot: task.repo_root, cwd: task.cwd };
+}
+
+/** One entry of a `cachedPromise` cache. */
+export interface CachedPromise<T> {
+  at: number;
+  value: Promise<T>;
+}
+
+/**
+ * `make()`, at most once per `ttlMs` for `key`.
+ *
+ * The *promise* is cached rather than its value, so requests arriving while
+ * one is in flight share it instead of starting their own — the point, for
+ * callers that would otherwise fork a git process per request for the same
+ * answer. A rejection is evicted as soon as it lands, or the first failure
+ * ("not a repository", most often) would be the answer for the rest of the
+ * TTL after it stopped being true — but only while it is still the cached
+ * entry, since a later request may already have replaced it.
+ */
+export function cachedPromise<T>(
+  cache: Map<string, CachedPromise<T>>,
+  key: string,
+  ttlMs: number,
+  make: () => Promise<T>,
+): Promise<T> {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value;
+
+  const value = make();
+  cache.set(key, { at: Date.now(), value });
+  value.catch(() => {
+    if (cache.get(key)?.value === value) cache.delete(key);
+  });
+  return value;
+}
+
+/** How long one project's `rev-parse --show-toplevel` stands in for the next. */
+const PROJECT_TOPLEVEL_TTL_MS = 3000;
+const projectToplevelCache = new Map<string, CachedPromise<string>>();
+
+/**
+ * The repository toplevel of `dir`, cached (`cachedPromise`): the Explorer
+ * opens a project with five or six routes at once, each needing this answer.
+ *
+ * Inlined rather than borrowed from `lib/worktree/repo.ts`'s `repoRootOf`,
+ * which imports `gitSpawn` from here.
+ */
+function cachedToplevel(dir: string): Promise<string> {
+  return cachedPromise(projectToplevelCache, dir, PROJECT_TOPLEVEL_TTL_MS, () =>
+    gitSpawn(dir, ["rev-parse", "--show-toplevel"]).then(({ stdout, exitCode }) => {
+      const root = stdout.trim();
+      if (exitCode !== 0 || !root) throw new Error(`Not a git repository: ${dir}`);
+      return root;
+    }),
+  );
+}
+
+/**
+ * A project's checkout as a `TaskRoot`: the directory a non-worktree task in
+ * it would start in (`cwd`), and the repository that directory belongs to
+ * (`repoRoot`).
+ *
+ * The composer has no task yet — the prompt is still being written — but its
+ * Explorer shows the repository the task is going to run in, so every
+ * repository-reading route answers for a project as well (see `rootRoutes`).
+ *
+ * A project with no directory ("General") and one whose directory is not a
+ * repository are 400s rather than empty answers: they are facts about the
+ * project, and the client decides whether they are worth showing.
+ */
+export async function resolveProjectRoot(projectId: string): Promise<TaskRoot | { error: Response }> {
+  const project = taskManager.getProjects().find((p) => p.id === projectId);
+  if (!project) {
+    return { error: Response.json({ error: `Unknown project "${projectId}"` }, { status: 404 }) };
+  }
+  if (!project.initialPath) {
+    return { error: Response.json({ error: "Project has no directory" }, { status: 400 }) };
+  }
+  const dir = expandTilde(project.initialPath);
+  try {
+    return { repoRoot: await cachedToplevel(dir), cwd: dir };
+  } catch {
+    // git fails the same way for a directory that is not a repository and one
+    // that is not there at all, and the second is worth its own words: a
+    // project whose path was moved or deleted is something the user can fix,
+    // and "not a git repository" sends them looking for the wrong problem.
+    if (!fs.existsSync(dir)) {
+      return { error: Response.json({ error: "Project directory does not exist" }, { status: 400 }) };
+    }
+    return { error: Response.json({ error: "Not a git repository" }, { status: 400 }) };
+  }
+}
+
+/** Which kind of id a repository-reading route was addressed by. */
+export type RootScope = "tasks" | "projects";
+
+export function resolveRoot(scope: RootScope, id: string): Promise<TaskRoot | { error: Response }> {
+  return scope === "tasks" ? resolveTaskRoot(id) : resolveProjectRoot(id);
+}
+
+/** A route handler over a resolved root. `scope` is there for the rare route
+ * whose answer depends on who asked — `files/search`, whose paths are written
+ * into a prompt for an agent running in a project's `cwd`. */
+export type RootHandler = (root: TaskRoot, req: Request, scope: RootScope) => Response | Promise<Response>;
+type RootRouteMethod = (req: Request & { params: { id: string } }) => Promise<Response>;
+
+export interface RootRouteOptions {
+  /** Rewrite the resolver's error Response before the client gets it — the
+   * backlog route answers "no repository here" with `detected: false`. The
+   * handler still never runs for an unresolved root. */
+  onResolveError?: (error: Response) => Response;
+}
+
+/**
+ * One handler, served under both `/api/tasks/:id/<subpath>` and
+ * `/api/projects/:id/<subpath>`.
+ *
+ * Every repository-reading route used to be task-scoped, because a task was
+ * the only thing with a directory. The composer needs the same Explorer —
+ * files, diff, history, backlog — before any task exists, against the project
+ * the prompt will run in. The handlers do not care how the directory was
+ * found, so each is written once against a `TaskRoot`, and this resolves the
+ * root for its scope before calling it; a root that cannot be resolved is
+ * answered here (404/400) and the handler never runs.
+ */
+export function rootRoutes(
+  subpath: string,
+  methods: { GET?: RootHandler; POST?: RootHandler },
+  options: RootRouteOptions = {},
+): Record<string, Record<string, RootRouteMethod>> {
+  const scoped = (scope: RootScope): Record<string, RootRouteMethod> => {
+    const table: Record<string, RootRouteMethod> = {};
+    for (const [method, handler] of Object.entries(methods)) {
+      if (!handler) continue;
+      table[method] = async (req) => {
+        const result = await resolveRoot(scope, req.params.id);
+        if ("error" in result) {
+          return options.onResolveError ? options.onResolveError(result.error) : result.error;
+        }
+        return handler(result, req, scope);
+      };
+    }
+    return table;
+  };
+  return {
+    [`/api/tasks/:id/${subpath}`]: scoped("tasks"),
+    [`/api/projects/:id/${subpath}`]: scoped("projects"),
+  };
 }
 
 export const IMAGE_MIME_TYPES: Record<string, string> = {

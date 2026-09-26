@@ -83,4 +83,19 @@ describe("invalidationsFor", () => {
     // mapping must not invent work from one if a future caller does.
     expect(invalidationsFor(changed([], false))).toEqual([]);
   });
+
+  test("each root id named gets the same keys — a project root beside its task (TASK-106)", () => {
+    const keys = invalidationsFor(changed(["src/a.ts"], true), ["t1", "project:web"]);
+    const forId = (id: string) => invalidationsFor({ ...changed(["src/a.ts"], true), taskId: id });
+    expect(keys).toEqual([...forId("t1"), ...forId("project:web")]);
+    expect(keys).toContainEqual(["tasks", "project:web", "file", "src/a.ts"]);
+    expect(keys).toContainEqual(["git-refs", "project:web"]);
+  });
+
+  test("without root ids it names only the task the frame names", () => {
+    expect(invalidationsFor(changed(null, false))).toEqual(
+      invalidationsFor(changed(null, false), ["t1"]),
+    );
+    expect(invalidationsFor(changed(null, false), [])).toEqual([]);
+  });
 });

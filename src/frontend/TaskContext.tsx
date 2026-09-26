@@ -15,6 +15,7 @@ import { queryClient } from "./query-client";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { usePty } from "./PtyContext";
 import { retainLayouts } from "./layout-store";
+import { projectRoot, rootId } from "./repo-root";
 import { byRecency } from "./task-list";
 import { retainTaskViewStates } from "./view-state-store";
 import { generateUUID } from "./utils/uuid";
@@ -500,8 +501,15 @@ export function TaskProvider({ children }: { children: ReactNode }) {
           // The server said what changed; `invalidationsFor` decides what that
           // makes stale, and `invalidateQueries`' default `refetchType:
           // "active"` means only mounted views actually refetch.
+          //
+          // A task with no worktree runs in its project's own directory, which
+          // is the tree the composer's Explorer browses under the project root
+          // (TASK-106) — so that root's caches are stale too.
           if (message.type === "changed") {
-            for (const queryKey of invalidationsFor(message)) {
+            const task = tasksRef.current.find((t) => t.id === message.taskId);
+            const extra =
+              task && task.worktreePath === null ? [rootId(projectRoot(task.projectId))] : [];
+            for (const queryKey of invalidationsFor(message, [message.taskId, ...extra])) {
               void queryClient.invalidateQueries({ queryKey });
             }
             return;
@@ -563,12 +571,20 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   // the first snapshot, and after a drop, "no tasks" and "not told yet" look
   // identical — and sweeping against a list we have not been given would wipe
   // every layout on the page.
+  //
+  // The composer's project roots (`project:<id>`, TASK-106) keep a layout and
+  // view state too — the tabs opened from a project's Explorer while a prompt
+  // is being written — so every listed project is valid as well, and a
+  // deleted project's entries go the way a deleted task's do. The projects
+  // ride the same snapshot that sets `loaded`, so they are never "not told
+  // yet" while the tasks are known.
   useEffect(() => {
     if (!loaded) return;
     const ids = new Set(tasks.map((t) => t.id));
+    for (const p of projects) ids.add(rootId(projectRoot(p.id)));
     retainTaskViewStates(ids);
     retainLayouts(ids);
-  }, [tasks, loaded]);
+  }, [tasks, projects, loaded]);
 
   const createTask = useCallback(async (options: CreateTaskOptions = {}, reporting?: RequestOptions) => {
     const result = await request<TaskInfo>(

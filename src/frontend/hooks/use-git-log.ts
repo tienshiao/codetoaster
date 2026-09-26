@@ -1,7 +1,8 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useInfiniteQuery, type InfiniteData } from "@tanstack/react-query";
 import { queryClient } from "../query-client";
 import { gitKeys } from "../query-keys";
+import { rootApi, rootId, type RepoRoot } from "../repo-root";
 import type { GitLogPage } from "../types/git";
 
 /**
@@ -38,15 +39,15 @@ const PAGE_LIMIT = 200;
  * A 409 means the client's window no longer matches server history (new commits
  * arrived / refs moved). Reset the infinite query so it refetches page one.
  */
-function handleStale(taskId: string) {
-  queryClient.resetQueries({ queryKey: gitKeys.log(taskId) });
+function handleStale(id: string) {
+  queryClient.resetQueries({ queryKey: gitKeys.log(id) });
 }
 
-async function fetchGitLog(taskId: string, param: LogPageParam): Promise<GitLogPage> {
+async function fetchGitLog(root: RepoRoot, param: LogPageParam): Promise<GitLogPage> {
   const params = new URLSearchParams({ skip: String(param.skip), limit: String(PAGE_LIMIT) });
   if (param.skip > 0 && param.after) params.set("after", param.after);
 
-  const res = await fetch(`/api/tasks/${taskId}/git/log?${params}`);
+  const res = await fetch(`${rootApi(root)}/git/log?${params}`);
   // Throw a typed error WITHOUT resetting here — the reset is performed once,
   // outside the fetch/retry cycle, by an effect watching query.error.
   if (res.status === 409) {
@@ -59,14 +60,20 @@ async function fetchGitLog(taskId: string, param: LogPageParam): Promise<GitLogP
   return res.json();
 }
 
-/** `enabled` is for a caller that has no task yet — the command palette at
- * `/` — where an empty id would otherwise be fetched as `/api/tasks//git/log`. */
-export function useGitLog(taskId: string, enabled = true) {
+/** A null root is a caller with nothing to read yet — the command palette at
+ * `/` — and leaves the query disabled, keyed on `null`. */
+export function useGitLog(root: RepoRoot | null, enabled = true) {
+  const id = root && rootId(root);
+  // `id` names the root exactly (see `rootId`), so a caller building a fresh
+  // root object each render must not hand `fetchUntil` a new identity with it.
+  const stableRoot = useMemo(() => root, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   const query = useInfiniteQuery({
-    queryKey: gitKeys.log(taskId),
-    queryFn: ({ pageParam }) => fetchGitLog(taskId, pageParam),
+    queryKey: gitKeys.log(id),
+    queryFn: ({ pageParam }) => fetchGitLog(root!, pageParam),
     initialPageParam: { skip: 0 } as LogPageParam,
-    enabled,
+    enabled: enabled && root != null,
+    // No `refetchOnFocusFor`: this would refetch every loaded page. The refs
+    // refetch on focus, and their hash changing resets the log (use-git-history).
     // A stale window won't fix itself by retrying the same request — reset it
     // instead (below). Every other error keeps the global retry:1 semantics.
     retry: (failureCount, error) => !(error instanceof StaleLogError) && failureCount < 1,
@@ -84,8 +91,8 @@ export function useGitLog(taskId: string, enabled = true) {
   // StaleLogError instance rather than looping.
   const staleError = query.error instanceof StaleLogError;
   useEffect(() => {
-    if (staleError) handleStale(taskId);
-  }, [staleError, taskId]);
+    if (staleError && id != null) handleStale(id);
+  }, [staleError, id]);
 
   /**
    * Fetch history through a specific sha (a sidebar ref click that lands deeper
@@ -95,6 +102,7 @@ export function useGitLog(taskId: string, enabled = true) {
    */
   const fetchUntil = useCallback(
     async (sha: string): Promise<FetchUntilStatus> => {
+      if (stableRoot == null || id == null) return "error";
       // The cursor snapshot below and the append at the end must agree on the
       // loaded row count, or a concurrent fetchNextPage would make both append
       // pages computed from the same skip (duplicate rows → corrupted lanes).
@@ -104,14 +112,14 @@ export function useGitLog(taskId: string, enabled = true) {
         for (
           let waited = 0;
           waited < 50 &&
-          queryClient.getQueryState(gitKeys.log(taskId))?.fetchStatus === "fetching";
+          queryClient.getQueryState(gitKeys.log(id))?.fetchStatus === "fetching";
           waited++
         ) {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
 
         const data = queryClient.getQueryData<InfiniteData<GitLogPage, LogPageParam>>(
-          gitKeys.log(taskId),
+          gitKeys.log(id),
         );
         if (!data) return "error";
 
@@ -128,10 +136,10 @@ export function useGitLog(taskId: string, enabled = true) {
         // won't catch it).
         let page: GitLogPage;
         try {
-          const res = await fetch(`/api/tasks/${taskId}/git/log?${params}`);
+          const res = await fetch(`${rootApi(stableRoot)}/git/log?${params}`);
           if (res.status === 409) {
             // Direct 409 handling (not inside a queryFn): reset now and report.
-            handleStale(taskId);
+            handleStale(id);
             return "stale";
           }
           if (!res.ok) return "error";
@@ -148,7 +156,7 @@ export function useGitLog(taskId: string, enabled = true) {
         // only if the loaded count is still the skip we requested from.
         let applied = false;
         queryClient.setQueryData<InfiniteData<GitLogPage, LogPageParam>>(
-          gitKeys.log(taskId),
+          gitKeys.log(id),
           (old) => {
             if (!old) return old;
             const loaded = old.pages.reduce((sum, p) => sum + p.commits.length, 0);
@@ -167,7 +175,7 @@ export function useGitLog(taskId: string, enabled = true) {
       // append. Report as a generic error rather than a false depth miss.
       return "error";
     },
-    [taskId],
+    [stableRoot, id],
   );
 
   return { ...query, fetchUntil };

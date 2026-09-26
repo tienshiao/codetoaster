@@ -80,3 +80,23 @@ export function presentTab(descriptor: TabDescriptor): TabPresentation {
       };
   }
 }
+
+/**
+ * `presentTab` for a project root's layout — the composer screen (TASK-106).
+ *
+ * The same projection with one difference: the `agent` tab holds the composer
+ * rather than a terminal, since a project has no agent until the prompt
+ * written there starts one. Everything else a project opens from its Explorer
+ * reads exactly as it would in a task.
+ */
+export function presentComposerTab(descriptor: TabDescriptor): TabPresentation {
+  if (descriptor.kind === "agent") {
+    return {
+      kind: "agent",
+      label: "New task",
+      title: "Start a task in this project",
+      closable: false,
+    };
+  }
+  return presentTab(descriptor);
+}

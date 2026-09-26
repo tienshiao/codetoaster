@@ -13,6 +13,13 @@
  * has to be a *different* key from the one with a value in it, or the disabled
  * observer would share a cache entry with a real fetch.
  *
+ * The `id` position holds a root id — `rootId(root)` from `repo-root.ts` —
+ * which is the bare task id for a task and `project:<id>` for a project the
+ * composer is browsing (TASK-106). A task's keys are therefore exactly what
+ * they were, and the change-invalidation builds them with the same functions
+ * — for a project root too, when the task that changed runs in the project's
+ * own directory.
+ *
  * Not here: `git-commit`, `git-tree`, `git-file` and `diff-tokens`. All four
  * are keyed by a content hash, nothing on the other side of this module ever
  * invalidates them, and a hash's content cannot change.

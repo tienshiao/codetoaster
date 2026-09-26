@@ -1,6 +1,7 @@
 import { afterEach, test, expect, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useHunkExpansions } from "./use-hunk-expansions";
+import { taskRoot } from "../repo-root";
 import { resetViewStates, viewRef } from "../view-state-store";
 import type { DiffHunk, FileDiff } from "../types/diff";
 
@@ -64,7 +65,7 @@ test("a chevron clamps against its neighbour's in-flight range, not only what ha
   const task = "expand-overlap";
   const net = heldFetch();
   const view = viewRef(task, "diffAll");
-  const { result } = renderHook(() => useHunkExpansions(task, "diffAll", view, files));
+  const { result } = renderHook(() => useHunkExpansions(taskRoot(task), "diffAll", view, files));
 
   // ⌄ below hunk 0, then ⌃ above hunk 1 before the first lands. Both handlers
   // come from the same render, which is the point: the second cannot see the
@@ -104,7 +105,7 @@ test("a response whose hunk moved under it is dropped rather than committed", as
   const net = heldFetch();
   const view = viewRef(task, "diffAll");
   const { result, rerender } = renderHook(
-    ({ files }: { files: FileDiff[] }) => useHunkExpansions(task, "diffAll", view, files),
+    ({ files }: { files: FileDiff[] }) => useHunkExpansions(taskRoot(task), "diffAll", view, files),
     { initialProps: { files: before } },
   );
 
@@ -129,7 +130,7 @@ test("a response whose hunk stayed put still commits", async () => {
   const task = "expand-settled";
   const net = heldFetch();
   const view = viewRef(task, "diffAll");
-  const { result } = renderHook(() => useHunkExpansions(task, "diffAll", view, files));
+  const { result } = renderHook(() => useHunkExpansions(taskRoot(task), "diffAll", view, files));
 
   await act(async () => {
     void result.current.expandContext(PATH, 0, "before", files[0]!.hunks[0]!, null, null);

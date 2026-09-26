@@ -22,11 +22,21 @@ import type { ServerMessage } from "../lib/xtmux/types";
  * Every key comes from `query-keys.ts`, which the owning hooks build theirs
  * from as well: a key spelled out twice is a key one rename can silently
  * detach, and a detached invalidation fails as silence rather than as an error.
+ *
+ * `rootIds` names every cache the change reaches, as root ids (`rootId` in
+ * `repo-root.ts`). By default only the task the frame names; the caller adds
+ * the task's project root (`project:<id>`) when the task runs in the project's
+ * own directory rather than a worktree, because then the composer's Explorer
+ * is browsing the very tree that moved (TASK-106). Each id gets the same set.
  */
 export function invalidationsFor(
   message: Extract<ServerMessage, { type: "changed" }>,
+  rootIds: readonly string[] = [message.taskId],
 ): QueryKey[] {
-  const id = message.taskId;
+  return rootIds.flatMap((id) => keysFor(message, id));
+}
+
+function keysFor(message: Extract<ServerMessage, { type: "changed" }>, id: string): QueryKey[] {
   const keys: QueryKey[] = [];
 
   const { files, history } = message;

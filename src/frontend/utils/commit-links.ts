@@ -1,5 +1,6 @@
 import type { ILink, ILinkProvider } from "@xterm/xterm";
 import { columnMapper, linkRange, type LinkBuffer } from "./terminal-links";
+import { rootApi, taskRoot } from "../repo-root";
 
 /**
  * Commit hashes in a terminal, as links (TASK-110).
@@ -93,7 +94,7 @@ export async function fetchCommits(
   shas: string[],
 ): Promise<Record<string, string>> {
   const query = encodeURIComponent(shas.join(","));
-  const res = await fetch(`/api/tasks/${taskId}/git/commits?sha=${query}`);
+  const res = await fetch(`${rootApi(taskRoot(taskId))}/git/commits?sha=${query}`);
   if (!res.ok) throw new Error("Failed to resolve commits");
   return ((await res.json()) as { commits?: Record<string, string> }).commits ?? {};
 }

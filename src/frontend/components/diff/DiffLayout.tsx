@@ -10,6 +10,7 @@ import {
   type DOMAttributes,
 } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import type { RepoRoot } from "@/frontend/repo-root";
 import { ResizeHandle } from "../v2/ResizeHandle";
 import { usePaneWidth } from "../../hooks/use-pane-width";
 import { FileTree } from "./FileTree";
@@ -60,7 +61,7 @@ export interface DiffLayoutScroll {
 
 interface DiffLayoutProps {
   files: FileDiff[];
-  taskId?: string;
+  root?: RepoRoot;
 
   // View-mode override (controlled); the large-diff → single default derives
   // from diff size inside the core so it stays live across refetches.
@@ -114,7 +115,7 @@ interface DiffLayoutProps {
 // All persistence-backed state is injected so each consumer owns its own store.
 export function DiffLayout({
   files,
-  taskId,
+  root,
   viewModeOverride,
   onViewModeOverride,
   selectedFile,
@@ -331,7 +332,7 @@ export function DiffLayout({
             hunkExpansions={hunkExpansions}
             onExpandContext={onExpandContext}
             commentState={commentState}
-            taskId={taskId}
+            root={root}
             imageRefs={imageRefs}
           />
         </div>
@@ -353,7 +354,7 @@ export function DiffLayout({
           hunkExpansions={hunkExpansions}
           onExpandContext={onExpandContext}
           commentState={commentState}
-          taskId={taskId}
+          root={root}
           imageRefs={imageRefs}
         />
       </div>

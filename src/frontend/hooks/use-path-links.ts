@@ -5,6 +5,7 @@ import type { PointMenuProps } from "../components/v2/DropdownMenu";
 import type { OpenOptions, TabDescriptor } from "../layout-store";
 import { useTasks } from "../TaskContext";
 import { createPathLinkProvider, indexFiles, type PathLinkContext } from "../utils/path-links";
+import { taskRoot } from "../repo-root";
 import { useTaskFiles } from "./use-task-files";
 
 export interface PathLinks {
@@ -33,7 +34,9 @@ interface Choice {
  * menu that goes with it (TASK-109).
  *
  * The provider is undefined until the task's file list has arrived — a task
- * outside any repository never gets one, since its list is an error.
+ * outside any repository never gets one, since its list is an error — and
+ * always for a null `taskId`, a pane read from a project with no terminal
+ * (a project root at the composer, TASK-106).
  *
  * The list is the Explorer's query, shared by key, so a task whose Files
  * section has already loaded costs nothing more, and a change to the working
@@ -51,14 +54,15 @@ interface Choice {
  * chosen one opens exactly as a single match would have.
  */
 export function usePathLinkProvider(
-  taskId: string,
+  taskId: string | null,
   enabled: boolean,
   onOpenTab: (descriptor: TabDescriptor, options?: OpenOptions) => void,
 ): PathLinks {
-  const { data } = useTaskFiles(taskId, { enabled });
+  const { data } = useTaskFiles(taskId == null ? null : taskRoot(taskId), { enabled });
   // The agent's live cwd. A shell tab's own cwd is not something the client
   // knows, so it shares this one; the root is tried after it either way.
-  const cwd = useTasks().taskById(taskId)?.cwd ?? null;
+  const { taskById } = useTasks();
+  const cwd = (taskId == null ? undefined : taskById(taskId))?.cwd ?? null;
 
   const index = useMemo(() => indexFiles(data), [data]);
   // Through refs, as in `useBacklogLinkProvider`: the factory's identity is

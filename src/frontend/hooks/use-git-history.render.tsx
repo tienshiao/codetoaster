@@ -1,6 +1,7 @@
 import { test, expect, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import type { FetchUntilStatus } from "./use-git-log";
+import { taskRoot } from "../repo-root";
 
 // A rendering test, so Vitest's, not `bun test`'s — see CLAUDE.md, "Testing".
 //
@@ -52,7 +53,7 @@ function mountAcrossTasks() {
   const view = renderHook(
     ({ taskId }: { taskId: string }) => {
       current = taskId;
-      return useGitHistory(taskId, (sha) => opened.push({ taskId: current, sha }));
+      return useGitHistory(taskRoot(taskId), (sha) => opened.push({ taskId: current, sha }));
     },
     { initialProps: { taskId: "task-a" } },
   );

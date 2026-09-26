@@ -11,6 +11,7 @@ import {
   type PaletteTask,
 } from "./palette-items";
 import { createLayout, openTab, resetIdCounter, type TaskLayout } from "./layout-store";
+import { presentComposerTab } from "./components/tabs/tab-labels";
 import type { FileDiff } from "./types/diff";
 import type { GitLogCommit, GitRefsResponse } from "./types/git";
 
@@ -88,6 +89,16 @@ describe("tabs", () => {
 
   test("no layout, no tabs", () => {
     expect(tabEntries(null)).toEqual([]);
+  });
+
+  test("at the composer the agent tab reads as the strip draws it there (TASK-106)", () => {
+    resetIdCounter();
+    const layout = openTab(createLayout(), { kind: "file", path: "src/a.ts" });
+
+    const labels = tabEntries(layout, presentComposerTab).map((e) => e.label);
+    expect(labels).toEqual(["New task", "a.ts"]);
+    // The default is still the task's projection.
+    expect(tabEntries(layout).map((e) => e.label)).toEqual(["Agent", "a.ts"]);
   });
 });
 
@@ -219,6 +230,13 @@ describe("actions", () => {
 
     expect(ids(entries)).toContain("action:search-terminal");
     expect(entries.find((e) => e.id === "action:search-terminal")!.keys).toEqual(["⌘", "F"]);
+  });
+
+  test("...and not at the composer, whose agent tab is the composer (TASK-106)", () => {
+    resetIdCounter();
+    const entries = ids(actionEntries({ task: null, layout: createLayout(), mac: true }));
+    expect(entries).not.toContain("action:search-terminal");
+    expect(entries).not.toContain("action:new-shell");
   });
 
   test("...and not in front of anything else, which has nothing to search", () => {

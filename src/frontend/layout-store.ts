@@ -1044,3 +1044,28 @@ export function retainLayouts(validTaskIds: ReadonlySet<string>): void {
     // As above.
   }
 }
+
+/**
+ * Re-home a stored layout: whatever is saved under `fromId` is saved under
+ * `toId` instead, and `fromId` is cleared. A no-op when nothing is stored
+ * under `fromId` — the destination then loads its own default, which is what
+ * a copy of the default would have given it anyway.
+ *
+ * The composer's handoff (TASK-106): the tabs a user opened from a project's
+ * Explorer while writing the prompt become the new task's, and the project's
+ * composer starts fresh for the next one. Moved as the raw stored string, so
+ * nothing about it is re-validated or re-minted here; `loadLayout` does that
+ * on the other side as it does for any stored layout.
+ */
+export function moveLayout(fromId: string, toId: string): void {
+  const store = storage();
+  if (!store || fromId === toId) return;
+  try {
+    const raw = store.getItem(storageKey(fromId));
+    if (raw == null) return;
+    store.setItem(storageKey(toId), raw);
+    store.removeItem(storageKey(fromId));
+  } catch {
+    // As above.
+  }
+}

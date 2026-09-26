@@ -1,4 +1,4 @@
-import { resolveTaskRoot, safePath, diffUntrackedFiles, gitSpawn, coalesce } from "./utils";
+import { rootRoutes, safePath, diffUntrackedFiles, gitSpawn, coalesce } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
 import type { LineTokens } from "../types/highlight";
 
@@ -25,20 +25,18 @@ async function workingTreeDiff(dir: string): Promise<string> {
 }
 
 export const diffRoutes = {
-  "/api/tasks/:id/diff": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("diff", {
+    async GET({ repoRoot: dir }) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
-        // Coalesced per task: the Explorer rail, the Changes panel and an open
-        // diff tab all hold this query, and one watcher batch invalidates it
-        // for every client at once. Each of those wants the same bytes. The
-        // directory is in the key because the root is re-resolved per request
-        // and can move under a task whose agent has changed repository; a
-        // caller with the new root must not be handed the old tree's diff.
-        const diff = await coalesce(`diff:${req.params.id}:${dir}`, () => workingTreeDiff(dir));
+        // Coalesced per directory: the Explorer rail, the Changes panel and an
+        // open diff tab all hold this query, and one watcher batch invalidates
+        // it for every client at once. Each of those wants the same bytes. The
+        // key is the directory, not the task or project id, because the root
+        // is re-resolved per request and can move under a task whose agent has
+        // changed repository — a caller with the new root must not be handed
+        // the old tree's diff — and because a task and its project over one
+        // checkout want exactly the same bytes.
+        const diff = await coalesce(`diff:${dir}`, () => workingTreeDiff(dir));
         const hash = Bun.hash(diff).toString(16);
         return Response.json({ diff, directory: dir, hash });
       } catch (error) {
@@ -48,15 +46,11 @@ export const diffRoutes = {
         );
       }
     },
-  },
+  }),
 
-  "/api/tasks/:id/context": {
-    async GET(req: Request & { params: { id: string } }) {
+  ...rootRoutes("context", {
+    async GET({ repoRoot: dir }, req) {
       try {
-        const result = await resolveTaskRoot(req.params.id);
-        if ("error" in result) return result.error;
-        const { repoRoot: dir } = result;
-
         const url = new URL(req.url);
         const filePath = url.searchParams.get("file");
         const start = parseInt(url.searchParams.get("start") || "1", 10);
@@ -105,5 +99,5 @@ export const diffRoutes = {
         );
       }
     },
-  },
-} as const;
+  }),
+};
