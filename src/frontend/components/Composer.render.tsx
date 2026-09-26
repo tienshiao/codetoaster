@@ -5,9 +5,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { chooseOption, selectValue } from "../../../test/v2-select";
 import type { ProfileSummary } from "../hooks/use-profiles";
 import {
+  getComposerDraft,
   requestComposerProject,
-  resetComposerRequest,
-} from "../composer-request-store";
+  resetComposerDraft,
+} from "../composer-draft-store";
 import type { CreateTaskOptions, TaskResult } from "../TaskContext";
 import type { ProjectInfo, TaskInfo } from "../../lib/xtmux/types";
 
@@ -82,8 +83,9 @@ function profile(name: string, label: string, model: boolean): ProfileSummary {
 let profiles: ProfileSummary[];
 
 beforeEach(() => {
-  // Module state, so a request made by one test is one the next would open on.
-  resetComposerRequest();
+  // Module state, so a draft typed into by one test is one the next would
+  // open on — prompt, attachments, project and all.
+  resetComposerDraft();
   stubs.projects = [project("general"), project("web")];
   stubs.createTask.mockReset();
   stubs.createTask.mockResolvedValue({ ok: true, value: created });
@@ -505,8 +507,9 @@ describe("the project a group's + asked for", () => {
   test("a changed ?project= moves the selection and nothing else", () => {
     // Back and Forward. Every `+` pushes a history entry, so navigating across
     // them changes this prop on a composer that is already mounted — and that
-    // is all that happens: no remount to re-read the seed, and no request in
-    // the store either.
+    // is all that happens: no remount, and no press writing the store. The
+    // composer hands the new address to the draft store, which moves the
+    // selection because it differs from the one last applied.
     const view = mount(<Composer />);
     type("ship it");
     expect(selectValue("project")).toBe("general");
@@ -519,8 +522,8 @@ describe("the project a group's + asked for", () => {
 
   test("arriving while the user is typing moves the selection and nothing else", () => {
     // The real shape of it: `/` is already showing, so pressing a group's `+`
-    // is a request into a live composer rather than a new mount. The prompt is
-    // the user's and the only copy of it.
+    // is a write to the draft under a live composer rather than a new mount.
+    // The prompt is the user's, and the press moves only the project.
     mount(<Composer />);
     type("ship it");
     expect(selectValue("project")).toBe("general");
@@ -535,7 +538,8 @@ describe("the project a group's + asked for", () => {
     // TASK-82, the whole of it: opened at `/?project=web`, chip moved to
     // general by hand, then web's `+` pressed again. The navigation behind that
     // press goes to the address already showing and so changes nothing, which
-    // is why the request is counted rather than compared by id.
+    // is why the press writes the draft's project directly rather than leaving
+    // it to the address.
     mount(<Composer projectId="web" />);
     chooseOption("project", "general");
     type("ship it");
@@ -822,6 +826,121 @@ describe("attachments", () => {
     expect((stubs.createTask.mock.calls[0]![0] as CreateTaskOptions).prompt).toBe(
       "what is wrong here\n\n/home/me/.codetoaster/uploads/abc/a.png",
     );
+  });
+});
+
+/**
+ * The draft outlives the composer (TASK-112).
+ *
+ * `/` unmounts the composer the moment the user opens a task, so everything
+ * here is a mount, an unmount and a second mount: what the user assembled has
+ * to be on the second one, and what the address and a `+` press ask for has
+ * to land on it the way it would on a live one.
+ */
+describe("the draft outlives the composer", () => {
+  function png(name: string): File {
+    return new File([new Uint8Array(2048)], name, { type: "image/png" });
+  }
+
+  function attach(...files: File[]) {
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files } });
+  }
+
+  function chips(): string[] {
+    const list = screen.queryByRole("list", { name: "Attachments" });
+    return list ? Array.from(list.children).map((li) => li.textContent ?? "") : [];
+  }
+
+  function promptValue(): string {
+    return (screen.getByLabelText("Prompt") as HTMLTextAreaElement).value;
+  }
+
+  test("leaving and coming back finds the prompt, the attachment and the chips", async () => {
+    const view = mount(<Composer />);
+    type("what is wrong here");
+    attach(png("shot.png"));
+    await waitFor(() => expect(chips()).toEqual(["shot.png2.0 KB"]));
+    chooseOption("model", "Sonnet");
+
+    // Opening a task: the route leaves `/` and the composer goes with it.
+    view.unmount();
+    mount(<Composer />);
+
+    expect(promptValue()).toBe("what is wrong here");
+    expect(chips()).toEqual(["shot.png2.0 KB"]);
+    expect(selectValue("model")).toBe("Sonnet");
+  });
+
+  test("a project's + pressed while the composer is not mounted still lands", () => {
+    const view = mount(<Composer />);
+    type("ship it");
+    view.unmount();
+
+    // Pressed from a task, where there is no composer to tell.
+    requestComposerProject("web");
+    mount(<Composer />);
+
+    expect(selectValue("project")).toBe("web");
+    expect(promptValue()).toBe("ship it");
+  });
+
+  test("the header's + keeps the draft's project", () => {
+    const view = mount(<Composer projectId="web" />);
+    type("ship it");
+    view.unmount();
+
+    // What the header's `+` navigates to: `/` with no preference, which is
+    // not an instruction to go back to the first project.
+    mount(<Composer />);
+
+    expect(selectValue("project")).toBe("web");
+    expect(promptValue()).toBe("ship it");
+  });
+
+  test("a remount at the same address re-applies nothing", () => {
+    const view = mount(<Composer projectId="web" />);
+    chooseOption("project", "general");
+    view.unmount();
+
+    // Back to `/?project=web` after a detour through a task. The address did
+    // not change, so it is not a new ask, and the hand-moved chip stands.
+    mount(<Composer projectId="web" />);
+
+    expect(selectValue("project")).toBe("general");
+  });
+
+  test("a successful submit clears the draft and keeps the project", async () => {
+    const view = mount(<Composer projectId="web" />);
+    submitKey(type("ship it"));
+    await waitFor(() => expect(stubs.openTask).toHaveBeenCalledTimes(1));
+    view.unmount();
+
+    mount(<Composer />);
+
+    expect(promptValue()).toBe("");
+    expect(selectValue("project")).toBe("web");
+  });
+
+  test("an unmount releases no object URL; leaving the draft does", async () => {
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    try {
+      const view = mount(<Composer />);
+      attach(png("shot.png"));
+      await waitFor(() => expect(chips()).toHaveLength(1));
+      const url = getComposerDraft().attachments[0]!.previewUrl;
+      expect(url).toBeTruthy();
+
+      // The thumbnail must still draw when the user comes back.
+      view.unmount();
+      expect(revoke).not.toHaveBeenCalled();
+
+      resetComposerDraft();
+      expect(revoke).toHaveBeenCalledTimes(1);
+      expect(revoke).toHaveBeenCalledWith(url);
+    } finally {
+      revoke.mockRestore();
+    }
   });
 });
 

@@ -2,37 +2,7 @@ import { FileText, X } from "lucide-react";
 import { IconButton } from "@/frontend/components/v2/IconButton";
 import { cn } from "@/frontend/lib/utils";
 import { formatSize } from "@/frontend/utils/formatSize";
-import { generateUUID } from "@/frontend/utils/uuid";
-
-/** A file the composer is holding until submit (TASK-93). Nothing is uploaded
- * while it sits here, so this is the only copy of it — and `previewUrl` is an
- * object URL this module minted, which the holder has to release. */
-export interface Attachment {
-  id: string;
-  file: File;
-  /** A thumbnail source, for an image. Undefined for everything else, which
-   * gets an icon rather than a broken picture. */
-  previewUrl?: string;
-}
-
-export function toAttachment(file: File): Attachment {
-  return {
-    // Not `crypto.randomUUID`: it is undefined on an insecure origin, which is
-    // exactly how this UI is reached over plain http on a LAN.
-    id: generateUUID(),
-    file,
-    // Only for an image. A PDF or a log would render as a broken thumbnail,
-    // and an object URL for one is a leak with nothing to show for it.
-    previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
-  };
-}
-
-/** The other half of `toAttachment`. An object URL pins its blob in memory for
- * the life of the document, so a composer the user pastes ten screenshots into
- * and then clears keeps all ten until the tab closes. */
-export function releaseAttachment(attachment: Attachment): void {
-  if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-}
+import type { Attachment } from "@/frontend/lib/attachments";
 
 export interface AttachmentStripProps {
   attachments: Attachment[];

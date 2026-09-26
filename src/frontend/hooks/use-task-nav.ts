@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { requestComposerProject } from "../composer-request-store";
+import { requestComposerProject } from "../composer-draft-store";
 import { useTasks } from "../TaskContext";
 import { buildTaskSlug } from "../utils/slug";
 
@@ -46,7 +46,7 @@ export function useOpenTask(): (taskId: string, options?: { tab?: string }) => v
  * one of those answers on the user's behalf, and to a promptless task besides.
  *
  * A project group's `+` passes that project's id and it goes out twice: to the
- * request store, which is what actually moves the composer's selection, and
+ * composer's draft store, which is what actually moves the selection, and
  * into the URL as `?project=` so the address opens on the same project when it
  * is reloaded or copied. The store is needed because the URL alone cannot
  * express a second press — `/?project=web` is already showing, the navigation
@@ -65,10 +65,11 @@ export function useOpenComposer(): (options?: { projectId?: string }) => void {
   return useCallback(
     (options = {}) => {
       // Unconditionally, rather than inside the navigation's success branch
-      // below: the store's own notify is what moves a composer already mounted
-      // at `/`, so the request does not need the navigation to have landed —
-      // and a navigation that never settles at all (a history blocker leaves
-      // the promise pending) would swallow the press entirely.
+      // below: the draft store's own notify is what moves a composer already
+      // mounted at `/`, and a composer not mounted yet reads the moved draft
+      // when it mounts, so the request does not need the navigation to have
+      // landed — and a navigation that never settles at all (a history blocker
+      // leaves the promise pending) would swallow the press entirely.
       if (options.projectId) requestComposerProject(options.projectId);
       // Focus only once the navigation has landed, and only if it did: a
       // navigation that rejects — blocked, or redirected out from under this —

@@ -1,6 +1,6 @@
 import {
   useCallback,
-  useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -11,19 +11,20 @@ import {
 import { CornerDownLeft, Folder, GitBranch, Paperclip, Upload } from "lucide-react";
 import { useTasks } from "@/frontend/TaskContext";
 import {
-  getComposerRequest,
-  subscribeComposerRequest,
-} from "@/frontend/composer-request-store";
+  addComposerAttachments,
+  applyComposerUrlProject,
+  clearComposerDraft,
+  getComposerDraft,
+  patchComposerDraft,
+  removeComposerAttachment,
+  setComposerDraftProject,
+  subscribeComposerDraft,
+} from "@/frontend/composer-draft-store";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { uploadStaged } from "@/frontend/lib/upload-api";
 import { useProfiles } from "@/frontend/hooks/use-profiles";
 import { COMPOSER_PROMPT_ID, useOpenTask } from "@/frontend/hooks/use-task-nav";
-import {
-  AttachmentStrip,
-  releaseAttachment,
-  toAttachment,
-  type Attachment,
-} from "@/frontend/components/AttachmentStrip";
+import { AttachmentStrip } from "@/frontend/components/AttachmentStrip";
 import { promptWithAttachments } from "@/frontend/lib/attachments";
 import { MentionSuggestions, useMention } from "@/frontend/components/MentionSuggestions";
 import { cn } from "@/frontend/lib/utils";
@@ -35,17 +36,12 @@ import {
   knownValue,
   modelOptions,
   profileOptions,
-  UNSET,
 } from "@/frontend/lib/agent-options";
 // From `profile.ts`, which imports nothing, and not from the registry beside
 // it, which reads the daemon's configuration off disk.
 import { DEFAULT_PROFILE } from "@/lib/agent/profile";
 import { TextInput } from "@/frontend/components/v2/TextInput";
 import { Textarea } from "@/frontend/components/v2/Textarea";
-
-/** `""` is not a model — it is the absence of an override, which lets the
- * server answer with the project's column. */
-const PROJECT_DEFAULT = UNSET;
 
 const MODELS = modelOptions("Project default");
 
@@ -74,28 +70,40 @@ export interface ComposerProps {
  * default. The column, the `POST /api/tasks` field and the server's resolution
  * of them all survive — a mode set by the API or the CLI still spawns with it.
  *
- * `projectId` is what the composer opens on, carried here as `/?project=<id>`.
- * It is a preference and not an address: it seeds the selection on mount, so a
- * copied URL opens on the project it names, and an id that names no project
- * falls through the same fallback a deleted project's id does and the composer
- * opens on the first one. The selection is not written back to it.
+ * What the user has typed, attached and chosen is not this component's: it
+ * is the one draft in `composer-draft-store`, read through
+ * `useSyncExternalStore` and written through the store's own functions. The
+ * composer is unmounted the moment the route leaves `/`, and a draft held in
+ * its state died with it — half a prompt, the screenshots pasted under it and
+ * every chip moved, all gone because the user clicked a task to check
+ * something. Held in the store, leaving `/` is only leaving, and the header's
+ * `+` comes back to the draft exactly as it was (TASK-112). It is in memory
+ * only; an attached `File` cannot be persisted, so a reload starts fresh.
  *
- * The prop keeps being followed after that mount, because it also *is* the
- * address: every `+` pushes a history entry, so Back and Forward move between
- * `/?project=web` and `/?project=general` — and a history navigation changes
- * this prop with nothing else happening at all. A composer that only read it
- * once would sit on the wrong project for the whole of that.
+ * `projectId` is `/?project=<id>`, and it is a preference and not an address:
+ * it seeds the selection so a copied URL opens on the project it names, an id
+ * that names no project falls through the same fallback a deleted project's id
+ * does and the composer opens on the first one, and the selection is never
+ * written back to it. It is handed to the store on every change, and the
+ * store applies it only when it differs from the last one it applied. That is
+ * what lets Back and Forward across the entries each `+` pushed still move the
+ * selection, while a remount at the same address — Back to `/?project=web`
+ * after a detour through a task — re-applies nothing over a chip the user
+ * moved by hand in between.
  *
- * `composer-request-store` answers the ask the address cannot express: a repeat
- * of the project it already names. Pressing web's `+` at `/?project=web` is a
- * navigation to the address already showing, so the prop does not move and only
- * the store's count does. The two coexist — a first press moves both for the
- * same id, which is two identical `setProjectId` calls — and a chip the user
- * moved by hand is clobbered by neither, since neither the prop nor the count
- * changes when nothing was pressed.
+ * A project group's `+` does not go through the prop at all. It writes the
+ * store directly, moving the draft's project whether or not this is mounted,
+ * and records the address it is about to navigate to so the arrival is not a
+ * second ask. A second press of the project already named is therefore a real
+ * move even though its navigation goes to the address already showing
+ * (TASK-82). Whichever way the ask arrives, only the project moves: the prompt
+ * and the attachments are the user's.
  *
- * Whichever way the ask arrives, only the selection moves: the prompt is the
- * user's and may already have been typed into, and it is the only copy of it.
+ * The option chips are overrides, `null` until touched, and what each shows is
+ * derived every render against the selected project's own columns. Moving the
+ * project re-seeds them by clearing the overrides in the store, so there is no
+ * record of which project they were seeded from and nothing to re-run when the
+ * project list lands late over the socket.
  */
 export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) {
   const { projects, createTask } = useTasks();
@@ -108,20 +116,26 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   const { data: profiles } = useProfiles();
   const PROFILES = profileOptions(profiles, "Project default");
 
-  const [prompt, setPrompt] = useState("");
-  const [projectId, setProjectId] = useState(requestedProjectId ?? "");
-  const [model, setModel] = useState(PROJECT_DEFAULT);
-  const [touchedProfile, setProfile] = useState<string | null>(null);
-  const [worktree, setWorktree] = useState(false);
-  const [baseRef, setBaseRef] = useState("");
+  const draft = useSyncExternalStore(subscribeComposerDraft, getComposerDraft, getComposerDraft);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Files held until submit (TASK-93). Nothing is written to disk while they
-  // sit here, so a composer the user walks away from leaves no orphans behind
-  // and there is no cleanup pass to own; the cost is that a large paste is
-  // uploaded at ⌘⏎ rather than in the background before it.
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // The address, handed to the store, which moves the selection only when it
+  // differs from the last one applied. A layout effect and not a plain one:
+  // the store's notify re-renders this synchronously inside the commit, so the
+  // moved project lands before the browser paints — a passive effect would
+  // paint a frame of the previous project and its chips first, and ⌘⏎ in that
+  // frame would send them.
+  useLayoutEffect(() => {
+    applyComposerUrlProject(requestedProjectId);
+  }, [requestedProjectId]);
+
+  // Files are held in the draft until submit (TASK-93). Nothing is written to
+  // disk while they sit there, so a draft the user walks away from leaves no
+  // orphans behind and there is no cleanup pass to own; the cost is that a
+  // large paste is uploaded at ⌘⏎ rather than in the background before it.
+  // Their object URLs are released by the store when they leave the draft and
+  // not on unmount, since the draft outlives this.
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Nested drag targets fire `dragleave` on the way *in* to a child, so the
   // overlay has to count enters rather than trust the last event — the same
@@ -129,96 +143,32 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   const [dragDepth, setDragDepth] = useState(0);
   const dragOver = dragDepth > 0;
 
-  // Every object URL still held when this unmounts, released. Through a ref
-  // because the effect must not re-run per attachment — a dependency on the
-  // list would revoke the URLs of the chips still on screen the moment the
-  // next one is added, and the thumbnails would go blank. `removeAttachment`
-  // reads the same ref for the current list.
-  const attachmentsRef = useRef(attachments);
-  attachmentsRef.current = attachments;
-  useEffect(() => () => attachmentsRef.current.forEach(releaseAttachment), []);
-
   const addFiles = useCallback(
     (files: File[]) => {
       // Nothing joins the list once the submit is under way: it snapshotted
       // the attachments before awaiting the upload, so a file added now would
       // be uploaded by nobody and named in no prompt — silently dropped.
-      if (submitting || files.length === 0) return;
-      setAttachments((current) => [...current, ...files.map(toAttachment)]);
+      if (submitting) return;
+      addComposerAttachments(files);
     },
     [submitting],
   );
 
-  const removeAttachment = useCallback((id: string) => {
-    // Released outside the updater: React may run one twice, and revoking the
-    // same object URL from a re-run is a side effect in a place that must not
-    // have any.
-    const going = attachmentsRef.current.find((a) => a.id === id);
-    if (going) releaseAttachment(going);
-    setAttachments((current) => current.filter((a) => a.id !== id));
-  }, []);
-
-  // Two "adjust state when a prop changes" branches, and they answer different
-  // questions.
-  //
-  // The first follows the address. `?project=` changing on a mounted composer
-  // is a history navigation — Back or Forward across the entries each `+`
-  // pushed, including Back to a plain `/` — and nothing else happens then: no
-  // remount to re-read the seed above, and no request in the store either.
-  const [lastRequested, setLastRequested] = useState(requestedProjectId ?? null);
-  if ((requestedProjectId ?? null) !== lastRequested) {
-    setLastRequested(requestedProjectId ?? null);
-    // Only when it names one. Back to `/` is the address dropping its
-    // preference, not an instruction to move the chip anywhere.
-    if (requestedProjectId) setProjectId(requestedProjectId);
-  }
-
-  // The second is for the ask the address cannot carry: a press of the `+` for
-  // the project `?project=` already names is a navigation to the address
-  // already showing, so the prop above is inert and the composer would see
-  // nothing (TASK-82). Keyed on the store's count and not on the id it carries,
-  // because that press names a project the composer may well be showing already
-  // — the user having moved the chip by hand since — and comparing ids would
-  // read it as nothing having been asked for.
-  //
-  // The two overlap harmlessly: a first press moves both for the same id, which
-  // is two identical `setProjectId` calls. Either way only the selection moves;
-  // the prompt is untouched, since the user can already be typing when the
-  // request arrives.
-  const request = useSyncExternalStore(
-    subscribeComposerRequest,
-    getComposerRequest,
-    getComposerRequest,
-  );
-  const [seenSeq, setSeenSeq] = useState(request.seq);
-  if (request.seq !== seenSeq) {
-    setSeenSeq(request.seq);
-    if (request.projectId) setProjectId(request.projectId);
-  }
+  const setPrompt = useCallback((value: string) => patchComposerDraft({ prompt: value }), []);
 
   // The list arrives over the socket, so there is a first render with no
   // projects at all and the selection has to survive it: an id held from before
   // a project was deleted elsewhere is no longer a choice either — and neither
   // is a `?project=` naming one that never existed, which lands here too.
-  const project = projects.find((p) => p.id === projectId) ?? projects[0];
+  const project = projects.find((p) => p.id === draft.projectId) ?? projects[0];
 
-  // React's own "adjust state when a prop changes": the model belongs to the
-  // project it was read from, so it is re-seeded during the render that moves
-  // the selection — including the one where the list first lands and picks the
-  // first project. An effect would paint a frame of the previous project's
-  // choices first, and ⌘⏎ in that frame would send them.
-  const [seededFor, setSeededFor] = useState<string | null>(null);
-  if (project && seededFor !== project.id) {
-    setSeededFor(project.id);
-    setModel(knownValue(MODELS, project.defaultModel));
-    // Back to untouched, not to a value: what the agent chip shows is derived
-    // from this project and the fetched list below.
-    setProfile(null);
-    setWorktree(project.worktreeDefault);
-    setBaseRef(project.defaultBaseRef ?? "");
-  }
-
-  // Derived rather than seeded, unlike the three fields above it, because its
+  // Each chip is the user's override if there is one, else the selected
+  // project's own answer. Derived every render rather than seeded when the
+  // selection moves, so the frame where the list first lands and picks the
+  // first project is already right, and moving the project is only a matter of
+  // the store clearing the overrides.
+  const model = draft.model ?? knownValue(MODELS, project?.defaultModel ?? null);
+  // Derived against the fetched list as well as the project, because its
   // options arrive over the network: `knownValue` against a list that has not
   // landed answers "unset" for every project, so a value stored when the
   // selection moved would show "Project default" over a project that has one —
@@ -228,7 +178,10 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
   // `null` is "the user has not touched this", which is not the empty choice:
   // that is a deliberate "let the project decide", and it has to survive the
   // list arriving.
-  const profile = touchedProfile ?? knownValue(PROFILES, project?.defaultProfile ?? null);
+  const profile = draft.profile ?? knownValue(PROFILES, project?.defaultProfile ?? null);
+  const worktree = draft.worktree ?? project?.worktreeDefault ?? false;
+  const baseRef = draft.baseRef ?? project?.defaultBaseRef ?? "";
+  const { prompt, attachments } = draft;
 
   // What this task would actually run on, which is the resolution the server
   // will do again: the override, else the project's column, else claude. Its
@@ -351,8 +304,11 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
       setSubmitting(false);
       return;
     }
-    // Left submitting: the navigation unmounts this, and until it does the
-    // button must not take a second ⌘⏎.
+    // The draft is spent, and goes: prompt, attachments (their object URLs
+    // released) and overrides. The project stays, since the next task is more
+    // often than not in the same one. Left submitting: the navigation unmounts
+    // this, and until it does the button must not take a second ⌘⏎.
+    clearComposerDraft();
     openTask(result.value.id, { tab: "agent" });
   }, [
     prompt, canSubmit, createTask, project, model, profile, worktree, baseRef, canWorktree,
@@ -448,7 +404,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
             icon={Folder}
             options={projects.map((p) => ({ value: p.id, label: p.name }))}
             value={project?.id ?? ""}
-            onValueChange={setProjectId}
+            onValueChange={setComposerDraftProject}
           />
         </div>
         {/* The positioning context for the suggestion list, which hangs off the
@@ -500,7 +456,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
         </div>
         <AttachmentStrip
           attachments={attachments}
-          onRemove={removeAttachment}
+          onRemove={removeComposerAttachment}
           disabled={submitting}
         />
         <div className="flex flex-wrap items-center gap-1.5">
@@ -511,7 +467,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
             label="agent"
             options={PROFILES}
             value={profile}
-            onValueChange={setProfile}
+            onValueChange={(v) => patchComposerDraft({ profile: v })}
           />
           <Select
             label="model"
@@ -526,7 +482,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
                 ? undefined
                 : "This agent takes no model"
             }
-            onValueChange={setModel}
+            onValueChange={(v) => patchComposerDraft({ model: v })}
           />
           <Checkbox
             variant="chip"
@@ -538,7 +494,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
                 ? "Give this task a checkout of its own"
                 : "This project has no directory to branch from"
             }
-            onChange={(e) => setWorktree(e.target.checked)}
+            onChange={(e) => patchComposerDraft({ worktree: e.target.checked })}
           />
           {/* Only alongside a worktree, because it decides nothing without
               one: a task running in the project's own checkout is on whatever
@@ -553,7 +509,7 @@ export function Composer({ projectId: requestedProjectId }: ComposerProps = {}) 
                 aria-label="Base ref"
                 value={baseRef}
                 placeholder={project?.defaultBaseRef ?? "HEAD"}
-                onChange={(e) => setBaseRef(e.target.value)}
+                onChange={(e) => patchComposerDraft({ baseRef: e.target.value })}
                 className="h-control w-28 border-0 bg-transparent px-0 focus:border-0"
               />
             </label>

@@ -756,6 +756,14 @@ header carries its own `+` alongside it, which opens the composer at `/?project=
 that project already selected; the composer treats the parameter as a preference rather
 than an address, and an id it does not know is simply not honoured.
 
+**The composer holds one draft, and it outlives the pane.** The prompt, the attachments,
+the project and the chip overrides live in a module store (`composer-draft-store`)
+rather than in the component, so leaving `/` to look at a task and coming back through
+the header's `+` lands on the draft unchanged. A project group's `+` moves the draft's
+project and re-seeds its chips from that project without touching the prompt; a
+successful submit clears the draft but keeps the project. It is in memory only, since an
+attached `File` cannot be persisted, so a reload starts fresh (TASK-112).
+
 Submit → `POST /api/tasks` → server creates the worktree, writes the per-task settings,
 spawns the agent with the prompt in argv → client navigates to `/t/<slug>` with the
 agent tab focused.

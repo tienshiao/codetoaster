@@ -1,6 +1,10 @@
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { getComposerRequest, resetComposerRequest } from "../composer-request-store";
+import {
+  getComposerDraft,
+  resetComposerDraft,
+  setComposerDraftProject,
+} from "../composer-draft-store";
 
 /**
  * What the sidebar's New task button does, which is the whole of TASK-76: it
@@ -27,8 +31,8 @@ const { COMPOSER_PROMPT_ID, useOpenComposer } = await import("./use-task-nav");
 beforeEach(() => {
   stubs.navigate.mockReset();
   stubs.navigate.mockResolvedValue(undefined);
-  // Module state, so a request counted by one test is still counted in the next.
-  resetComposerRequest();
+  // Module state, so a project one test's press moved is where the next starts.
+  resetComposerDraft();
 });
 
 afterEach(() => {
@@ -63,26 +67,32 @@ test("a project group's New task carries the project in the URL", async () => {
   expect(stubs.navigate).toHaveBeenCalledWith({ to: "/", search: { project: "web" } });
 });
 
-test("a project group's New task is a counted request, not only an address", async () => {
-  // TASK-82. Pressed twice, the second navigation is to the URL already
-  // showing and tells the composer nothing; the count is what makes it an ask.
+test("a project group's New task moves the draft's project, and the header's does not", async () => {
+  // TASK-82, TASK-112. The press writes the draft directly, together with the
+  // address it is about to navigate to, so the arrival does not apply it twice.
   const { result } = renderHook(() => useOpenComposer());
 
   await act(async () => {
     result.current({ projectId: "web" });
   });
-  expect(getComposerRequest()).toEqual({ projectId: "web", seq: 1 });
+  expect(getComposerDraft().projectId).toBe("web");
+  expect(getComposerDraft().urlProject).toBe("web");
 
+  // Moved by hand, then web's `+` again: the second navigation is to the URL
+  // already showing and says nothing, so the write is what makes it land.
+  setComposerDraftProject("general");
   await act(async () => {
     result.current({ projectId: "web" });
   });
-  expect(getComposerRequest()).toEqual({ projectId: "web", seq: 2 });
+  expect(getComposerDraft().projectId).toBe("web");
 
-  // The header's `+` has no opinion about the project, so it asks for nothing.
+  // The header's `+` has no opinion about the project, so the draft keeps
+  // whichever one it is on.
+  setComposerDraftProject("general");
   await act(async () => {
     result.current();
   });
-  expect(getComposerRequest().seq).toBe(2);
+  expect(getComposerDraft().projectId).toBe("general");
 });
 
 test("the prompt box takes focus once the navigation has landed", async () => {
