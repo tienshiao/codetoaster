@@ -402,8 +402,13 @@ export function coalesce<T>(key: string, fn: () => Promise<T>): Promise<T> {
   if (!slot) return startCoalesced(key, fn);
   if (!slot.queued) {
     // Attached after the `finally` that clears the slot, so by the time this
-    // runs the map is empty for the key and the rerun registers as a new slot.
-    const rerun = () => startCoalesced(key, fn);
+    // runs the map is usually empty for the key and the rerun registers as a
+    // new slot. Usually: the clear and this callback are two microtasks, and a
+    // handler resuming from its own `await` between them finds no slot and
+    // starts a run of its own. Going back through `coalesce` rather than
+    // straight to `startCoalesced` queues behind that run instead of running
+    // alongside it — its answer is as fresh as the rerun's would have been.
+    const rerun = () => coalesce(key, fn);
     slot.queued = slot.running.then(rerun, rerun);
   }
   return slot.queued as Promise<T>;
