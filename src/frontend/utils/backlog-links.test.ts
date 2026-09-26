@@ -100,6 +100,12 @@ test("indexBacklog keys the list by uppercased id", () => {
         labels: [],
         assignee: [],
         path: "backlog/tasks/task-82 - Eighty-two.md",
+        description: "",
+        createdDate: null,
+        updatedDate: null,
+        dependencies: [],
+        parent: null,
+        acceptance: { done: 0, total: 0 },
       },
     ],
   };

@@ -2,7 +2,7 @@ import { test, expect, describe, afterEach } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { readBacklog, parseTaskFile, compareBacklogTasks } from "./read";
+import { readBacklog, parseTaskFile, compareBacklogTasks, DESCRIPTION_CAP } from "./read";
 import type { BacklogTask } from "../../types/backlog";
 
 // Fixtures are real directories, because everything under test is a question
@@ -60,6 +60,11 @@ labels:
   - api
 priority: high
 ordinal: 7000
+created_date: '2026-09-10 07:44'
+updated_date: '2026-09-11 18:02'
+dependencies:
+  - TASK-3
+parent_task_id: TASK-6
 `
       ),
     });
@@ -79,6 +84,12 @@ ordinal: 7000
         labels: ["server", "api"],
         assignee: ["@tma"],
         path: "backlog/tasks/task-7 - Do the thing.md",
+        description: "Body text.",
+        createdDate: "2026-09-10 07:44",
+        updatedDate: "2026-09-11 18:02",
+        dependencies: ["TASK-3"],
+        parent: "TASK-6",
+        acceptance: { done: 0, total: 0 },
       },
     ]);
   });
@@ -223,6 +234,12 @@ describe("parseTaskFile", () => {
       labels: [],
       assignee: [],
       path: "backlog/tasks/task-5.md",
+      description: "Body text.",
+      createdDate: null,
+      updatedDate: null,
+      dependencies: [],
+      parent: null,
+      acceptance: { done: 0, total: 0 },
     });
   });
 
@@ -251,9 +268,137 @@ describe("parseTaskFile", () => {
   });
 });
 
+// The body sections the hover card shows (TASK-114), in the shape the Backlog.md
+// CLI writes them: marker comments around each section, numbered criteria.
+describe("parseTaskFile: the body", () => {
+  const FULL = `---
+id: TASK-9
+title: Nine
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+First paragraph.
+
+Second paragraph.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 One
+- [X] #2 Two
+- [ ] #3 Three
+<!-- AC:END -->
+
+## Implementation Notes
+
+- [x] a note's own checklist
+- [ ] is not the criteria
+`;
+
+  test("the description without its markers, and the criteria counted (AC #5)", () => {
+    const task = parseTaskFile(FULL, "p.md")!;
+    expect(task.description).toBe("First paragraph.\n\nSecond paragraph.");
+    // Three, not five: the notes' checklist sits under the next heading.
+    expect(task.acceptance).toEqual({ done: 2, total: 3 });
+  });
+
+  test("a file with none of it reads as the defaults (AC #5)", () => {
+    const task = parseTaskFile("---\nid: TASK-5\ntitle: Bare\n---\n", "p.md")!;
+    expect(task.description).toBe("");
+    expect(task.createdDate).toBeNull();
+    expect(task.updatedDate).toBeNull();
+    expect(task.dependencies).toEqual([]);
+    expect(task.parent).toBeNull();
+    expect(task.acceptance).toEqual({ done: 0, total: 0 });
+  });
+
+  test("an unchecked-only list is none done of all of them (AC #5)", () => {
+    const file = "---\nid: TASK-5\n---\n\n## Acceptance Criteria\n- [ ] #1 a\n- [ ] #2 b\n";
+    expect(parseTaskFile(file, "p.md")!.acceptance).toEqual({ done: 0, total: 2 });
+  });
+
+  test("a heading quoted inside a code fence neither ends nor opens a section", () => {
+    const file = [
+      "---",
+      "id: TASK-5",
+      "---",
+      "",
+      "## Description",
+      "",
+      "A task file looks like this:",
+      "```md",
+      "## Acceptance Criteria",
+      "- [x] not the real list",
+      "```",
+      "and that is the whole description.",
+      "",
+      "## Acceptance Criteria",
+      "- [ ] #1 the real one",
+      "",
+    ].join("\n");
+    const task = parseTaskFile(file, "p.md")!;
+    expect(task.description).toBe(
+      "A task file looks like this:\n```md\n## Acceptance Criteria\n- [x] not the real list\n```\nand that is the whole description.",
+    );
+    expect(task.acceptance).toEqual({ done: 0, total: 1 });
+  });
+
+  test("a checklist outside the criteria section is not counted", () => {
+    const file = "---\nid: TASK-5\n---\n\n## Description\n\n- [x] looks like one\n";
+    expect(parseTaskFile(file, "p.md")!.acceptance).toEqual({ done: 0, total: 0 });
+  });
+
+  test("a description past the cap is cut to it, ending in an ellipsis", () => {
+    const file = `---\nid: TASK-5\n---\n\n## Description\n\n${"a".repeat(DESCRIPTION_CAP + 100)}\n`;
+    const description = parseTaskFile(file, "p.md")!.description;
+    expect(description.length).toBe(DESCRIPTION_CAP);
+    expect(description.endsWith("…")).toBe(true);
+  });
+
+  test("a description exactly at the cap is left whole", () => {
+    const text = "b".repeat(DESCRIPTION_CAP);
+    const file = `---\nid: TASK-5\n---\n\n## Description\n\n${text}\n`;
+    expect(parseTaskFile(file, "p.md")!.description).toBe(text);
+  });
+
+  test("a subtask's parent and a dependency list are read", () => {
+    const file = "---\nid: TASK-89.3\nparent_task_id: TASK-89\ndependencies:\n  - TASK-89.1\n  - TASK-89.2\n---\n";
+    const task = parseTaskFile(file, "p.md")!;
+    expect(task.parent).toBe("TASK-89");
+    expect(task.dependencies).toEqual(["TASK-89.1", "TASK-89.2"]);
+  });
+
+  test("a non-string parent reads as none", () => {
+    expect(parseTaskFile("---\nid: TASK-5\nparent_task_id: 8\n---\n", "p.md")!.parent).toBeNull();
+  });
+
+  test("a CRLF file still finds its sections", () => {
+    const task = parseTaskFile(FULL.replace(/\n/g, "\r\n"), "p.md")!;
+    expect(task.description).toBe("First paragraph.\n\nSecond paragraph.");
+    expect(task.acceptance).toEqual({ done: 2, total: 3 });
+  });
+});
+
 describe("compareBacklogTasks", () => {
   function t(id: string, ordinal: number | null): BacklogTask {
-    return { id, title: id, status: "", ordinal, priority: null, labels: [], assignee: [], path: `${id}.md` };
+    return {
+      id,
+      title: id,
+      status: "",
+      ordinal,
+      priority: null,
+      labels: [],
+      assignee: [],
+      path: `${id}.md`,
+      description: "",
+      createdDate: null,
+      updatedDate: null,
+      dependencies: [],
+      parent: null,
+      acceptance: { done: 0, total: 0 },
+    };
   }
 
   test("an id with no number in it sorts last", () => {

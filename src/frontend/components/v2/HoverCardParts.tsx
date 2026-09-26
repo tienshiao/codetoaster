@@ -84,6 +84,22 @@ export function HoverCardShell({ open, card, children }: HoverCardShellProps) {
   );
 }
 
+/**
+ * The long text under a card's title — a commit body, a task's description.
+ *
+ * Wrapped, and clamped rather than cut: the text can run to a page, and a card
+ * taller than the panel covers the list it is describing. The tail is one
+ * click away in the row's own tab. One block for every card, so the clamp
+ * height is a single decision.
+ */
+export function HoverCardBody({ children }: { children: ReactNode }) {
+  return (
+    <p className="max-h-48 overflow-hidden whitespace-pre-wrap break-words text-xs text-subtle-foreground">
+      {children}
+    </p>
+  );
+}
+
 /** One `dt`/`dd` pair of the fact block. The label column is fixed so the
  * values line up: this is read down the left edge. */
 export function Fact({ label, children }: { label: string; children: ReactNode }) {

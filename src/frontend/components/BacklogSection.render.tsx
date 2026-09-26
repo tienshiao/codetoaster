@@ -56,6 +56,12 @@ function response(): BacklogResponse {
       labels: t.labels ?? [],
       assignee: [],
       path: t.path ?? `backlog/tasks/${t.id.toLowerCase()} - ${t.title}.md`,
+      description: "",
+      createdDate: null,
+      updatedDate: null,
+      dependencies: [],
+      parent: null,
+      acceptance: { done: 0, total: 0 },
     })),
   };
 }
@@ -152,6 +158,50 @@ test("a card opens the task's own .md, the way the Files section opens a file", 
     kind: "file",
     path: "backlog/tasks/task-12 - in flight.md",
   });
+});
+
+/** Every media query answering the same way: `matches` for a mouse-and-nothing-
+ * else device, `!matches` for one with a coarse pointer attached. */
+function pointer(matches: boolean) {
+  vi.spyOn(window, "matchMedia").mockImplementation(
+    (query: string) =>
+      ({
+        matches: query === "(any-pointer: coarse)" ? !matches : matches,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList,
+  );
+}
+
+test("every card is a hover-card trigger, and none carries a native title (TASK-114 AC #4)", async () => {
+  pointer(true);
+  mountSection("Open");
+  await screen.findByText("TASK-12");
+
+  for (const card of screen.getAllByRole("button", { name: /TASK-1[0-2]/ })) {
+    // Radix's trigger writes its state onto the element it wraps; a card left
+    // outside the wrapper has none.
+    expect(card.getAttribute("data-state")).toBe("closed");
+    // The card says the title; a tooltip on top of it would say it twice.
+    expect(card.hasAttribute("title")).toBe(false);
+  }
+  vi.restoreAllMocks();
+});
+
+test("with no pointer that can hover, the title tooltip is back and no trigger is mounted", async () => {
+  pointer(false);
+  mountSection("Open");
+  await screen.findByText("TASK-12");
+
+  const card = screen.getByRole("button", { name: /TASK-12 in flight/ });
+  expect(card.getAttribute("title")).toBe("in flight");
+  expect(card.hasAttribute("data-state")).toBe(false);
+  vi.restoreAllMocks();
 });
 
 test("a card carries its priority and labels", async () => {

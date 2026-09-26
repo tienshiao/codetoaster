@@ -198,6 +198,12 @@ const DETECTED: BacklogResponse = {
       labels: [],
       assignee: [],
       path: TASK_PATH,
+      description: "",
+      createdDate: null,
+      updatedDate: null,
+      dependencies: [],
+      parent: null,
+      acceptance: { done: 0, total: 0 },
     },
   ],
 };

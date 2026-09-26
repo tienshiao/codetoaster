@@ -85,7 +85,8 @@ describe("GET /api/tasks/:id/backlog", () => {
     );
     fs.writeFileSync(
       path.join(repoRoot, "backlog", "tasks", "task-1 - First.md"),
-      `---\nid: TASK-1\ntitle: First\nstatus: To Do\nordinal: 1000\n---\n\nBody.\n`
+      `---\nid: TASK-1\ntitle: First\nstatus: To Do\nordinal: 1000\ncreated_date: '2026-09-10 07:44'\n---\n\n` +
+        `## Description\n\nBody.\n\n## Acceptance Criteria\n- [x] #1 one\n- [ ] #2 two\n`
     );
     row("backlogged", { repo_root: repoRoot, cwd: repoRoot });
 
@@ -105,6 +106,13 @@ describe("GET /api/tasks/:id/backlog", () => {
           labels: [],
           assignee: [],
           path: "backlog/tasks/task-1 - First.md",
+          // What the hover card draws (TASK-114), carried by the route itself.
+          description: "Body.",
+          createdDate: "2026-09-10 07:44",
+          updatedDate: null,
+          dependencies: [],
+          parent: null,
+          acceptance: { done: 1, total: 2 },
         },
       ],
     });

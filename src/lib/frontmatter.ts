@@ -9,6 +9,12 @@ export interface FrontmatterBlock {
   /** Source lines the block spans, *both* fences included — what a caller drops
    * off the front of the body it renders. */
   lineCount: number;
+  /** Everything after the closing fence, as written (line endings included).
+   * Handed over rather than left to the caller to re-split: a caller counting
+   * `lineCount` lines off its own split of the text has to split exactly as
+   * this did, and the day the two disagree the body starts on the wrong line
+   * with nothing to say so. */
+  body: string;
 }
 
 export function extractFrontmatter(text: string): FrontmatterBlock | null {
@@ -19,7 +25,11 @@ export function extractFrontmatter(text: string): FrontmatterBlock | null {
   if (lines[0]?.trim() !== "---") return null;
   for (let i = 1; i < lines.length; i++) {
     if (lines[i]?.trim() === "---") {
-      return { yaml: lines.slice(1, i).join("\n"), lineCount: i + 1 };
+      return {
+        yaml: lines.slice(1, i).join("\n"),
+        lineCount: i + 1,
+        body: lines.slice(i + 1).join("\n"),
+      };
     }
   }
   return null;

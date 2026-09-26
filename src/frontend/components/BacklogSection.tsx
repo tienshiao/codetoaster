@@ -7,6 +7,8 @@ import {
 } from "@/frontend/components/explorer-notes";
 import { BACKLOG_TABS, type BacklogTab } from "@/frontend/explorer-store";
 import { useBacklog } from "@/frontend/hooks/use-backlog";
+import { useHoverPointer } from "@/frontend/hooks/use-hover-pointer";
+import { BacklogHoverCard } from "./BacklogHoverCard";
 import { cn } from "@/frontend/lib/utils";
 import type { TabDescriptor } from "@/frontend/layout-store";
 import type { BacklogTask } from "@/types/backlog";
@@ -196,42 +198,56 @@ function priorityTone(priority: string): "danger" | "warning" | "neutral" {
 
 function BacklogCard({ task, onOpen }: { task: BacklogTask; onOpen: () => void }) {
   const chips = task.priority || task.labels.length > 0;
+  const hoverable = useHoverPointer();
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      // The full title in `title`, because at 272px a readable title is what
-      // gets truncated.
-      title={task.title}
-      aria-label={`${task.id} ${task.title}`}
-      className={cn(
-        "flex w-full cursor-pointer flex-col items-stretch gap-0.5 rounded-md px-2 py-1 text-left",
-        "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
-        "text-foreground hover:bg-hover",
-      )}
-    >
-      <span className="flex min-h-5 items-center gap-2">
-        <span className="flex-none font-mono text-micro tracking-mono text-subtle-foreground">
-          {task.id}
+    // Every card gets a hover card — always, not only the truncated ones
+    // (TASK-114 AC #4), by the rule and for the reasons the commit rows gave.
+    // The row drops the assignee, the dates and the description for every task,
+    // so the card always carries something the row does not whatever the
+    // title's length; and a rule conditioned on measured truncation would have
+    // to be re-measured as the panel resizes, so cards would come and go under
+    // a pointer that had not moved.
+    //
+    <BacklogHoverCard task={task}>
+      <button
+        type="button"
+        onClick={onOpen}
+        // The native `title` only where the shell mounts no card: with one, the
+        // browser's tooltip would open on top of it and say the title a second
+        // time; without one — a device with a coarse pointer attached, see
+        // `useHoverPointer` — the tooltip is the only way left to read a title
+        // the row truncates, and it was there before the card was.
+        title={hoverable ? undefined : task.title}
+        aria-label={`${task.id} ${task.title}`}
+        className={cn(
+          "flex w-full cursor-pointer flex-col items-stretch gap-0.5 rounded-md px-2 py-1 text-left",
+          "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+          "text-foreground hover:bg-hover",
+        )}
+      >
+        <span className="flex min-h-5 items-center gap-2">
+          <span className="flex-none font-mono text-micro tracking-mono text-subtle-foreground">
+            {task.id}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs">{task.title}</span>
         </span>
-        <span className="min-w-0 flex-1 truncate text-xs">{task.title}</span>
-      </span>
-      {/* Chips on their own line: beside the title they took its width, and a
-          card whose title reads "T…" next to three labels says nothing. */}
-      {chips ? (
-        <span className="flex flex-wrap items-center gap-1">
-          {task.priority ? (
-            <Badge tone={priorityTone(task.priority)} mono={false}>
-              {task.priority}
-            </Badge>
-          ) : null}
-          {task.labels.map((label) => (
-            <Badge key={label} tone="neutral" mono={false}>
-              {label}
-            </Badge>
-          ))}
-        </span>
-      ) : null}
-    </button>
+        {/* Chips on their own line: beside the title they took its width, and a
+            card whose title reads "T…" next to three labels says nothing. */}
+        {chips ? (
+          <span className="flex flex-wrap items-center gap-1">
+            {task.priority ? (
+              <Badge tone={priorityTone(task.priority)} mono={false}>
+                {task.priority}
+              </Badge>
+            ) : null}
+            {task.labels.map((label) => (
+              <Badge key={label} tone="neutral" mono={false}>
+                {label}
+              </Badge>
+            ))}
+          </span>
+        ) : null}
+      </button>
+    </BacklogHoverCard>
   );
 }

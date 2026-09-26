@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Fact, HoverCardShell } from "@/frontend/components/v2/HoverCardParts";
+import { Fact, HoverCardBody, HoverCardShell } from "@/frontend/components/v2/HoverCardParts";
 import { absoluteDate } from "../../utils/relativeDate";
 import type { GitLogCommit } from "../../types/git";
 
@@ -34,14 +34,7 @@ export function CommitHoverCard({ commit, children, open }: CommitHoverCardProps
       card={
         <>
           <span className="font-medium break-words">{commit.subject}</span>
-          {commit.body ? (
-            // Wrapped and clamped rather than cut: a message can be a page of
-            // rationale, and a card taller than the panel covers the list it is
-            // describing. The tail is one click away in the commit tab.
-            <p className="max-h-48 overflow-hidden whitespace-pre-wrap break-words text-xs text-subtle-foreground">
-              {commit.body}
-            </p>
-          ) : null}
+          {commit.body ? <HoverCardBody>{commit.body}</HoverCardBody> : null}
           <dl className="flex flex-col gap-1 text-micro">
             <Fact label="SHA">
               <span className="font-mono tracking-mono">{commit.hash.slice(0, 8)}</span>

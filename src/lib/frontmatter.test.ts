@@ -7,18 +7,25 @@ import { extractFrontmatter } from "./frontmatter";
 
 test("a fenced block yields the YAML between the fences and a count including both", () => {
   const block = extractFrontmatter("---\nid: TASK-1\nstatus: To Do\n---\n# Title\n");
-  expect(block).toEqual({ yaml: "id: TASK-1\nstatus: To Do", lineCount: 4 });
+  expect(block).toEqual({ yaml: "id: TASK-1\nstatus: To Do", lineCount: 4, body: "# Title\n" });
 });
 
 test("an empty block still counts its two fences", () => {
-  expect(extractFrontmatter("---\n---\nbody")).toEqual({ yaml: "", lineCount: 2 });
+  expect(extractFrontmatter("---\n---\nbody")).toEqual({ yaml: "", lineCount: 2, body: "body" });
 });
 
 test("a byte-order mark ahead of the opening fence does not hide the block", () => {
   expect(extractFrontmatter("﻿---\nid: TASK-1\n---\n")).toEqual({
     yaml: "id: TASK-1",
     lineCount: 3,
+    body: "",
   });
+});
+
+test("the body is what follows the closing fence, line endings as written", () => {
+  expect(extractFrontmatter("---\r\nid: TASK-1\r\n---\r\n# Title\r\nText\r\n")?.body).toBe(
+    "# Title\r\nText\r\n",
+  );
 });
 
 test("a closing fence with trailing whitespace still closes", () => {

@@ -23,6 +23,79 @@ function asStringArray(value: unknown): string[] {
   return value.filter((v) => typeof v === "string");
 }
 
+function asStringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/** What the card can afford to carry per task, `…` included. */
+export const DESCRIPTION_CAP = 500;
+
+/** A fenced code block's opening or closing line. */
+const FENCE = /^\s*(`{3,}|~{3,})/;
+
+/**
+ * The lines under a `## <name>` heading, up to the next `## ` heading or the end
+ * of the body; null when the heading is not there. A `### ` subheading stays
+ * inside the section — its third `#` is what keeps it from matching.
+ *
+ * Fenced code is skipped on both tests: a description that quotes a markdown
+ * example, or a shell snippet with a `## comment` line, would otherwise end
+ * at that line, and the criteria heading found *inside* the fence would count
+ * the example's checkboxes instead of the task's.
+ */
+function section(bodyLines: string[], name: string): string[] | null {
+  const heading = new RegExp(`^##\\s+${name}\\s*$`, "i");
+  let fenced = false;
+  let start = -1;
+  for (let i = 0; i < bodyLines.length; i++) {
+    const line = bodyLines[i]!.trim();
+    if (FENCE.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    if (start === -1) {
+      if (heading.test(line)) start = i + 1;
+    } else if (/^##\s/.test(line)) {
+      return bodyLines.slice(start, i);
+    }
+  }
+  return start === -1 ? null : bodyLines.slice(start);
+}
+
+/** Backlog.md's `<!-- SECTION:…:BEGIN -->` and `<!-- AC:END -->` fences: a line
+ * that is one HTML comment and nothing else. */
+const MARKER_LINE = /^\s*<!--.*-->\s*$/;
+
+/** The `## Description` body, markers stripped, trimmed and capped. */
+export function parseDescription(bodyLines: string[]): string {
+  const lines = section(bodyLines, "Description");
+  if (lines === null) return "";
+  const text = lines.filter((line) => !MARKER_LINE.test(line)).join("\n").trim();
+  if (text.length <= DESCRIPTION_CAP) return text;
+  let cut = text.slice(0, DESCRIPTION_CAP - 1);
+  // Never half an emoji: a lone high surrogate renders as a replacement box.
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+const CHECKBOX = /^\s*[-*]\s+\[([ xX])\]/;
+
+/** Checked and total items of the `## Acceptance Criteria` checklist only. */
+export function parseAcceptance(bodyLines: string[]): { done: number; total: number } {
+  const lines = section(bodyLines, "Acceptance Criteria") ?? [];
+  let done = 0;
+  let total = 0;
+  for (const line of lines) {
+    const match = CHECKBOX.exec(line);
+    if (!match) continue;
+    total++;
+    if (match[1] !== " ") done++;
+  }
+  return { done, total };
+}
+
 /**
  * One task file's frontmatter, or null when there is nothing usable in it.
  * Pure and exported so the parsing rules can be tested without a fixture tree.
@@ -46,6 +119,10 @@ export function parseTaskFile(content: string, filePath: string): BacklogTask | 
   const fm = parsed as Record<string, unknown>;
   if (typeof fm.id !== "string") return null;
 
+  // A CRLF file is folded to LF so a heading still reads as one and the
+  // description does not carry a `\r` per line.
+  const bodyLines = block.body.replace(/\r\n/g, "\n").split("\n");
+
   // A folded `title: >-` arrives from the YAML parser already joined into one
   // line, which is exactly what the card wants.
   const ordinal = typeof fm.ordinal === "number" && Number.isFinite(fm.ordinal) ? fm.ordinal : null;
@@ -59,6 +136,12 @@ export function parseTaskFile(content: string, filePath: string): BacklogTask | 
     labels: asStringArray(fm.labels),
     assignee: asStringArray(fm.assignee),
     path: filePath,
+    description: parseDescription(bodyLines),
+    createdDate: asStringOrNull(fm.created_date),
+    updatedDate: asStringOrNull(fm.updated_date),
+    dependencies: asStringArray(fm.dependencies),
+    parent: asStringOrNull(fm.parent_task_id),
+    acceptance: parseAcceptance(bodyLines),
   };
 }
 
