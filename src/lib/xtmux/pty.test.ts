@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { Pty, sanitizeSize } from "./pty";
+import { waitFor } from "../../../test/wait";
 
 function settle(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -63,6 +64,44 @@ test("kill on a PTY that was already quiet announces nothing", async () => {
   await settle(100);
   pty.kill();
   expect(events).toEqual([]);
+});
+
+// Claude Code asks for the cursor position about every 200ms, idle or not. As
+// activity that held every agent permanently active, and the edges a server
+// stall then made were stamped on every task at once (TASK-111). Echo off, as
+// the agent's raw mode has it: the headless terminal's answer goes back into the
+// PTY, and a cooked tty would print it.
+test("a program polling the cursor position is not active", async () => {
+  const events: boolean[] = [];
+  const pty = new Pty("p4", ["sh", "-c", "stty -echo; while :; do printf '\\033[?6n'; sleep 0.1; done"], 80, 24);
+  pty.onActivityChange((_id, active) => events.push(active));
+  // The headless terminal's answers, which prove the polls arrived: otherwise a
+  // program that never got to print would pass too.
+  let answered = 0;
+  const write = pty.write.bind(pty);
+  pty.write = (data: string) => {
+    answered++;
+    write(data);
+  };
+
+  // The loop never ends on its own, so a failed assertion must not leave it running.
+  try {
+    await settle(500);
+    expect(answered).toBeGreaterThan(1);
+    expect(events).toEqual([]);
+  } finally {
+    pty.kill();
+  }
+});
+
+test("a query alongside real output is still activity", async () => {
+  const events: boolean[] = [];
+  const pty = new Pty("p5", ["sh", "-c", "sleep 0.05; printf 'hello\\033[?6n'; sleep 30"], 80, 24);
+  pty.onActivityChange((_id, active) => events.push(active));
+
+  expect(await waitFor(() => events.length > 0)).toBe(true);
+  expect(events[0]).toBe(true);
+  pty.kill();
 });
 
 // getCwd used to shell out with Bun.spawnSync, which blocks the daemon's single

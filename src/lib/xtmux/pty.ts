@@ -3,6 +3,7 @@ import { readlink } from "node:fs/promises";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { InlineImages } from "./inline-images";
+import { isOnlyQueries } from "./query-output";
 import type { ClientInfo, ServerMessage } from "./types";
 
 // Validate a client-reported terminal size. Messages are parsed from the wire,
@@ -217,7 +218,10 @@ export class Pty {
           if (headless) this.terminal.write(headless);
           // Broadcast to all connected clients
           if (clients) this.broadcast({ type: "data", ptyId: this.id, data: clients });
-          // Track activity
+          // Track activity — but not off a chunk that only asks the terminal
+          // something, which neither raises the edge nor holds it up
+          // (query-output.ts).
+          if (isOnlyQueries(str)) return;
           if (!this.isActive) {
             this.isActive = true;
             this.onActivityChangeCallback?.(this.id, true);
