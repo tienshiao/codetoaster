@@ -273,6 +273,19 @@ describe("on a device with no pointer", () => {
   });
 });
 
+describe("the layer", () => {
+  test("the card sits at z-40, under dialogs and menus at 50 (TASK-115)", () => {
+    open();
+
+    // At 50 alongside a dialog's scrim, whichever portal mounted last won, and a
+    // card whose open timer fired after the scrim painted over the shade.
+    const panel = screen.getByText("Project").closest<HTMLElement>(".pointer-events-none");
+    expect(panel).not.toBeNull();
+    expect(panel!.classList).toContain("z-40");
+    expect(panel!.classList).not.toContain("z-50");
+  });
+});
+
 describe("the trigger", () => {
   test("wraps the row rather than replacing it, and adds no box of its own", () => {
     render(

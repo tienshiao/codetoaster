@@ -17,7 +17,14 @@ import {
  */
 
 const HOVER_CARD_CONTENT_CLASS = cn(
-  "z-50 flex w-72 flex-col gap-2 rounded-md border border-border bg-pane p-3",
+  // z-40, one layer under everything else that floats. A hover card is
+  // display-only, a second look at a row, so it sits under every other floating
+  // surface: menus, selects, the command palette and dialogs all stay at 50.
+  // That is what makes mount order irrelevant. At 50 alongside them it was a
+  // tie broken by whichever portal reached `document.body` last, and a card
+  // whose open timer fired after a dialog's scrim had mounted painted above the
+  // shade (TASK-115).
+  "z-40 flex w-72 flex-col gap-2 rounded-md border border-border bg-pane p-3",
   "font-sans text-sm leading-ui tracking-ui text-foreground shadow-overlay",
   // Display-only, and enforced rather than promised (TASK-97 AC #5). The card
   // hangs over the pane beside the sidebar, where a click is meant for whatever

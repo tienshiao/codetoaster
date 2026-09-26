@@ -467,9 +467,13 @@ export function DiffLayout({
 
           {/* Floating prev/next navigation for single-file mode. Nothing to
               page through when the diff is one file — a per-file tab always is
-              — so the bar would be two dead buttons over "1 of 1". */}
+              — so the bar would be two dead buttons over "1 of 1".
+
+              z-30: in-pane chrome, under every floating surface. At 50 it tied
+              with the hover cards (now 40, TASK-115) and painted over a card
+              hanging off a low sidebar row. */}
           {viewMode === "single" && files.length > 1 && (
-            <div className="sticky bottom-4 z-50 flex items-center justify-center pointer-events-none">
+            <div className="sticky bottom-4 z-30 flex items-center justify-center pointer-events-none">
               <div className="pointer-events-auto flex items-center gap-3 px-5 py-2.5 bg-popover border border-border rounded-lg shadow-lg">
                 <Button
                   variant="outline"
