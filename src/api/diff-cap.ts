@@ -46,7 +46,16 @@ const DEFAULT_BUDGETS: DiffBudgets = {
   maxTotalBytes: MAX_TOTAL_DIFF_BYTES,
 };
 
-const FILE_HEADER = "diff --git ";
+/** Every header that opens a file's section. A plain `git diff` during a merge
+ * or rebase conflict prints each conflicted file as a combined diff under
+ * `diff --cc` (or `diff --combined`), and a section boundary that missed it
+ * would fold the conflict into the previous file — so a large conflict would
+ * cap, and hide, its small neighbour's diff. */
+const FILE_HEADERS = ["diff --git ", "diff --cc ", "diff --combined "];
+
+function startsFile(diff: string, at: number): boolean {
+  return FILE_HEADERS.some((header) => diff.startsWith(header, at));
+}
 
 /** A counter of the UTF-8 bytes in consecutive, non-overlapping ranges of `s`,
  * taken in order. It does not copy the ranges: a range's byte length is its
@@ -125,7 +134,7 @@ function scanSection(diff: string, start: number): Section {
     }
     if (nl === -1 || nl + 1 >= diff.length) break;
     from = nl + 1;
-    if (diff.startsWith(FILE_HEADER, from)) {
+    if (startsFile(diff, from)) {
       end = from;
       break;
     }

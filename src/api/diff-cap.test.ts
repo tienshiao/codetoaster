@@ -208,4 +208,35 @@ describe("capDiff", () => {
     expect(big.deletions).toBe(1);
     expect(big.oversized).toEqual({ bytes: section.length, longestLine: 30_000 });
   });
+
+  // A plain `git diff` mid-conflict prints the conflicted file under
+  // `diff --cc`. Missing that boundary folded the conflict into the file
+  // before it, so a large conflict capped its small neighbour.
+  test("a combined-diff header starts its own section", () => {
+    const small = [
+      "diff --git a/small.txt b/small.txt",
+      "index 1111111..2222222 100644",
+      "--- a/small.txt",
+      "+++ b/small.txt",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "",
+    ].join("\n");
+    const conflict = [
+      "diff --cc big.txt",
+      "index 3333333,4444444..0000000",
+      "--- a/big.txt",
+      "+++ b/big.txt",
+      "@@@ -1,1 -1,1 +1,1 @@@",
+      "++" + "x".repeat(MAX_DIFF_LINE_CHARS + 10),
+      "",
+    ].join("\n");
+
+    const out = capDiff(small + conflict);
+
+    expect(out.startsWith(small)).toBe(true);
+    expect(out.slice(small.length)).toContain("Oversized diff omitted:");
+    expect(out.slice(small.length).startsWith("diff --cc big.txt\n")).toBe(true);
+  });
 });
