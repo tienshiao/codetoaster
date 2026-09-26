@@ -1,11 +1,11 @@
 ---
 id: TASK-106
 title: 'Composer: the Explorer follows the chosen project'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-16 22:50'
-updated_date: '2026-09-26 08:18'
+updated_date: '2026-09-26 08:34'
 labels:
   - frontend
   - composer
@@ -47,3 +47,9 @@ Design decisions: (1) shared root abstraction on both sides rather than duplicat
 
 Design change mid-task (user): the preview-slot approach (ComposerMain + composer-preview-store) was replaced by making the composer screen a real tab area. TaskShell keys useTaskLayout by rootId(root), so a project gets its own persisted layout (codetoaster:layout:project:<id>) whose Agent tab renders the composer (TabPane agentContent, labelled New task via TabArea's presentTab override); Explorer opens are ordinary preview/pinned/split tabs; switching the project chip swaps layouts; Composer's submit calls moveLayout(project root -> new task id) so tabs opened while drafting become the task's; deleted projects' layouts and view states are pruned with the tasks' in TaskContext. Review submit from a diff tab at the composer appends the review to the prompt (DiffView destination=prompt wording). Code review round 1 fixes: project-root queries invalidated when a non-worktree task in the same checkout reports changes (invalidationsFor takes root ids) plus refetchOnWindowFocus for project roots; useComposerProject subscribes via a projectId selector; useProjectFileSearch folded into useFileSearch({quietRefusals}). Verified in a browser on an isolated server (port 4599, scratch db) with three projects: worktree (dirty, Backlog.md), main checkout, and a subdirectory project; bun run test 1742 unit + 424 render pass, tsc clean.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The Explorer at the composer browses the chosen project. Server: a shared root resolver (resolveProjectRoot, rootRoutes) serves every repository-reading route under both /api/tasks/:id and /api/projects/:id from one handler; project file search stays relative to the project's directory. Frontend: RepoRoot replaces taskId in every repo-reading hook and read-only component, keyed by rootId so task and project state never share a cache entry or view-state slot; the composer screen is a per-project tab area whose Agent tab renders the composer, Explorer opens are ordinary preview/pinned/split tabs, switching project swaps layouts, and Start task moves the layout to the new task. Verified with route tests, Explorer/TaskShell/TabPane/CommandPalette render tests, the full suite (1746 unit, 427 render), and a browser pass against an isolated server; two code-review rounds fixed stale project queries, the review dialog wording, a duplicated search hook and a per-keystroke shell re-render.
+<!-- SECTION:FINAL_SUMMARY:END -->
