@@ -63,8 +63,8 @@ export interface FileViewState {
   lineWrap: boolean;
   /** On by default: a markdown file opened from a tree, a Backlog card or a
    * terminal link (TASK-85, TASK-86) is there to be read, and the eye button
-   * turns it back into source for the tab that wants it. Non-markdown files
-   * ignore it. */
+   * turns it back into source for the tab that wants it. CSV and TSV use it
+   * for their table view (TASK-119); other files ignore it. */
   markdownPreview: boolean;
   scrollTops: Map<string, number>;
 }

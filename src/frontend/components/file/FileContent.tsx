@@ -1,6 +1,8 @@
 import { useMemo, useRef, useEffect, useLayoutEffect, type MouseEvent } from "react";
 import { rootApi, type RepoRoot } from "@/frontend/repo-root";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { TablePreview } from "./TablePreview";
+import { delimiterForPath, parseDelimited } from "../../utils/delimited";
 import { syntaxTokensFor } from "../../utils/wordDiff";
 import { getLanguageFromPath } from "../../utils/languageDetection";
 import { FileIcon } from "../diff/FileIcon";
@@ -18,6 +20,7 @@ interface FileContentProps {
   content: FileContentResponse | null;
   loading: boolean;
   lineWrap: boolean;
+  /** Render markdown, and CSV/TSV as a table, instead of the source. */
   markdownPreview?: boolean;
   initialScrollTop?: number;
   onScrollTopChange?: (top: number) => void;
@@ -57,19 +60,22 @@ export function FileContent({
   // that won't render is pure waste (the git file browser, which never enables
   // the preview, would otherwise join every file it opens into a second copy).
   const showMarkdown = !!markdownPreview && langConfig?.name === "Markdown";
+  const delimiter = markdownPreview ? delimiterForPath(filePath) : null;
+  const showTable = delimiter !== null;
+  const showPreview = showMarkdown || showTable;
 
   // Per-line tokens: prefer server tree-sitter tokens, but only when they
   // reconstruct the line exactly (guards against a stale diff/content race or an
   // unsupported grammar); otherwise fall back to the client regex tokenizer.
   // syntaxTokensFor centralizes that choice (shared with the diff view).
   const lineTokens = useMemo<LineTokens[]>(() => {
-    if (showMarkdown || !content || content.isBinary) return [];
+    if (showPreview || !content || content.isBinary) return [];
     const serverTokens = content.tokens;
     return content.lines.map((line, i) =>
       syntaxTokensFor(line.content, serverTokens?.[i] ?? null, langConfig)
         ?? [{ text: line.content, type: null }],
     );
-  }, [content, langConfig, showMarkdown]);
+  }, [content, langConfig, showPreview]);
 
   // The parsed frontmatter, only when the preview is the branch that renders:
   // the source view shows the raw block, unchanged (TASK-87).
@@ -83,6 +89,15 @@ export function FileContent({
       ? content.lines.slice(frontmatter?.lineCount ?? 0).map((line) => line.content).join("\n")
       : ""),
     [content, showMarkdown, frontmatter],
+  );
+
+  // Parsed rows for the table preview. Rejoined from the server's lines rather
+  // than split per line, because a quoted field may span several of them.
+  const tableRows = useMemo(
+    () => (delimiter && content && !content.isBinary
+      ? parseDelimited(content.lines.map((line) => line.content).join("\n"), delimiter)
+      : []),
+    [content, delimiter],
   );
 
   // Restore scroll once the lines have rendered (content arrives async, and
@@ -184,6 +199,10 @@ export function FileContent({
         <MarkdownPreview source={markdownSource} frontmatter={frontmatter} />
       </div>
     );
+  }
+
+  if (showTable) {
+    return <TablePreview rows={tableRows} scrollRef={scrollRef} onScroll={onScrollTopChange} wrap={lineWrap} />;
   }
 
   const maxLineNum = lines.length.toString().length;

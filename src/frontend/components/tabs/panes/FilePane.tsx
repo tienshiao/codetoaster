@@ -8,6 +8,7 @@ import { useFileContent } from "@/frontend/hooks/use-task-files";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
+import { delimiterForPath } from "@/frontend/utils/delimited";
 
 interface FilePaneProps {
   root: RepoRoot;
@@ -36,10 +37,10 @@ export function FilePane({ root, view, path, line, onOpenFile }: FilePaneProps) 
   const [markdownPreview, setMarkdownPreview] = useViewState("file", view, "markdownPreview");
   const { data: content = null, isLoading } = useFileContent(root, path);
 
-  const isMarkdown = getLanguageFromPath(path)?.name === "Markdown";
-  const previewActive = isMarkdown && markdownPreview;
-  // Source and rendered markdown have unrelated content heights, so the offset
-  // — and FileContent's mount — are keyed by mode, not just by the file.
+  const hasPreview = getLanguageFromPath(path)?.name === "Markdown" || delimiterForPath(path) !== null;
+  const previewActive = hasPreview && markdownPreview;
+  // Source and a rendered preview have unrelated content heights, so the
+  // offset — and FileContent's mount — are keyed by mode, not just by the file.
   const scrollKey = previewActive ? `md-preview:${path}` : path;
   const scrollTops = getViewState("file", view).scrollTops;
 
@@ -50,7 +51,7 @@ export function FilePane({ root, view, path, line, onOpenFile }: FilePaneProps) 
           {path}
         </span>
         <div className="ml-auto flex flex-none items-center gap-0.5">
-          {isMarkdown && (
+          {hasPreview && (
             <IconButton
               icon={Eye}
               label="Preview"
