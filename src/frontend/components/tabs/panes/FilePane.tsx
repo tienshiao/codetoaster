@@ -1,10 +1,12 @@
 import { useState } from "react";
 import type { RepoRoot } from "@/frontend/repo-root";
-import { Eye, WrapText } from "lucide-react";
+import { Eye, FolderSearch, WrapText } from "lucide-react";
+import { toast } from "sonner";
 import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
-import { useFileContent } from "@/frontend/hooks/use-task-files";
+import { revealFile, useFileContent } from "@/frontend/hooks/use-task-files";
+import { isDesktopMac } from "@/frontend/utils/platform";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
@@ -67,6 +69,20 @@ export function FilePane({ root, view, path, line, onOpenFile }: FilePaneProps) 
             active={lineWrap}
             onClick={() => setLineWrap(!lineWrap)}
           />
+          {/* The daemon reveals the file on its own machine, so the button is
+              only offered to a browser that is plausibly sitting at it. */}
+          {isDesktopMac() && (
+            <IconButton
+              icon={FolderSearch}
+              label="Show in Finder"
+              size="sm"
+              onClick={() =>
+                revealFile(root, path).catch((e: Error) =>
+                  toast.error("Could not show the file in Finder", { description: e.message }),
+                )
+              }
+            />
+          )}
         </div>
       </div>
       <FileContent

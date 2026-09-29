@@ -188,6 +188,18 @@ export async function serializeFileContent(buffer: ArrayBuffer, filePath: string
   };
 }
 
+/**
+ * The command that reveals `fullPath` in the platform's file manager, or null
+ * where there is none worth running.
+ *
+ * macOS only: `open -R` selects the file in a Finder window, which is the whole
+ * point. `xdg-open` on the parent directory would open *a* window but select
+ * nothing, and the button is only offered to a browser on a Mac anyway.
+ */
+export function revealCommand(fullPath: string, platform: NodeJS.Platform = process.platform): string[] | null {
+  return platform === "darwin" ? ["open", "-R", fullPath] : null;
+}
+
 export const fileRoutes = {
   ...rootRoutes("files", {
     async GET({ repoRoot: dir }) {
@@ -281,6 +293,58 @@ export const fileRoutes = {
         return Response.json(
           { error: "Failed to read file", message: error instanceof Error ? error.message : String(error) },
           { status: 500 }
+        );
+      }
+    },
+  }),
+
+  /**
+   * Show a file in Finder on the daemon's machine (TASK-120).
+   *
+   * The browser cannot do this itself, and the daemon can only do it for a
+   * browser sitting at the same Mac — which the client checks before offering
+   * the button. Refusals come before the spawn, so a test can cover them
+   * without a Finder window opening.
+   */
+  ...rootRoutes("reveal", {
+    async POST({ repoRoot: dir }, req) {
+      let filePath: unknown;
+      try {
+        ({ file: filePath } = (await req.json()) as { file?: unknown });
+      } catch {
+        return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+      }
+      if (typeof filePath !== "string" || !filePath) {
+        return Response.json({ error: "Missing file parameter" }, { status: 400 });
+      }
+
+      const fullPath = safePath(dir, filePath);
+      if (!fullPath) {
+        return Response.json({ error: "Invalid file path" }, { status: 400 });
+      }
+      if (!(await Bun.file(fullPath).exists())) {
+        return Response.json({ error: "File not found" }, { status: 404 });
+      }
+
+      const cmd = revealCommand(fullPath);
+      if (!cmd) {
+        return Response.json({ error: "Show in Finder needs a macOS daemon" }, { status: 501 });
+      }
+
+      try {
+        const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "pipe" });
+        const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+        if (exitCode !== 0) {
+          return Response.json(
+            { error: "Could not show the file in Finder", message: stderr.trim() },
+            { status: 500 },
+          );
+        }
+        return new Response(null, { status: 204 });
+      } catch (error) {
+        return Response.json(
+          { error: "Could not show the file in Finder", message: error instanceof Error ? error.message : String(error) },
+          { status: 500 },
         );
       }
     },

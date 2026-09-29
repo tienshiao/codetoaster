@@ -43,3 +43,17 @@ export function useFileContent(root: RepoRoot, filePath: string | null) {
     refetchOnWindowFocus: refetchOnFocusFor(root),
   });
 }
+
+/** Reveal a file in Finder on the daemon's machine (TASK-120). Throws with the
+ * server's message, which the caller shows. */
+export async function revealFile(root: RepoRoot, filePath: string): Promise<void> {
+  const res = await fetch(`${rootApi(root)}/reveal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file: filePath }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Could not show the file in Finder");
+  }
+}

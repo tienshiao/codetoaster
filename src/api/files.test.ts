@@ -2,7 +2,7 @@ import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { fileRoutes, serializeFileContent } from "./files";
+import { fileRoutes, revealCommand, serializeFileContent } from "./files";
 import { initDatabase } from "../lib/db";
 import { taskManager } from "../lib/tasks/manager";
 import { cleanupRepos, tempDir, tempRepo } from "../../test/git-repo";
@@ -199,5 +199,59 @@ describe("GET /api/projects/:id/files/search", () => {
     const res = await search("notrepo", "parser");
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Not a git repository" });
+  });
+
+  /**
+   * Show in Finder (TASK-120). Only the refusals are driven through the route:
+   * a request that passes them opens a real Finder window, which is no thing
+   * for a test run to do. Which platforms get a command is `revealCommand`'s,
+   * covered below.
+   */
+  function reveal(id: string, body: unknown) {
+    return fetch(`${base}/api/projects/${id}/reveal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    });
+  }
+
+  test("reveal refuses a body with no file", async () => {
+    const res = await reveal("web", {});
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Missing file parameter" });
+  });
+
+  test("reveal refuses a body that is not JSON", async () => {
+    const res = await reveal("web", "not json");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid JSON body" });
+  });
+
+  test("reveal refuses a path that climbs out of the repository", async () => {
+    const res = await reveal("web", { file: "../outside.txt" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid file path" });
+  });
+
+  test("reveal of a file that is not there is a 404", async () => {
+    const res = await reveal("web", { file: "src/missing.ts" });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "File not found" });
+  });
+
+  test("reveal on an unknown project is a 404 before the body is read", async () => {
+    const res = await reveal("nope", { file: "src/parser.ts" });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("revealCommand", () => {
+  test("macOS selects the file in Finder", () => {
+    expect(revealCommand("/repo/src/a.ts", "darwin")).toEqual(["open", "-R", "/repo/src/a.ts"]);
+  });
+
+  test("anywhere else there is nothing to run, which the route answers with a 501", () => {
+    expect(revealCommand("/repo/src/a.ts", "linux")).toBeNull();
+    expect(revealCommand("/repo/src/a.ts", "win32")).toBeNull();
   });
 });
