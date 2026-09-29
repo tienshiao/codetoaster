@@ -1,9 +1,15 @@
-import { memo, useMemo, type RefObject } from "react";
+import { memo, useLayoutEffect, useMemo, useState, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { rowForLine } from "../../utils/delimited";
 
 interface TablePreviewProps {
   /** Parsed rows; the first is the header. */
   rows: string[][];
+  /** The source line each row starts on, parallel to `rows`. */
+  rowLines: number[];
+  /** A source line to reveal and flash (go-to-definition, a terminal link's
+   * `file.csv:42`): the row holding it, since a row may span several lines. */
+  highlightLine?: number;
   /** Filled with the scroll container, so FileContent's scroll restore works
    * the same for the table as for every other view. The container is rendered
    * here, not by FileContent: a parent's ref is attached only after this
@@ -16,8 +22,10 @@ interface TablePreviewProps {
 }
 
 const ROW_HEIGHT = 24;
-// Rows looked at when sizing columns and guessing alignment. Enough to be
-// representative; bounded so a 100k-row file does not scan every cell.
+// Rows looked at when guessing alignment: enough to be representative, and
+// bounded because it runs a regex per cell. Widths look at every row — a
+// length read is cheap, and a column of ids that grows from 3 digits to 5
+// would otherwise truncate the tail of the file.
 const SAMPLE_ROWS = 200;
 const MIN_COL_CH = 4;
 const MAX_COL_CH = 48;
@@ -29,19 +37,18 @@ interface ColumnLayout {
   numeric: boolean[];
 }
 
-/** Column widths in `ch` from the longest sampled cell (header included), and
- * which columns are numbers throughout the sample, which right-align. */
+/** Column widths in `ch` from the longest cell (header included), and which
+ * columns are numbers throughout the sample, which right-align. */
 function layoutColumns(rows: string[][], columnCount: number, gutterCh: number): ColumnLayout {
   const widths = new Array<number>(columnCount).fill(MIN_COL_CH);
   const numeric = new Array<boolean>(columnCount).fill(true);
   const seen = new Array<boolean>(columnCount).fill(false);
-  const end = Math.min(rows.length, SAMPLE_ROWS + 1);
-  for (let r = 0; r < end; r++) {
+  for (let r = 0; r < rows.length; r++) {
     const row = rows[r]!;
     for (let c = 0; c < row.length; c++) {
       const cell = row[c]!;
       if (cell.length > widths[c]!) widths[c] = Math.min(cell.length, MAX_COL_CH);
-      if (r === 0 || cell === "") continue;
+      if (r === 0 || r > SAMPLE_ROWS || cell === "") continue;
       seen[c] = true;
       if (numeric[c] && !(NUMERIC.test(cell) && /\d/.test(cell))) numeric[c] = false;
     }
@@ -64,7 +71,14 @@ function layoutColumns(rows: string[][], columnCount: number, gutterCh: number):
  * widest row get empty cells; the grid is sized to the widest row, so a longer
  * one never spills.
  */
-export const TablePreview = memo(function TablePreview({ rows, scrollRef, onScroll, wrap }: TablePreviewProps) {
+export const TablePreview = memo(function TablePreview({
+  rows,
+  rowLines,
+  highlightLine,
+  scrollRef,
+  onScroll,
+  wrap,
+}: TablePreviewProps) {
   const header = rows[0] ?? [];
   const bodyCount = Math.max(0, rows.length - 1);
 
@@ -81,6 +95,25 @@ export const TablePreview = memo(function TablePreview({ rows, scrollRef, onScro
     estimateSize: () => ROW_HEIGHT,
     overscan: 20,
   });
+
+  // The body row being flashed. It is flashed by rendering, not by reaching
+  // into the DOM: the target may be far outside the virtual window, and with
+  // measured rows scrollToIndex takes several frames to settle, so there is no
+  // one moment the row is known to exist. `seq` is in the row's key, so a
+  // repeat jump to the same row remounts it and restarts the animation.
+  const [flash, setFlash] = useState<{ index: number; seq: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!highlightLine || rows.length === 0) return;
+    const index = rowForLine(rowLines, highlightLine) - 1; // body index; -1 is the header
+    if (index < 0) {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+      return;
+    }
+    virtualizer.scrollToIndex(index, { align: "center" });
+    setFlash((prev) => ({ index, seq: (prev?.seq ?? 0) + 1 }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the virtualizer is stable; re-run on a new target or new rows only
+  }, [highlightLine, rows, rowLines]);
 
   if (rows.length === 0) {
     return (
@@ -119,21 +152,25 @@ export const TablePreview = memo(function TablePreview({ rows, scrollRef, onScro
           {renderCells(header, "py-1")}
         </div>
         <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
-          {virtualizer.getVirtualItems().map((item) => (
-            <div
-              key={item.key}
-              role="row"
-              data-index={item.index}
-              ref={virtualizer.measureElement}
-              className="absolute left-0 top-0 grid w-full border-b border-border hover:bg-hover"
-              style={{ gridTemplateColumns: template, transform: `translateY(${item.start}px)` }}
-            >
-              <div className="sticky left-0 z-10 select-none border-r border-border bg-pane py-0.5 pr-[1ch] text-right text-muted-foreground/60">
-                {item.index + 1}
+          {virtualizer.getVirtualItems().map((item) => {
+            const flashing = flash?.index === item.index;
+            return (
+              <div
+                key={flashing ? `${item.key}:${flash.seq}` : item.key}
+                role="row"
+                data-index={item.index}
+                ref={virtualizer.measureElement}
+                className={`absolute left-0 top-0 grid w-full border-b border-border hover:bg-hover ${flashing ? "line-flash" : ""}`}
+                style={{ gridTemplateColumns: template, transform: `translateY(${item.start}px)` }}
+                onAnimationEnd={flashing ? () => setFlash(null) : undefined}
+              >
+                <div className="sticky left-0 z-10 select-none border-r border-border bg-pane py-0.5 pr-[1ch] text-right text-muted-foreground/60">
+                  {item.index + 1}
+                </div>
+                {renderCells(rows[item.index + 1]!, "py-0.5")}
               </div>
-              {renderCells(rows[item.index + 1]!, "py-0.5")}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

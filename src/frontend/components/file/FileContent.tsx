@@ -2,7 +2,7 @@ import { useMemo, useRef, useEffect, useLayoutEffect, type MouseEvent } from "re
 import { rootApi, type RepoRoot } from "@/frontend/repo-root";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { TablePreview } from "./TablePreview";
-import { delimiterForPath, parseDelimited } from "../../utils/delimited";
+import { delimiterForPath, parseDelimited, type DelimitedTable } from "../../utils/delimited";
 import { syntaxTokensFor } from "../../utils/wordDiff";
 import { getLanguageFromPath } from "../../utils/languageDetection";
 import { FileIcon } from "../diff/FileIcon";
@@ -93,10 +93,10 @@ export function FileContent({
 
   // Parsed rows for the table preview. Rejoined from the server's lines rather
   // than split per line, because a quoted field may span several of them.
-  const tableRows = useMemo(
+  const table = useMemo<DelimitedTable>(
     () => (delimiter && content && !content.isBinary
       ? parseDelimited(content.lines.map((line) => line.content).join("\n"), delimiter)
-      : []),
+      : { rows: [], rowLines: [] }),
     [content, delimiter],
   );
 
@@ -105,14 +105,20 @@ export function FileContent({
   useLayoutEffect(() => {
     if (restoredScrollRef.current || initialScrollTop === undefined) return;
     if (!content || content.isBinary || !scrollRef.current) return;
+    // The table reveals its own target row, and its layout effect has already
+    // run by now (a child's go first): restoring here would undo it.
+    if (showTable && highlightLine) {
+      restoredScrollRef.current = true;
+      return;
+    }
     scrollRef.current.scrollTop = initialScrollTop;
     restoredScrollRef.current = true;
-  }, [content, initialScrollTop]);
+  }, [content, initialScrollTop, showTable, highlightLine]);
 
   // Deep link (go-to-definition): scroll the target line into view and flash it.
   // Takes precedence over the saved scroll position when a line is specified.
   useLayoutEffect(() => {
-    if (!highlightLine || !content || content.isBinary || !scrollRef.current) return;
+    if (!highlightLine || showTable || !content || content.isBinary || !scrollRef.current) return;
     restoredScrollRef.current = true; // don't fight this with scroll-restore
     const row = scrollRef.current.querySelector<HTMLElement>(`[data-line="${highlightLine}"]`);
     if (!row) return;
@@ -121,7 +127,7 @@ export function FileContent({
     // Force reflow so re-adding the class restarts the animation.
     void row.offsetWidth;
     row.classList.add("line-flash");
-  }, [highlightLine, content]);
+  }, [highlightLine, content, showTable]);
 
   const handleClick = (e: MouseEvent) => {
     if (!onSymbolClick || !(e.metaKey || e.ctrlKey)) return;
@@ -202,7 +208,16 @@ export function FileContent({
   }
 
   if (showTable) {
-    return <TablePreview rows={tableRows} scrollRef={scrollRef} onScroll={onScrollTopChange} wrap={lineWrap} />;
+    return (
+      <TablePreview
+        rows={table.rows}
+        rowLines={table.rowLines}
+        highlightLine={highlightLine}
+        scrollRef={scrollRef}
+        onScroll={onScrollTopChange}
+        wrap={lineWrap}
+      />
+    );
   }
 
   const maxLineNum = lines.length.toString().length;

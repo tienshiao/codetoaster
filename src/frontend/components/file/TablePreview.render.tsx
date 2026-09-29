@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "vitest";
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { taskRoot } from "@/frontend/repo-root";
 import { FileContent } from "./FileContent";
 import type { FileContentResponse } from "@/frontend/types/file";
@@ -25,6 +25,7 @@ function contentOf(text: string): FileContentResponse {
 // rows) and every other element one 24px row.
 const realHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!;
 const realWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")!;
+const realScrollTo = HTMLElement.prototype.scrollTo;
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
     configurable: true,
@@ -33,8 +34,20 @@ beforeEach(() => {
     },
   });
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => 800 });
+  // The virtualizer clamps a scroll target to scrollHeight - clientHeight.
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => 1e9 });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 240 });
+  // Nor does its scrollTo move anything; the virtualizer scrolls to a row with it.
+  HTMLElement.prototype.scrollTo = function (this: HTMLElement, opts?: ScrollToOptions | number) {
+    if (typeof opts === "object" && opts.top !== undefined) this.scrollTop = opts.top;
+    this.dispatchEvent(new Event("scroll"));
+  } as HTMLElement["scrollTo"];
 });
 afterEach(() => {
+  HTMLElement.prototype.scrollTo = realScrollTo;
+  // Own-property stubs over inherited getters: deleting restores them.
+  delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+  delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
   Object.defineProperty(HTMLElement.prototype, "offsetHeight", realHeight);
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", realWidth);
 });
@@ -90,6 +103,28 @@ test("with the preview off, a CSV is source lines", () => {
   );
   expect(container.querySelector('[role="table"]')).toBeNull();
   expect(container.querySelector('[data-line="2"]')?.textContent).toContain("ada,36");
+});
+
+test("a line target scrolls to and flashes the row holding it", async () => {
+  // Lines 2–3 are body row 0 (its quoted field spans both), so line N (N ≥ 4)
+  // is body row N - 3, whose id cell is also N - 3.
+  const text = ["id,value", '0,"two\nlines"', ...Array.from({ length: 50_000 }, (_, i) => `${i + 1},x`)].join("\n");
+  const { container } = render(
+    <FileContent
+      filePath="big.csv"
+      root={taskRoot("t1")}
+      content={contentOf(text)}
+      loading={false}
+      lineWrap={false}
+      markdownPreview
+      highlightLine={40_000}
+    />,
+  );
+  await waitFor(() => {
+    const row = container.querySelector<HTMLElement>('[role="row"][data-index="39997"]');
+    expect(row?.classList.contains("line-flash")).toBe(true);
+    expect(cells(row!)[0]).toBe("39997");
+  });
 });
 
 test("a long file renders only a window of its rows", () => {

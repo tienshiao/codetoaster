@@ -18,6 +18,32 @@ const QUOTE = 34; // "
 const CR = 13;
 const LF = 10;
 
+export interface DelimitedTable {
+  rows: string[][];
+  /** The 1-based source line each row starts on, parallel to `rows`. A row
+   * with a quoted line break spans several lines, so this is how a line number
+   * (a terminal link's `file.csv:42`) finds its row. */
+  rowLines: number[];
+}
+
+/** The row holding 1-based source `line`: the last row starting at or before
+ * it. -1 when there are no rows. */
+export function rowForLine(rowLines: number[], line: number): number {
+  let lo = 0;
+  let hi = rowLines.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (rowLines[mid]! <= line) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found;
+}
+
 /**
  * Split delimited text into rows of fields, per RFC 4180 and leniently past it.
  *
@@ -32,14 +58,20 @@ const LF = 10;
  * TSV gets the same quoting rules: strict TSV has none, but the files people
  * actually have (spreadsheet exports) quote the same way CSV does.
  */
-export function parseDelimited(text: string, delimiter: Delimiter): string[][] {
+export function parseDelimited(text: string, delimiter: Delimiter): DelimitedTable {
   const delim = delimiter.charCodeAt(0);
   const rows: string[][] = [];
+  const rowLines: number[] = [];
+  const table = { rows, rowLines };
   let row: string[] = [];
   let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
   const n = text.length;
+  // 1-based source line, counted in \n breaks only: those are the lines the
+  // file view numbers, so a lone \r ends a row without starting a line.
+  let line = 1;
 
-  if (i >= n) return rows;
+  if (i >= n) return table;
+  rowLines.push(line);
 
   for (;;) {
     // One field per iteration; `i` is at its first character.
@@ -71,6 +103,7 @@ export function parseDelimited(text: string, delimiter: Delimiter): string[][] {
         i++;
       }
       field = tail < i ? out + text.slice(tail, i) : out;
+      for (let nl = out.indexOf("\n"); nl !== -1; nl = out.indexOf("\n", nl + 1)) line++;
     } else {
       const start = i;
       while (i < n) {
@@ -84,15 +117,17 @@ export function parseDelimited(text: string, delimiter: Delimiter): string[][] {
 
     if (i >= n) {
       rows.push(row);
-      return rows;
+      return table;
     }
     const c = text.charCodeAt(i);
     i++;
     if (c === delim) continue;
     // A line break: close the row.
     if (c === CR && text.charCodeAt(i) === LF) i++;
+    if (text.charCodeAt(i - 1) === LF) line++;
     rows.push(row);
     row = [];
-    if (i >= n) return rows;
+    if (i >= n) return table;
+    rowLines.push(line);
   }
 }
