@@ -27,6 +27,11 @@ test("within a hunk the first change in order wins, deletion or not", () => {
   expect(firstChangedLine(f)).toBe(2);
 });
 
+test("a deletion at the end of the file lands on the new last line, not one past it", () => {
+  const f = file("@@ -3,3 +3,2 @@", " c", " d", "-e");
+  expect(firstChangedLine(f)).toBe(4);
+});
+
 test("a file whose first line was deleted lands on line 1, not 0", () => {
   const f = file("@@ -1,2 +0,0 @@", "-a", "-b");
   expect(firstChangedLine(f)).toBe(1);
