@@ -8,6 +8,8 @@ import {
   buildFileListing,
   type CachedPromise,
 } from "./utils";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import { highlightFile } from "../lib/highlight/tokenize";
 import { extractFrontmatter } from "../lib/frontmatter";
 import type { FileTokens } from "../types/highlight";
@@ -194,11 +196,23 @@ export async function serializeFileContent(buffer: ArrayBuffer, filePath: string
  *
  * macOS only: `open -R` selects the file in a Finder window, which is the whole
  * point. `xdg-open` on the parent directory would open *a* window but select
- * nothing, and the button is only offered to a browser on a Mac anyway.
+ * nothing, and the button is only offered to a browser on a Mac anyway. The
+ * absolute path, so a launchd PATH or a user's shim cannot change what runs.
  */
 export function revealCommand(fullPath: string, platform: NodeJS.Platform = process.platform): string[] | null {
-  return platform === "darwin" ? ["open", "-R", fullPath] : null;
+  return platform === "darwin" ? ["/usr/bin/open", "-R", fullPath] : null;
 }
+
+/** Loopback peers, the only ones for whom a Finder window on this machine is
+ * one they can see. Bun reports an IPv4 peer on a dual-stack socket as mapped. */
+export function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  return address === "::1" || address.startsWith("127.") || address.startsWith("::ffff:127.");
+}
+
+/** Long enough for a Finder that is relaunching; short enough that a wedged
+ * LaunchServices answers the click rather than leaving it pending. */
+const REVEAL_TIMEOUT_MS = 10_000;
 
 export const fileRoutes = {
   ...rootRoutes("files", {
@@ -302,12 +316,21 @@ export const fileRoutes = {
    * Show a file in Finder on the daemon's machine (TASK-120).
    *
    * The browser cannot do this itself, and the daemon can only do it for a
-   * browser sitting at the same Mac — which the client checks before offering
-   * the button. Refusals come before the spawn, so a test can cover them
-   * without a Finder window opening.
+   * browser sitting at the same Mac. The client hides the button elsewhere,
+   * but that is a guess from the page's host; the peer address is the answer,
+   * so a request from anywhere but loopback is refused rather than opening a
+   * window on a screen nobody is looking at. Refusals come before the spawn,
+   * so a test can cover them without a Finder window opening.
    */
   ...rootRoutes("reveal", {
-    async POST({ repoRoot: dir }, req) {
+    async POST({ repoRoot: dir }, req, _scope, server) {
+      if (!isLoopbackAddress(server?.requestIP(req)?.address)) {
+        return Response.json(
+          { error: "Show in Finder only works from a browser on the daemon's machine" },
+          { status: 403 },
+        );
+      }
+
       let filePath: unknown;
       try {
         ({ file: filePath } = (await req.json()) as { file?: unknown });
@@ -318,12 +341,21 @@ export const fileRoutes = {
         return Response.json({ error: "Missing file parameter" }, { status: 400 });
       }
 
-      const fullPath = safePath(dir, filePath);
-      if (!fullPath) {
+      const lexical = safePath(dir, filePath);
+      if (!lexical) {
         return Response.json({ error: "Invalid file path" }, { status: 400 });
       }
-      if (!(await Bun.file(fullPath).exists())) {
+      // Resolved, because `safePath` is lexical: a symlink in the tree can
+      // point anywhere, and Finder would follow it. `realpath` also answers
+      // whether it exists — a directory included, which `Bun.file` says is not.
+      let fullPath: string;
+      try {
+        fullPath = await realpath(lexical);
+      } catch {
         return Response.json({ error: "File not found" }, { status: 404 });
+      }
+      if (!fullPath.startsWith((await realpath(dir)) + path.sep)) {
+        return Response.json({ error: "Invalid file path" }, { status: 400 });
       }
 
       const cmd = revealCommand(fullPath);
@@ -332,8 +364,11 @@ export const fileRoutes = {
       }
 
       try {
-        const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "pipe" });
+        const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "pipe", timeout: REVEAL_TIMEOUT_MS });
         const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+        if (proc.signalCode) {
+          return Response.json({ error: "Finder did not answer in time" }, { status: 504 });
+        }
         if (exitCode !== 0) {
           return Response.json(
             { error: "Could not show the file in Finder", message: stderr.trim() },

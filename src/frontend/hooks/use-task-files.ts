@@ -45,7 +45,8 @@ export function useFileContent(root: RepoRoot, filePath: string | null) {
 }
 
 /** Reveal a file in Finder on the daemon's machine (TASK-120). Throws with the
- * server's message, which the caller shows. */
+ * most specific thing the server said — `open`'s stderr when there is one, the
+ * refusal otherwise — since the caller's toast already says what failed. */
 export async function revealFile(root: RepoRoot, filePath: string): Promise<void> {
   const res = await fetch(`${rootApi(root)}/reveal`, {
     method: "POST",
@@ -54,6 +55,6 @@ export async function revealFile(root: RepoRoot, filePath: string): Promise<void
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || "Could not show the file in Finder");
+    throw new Error(data.message || data.error || `The server answered ${res.status}`);
   }
 }

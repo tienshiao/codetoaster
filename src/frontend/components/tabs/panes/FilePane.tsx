@@ -6,7 +6,7 @@ import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
 import { revealFile, useFileContent } from "@/frontend/hooks/use-task-files";
-import { isDesktopMac } from "@/frontend/utils/platform";
+import { canRevealInFinder } from "@/frontend/utils/platform";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
@@ -71,7 +71,7 @@ export function FilePane({ root, view, path, line, onOpenFile }: FilePaneProps) 
           />
           {/* The daemon reveals the file on its own machine, so the button is
               only offered to a browser that is plausibly sitting at it. */}
-          {isDesktopMac() && (
+          {canRevealInFinder() && (
             <IconButton
               icon={FolderSearch}
               label="Show in Finder"

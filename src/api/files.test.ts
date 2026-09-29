@@ -2,7 +2,7 @@ import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { fileRoutes, revealCommand, serializeFileContent } from "./files";
+import { fileRoutes, isLoopbackAddress, revealCommand, serializeFileContent } from "./files";
 import { initDatabase } from "../lib/db";
 import { taskManager } from "../lib/tasks/manager";
 import { cleanupRepos, tempDir, tempRepo } from "../../test/git-repo";
@@ -243,11 +243,52 @@ describe("GET /api/projects/:id/files/search", () => {
     const res = await reveal("nope", { file: "src/parser.ts" });
     expect(res.status).toBe(404);
   });
+
+  test("reveal refuses a symlink that leads out of the repository", async () => {
+    // Lexically inside, so `safePath` alone would pass it and Finder would
+    // follow the link.
+    const outside = tempDir("codetoaster-outside-");
+    fs.writeFileSync(path.join(outside, "secret.txt"), "x");
+    fs.symlinkSync(outside, path.join(repoRoot, "escape"));
+    const res = await reveal("web", { file: "escape/secret.txt" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid file path" });
+  });
+
+  test("reveal refuses a peer that is not on this machine", async () => {
+    // Called directly, since every request a test can make arrives over
+    // loopback: the server stand-in reports a LAN address instead.
+    const handler = (fileRoutes as any)["/api/projects/:id/reveal"].POST;
+    const req = Object.assign(
+      new Request(`${base}/api/projects/web/reveal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file: "src/parser.ts" }),
+      }),
+      { params: { id: "web" } },
+    );
+    const res: Response = await handler(req, { requestIP: () => ({ address: "192.168.1.20" }) });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("isLoopbackAddress", () => {
+  test("IPv4, IPv6 and v4-mapped loopback are local", () => {
+    for (const a of ["127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1"]) {
+      expect(isLoopbackAddress(a)).toBe(true);
+    }
+  });
+
+  test("anything else, or no address at all, is not", () => {
+    for (const a of ["192.168.1.20", "::ffff:10.0.0.1", "fe80::1", "", undefined]) {
+      expect(isLoopbackAddress(a)).toBe(false);
+    }
+  });
 });
 
 describe("revealCommand", () => {
   test("macOS selects the file in Finder", () => {
-    expect(revealCommand("/repo/src/a.ts", "darwin")).toEqual(["open", "-R", "/repo/src/a.ts"]);
+    expect(revealCommand("/repo/src/a.ts", "darwin")).toEqual(["/usr/bin/open", "-R", "/repo/src/a.ts"]);
   });
 
   test("anywhere else there is nothing to run, which the route answers with a 501", () => {

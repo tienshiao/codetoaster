@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { Server } from "bun";
 import { taskManager } from "../lib/tasks/manager";
 import { expandTilde } from "../lib/tilde";
 
@@ -136,9 +137,15 @@ export function resolveRoot(scope: RootScope, id: string): Promise<TaskRoot | { 
 
 /** A route handler over a resolved root. `scope` is there for the rare route
  * whose answer depends on who asked — `files/search`, whose paths are written
- * into a prompt for an agent running in a project's `cwd`. */
-export type RootHandler = (root: TaskRoot, req: Request, scope: RootScope) => Response | Promise<Response>;
-type RootRouteMethod = (req: Request & { params: { id: string } }) => Promise<Response>;
+ * into a prompt for an agent running in a project's `cwd`. `server` is Bun's,
+ * for the rarer one that needs the peer's address (`reveal`). */
+export type RootHandler = (
+  root: TaskRoot,
+  req: Request,
+  scope: RootScope,
+  server?: Server<unknown>,
+) => Response | Promise<Response>;
+type RootRouteMethod = (req: Request & { params: { id: string } }, server?: Server<unknown>) => Promise<Response>;
 
 export interface RootRouteOptions {
   /** Rewrite the resolver's error Response before the client gets it — the
@@ -168,12 +175,12 @@ export function rootRoutes(
     const table: Record<string, RootRouteMethod> = {};
     for (const [method, handler] of Object.entries(methods)) {
       if (!handler) continue;
-      table[method] = async (req) => {
+      table[method] = async (req, server) => {
         const result = await resolveRoot(scope, req.params.id);
         if ("error" in result) {
           return options.onResolveError ? options.onResolveError(result.error) : result.error;
         }
-        return handler(result, req, scope);
+        return handler(result, req, scope, server);
       };
     }
     return table;
