@@ -65,6 +65,43 @@ export interface TaskDiffOptions {
   tokens?: boolean;
 }
 
+/** One parse per diff response, however many file tabs ask (TASK-121). Keyed
+ * by the response object, which react-query hands every observer by identity
+ * until a refetch replaces it — and then this entry goes with it. */
+const changedPathsCache = new WeakMap<object, Set<string>>();
+
+function changedPaths(response: { diff: string }): Set<string> {
+  let paths = changedPathsCache.get(response);
+  if (!paths) {
+    try {
+      paths = new Set(parseDiff(response.diff).map((f) => f.newPath));
+    } catch {
+      paths = new Set();
+    }
+    changedPathsCache.set(response, paths);
+  }
+  return paths;
+}
+
+/**
+ * The paths in the working-tree diff, for a caller that asks only "has this
+ * file changed?" — a file tab's Show changes button.
+ *
+ * `useTaskDiff` would answer that too, but it word-diffs the whole tree per
+ * hook instance, and a file tab per open file is exactly the multiplier that
+ * made a large diff freeze the page (TASK-117). This shares its query, so no
+ * request of its own, and parses once per response for every tab together.
+ */
+export function useChangedPaths(root: RepoRoot): Set<string> | undefined {
+  const { data } = useQuery({
+    queryKey: taskKeys.diff(rootId(root)),
+    queryFn: () => fetchDiff(root),
+    refetchOnWindowFocus: refetchOnFocusFor(root),
+    select: changedPaths,
+  });
+  return data;
+}
+
 // A null root is the Explorer rail or the palette with nothing to read yet: the
 // query stays disabled, keyed on `null`, rather than fetching a route with no id.
 export function useTaskDiff(

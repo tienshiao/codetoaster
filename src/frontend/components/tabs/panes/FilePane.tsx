@@ -6,7 +6,7 @@ import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
 import { revealFile, useFileContent } from "@/frontend/hooks/use-task-files";
-import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
+import { useChangedPaths } from "@/frontend/hooks/use-task-diff";
 import { canRevealInFinder } from "@/frontend/utils/platform";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
@@ -41,11 +41,9 @@ export function FilePane({ root, view, path, line, onOpenFile, onOpenDiff }: Fil
   const [lineWrap, setLineWrap] = useViewState("file", view, "lineWrap");
   const [markdownPreview, setMarkdownPreview] = useViewState("file", view, "markdownPreview");
   const { data: content = null, isLoading } = useFileContent(root, path);
-  // Whether there is a diff to switch to. The file list only, no tokens: the
-  // same query the Explorer's Changes count holds, so this costs no request of
-  // its own, and the diff tab asks for tokens itself when it opens.
-  const { data: changes } = useTaskDiff(root, { tokens: false });
-  const changed = changes?.some((f) => f.newPath === path) ?? false;
+  // Whether there is a diff to switch to — see `useChangedPaths` for why this
+  // is not `useTaskDiff`.
+  const changed = useChangedPaths(root)?.has(path) ?? false;
 
   const hasPreview = getLanguageFromPath(path)?.name === "Markdown" || delimiterForPath(path) !== null;
   const previewActive = hasPreview && markdownPreview;

@@ -2,19 +2,24 @@ import type { FileDiff } from "../types/diff";
 
 /**
  * Where "View file" from a diff should land in the new file (TASK-121): the
- * first added line, since that is the change the reader was looking at.
+ * first change, in the order the diff shows them.
  *
- * A hunk that only deletes has no added line to point at, so it falls back to
- * where the hunk sits in the new file — the line the deletion now sits above.
+ * An added line is its own line number. A deletion has no line in the new file,
+ * so it lands on the line that now follows it — which is why the walk tracks
+ * the new side through the leading context rather than using `newStart`, the
+ * first *context* line, up to three rows above the change.
+ *
  * Undefined when there is nothing to point at (a pure rename, a binary file),
  * which opens the file at the top.
  */
 export function firstChangedLine(file: FileDiff): number | undefined {
   for (const hunk of file.hunks) {
+    let next = hunk.newStart;
     for (const line of hunk.lines) {
-      if (line.type === "addition" && line.newLineNum !== undefined) return line.newLineNum;
+      if (line.type === "addition") return line.newLineNum ?? next;
+      if (line.type === "deletion") return Math.max(1, next);
+      if (line.type === "context") next = (line.newLineNum ?? next) + 1;
     }
-    if (hunk.lines.some((l) => l.type === "deletion")) return Math.max(1, hunk.newStart);
   }
   return undefined;
 }

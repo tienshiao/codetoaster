@@ -12,14 +12,19 @@ test("lands on the first added line, not the hunk's leading context", () => {
   expect(firstChangedLine(f)).toBe(13);
 });
 
-test("a deletion-only hunk lands where the lines used to be", () => {
-  const f = file("@@ -5,3 +5,2 @@", " a", "-gone", " b");
-  expect(firstChangedLine(f)).toBe(5);
+test("a deletion lands on the line that now follows it, past git's usual three of context", () => {
+  const f = file("@@ -10,7 +10,6 @@", " a", " b", " c", "-gone", " d", " e", " f");
+  expect(firstChangedLine(f)).toBe(13);
 });
 
 test("an earlier deletion-only hunk wins over a later addition", () => {
   const f = file("@@ -5,3 +5,2 @@", " a", "-gone", " b", "@@ -40,2 +39,3 @@", " x", "+added", " y");
-  expect(firstChangedLine(f)).toBe(5);
+  expect(firstChangedLine(f)).toBe(6);
+});
+
+test("within a hunk the first change in order wins, deletion or not", () => {
+  const f = file("@@ -1,5 +1,5 @@", " a", "-b", " c", "+d", " e");
+  expect(firstChangedLine(f)).toBe(2);
 });
 
 test("a file whose first line was deleted lands on line 1, not 0", () => {
