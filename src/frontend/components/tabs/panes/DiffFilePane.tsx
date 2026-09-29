@@ -24,7 +24,7 @@ interface DiffFilePaneProps {
   path: string;
   /** Opens a file at a line — where go-to-definition lands. Opening tabs is the
    * layout's business, so it arrives here as a callback. */
-  onOpenFile: (path: string, line: number) => void;
+  onOpenFile: (path: string, line?: number) => void;
 }
 
 /**
@@ -126,6 +126,7 @@ export function DiffFilePane({ root, view, path, onOpenFile }: DiffFilePaneProps
         commentCounts={commentState.fileCommentCounts}
         hunkExpansions={hunkExpansions}
         onExpandContext={expandContext}
+        onViewFile={onOpenFile}
         symbol={{
           modHeld,
           hoverHandlers: symbolHover,

@@ -97,9 +97,13 @@ export function TabPane({
   // The line rides on the descriptor, so jumping into a file already open
   // moves the cursor instead of opening it twice (`tabKey` ignores `line`).
   const openFile = useCallback(
-    (path: string, line: number) => onOpenTab({ kind: "file", path, line }),
+    (path: string, line?: number) => onOpenTab({ kind: "file", path, line }),
     [onOpenTab],
   );
+  // A file tab's Show changes (TASK-121), the way back from a diff's View file.
+  // Permanent for the same reason: asked for by name, and `tabKey` dedupes, so
+  // going back and forth switches between two tabs rather than making more.
+  const openDiff = useCallback((path: string) => onOpenTab({ kind: "diff", path }), [onOpenTab]);
 
   // Task ids (TASK-86), file paths (TASK-108) and commit hashes (TASK-110) in
   // the task's terminals, as links that open a tab. Called unconditionally,
@@ -221,6 +225,7 @@ export function TabPane({
             path={descriptor.path}
             line={descriptor.line}
             onOpenFile={openFile}
+            onOpenDiff={openDiff}
           />
         </Frame>
       );

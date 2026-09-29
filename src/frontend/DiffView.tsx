@@ -34,7 +34,7 @@ interface DiffViewProps {
   /** Opens a file at a line — where go-to-definition lands. The tab area owns
    * opening tabs, so this arrives as a callback rather than being navigated to
    * from inside the diff. */
-  onOpenFile: (path: string, line: number) => void;
+  onOpenFile: (path: string, line?: number) => void;
   /** Where `onSubmit` puts the review, which is what the confirmation has to
    * say: a task's agent terminal, or — for a diff opened at the composer,
    * where there is no agent yet — the prompt being written (TASK-106). */
@@ -198,6 +198,7 @@ export function DiffView({ root, onSubmit, onOpenFile, destination = "terminal" 
         commentCounts={commentState.fileCommentCounts}
         hunkExpansions={hunkExpansions}
         onExpandContext={expandContext}
+        onViewFile={onOpenFile}
         symbol={{
           modHeld,
           hoverHandlers: symbolHover,

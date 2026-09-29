@@ -1,11 +1,12 @@
 import { useState } from "react";
 import type { RepoRoot } from "@/frontend/repo-root";
-import { Eye, FolderSearch, WrapText } from "lucide-react";
+import { Eye, FileDiff, FolderSearch, WrapText } from "lucide-react";
 import { toast } from "sonner";
 import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
 import { revealFile, useFileContent } from "@/frontend/hooks/use-task-files";
+import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
 import { canRevealInFinder } from "@/frontend/utils/platform";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
@@ -23,7 +24,9 @@ interface FilePaneProps {
   line?: number;
   /** Opens a file at a line — where go-to-definition lands. Opening tabs is the
    * layout's business, so it arrives here as a callback. */
-  onOpenFile: (path: string, line: number) => void;
+  onOpenFile: (path: string, line?: number) => void;
+  /** Opens this file's working-tree diff tab (TASK-121). */
+  onOpenDiff: (path: string) => void;
 }
 
 /**
@@ -33,11 +36,16 @@ interface FilePaneProps {
  * file tab it opens, so a pane that carried one would be drawing the same tree
  * once per open file.
  */
-export function FilePane({ root, view, path, line, onOpenFile }: FilePaneProps) {
+export function FilePane({ root, view, path, line, onOpenFile, onOpenDiff }: FilePaneProps) {
   const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const [lineWrap, setLineWrap] = useViewState("file", view, "lineWrap");
   const [markdownPreview, setMarkdownPreview] = useViewState("file", view, "markdownPreview");
   const { data: content = null, isLoading } = useFileContent(root, path);
+  // Whether there is a diff to switch to. The file list only, no tokens: the
+  // same query the Explorer's Changes count holds, so this costs no request of
+  // its own, and the diff tab asks for tokens itself when it opens.
+  const { data: changes } = useTaskDiff(root, { tokens: false });
+  const changed = changes?.some((f) => f.newPath === path) ?? false;
 
   const hasPreview = getLanguageFromPath(path)?.name === "Markdown" || delimiterForPath(path) !== null;
   const previewActive = hasPreview && markdownPreview;
@@ -53,6 +61,9 @@ export function FilePane({ root, view, path, line, onOpenFile }: FilePaneProps) 
           {path}
         </span>
         <div className="ml-auto flex flex-none items-center gap-0.5">
+          {changed && (
+            <IconButton icon={FileDiff} label="Show changes" size="sm" onClick={() => onOpenDiff(path)} />
+          )}
           {hasPreview && (
             <IconButton
               icon={Eye}

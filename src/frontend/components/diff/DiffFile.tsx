@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import type { RepoRoot } from "@/frontend/repo-root";
-import { ChevronDown, ChevronRight, ChevronUp, MessageCircle, MessageSquare, MessageSquarePlus, MoreHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, FileText, MessageCircle, MessageSquare, MessageSquarePlus, MoreHorizontal } from "lucide-react";
+import { firstChangedLine } from "../../utils/firstChangedLine";
 import { CommentInput } from "./CommentInput";
 import { CommentDisplay } from "./CommentDisplay";
 import { ImageDiff } from "./ImageDiff";
@@ -29,6 +30,10 @@ interface DiffFileProps {
   // When present (git commit view) both image sides are resolved from git refs;
   // absent means the working-tree diff, where the "after" side is the file on disk.
   imageRefs?: { old: string; new: string };
+  /** Opens the whole file, at its first change (TASK-121). Only the working-tree
+   * diff passes it: there the file on disk *is* the new side, where a commit's
+   * new side may be long gone from the tree. */
+  onViewFile?: (path: string, line?: number) => void;
 }
 
 const EMPTY_EXPANSIONS = new Map<string, HunkExpansionState>();
@@ -161,6 +166,7 @@ export function DiffFile({
   commentState,
   root,
   imageRefs,
+  onViewFile,
 }: DiffFileProps) {
   const hunkExpansions = hunkExpansionsProp ?? EMPTY_EXPANSIONS;
   const comments = commentState?.comments;
@@ -260,6 +266,20 @@ export function DiffFile({
             </span>
           )}
         </span>
+        {/* A deleted file has nothing on disk to show. */}
+        {onViewFile && file.status !== "deleted" && (
+          <button
+            className="shrink-0 flex items-center gap-1 text-xs font-sans text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-accent"
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewFile(filePath, firstChangedLine(file));
+            }}
+            title="View file"
+            aria-label="View file"
+          >
+            <FileText size={12} />
+          </button>
+        )}
         {commentState && (
           <button
             className="shrink-0 flex items-center gap-1 text-xs font-sans text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-accent"

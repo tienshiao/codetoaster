@@ -96,6 +96,9 @@ interface DiffLayoutProps {
   ) => void;
   commentCounts?: Map<string, number>;
   imageRefs?: { old: string; new: string };
+  /** A View file button on each file header (TASK-121). The working-tree
+   * consumers pass it; the commit view does not, so it does not render. */
+  onViewFile?: (path: string, line?: number) => void;
 
   // Extra toolbar content, right-aligned (e.g. the Submit Review button).
   toolbarExtra?: ReactNode;
@@ -130,6 +133,7 @@ export function DiffLayout({
   onExpandContext,
   commentCounts,
   imageRefs,
+  onViewFile,
   toolbarExtra,
   showFileTree = true,
   showViewModeToggle = true,
@@ -334,6 +338,7 @@ export function DiffLayout({
             commentState={commentState}
             root={root}
             imageRefs={imageRefs}
+            onViewFile={onViewFile}
           />
         </div>
       );
@@ -356,6 +361,7 @@ export function DiffLayout({
           commentState={commentState}
           root={root}
           imageRefs={imageRefs}
+          onViewFile={onViewFile}
         />
       </div>
     ));
