@@ -98,6 +98,26 @@ test("pointing at a pane that is not listening does not take the keys away", () 
   expect(showing()).toBe("2 of 3");
 });
 
+test("a file header collapses its file among others, and offers nothing when it is the only one shown", () => {
+  // The path is both the header's label and the fixture's one line; the header
+  // comes first.
+  const header = (view: ReturnType<typeof render>) => view.getAllByText("a.ts")[0]!;
+
+  const all = render(<Pane mode="all" />);
+  expect(all.container.querySelectorAll("table")).toHaveLength(3);
+  fireEvent.click(header(all));
+  expect(all.container.querySelectorAll("table")).toHaveLength(2);
+  all.unmount();
+
+  // In single-file mode the file is the whole view. A chevron there promised a
+  // collapse that never came, while the click quietly collapsed the file in
+  // "all" mode.
+  const single = render(<Pane mode="single" />);
+  expect(single.container.querySelector(".lucide-chevron-down")).toBeNull();
+  fireEvent.click(header(single));
+  expect(single.container.querySelectorAll("table")).toHaveLength(1);
+});
+
 test("navigating does not release the keys the pane is holding", () => {
   split();
   // The listener's effect re-runs on every navigation (its callbacks close over

@@ -15,7 +15,9 @@ import type { UseCommentsReturn } from "../../hooks/use-comments";
 interface DiffFileProps {
   file: FileDiff;
   isExpanded: boolean;
-  onToggle: () => void;
+  /** Absent where the file cannot be collapsed (single-file mode, where it is
+   * the whole view): the header then drops the chevron and the click. */
+  onToggle?: () => void;
   hunkExpansions?: Map<string, HunkExpansionState>;
   onExpandContext?: (
     filePath: string,
@@ -240,14 +242,20 @@ export function DiffFile({
 
   return (
     <div className={`border-x border-b border-border ${!isExpanded ? 'opacity-75' : ''}`}>
-      {/* File header */}
+      {/* File header. Sticky, so it has to stay opaque: the hover wash is laid
+          over `bg-muted` as an image rather than replacing it, or the lines
+          scrolling underneath show through. */}
       <div
-        className="sticky top-0 z-10 flex items-center gap-2 px-3 py-1.5 bg-muted cursor-pointer hover:bg-accent text-sm border-t border-b border-border"
+        className={`sticky top-0 z-10 flex items-center gap-2 px-3 py-1.5 bg-muted text-sm border-t border-b border-border ${
+          onToggle ? "cursor-pointer hover:bg-[linear-gradient(var(--color-hover),var(--color-hover))]" : ""
+        }`}
         onClick={onToggle}
       >
-        <span className="shrink-0 text-muted-foreground">
-          {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </span>
+        {onToggle && (
+          <span className="shrink-0 text-muted-foreground">
+            {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </span>
+        )}
         {/* Change indicator bar */}
         <span className="shrink-0 flex w-12 h-2 rounded-full overflow-hidden bg-muted">
           <span className="bg-green-500 h-full" style={{ width: `${additionWidth}%` }} />

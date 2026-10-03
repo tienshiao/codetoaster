@@ -329,10 +329,11 @@ export function DiffLayout({
             else fileRefs.current.delete(file.newPath);
           }}
         >
+          {/* No `onToggle`: the one file on screen is always expanded, and a
+              toggle here would only collapse it unseen in "all" mode. */}
           <DiffFile
             file={file}
             isExpanded={true}
-            onToggle={() => handleToggleFile(file.newPath)}
             hunkExpansions={hunkExpansions}
             onExpandContext={onExpandContext}
             commentState={commentState}
