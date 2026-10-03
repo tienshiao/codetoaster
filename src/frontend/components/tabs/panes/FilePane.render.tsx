@@ -5,6 +5,8 @@ import type { ReactNode } from "react";
 import { taskRoot } from "@/frontend/repo-root";
 import { getViewState, viewRef, type ViewRef } from "@/frontend/view-state-store";
 import type { FileContentResponse, FilesResponse } from "@/frontend/types/file";
+import { defaultParseSearch } from "@tanstack/react-router";
+import { parseTabSearch } from "@/frontend/utils/tab-link";
 import { FilePane } from "./FilePane";
 
 /**
@@ -16,13 +18,17 @@ import { FilePane } from "./FilePane";
 const PAGES: Record<string, string[]> = {
   "wiki/services/archive.md": [
     "# Archive",
-    "[cell setup](cell.md#setup) [retention here](archive.md#retention) [line](/src/a.ts#L3)",
+    "[cell setup](cell.md#setup) [retention here](archive.md#retention) [line](/src/a.ts#L3) [below](#retention) [index](/index)",
     "![diagram](/img/flow.png)",
     "## Retention",
   ],
 };
 
-const stubs = vi.hoisted(() => ({ fetchFiles: vi.fn() }));
+const stubs = vi.hoisted(() => ({
+  fetchFiles: vi.fn(),
+  /** What the cache holds for the listing — the pane only watches it. */
+  cachedFiles: undefined as unknown,
+}));
 
 vi.mock("@/frontend/hooks/use-task-files", () => ({
   useFileContent: (_root: unknown, path: string): { data: FileContentResponse; isLoading: boolean } => {
@@ -38,6 +44,11 @@ vi.mock("@/frontend/hooks/use-task-files", () => ({
     };
   },
   fetchTaskFiles: stubs.fetchFiles,
+  useTaskFiles: (_root: unknown, options?: { enabled?: boolean }) => {
+    // The pane must only watch the cache, never fetch through the hook.
+    if (options?.enabled !== false) throw new Error("useTaskFiles must stay disabled in a file pane");
+    return { data: stubs.cachedFiles };
+  },
   revealFile: vi.fn(),
 }));
 vi.mock("@/frontend/hooks/use-task-diff", () => ({ useChangedPaths: () => undefined }));
@@ -60,6 +71,7 @@ const originalScrollIntoView = Element.prototype.scrollIntoView;
 beforeEach(() => {
   scrolled.length = 0;
   stubs.fetchFiles.mockReset().mockResolvedValue(FILES);
+  stubs.cachedFiles = undefined;
   Element.prototype.scrollIntoView = function (this: Element) {
     scrolled.push(this);
   };
@@ -74,6 +86,7 @@ interface PaneProps {
   anchor?: string;
   anchorAt?: number;
   view?: ViewRef;
+  taskHref?: string;
 }
 
 function renderPane(props: PaneProps = {}) {
@@ -89,6 +102,7 @@ function renderPane(props: PaneProps = {}) {
       path="wiki/services/archive.md"
       anchor={p.anchor}
       anchorAt={p.anchorAt}
+      taskHref={p.taskHref}
       onOpenFile={onOpenFile}
       onOpenDiff={vi.fn()}
     />
@@ -194,6 +208,77 @@ test("a click whose listing arrives after the tab closed opens nothing", async (
   release(FILES);
   await new Promise((r) => setTimeout(r, 0));
   expect(onOpenFile).not.toHaveBeenCalled();
+});
+
+/** Real URLs (TASK-126). */
+const BASE = "/t/wiki-t1";
+const tabSearch = (href: string | null) => parseTabSearch(defaultParseSearch(href!.slice(href!.indexOf("?"))));
+
+test("in a task, a repository link carries the URL that opens its tab", () => {
+  stubs.cachedFiles = FILES;
+  renderPane({ taskHref: BASE });
+  const href = screen.getByRole("link", { name: "cell setup" }).getAttribute("href");
+  expect(href!.startsWith(`${BASE}?`)).toBe(true);
+  expect(tabSearch(href)).toEqual({ tab: "file:wiki/services/cell.md", anchor: "setup" });
+  expect(tabSearch(screen.getByRole("link", { name: "line" }).getAttribute("href"))).toEqual({
+    tab: "file:src/a.ts",
+    line: 3,
+  });
+});
+
+test("a fragment link carries this file's URL with the heading", () => {
+  renderPane({ taskHref: BASE });
+  expect(tabSearch(screen.getByRole("link", { name: "below" }).getAttribute("href"))).toEqual({
+    tab: "file:wiki/services/archive.md",
+    anchor: "retention",
+  });
+});
+
+test("the URL uses the cached listing once it is there, for an extensionless / link", () => {
+  // No listing yet: the plain resolution, which misses the .md and the bundle.
+  const { unmount } = renderPane({ taskHref: BASE });
+  expect(tabSearch(screen.getByRole("link", { name: "index" }).getAttribute("href"))).toEqual({ tab: "file:index" });
+  unmount();
+  stubs.cachedFiles = FILES;
+  renderPane({ taskHref: BASE });
+  expect(tabSearch(screen.getByRole("link", { name: "index" }).getAttribute("href"))).toEqual({
+    tab: "file:wiki/index.md",
+  });
+});
+
+test("opening a task's preview asks for the listing up front; a project's does not", async () => {
+  // The page's image asks for the listing either way (and the query client
+  // would fold the two into one request); a task's preview adds the up-front ask.
+  const project = renderPane();
+  await waitFor(() => expect(stubs.fetchFiles).toHaveBeenCalled());
+  const withoutTask = stubs.fetchFiles.mock.calls.length;
+  project.unmount();
+  stubs.fetchFiles.mockClear();
+
+  renderPane({ taskHref: BASE });
+  await waitFor(() => expect(stubs.fetchFiles.mock.calls.length).toBe(withoutTask + 1));
+});
+
+test("a modified or middle click is left to the browser; a plain click opens in place", async () => {
+  const { onOpenFile } = renderPane({ taskHref: BASE });
+  const link = screen.getByRole("link", { name: "cell setup" });
+  // fireEvent returns false when the default was prevented.
+  expect(fireEvent.click(link, { metaKey: true })).toBe(true);
+  expect(fireEvent.click(link, { ctrlKey: true })).toBe(true);
+  expect(fireEvent.click(link, { shiftKey: true })).toBe(true);
+  expect(fireEvent(link, new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }))).toBe(true);
+  expect(onOpenFile).not.toHaveBeenCalled();
+
+  expect(fireEvent.click(link)).toBe(false);
+  await waitFor(() => expect(onOpenFile).toHaveBeenCalledWith("wiki/services/cell.md", undefined, "setup"));
+});
+
+test("outside a task the link keeps its raw href, and a middle click stays blocked", () => {
+  renderPane();
+  const link = screen.getByRole("link", { name: "cell setup" });
+  expect(link.getAttribute("href")).toBe("cell.md#setup");
+  expect(fireEvent(link, new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }))).toBe(false);
+  expect(fireEvent.click(link, { metaKey: true })).toBe(false);
 });
 
 test("a / image resolves against the wiki's root and loads from the image endpoint", async () => {

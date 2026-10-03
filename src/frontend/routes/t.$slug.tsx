@@ -3,15 +3,15 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useTasks } from "../TaskContext";
 import { TaskShell } from "../components/TaskShell";
 import { parseTaskSlug } from "../utils/slug";
+import { parseTabSearch } from "../utils/tab-link";
 
 export const Route = createFileRoute("/t/$slug")({
   // `tab` is a tab key (`agent`, `diffAll`, `file:src/a.ts`, …). Validated only
   // as "a string or absent" here, because whether it names something openable
   // is `descriptorFromKey`'s question and its answer depends on the layout the
-  // shell holds, not on the URL.
-  validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
-    tab: typeof search.tab === "string" && search.tab ? search.tab : undefined,
-  }),
+  // shell holds, not on the URL. `line` and `anchor` are where a file tab
+  // should land — a markdown link's `#L12` or heading (TASK-126).
+  validateSearch: parseTabSearch,
   component: TaskRoute,
 });
 
@@ -23,7 +23,7 @@ export const Route = createFileRoute("/t/$slug")({
  */
 function TaskRoute() {
   const { slug } = Route.useParams();
-  const { tab } = Route.useSearch();
+  const { tab, line, anchor } = Route.useSearch();
   const { id } = parseTaskSlug(slug);
   const { taskById, loaded } = useTasks();
   const navigate = useNavigate();
@@ -53,5 +53,12 @@ function TaskRoute() {
   // `/` draws the same empty shell, so there is no flash between the two.
   if (missing) return <TaskShell taskId={null} />;
 
-  return <TaskShell taskId={id} pendingTab={tab ?? null} onTabEnsured={clearTab} />;
+  return (
+    <TaskShell
+      taskId={id}
+      pendingTab={tab ?? null}
+      pendingPosition={line || anchor ? { line, anchor } : undefined}
+      onTabEnsured={clearTab}
+    />
+  );
 }

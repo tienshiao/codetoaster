@@ -25,6 +25,9 @@ sources:
   - id: task-125
     resource: "../../backlog/tasks/task-125 - Relative-image-sources-in-the-markdown-preview-load-from-the-repository.md"
     title: "TASK-125 — Relative image sources in the markdown preview load from the repository"
+  - id: task-126
+    resource: "../../backlog/tasks/task-126 - Markdown-preview-links-carry-real-URLs-that-open-the-file-tab-heading-included.md"
+    title: "TASK-126 — Markdown preview links carry real URLs that open the file tab, heading included"
 ---
 
 # What it renders
@@ -100,9 +103,24 @@ Ids are numbered the way GitHub numbers them, skipping any already taken, and fo
 
 An image with a repository path[^task-125] resolves exactly as a link does — relative to the file, or `/` to its bundle — and loads from the working-tree image endpoint. Nothing is requested until the file list answers, and an image that resolves to nothing shows its alt text rather than a broken request. External images load as written; `data:` URIs are dropped by react-markdown's URL policy before they get here.
 
+# Link URLs
+
+What a browser does with a link without asking the page — open in a new tab, copy the link address, ⌘/Ctrl/Shift-click, middle-click — reads the `href` alone, so in a task's preview every repository link and every `#heading` link carries the app's own URL for its target:[^task-126]
+
+```
+/t/<task-slug>?tab=file:wiki/conventions/testing.md&anchor=markdown-header-what-goes-where
+/t/<task-slug>?tab=file:src/api/files.ts&line=263
+```
+
+The task route ensures the tab named by `tab` (§7.3) and lands it on `line` or `anchor`, as a fresh heading request. The URL is built and read with the router's own search serializer, so an anchor like `2024` comes back a string. A plain click still opens the tab in place; a modified or middle click goes to the browser with the URL.
+
+The `href` is drawn before any click, so it resolves against the file list the cache already holds, and a task's preview asks for that list once as it opens. Until it arrives an extensionless or `/` link gets the plain resolution in its `href`; a plain click always resolves against a fresh list.
+
+The composer's Explorer browses a project, which has no route that opens tabs, so its previews keep the raw `href` and only the in-page behaviour.
+
 # Not yet
 
-- Right-click "Open link in new tab" still gets the app-relative `href`: no app URL opens a file tab.
+- A heading anchor does nothing in the source view; the request is spent rather than saved for when the preview is turned on.
 
 [^preview]: src/frontend/components/file/MarkdownPreview.tsx
 [^markdown-links]: src/frontend/utils/markdown-links.ts
@@ -110,3 +128,4 @@ An image with a repository path[^task-125] resolves exactly as a link does — r
 [^task-122]: TASK-122 — Relative links in the markdown preview open the linked file
 [^task-124]: TASK-124 — Headings in the markdown preview get ids, and links to them scroll
 [^task-125]: TASK-125 — Relative image sources in the markdown preview load from the repository
+[^task-126]: TASK-126 — Markdown preview links carry real URLs that open the file tab, heading included

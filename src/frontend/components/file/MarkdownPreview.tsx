@@ -45,6 +45,9 @@ interface PreviewHandlers {
   onOpenLink?: (href: string) => void;
   /** The URL to load a repository image from, or null for none (TASK-125). */
   resolveImage?: (src: string) => Promise<string | null>;
+  /** The app URL a repository or fragment link should carry, or null for
+   * none (TASK-126). Synchronous: it is read while the link is drawn. */
+  hrefFor?: (href: string) => string | null;
 }
 
 const PreviewContext = createContext<PreviewHandlers>({});
@@ -140,12 +143,19 @@ function pinWhileLayoutSettles(container: HTMLElement, target: Element): () => v
  * the element so hovering still shows where it points.
  */
 function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
-  const { onOpenLink } = useContext(PreviewContext);
+  const { onOpenLink, hrefFor } = useContext(PreviewContext);
   const kind = href ? hrefKind(href) : "fragment";
   if (kind === "external") {
     return <a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>;
   }
+  // The app's own URL for the target, when the caller can make one (TASK-126).
+  // It is what the browser acts on without asking the page — open in a new
+  // tab, copy the link — so with it in the `href`, those land on the file.
+  const url = href ? (hrefFor?.(href) ?? null) : null;
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    // ⌘/Ctrl/Shift-click is the reader asking for a new tab or window: with a
+    // real URL, the browser's answer is the right one.
+    if (url && (e.metaKey || e.ctrlKey || e.shiftKey)) return;
     e.preventDefault();
     if (!href) return;
     if (kind === "file") {
@@ -155,9 +165,15 @@ function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
     // Scoped to this preview: another open file tab can carry the same ids.
     scrollToAnchor(e.currentTarget.closest(".markdown-preview"), decode(href.slice(1)));
   };
-  // A middle-click would open the app's 404 in a new browser tab.
   return (
-    <a {...props} href={href} onClick={onClick} onAuxClick={(e) => e.preventDefault()}>
+    <a
+      {...props}
+      href={url ?? href}
+      onClick={onClick}
+      // Without a real URL, a middle-click would open the app's 404 in a new
+      // browser tab; with one, it opens the file there.
+      onAuxClick={url ? undefined : (e) => e.preventDefault()}
+    >
       {children}
     </a>
   );
@@ -230,6 +246,7 @@ export function MarkdownPreview({
   frontmatter,
   onOpenLink,
   resolveImage,
+  hrefFor,
   jump,
   onJumped,
 }: {
@@ -237,6 +254,7 @@ export function MarkdownPreview({
   frontmatter?: Frontmatter;
   onOpenLink?: (href: string) => void;
   resolveImage?: (src: string) => Promise<string | null>;
+  hrefFor?: (href: string) => string | null;
   jump?: AnchorJump | null;
   /** The jump with this `seq` has been served and should not be asked for
    * again; `landed` says whether its heading was there to scroll to. */
@@ -281,7 +299,7 @@ export function MarkdownPreview({
     onJumpedRef.current?.(seq, target !== null);
   }, [seq, anchor]);
 
-  const handlers = useMemo(() => ({ onOpenLink, resolveImage }), [onOpenLink, resolveImage]);
+  const handlers = useMemo(() => ({ onOpenLink, resolveImage, hrefFor }), [onOpenLink, resolveImage, hrefFor]);
 
   return (
     <PreviewContext.Provider value={handlers}>

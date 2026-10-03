@@ -30,6 +30,8 @@ interface FileContentProps {
   onOpenLink?: (href: string) => void;
   /** Where the markdown preview loads a repository image from. */
   resolveImage?: (src: string) => Promise<string | null>;
+  /** A markdown link's real URL, for the browser's own handling of it. */
+  hrefFor?: (href: string) => string | null;
   /** A heading for the markdown preview to scroll to. */
   anchorJump?: AnchorJump | null;
   /** The preview carried out the jump with this `seq`. */
@@ -52,6 +54,7 @@ export function FileContent({
   onSymbolClick,
   onOpenLink,
   resolveImage,
+  hrefFor,
   anchorJump,
   onAnchorJumped,
   imageUrl: imageUrlProp,
@@ -227,6 +230,7 @@ export function FileContent({
           frontmatter={frontmatter}
           onOpenLink={onOpenLink}
           resolveImage={resolveImage}
+          hrefFor={hrefFor}
           jump={anchorJump}
           onJumped={handleAnchorJumped}
         />

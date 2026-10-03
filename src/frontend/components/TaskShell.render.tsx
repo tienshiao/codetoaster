@@ -191,6 +191,36 @@ afterEach(() => {
   clearLayout(TASK_ID);
 });
 
+function storedFile(path: string) {
+  return loadLayout(TASK_ID)
+    .groups.flatMap((g) => g.tabs)
+    .map((t) => t.descriptor)
+    .find((d) => d.kind === "file" && d.path === path);
+}
+
+test("a ?tab= file link lands on its heading, as a fresh request (TASK-126)", async () => {
+  const ensured = vi.fn();
+  const before = Date.now();
+  render(
+    <TaskShell taskId={TASK_ID} pendingTab="file:wiki/a.md" pendingPosition={{ anchor: "setup" }} onTabEnsured={ensured} />,
+    { wrapper: Providers },
+  );
+  await waitFor(() => expect(ensured).toHaveBeenCalled());
+  const descriptor = storedFile("wiki/a.md");
+  expect(descriptor).toMatchObject({ kind: "file", path: "wiki/a.md", anchor: "setup" });
+  expect((descriptor as { anchorAt?: number }).anchorAt).toBeGreaterThanOrEqual(before);
+});
+
+test("a ?tab= file link carries its line", async () => {
+  const ensured = vi.fn();
+  render(
+    <TaskShell taskId={TASK_ID} pendingTab="file:src/a.ts" pendingPosition={{ line: 12 }} onTabEnsured={ensured} />,
+    { wrapper: Providers },
+  );
+  await waitFor(() => expect(ensured).toHaveBeenCalled());
+  expect(storedFile("src/a.ts")).toEqual({ kind: "file", path: "src/a.ts", line: 12 });
+});
+
 test("two presses on + inside one round trip open two tabs, not one", async () => {
   // The failure this exists for: both presses read the layout as it was before
   // either answered, so the second write lands a layout that never held the

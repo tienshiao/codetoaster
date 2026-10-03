@@ -34,6 +34,7 @@ import {
   type TaskLayout,
 } from "@/frontend/layout-store";
 import { projectRoot, rootId, taskRoot, type RepoRoot } from "@/frontend/repo-root";
+import { buildTaskSlug } from "@/frontend/utils/slug";
 import { patchComposerDraft, getComposerDraft } from "@/frontend/composer-draft-store";
 import type { ExplorerSection } from "@/frontend/explorer-store";
 
@@ -43,6 +44,9 @@ export interface TaskShellProps {
   /** A `?tab=` deep link's tab key, to be opened if absent and focused if not
    * (§7.3). Null once there is nothing pending. */
   pendingTab?: string | null;
+  /** Where a pending `file:` tab should land: a markdown link's `#L12` or
+   * heading, carried in the URL beside the key (TASK-126). */
+  pendingPosition?: { line?: number; anchor?: string };
   /** Called once `pendingTab` has been honoured, so the route can drop the
    * parameter. Ensuring is a one-off instruction, not a description of the
    * layout: leaving `?tab=` in the URL would reopen a tab the user then closed,
@@ -63,7 +67,7 @@ export interface TaskShellProps {
  * sidebar's ordering, filter and per-row actions — belongs to the shell and its
  * hooks, so the routes stay about addresses.
  */
-export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }: TaskShellProps) {
+export function TaskShell({ taskId, pendingTab = null, pendingPosition, onTabEnsured, children }: TaskShellProps) {
   const { tasks, loaded, home, openShell, closeShell, setViewedTask } = useTasks();
   const openTask = useOpenTask();
   const openComposer = useOpenComposer();
@@ -308,6 +312,9 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   const displayNames = useMemo(() => taskDisplayNames(tasks), [tasks]);
   const selected = tasks.find((t) => t.id === taskId);
   const { sendInput } = usePty();
+  // The task's own address, as `useOpenTask` builds it: titled when the task is
+  // in the list, the bare id (the whole address anyway) when it is not yet.
+  const taskHref = taskId ? `/t/${selected ? buildTaskSlug(selected) : taskId}` : undefined;
 
   // The label the browser's tab shows. Set here rather than by the route, which
   // knows an id and not a title — and left unset, the tab reads a static
@@ -372,25 +379,37 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
   // is also what lets the same link be followed twice in a row: the token
   // clears when the parameter does, not when the tab closes.
   const ensuredRef = useRef<string | null>(null);
+  const pendingLine = pendingPosition?.line;
+  const pendingAnchor = pendingPosition?.anchor;
   useEffect(() => {
     if (!pendingTab || !taskId) {
       ensuredRef.current = null;
       return;
     }
     if (!layout) return;
-    const token = `${taskId}:${pendingTab}`;
+    const token = `${taskId}:${pendingTab}:${pendingLine ?? ""}:${pendingAnchor ?? ""}`;
     if (ensuredRef.current === token) return;
     ensuredRef.current = token;
 
     // A key this build cannot open — an older link, or a hand-edited URL — is
     // dropped rather than being allowed to hold the parameter open forever.
-    const descriptor = descriptorFromKey(pendingTab);
+    const keyed = descriptorFromKey(pendingTab);
+    // A file tab lands where the link pointed. The heading is stamped as a new
+    // request (TASK-124), so following the link again scrolls again.
+    const descriptor =
+      keyed?.kind === "file"
+        ? {
+            ...keyed,
+            ...(pendingLine ? { line: pendingLine } : {}),
+            ...(pendingAnchor ? { anchor: pendingAnchor, anchorAt: Date.now() } : {}),
+          }
+        : keyed;
     // Deliberately permanent, not preview: following a link is the user asking
     // for that tab by name, and a preview tab would be replaced by their next
     // click in the Explorer.
     if (descriptor) reduceLayout((current) => openTab(current, descriptor));
     onTabEnsured?.();
-  }, [pendingTab, taskId, layout, reduceLayout, onTabEnsured]);
+  }, [pendingTab, pendingLine, pendingAnchor, taskId, layout, reduceLayout, onTabEnsured]);
 
   // Having a ptyId is not the same as having somewhere to write. A PTY whose
   // process exited on its own is never removed from PtyManager — only `kill`
@@ -627,6 +646,9 @@ export function TaskShell({ taskId, pendingTab = null, onTabEnsured, children }:
                         root!.kind === "task" ? handleSubmitReview : submitReviewToComposer
                       }
                       visible={visible}
+                      // Where a file tab's links point (TASK-126). Only a task
+                      // has a route that opens tabs; the composer's have none.
+                      taskHref={taskHref}
                       // Whether this pane's group is the one the leader chords
                       // act on — what a terminal's search bar answers ⌘G for
                       // when the caret is nowhere near a terminal.

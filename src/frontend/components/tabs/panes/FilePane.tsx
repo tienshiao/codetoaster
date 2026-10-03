@@ -1,21 +1,22 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { rootApi, type RepoRoot } from "@/frontend/repo-root";
+import { rootApi, rootId, type RepoRoot } from "@/frontend/repo-root";
 import { Eye, FileDiff, FolderSearch, WrapText } from "lucide-react";
 import { toast } from "sonner";
 import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
 import type { AnchorJump } from "@/frontend/components/file/MarkdownPreview";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
-import { fetchTaskFiles, revealFile, useFileContent } from "@/frontend/hooks/use-task-files";
+import { fetchTaskFiles, revealFile, useFileContent, useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useChangedPaths } from "@/frontend/hooks/use-task-diff";
 import { canRevealInFinder } from "@/frontend/utils/platform";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
 import { delimiterForPath } from "@/frontend/utils/delimited";
-import { resolveMarkdownLink } from "@/frontend/utils/markdown-links";
+import { decode, resolveMarkdownLink } from "@/frontend/utils/markdown-links";
 import { filePathSet } from "@/frontend/utils/path-links";
+import { fileTabHref } from "@/frontend/utils/tab-link";
 
 interface FilePaneProps {
   root: RepoRoot;
@@ -32,6 +33,9 @@ interface FilePaneProps {
   /** When that heading was asked for: a new value is a new request, even for
    * the same heading. */
   anchorAt?: number;
+  /** The task's route, which markdown links build real URLs on (TASK-126).
+   * Absent for a project root: its links keep the in-page behaviour only. */
+  taskHref?: string;
   /** Opens a file at a line or heading — where go-to-definition and markdown
    * links land. Opening tabs is the layout's business, so it arrives here as
    * a callback. */
@@ -47,7 +51,17 @@ interface FilePaneProps {
  * file tab it opens, so a pane that carried one would be drawing the same tree
  * once per open file.
  */
-export function FilePane({ root, view, path, line, anchor, anchorAt, onOpenFile, onOpenDiff }: FilePaneProps) {
+export function FilePane({
+  root,
+  view,
+  path,
+  line,
+  anchor,
+  anchorAt,
+  taskHref,
+  onOpenFile,
+  onOpenDiff,
+}: FilePaneProps) {
   const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const [lineWrap, setLineWrap] = useViewState("file", view, "lineWrap");
   const [markdownPreview, setMarkdownPreview] = useViewState("file", view, "markdownPreview");
@@ -135,6 +149,31 @@ export function FilePane({ root, view, path, line, anchor, anchorAt, onOpenFile,
     [imageBase, path],
   );
 
+  // A link's real URL (TASK-126), for what the browser does with an href on
+  // its own: open in a new tab, copy the link. It has to exist when the link
+  // is drawn, before any click could fetch the listing, so it reads the
+  // listing from the cache — watched, not fetched, so a working-tree change
+  // refetches nothing on this pane's account — and asks for it once when a
+  // task's markdown preview opens. Until it arrives, a link gets the plain
+  // resolution, which is right for every link but an extensionless or `/` one.
+  const { data: cachedFiles } = useTaskFiles(root, { enabled: false });
+  const showsMarkdown = previewActive && getLanguageFromPath(path)?.name === "Markdown";
+  const rootKey = rootId(root);
+  useEffect(() => {
+    if (taskHref && showsMarkdown) void fetchTaskFiles(queryClient, root).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `root` by its key: a new object for the same root is not a new root
+  }, [taskHref, showsMarkdown, queryClient, rootKey]);
+  const hrefFor = useMemo(() => {
+    if (!taskHref) return undefined;
+    const files = cachedFiles ? filePathSet(cachedFiles) : null;
+    return (href: string) => {
+      const target = href.startsWith("#")
+        ? { path, anchor: decode(href.slice(1)) }
+        : resolveMarkdownLink(href, path, files);
+      return target ? fileTabHref(taskHref, target) : null;
+    };
+  }, [taskHref, path, cachedFiles]);
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex h-row flex-none items-center gap-2 border-b border-border bg-chrome px-3">
@@ -194,6 +233,7 @@ export function FilePane({ root, view, path, line, anchor, anchorAt, onOpenFile,
         onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}
         onOpenLink={onOpenLink}
         resolveImage={resolveImage}
+        hrefFor={hrefFor}
         anchorJump={jump}
         onAnchorJumped={onAnchorJumped}
       />

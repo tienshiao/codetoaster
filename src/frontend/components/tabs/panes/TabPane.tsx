@@ -38,6 +38,10 @@ export interface TabPaneProps {
   /** False for a terminal tab that is mounted but not showing. `TabArea` keeps
    * those mounted; every other kind only renders while it is active. */
   visible: boolean;
+  /** The task's route, `/t/<slug>`, which a file tab's markdown links build
+   * real URLs on (TASK-126). Absent for a project root, which has no route
+   * that opens tabs. */
+  taskHref?: string;
   /**
    * A rising number means "you are in front now — take the caret" (TASK-34).
    * Zero for every pane that is not the one the layout points at, so a pulse
@@ -73,6 +77,7 @@ export function TabPane({
   onOpenTab,
   onSubmitReview,
   visible,
+  taskHref,
   focusRequest = 0,
   searchRequest = 0,
   active = false,
@@ -231,6 +236,7 @@ export function TabPane({
             line={descriptor.line}
             anchor={descriptor.anchor}
             anchorAt={descriptor.anchorAt}
+            taskHref={taskHref}
             onOpenFile={openFile}
             onOpenDiff={openDiff}
           />
