@@ -78,9 +78,10 @@ const CANDIDATE = /[^\s"'`()[\]{}<>*,;|=]+/g;
 const TRAILING = /[.,:;!?]+$/;
 const POSITION = /^:(\d+)(?::(\d+))?/;
 
-/** `a/./b/../c` → `a/c`, or null for a path that climbs out of where it
- * started — which is out of the repository, and so not a file of this task. */
-function normalize(path: string): string | null {
+/** `a/./b/../c` → `a/c`; `""` for where it started (the root itself, which is
+ * never a file); null for a path that climbs out of it — out of the
+ * repository, and so not a file of this task. */
+export function normalize(path: string): string | null {
   const out: string[] = [];
   for (const segment of path.split("/")) {
     if (segment === "" || segment === ".") continue;
@@ -91,7 +92,7 @@ function normalize(path: string): string | null {
       out.push(segment);
     }
   }
-  return out.length > 0 ? out.join("/") : null;
+  return out.join("/");
 }
 
 /**

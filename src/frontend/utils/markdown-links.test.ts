@@ -64,6 +64,22 @@ describe("resolveMarkdownLink", () => {
     expect(resolveMarkdownLink("/index.md", "wiki/services/archive.md", FILES)).toEqual({ path: "wiki/index.md" });
   });
 
+  test("outside a bundle, a root-absolute link means the repository root, as on GitHub", () => {
+    // docs/ has a README but no index.md, so it is not a bundle.
+    expect(resolveMarkdownLink("/README.md", "docs/guide.md", FILES)).toEqual({ path: "README.md" });
+    const monorepo = new Set(["README.md", "packages/README.md", "packages/app/README.md", "packages/app/docs/setup.md"]);
+    expect(resolveMarkdownLink("/README.md", "packages/app/docs/setup.md", monorepo)).toEqual({ path: "README.md" });
+  });
+
+  test("the nearest bundle wins over an outer one", () => {
+    const nested = new Set(["docs/index.md", "docs/wiki/index.md", "docs/wiki/a/b.md"]);
+    expect(resolveMarkdownLink("/index.md", "docs/wiki/a/b.md", nested)).toEqual({ path: "docs/wiki/index.md" });
+  });
+
+  test("without a file list, a root-absolute link means the repository root", () => {
+    expect(resolveMarkdownLink("/src/generated.ts", "docs/guide.md", null)).toEqual({ path: "src/generated.ts" });
+  });
+
   test("a root-absolute link falls back to the repository root", () => {
     expect(resolveMarkdownLink("/src/api/files.ts", "wiki/services/archive.md", FILES)).toEqual({
       path: "src/api/files.ts",
@@ -93,6 +109,12 @@ describe("resolveMarkdownLink", () => {
     expect(resolveMarkdownLink("docs", "README.md", files)).toEqual({ path: "docs.md" });
     // With no page inside, the README it asked for — the tab says it is missing.
     expect(resolveMarkdownLink("nothing/", "README.md", files)).toEqual({ path: "nothing/README.md" });
+  });
+
+  test("a . or .. link is a directory link too", () => {
+    const files = new Set(["docs.md", "docs/README.md", "docs/guide.md"]);
+    expect(resolveMarkdownLink(".", "docs/guide.md", files)).toEqual({ path: "docs/README.md" });
+    expect(resolveMarkdownLink("sub/..", "docs/guide.md", files)).toEqual({ path: "docs/README.md" });
   });
 
   test("a link to the repository root opens its README", () => {

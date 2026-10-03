@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { hrefKind, resolveMarkdownLink } from "./markdown-links";
 
@@ -23,10 +23,16 @@ function markdownFiles(dir: string): string[] {
   });
 }
 
-/** Inline link targets, outside fenced code. Images and autolinks are not ours. */
+/**
+ * Inline link targets outside fenced code, in either destination form
+ * (`(a.md)`, `(<a b.md>)`) and with or without a title. Images are not links;
+ * reference-style links are not used in this wiki.
+ */
+const INLINE_LINK = /(?<!!)\[[^\]]*\]\(\s*(?:<([^>]*)>|([^)\s]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g;
+
 function links(source: string): string[] {
   const prose = source.replace(/^```[\s\S]*?^```/gm, "");
-  return [...prose.matchAll(/(?<!!)\[[^\]]*\]\(([^)\s]+)\)/g)].map((m) => m[1]!);
+  return [...prose.matchAll(INLINE_LINK)].map((m) => m[1] ?? m[2]!);
 }
 
 const isFile = {
@@ -43,11 +49,15 @@ test("the wiki has pages to check", () => {
   expect(markdownFiles(WIKI).length).toBeGreaterThan(3);
 });
 
-test("every wiki link resolves to a file", () => {
+test("links with a title or an angle-bracketed destination are still found", () => {
+  expect(links('[a](/x.md "T") [b](<y z.md>) [c](w.md) ![i](p.png)')).toEqual(["/x.md", "y z.md", "w.md"]);
+});
+
+test("every wiki link resolves to a file", async () => {
   const broken: string[] = [];
   for (const file of markdownFiles(WIKI)) {
     const fromFile = relative(REPO, file);
-    for (const href of links(readFileSync(file, "utf8"))) {
+    for (const href of links(await Bun.file(file).text())) {
       if (hrefKind(href) !== "file") continue;
       const target = resolveMarkdownLink(href, fromFile, isFile);
       if (!target || !isFile.has(target.path)) broken.push(`${fromFile}: ${href} → ${target?.path ?? "nothing"}`);

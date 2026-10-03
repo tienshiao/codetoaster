@@ -1,3 +1,5 @@
+import { normalize } from "./path-links";
+
 /**
  * Links in the markdown preview (TASK-122).
  *
@@ -42,16 +44,20 @@ const LINE_FRAGMENT = /^L(\d+)/;
  * A relative link resolves against `fromFile`'s directory, as on any host. A
  * `/`-prefixed one is less settled: GitHub reads it as the repository root,
  * but a wiki kept in a subdirectory means its own root — `wiki/index.md`
- * linking `/services/archive.md` means `wiki/services/archive.md`. Both are
- * covered by trying each of `fromFile`'s ancestors, outermost first, and the
- * repository root last, taking the first that holds the file. The root goes
- * last because a wiki's `/README.md` or `/index.md` means its own, and nearly
- * every repository has a README of its own to steal the link.
+ * linking `/services/archive.md` means `wiki/services/archive.md`. So a `/`
+ * link first tries the bundle `fromFile` sits in — the nearest ancestor
+ * holding an `index.md`, which is how an LLM wiki (OKF) marks its root — and
+ * then the repository root. A file in no bundle gets GitHub's reading. Any
+ * other ancestor is tried last, for a wiki that marks its root some other way.
+ * Asking for the bundle by its marker, rather than taking the first ancestor
+ * that happens to hold the name, is what keeps a wiki's `/index.md` from
+ * opening an outer docs page and a monorepo package's `/README.md` from
+ * opening the package's.
  *
  * Wikis also drop the extension (a Bitbucket wiki writes `LED%20API%203` for
  * `LED API 3.md`) and link a directory for its README, so each base tries the
  * exact path, then the `.md` page, then a README or index inside it. A link
- * ending in `/` says it is a directory, and tries only the last two.
+ * that says it is a directory (`docs/`, `.`, `..`) tries only the last.
  *
  * `files` is the repository's file list. Without it, or when nothing matches,
  * the answer is the first plain resolution: the file tab then says it is
@@ -77,8 +83,8 @@ export function resolveMarkdownLink(
   const target = (path: string): MarkdownLinkTarget => (line ? { path, line } : { path });
 
   const dir = fromFile.includes("/") ? fromFile.slice(0, fromFile.lastIndexOf("/")) : "";
-  const bases = raw.startsWith("/") ? ancestors(dir) : [dir];
-  const isDir = raw.endsWith("/");
+  const bases = raw.startsWith("/") ? rootBases(dir, files) : [dir];
+  const isDir = DIRECTORY.test(raw);
 
   let fallback: string | null = null;
   for (const base of bases) {
@@ -93,15 +99,25 @@ export function resolveMarkdownLink(
   return fallback === null ? null : target(fallback);
 }
 
-/** `a/b` → `["a", "a/b", ""]`: outermost first, the repository root last. */
-function ancestors(dir: string): string[] {
-  const out: string[] = [];
+/** Ends in `/`, or in a `.` or `..` segment. */
+const DIRECTORY = /(?:^|\/)(?:\.\.?)?$/;
+
+/**
+ * What a `/` link may be relative to, best first: the enclosing bundle's root
+ * when there is one, the repository root, then the remaining ancestors from
+ * the outside in.
+ */
+function rootBases(dir: string, files: Pick<ReadonlySet<string>, "has"> | null): string[] {
+  const ancestors = [""];
   if (dir !== "") {
     const segments = dir.split("/");
-    for (let i = 1; i <= segments.length; i++) out.push(segments.slice(0, i).join("/"));
+    for (let i = 1; i <= segments.length; i++) ancestors.push(segments.slice(0, i).join("/"));
   }
-  out.push("");
-  return out;
+  const bundle = files
+    ? ancestors.findLast((base) => files.has(base ? `${base}/index.md` : "index.md"))
+    : undefined;
+  const first = bundle === undefined ? [""] : [bundle, ""];
+  return [...new Set([...first, ...ancestors])];
 }
 
 /** What `path` may name, most literal first. `""` is the repository root. */
@@ -112,24 +128,6 @@ function candidates(path: string, isDir: boolean): string[] {
   const out = [path];
   if (!path.toLowerCase().endsWith(".md")) out.push(`${path}.md`);
   return [...out, ...dirPages];
-}
-
-/**
- * `a/./b/../c` → `a/c`; `""` for the repository root itself; null for a path
- * that climbs out of it, which is not a file of this repository.
- */
-function normalize(path: string): string | null {
-  const out: string[] = [];
-  for (const segment of path.split("/")) {
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") {
-      if (out.length === 0) return null;
-      out.pop();
-    } else {
-      out.push(segment);
-    }
-  }
-  return out.join("/");
 }
 
 /** A malformed escape (`100%.md`) is taken literally rather than thrown. */

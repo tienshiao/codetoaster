@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
-import { ensureTaskFiles, revealFile, useFileContent } from "@/frontend/hooks/use-task-files";
+import { fetchTaskFiles, revealFile, useFileContent } from "@/frontend/hooks/use-task-files";
 import { useChangedPaths } from "@/frontend/hooks/use-task-diff";
 import { canRevealInFinder } from "@/frontend/utils/platform";
 import { useViewState } from "@/frontend/hooks/use-view-state";
@@ -61,7 +61,7 @@ export function FilePane({ root, view, path, line, onOpenFile, onOpenDiff }: Fil
   // whole listing on every working-tree change. A failed fetch still opens the
   // plain resolution.
   const openLink = async (href: string) => {
-    const files = await ensureTaskFiles(queryClient, root).catch(() => null);
+    const files = await fetchTaskFiles(queryClient, root).catch(() => null);
     const fileSet = files
       ? new Set(files.files.filter((file) => !file.isDirectory).map((file) => file.path))
       : null;

@@ -42,16 +42,16 @@ Resolution, in `markdown-links.ts`:[^markdown-links]
 
 1. Fragment and query are dropped (a `#L12` fragment becomes the line to open at), and percent-escapes are decoded.
 2. A relative link resolves against the current file's directory.
-3. A `/` link tries each ancestor of the current file, outermost first, then the repository root. A wiki in a subdirectory means its own root by `/`; GitHub means the repository's. Trying the wiki first is what keeps a wiki's `/index.md` from opening the project's README.
-4. Each base tries the exact path, then `<path>.md` (extensionless wiki pages), then `README.md` and `index.md` inside it. A link ending in `/` tries only those last two.
-5. The first candidate in the task's file list wins. With no hit, the plain resolution opens and the tab says the file is missing.
+3. A `/` link tries the bundle the file sits in first — the nearest ancestor holding an `index.md`, which is how this wiki marks its root — then the repository root, then any other ancestor. A wiki in a subdirectory means its own root by `/`; GitHub means the repository's, and a file in no bundle gets GitHub's reading. Asking for the bundle by its marker keeps a wiki's `/index.md` from opening an outer page, and a monorepo package's `/README.md` from opening the package's own.
+4. Each base tries the exact path, then `<path>.md` (extensionless wiki pages), then a `README.md`, `readme.md` or `index.md` inside it. A link that says it is a directory (`docs/`, `.`, `..`) tries only the last three.
+5. The first candidate in the task's file list wins. With no hit, the plain resolution opens and the tab says the file is missing. A link that climbs out of the repository opens nothing and says so.
 
 ```mermaid
 flowchart LR
   link["clicked link"] --> kind{"scheme?"}
   kind -- yes --> browser["new browser tab"]
   kind -- fragment --> scroll["scroll in preview"]
-  kind -- path --> bases["bases: file dir, or ancestors then root"]
+  kind -- path --> bases["bases: file dir, or bundle root then repo root"]
   bases --> cands["exact, .md, README.md, index.md"]
   cands --> hit{"in file list?"}
   hit -- yes --> tab["file tab"]
@@ -59,7 +59,7 @@ flowchart LR
   plain --> tab
 ```
 
-The file list is fetched when a link is clicked, not watched while the preview is open. Most previews are read without a click, and a watcher would refetch the whole listing on every working-tree change.
+The file list is fetched when a link is clicked, not watched while the preview is open. Most previews are read without a click, and a watcher would refetch the whole listing on every working-tree change. A cached list answers at once unless the working tree has changed since, in which case the click waits for a fresh one, so a page the agent just wrote resolves.
 
 ## Every form, as test data
 

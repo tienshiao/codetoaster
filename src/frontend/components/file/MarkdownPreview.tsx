@@ -1,13 +1,4 @@
-import {
-  createContext,
-  memo,
-  useContext,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  type ComponentProps,
-  type MouseEvent,
-} from "react";
+import { createContext, memo, useContext, type ComponentProps, type MouseEvent } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Element } from "hast";
@@ -30,7 +21,8 @@ function extractMermaidSource(node: Element | undefined): string | null {
  * Who handles a click on a repository link. A context rather than a closure,
  * because the `a` component has to be a module-level constant (see below).
  */
-const OpenLinkContext = createContext<(href: string) => void>(() => {});
+const noop = () => {};
+const OpenLinkContext = createContext<(href: string) => void>(noop);
 
 /**
  * A link that stays out of the browser's hands unless it leaves the app
@@ -95,25 +87,21 @@ const COMPONENTS: Components = {
  * Rendered markdown, with a handler for its repository links.
  *
  * `onOpenLink` receives a clicked link's raw `href`; resolving it is the
- * caller's, since only the caller has the file list. It is read through a ref
- * so a fresh callback each render does not defeat the body's memo.
+ * caller's, since only the caller has the file list. A new callback each
+ * render costs only the links' re-render: context reaches its consumers past
+ * the body's memo, so the markdown pipeline does not run again.
  */
 export function MarkdownPreview({
   source,
   frontmatter,
-  onOpenLink,
+  onOpenLink = noop,
 }: {
   source: string;
   frontmatter?: Frontmatter;
   onOpenLink?: (href: string) => void;
 }) {
-  const onOpenLinkRef = useRef(onOpenLink);
-  useLayoutEffect(() => {
-    onOpenLinkRef.current = onOpenLink;
-  });
-  const openLink = useMemo(() => (href: string) => onOpenLinkRef.current?.(href), []);
   return (
-    <OpenLinkContext.Provider value={openLink}>
+    <OpenLinkContext.Provider value={onOpenLink}>
       <MarkdownBody source={source} frontmatter={frontmatter} />
     </OpenLinkContext.Provider>
   );

@@ -36,13 +36,13 @@ export function useTaskFiles(
 }
 
 /** The same file tree on demand, for a one-off lookup that should not keep an
- * observer — and its refetches — alive. A cached copy answers at once, stale
- * or not, and a stale one is refreshed behind it. */
-export function ensureTaskFiles(queryClient: QueryClient, root: RepoRoot): Promise<FilesResponse> {
-  return queryClient.ensureQueryData({
+ * observer — and its refetches — alive. A fresh cached copy answers at once;
+ * a stale or invalidated one (the working tree changed) is refetched first,
+ * so the lookup sees a file that was just written. */
+export function fetchTaskFiles(queryClient: QueryClient, root: RepoRoot): Promise<FilesResponse> {
+  return queryClient.fetchQuery({
     queryKey: taskKeys.files(rootId(root)),
     queryFn: () => fetchFiles(root),
-    revalidateIfStale: true,
   });
 }
 
