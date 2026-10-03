@@ -40,6 +40,11 @@ export interface MarkdownLinkTarget {
 
 const LINE_FRAGMENT = /^L(\d+)(?:-L\d+)?$/;
 
+/** Whether a fragment (without its `#`) is GitHub's `L12` line form. */
+export function isLineFragment(fragment: string): boolean {
+  return LINE_FRAGMENT.test(fragment);
+}
+
 /**
  * A heading's id, as GitHub derives it: lower-cased, punctuation dropped,
  * each space a hyphen. Two headings with the same text get the same slug;
@@ -133,7 +138,6 @@ export function resolveMarkdownLink(
   const queryAt = raw.indexOf("?");
   if (queryAt !== -1) raw = raw.slice(0, queryAt);
   raw = decode(raw);
-  if (raw === "") return null;
 
   const lineMatch = LINE_FRAGMENT.exec(fragment);
   const line = lineMatch ? Number(lineMatch[1]) : undefined;
@@ -143,9 +147,12 @@ export function resolveMarkdownLink(
     ...(line ? { line } : {}),
     ...(anchor ? { anchor } : {}),
   });
+  // A bare fragment names a place in this same file — a heading, or a line.
+  if (raw === "") return fragment ? target(fromFile) : null;
 
   const dir = fromFile.includes("/") ? fromFile.slice(0, fromFile.lastIndexOf("/")) : "";
-  const bases = raw.startsWith("/") ? rootBases(dir, files) : [dir];
+  // `home` is where a link that matches nothing is taken to point.
+  const { bases, home } = raw.startsWith("/") ? rootBases(dir, files) : { bases: [dir], home: dir };
   const isDir = DIRECTORY.test(raw);
 
   let fallback: string | null = null;
@@ -153,7 +160,7 @@ export function resolveMarkdownLink(
     const joined = normalize(base ? `${base}/${raw}` : raw);
     if (joined === null) continue;
     const tried = candidates(joined, isDir);
-    fallback ??= tried[0]!;
+    if (base === home) fallback = tried[0]!;
     if (!files) break;
     const hit = tried.find((candidate) => files.has(candidate));
     if (hit) return target(hit);
@@ -169,7 +176,10 @@ const DIRECTORY = /(?:^|\/)(?:\.\.?)?$/;
  * when there is one, the repository root, then the remaining ancestors from
  * the outside in.
  */
-function rootBases(dir: string, files: Pick<ReadonlySet<string>, "has"> | null): string[] {
+function rootBases(
+  dir: string,
+  files: Pick<ReadonlySet<string>, "has"> | null,
+): { bases: string[]; home: string } {
   const ancestors = [""];
   if (dir !== "") {
     const segments = dir.split("/");
@@ -179,12 +189,14 @@ function rootBases(dir: string, files: Pick<ReadonlySet<string>, "has"> | null):
   // An LLM wiki's root holds both its catalog and its log; a section of one
   // may hold an index.md of its own and must not be taken for the root. The
   // nearest such pair wins, so a wiki nested in a larger docs tree is its own
-  // bundle. Failing that, the outermost index.md below the repository root.
-  const bundle =
-    ancestors.findLast((base) => has(base, "index.md") && has(base, "log.md")) ??
-    ancestors.find((base) => base !== "" && has(base, "index.md"));
+  // bundle. Failing that, the outermost index.md below the repository root —
+  // a weaker sign, good enough to try first but not to send a link that
+  // matches nothing there: an outer docs folder's index.md does not make
+  // `/scripts/gen.sh` mean `docs/scripts/gen.sh`.
+  const wiki = ancestors.findLast((base) => has(base, "index.md") && has(base, "log.md"));
+  const bundle = wiki ?? ancestors.find((base) => base !== "" && has(base, "index.md"));
   const first = bundle === undefined ? [""] : [bundle, ""];
-  return [...new Set([...first, ...ancestors])];
+  return { bases: [...new Set([...first, ...ancestors])], home: wiki ?? "" };
 }
 
 /** What `path` may name, most literal first. `""` is the repository root. */

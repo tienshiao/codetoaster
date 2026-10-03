@@ -77,6 +77,7 @@ This wiki is the fixture for that table. From this page:
 - Relative: [testing](../conventions/testing.md), [terminal links](terminal-links.md), [same directory](./task-naming.md)
 - Bundle-relative: [wiki maintenance](/conventions/wiki-maintenance.md), and the [index](/index.md), which must open `wiki/index.md` and not a root file
 - Repository root via `/`: [the CLAUDE.md](/CLAUDE.md), and [a line in a source file](/src/frontend/utils/markdown-links.ts#L40)
+- A line of a markdown page, which lands on the rendered block holding it: [the log's first entry](../log.md#L4)
 - Extensionless: [the log](../log)
 - Escaped: [bun shell deadlock](../gotchas/bun%2Dshell%2Ddeadlock.md)
 - A directory: [the wiki root](../)
@@ -96,6 +97,8 @@ A fragment finds its heading by exact id first, then by a looser key that both G
 A link to a heading in a file — another page or this one — opens the file with the heading as the tab's anchor. The anchor rides on the tab descriptor the way a go-to-definition line does, outside the tab key, stamped with when it was asked for. Each stamp is one request: the tab records the last one it carried out in its view state, so following the same link again scrolls again, while switching back to the tab (file panes unmount when inactive) or reloading keeps the reader's place.
 
 Repository images and mermaid diagrams fill in after the jump has scrolled and would push the heading down, so the preview holds the heading at the top as the page grows, until the reader scrolls, clicks or types, or three seconds pass.
+
+A `#L12` link names a line, not a heading. The rendered preview has no line rows, so every block carries the source line it starts on, and a line lands on the block holding it — counted from the end of the frontmatter, which the preview draws as a header.
 
 Ids are numbered the way GitHub numbers them, skipping any already taken, and footnote ids are reserved first so a heading cannot steal one.
 

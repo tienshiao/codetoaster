@@ -40,6 +40,7 @@ const FILES = new Set([
   "docs/guide.md",
   "docs/README.md",
   "wiki/index.md",
+  "wiki/log.md",
   "wiki/services/archive.md",
   "wiki/services/cell.md",
   "wiki/conventions/repo-layout.md",
@@ -209,6 +210,19 @@ describe("resolveMarkdownLink", () => {
   test("an unknown file still resolves to its plain path", () => {
     expect(resolveMarkdownLink("missing.md", "wiki/index.md", FILES)).toEqual({ path: "wiki/missing.md" });
     expect(resolveMarkdownLink("/missing.md", "wiki/index.md", FILES)).toEqual({ path: "wiki/missing.md" });
+  });
+
+  test("a docs folder's index.md is tried first but is not where a miss points", () => {
+    const docs = new Set(["docs/index.md", "docs/guide.md", "docs/setup.md"]);
+    expect(resolveMarkdownLink("/setup.md", "docs/guide.md", docs)).toEqual({ path: "docs/setup.md" });
+    // An ignored file at the repo root, absent from the listing: GitHub's reading.
+    expect(resolveMarkdownLink("/scripts/gen.sh", "docs/guide.md", docs)).toEqual({ path: "scripts/gen.sh" });
+  });
+
+  test("a bare fragment names a place in this same file", () => {
+    expect(resolveMarkdownLink("#setup", "docs/guide.md", FILES)).toEqual({ path: "docs/guide.md", anchor: "setup" });
+    expect(resolveMarkdownLink("#L12", "docs/guide.md", FILES)).toEqual({ path: "docs/guide.md", line: 12 });
+    expect(resolveMarkdownLink("#", "docs/guide.md", FILES)).toBeNull();
   });
 
   test("without a file list, the plain resolution", () => {

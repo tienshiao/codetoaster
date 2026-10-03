@@ -18,7 +18,7 @@ import { FilePane } from "./FilePane";
 const PAGES: Record<string, string[]> = {
   "wiki/services/archive.md": [
     "# Archive",
-    "[cell setup](cell.md#setup) [retention here](archive.md#retention) [line](/src/a.ts#L3) [below](#retention) [index](/index)",
+    "[cell setup](cell.md#setup) [retention here](archive.md#retention) [line](/src/a.ts#L3) [below](#retention) [index](/index) [own line](#L4)",
     "![diagram](/img/flow.png)",
     "## Retention",
   ],
@@ -83,6 +83,7 @@ afterEach(() => {
 type OpenFile = (path: string, line?: number, anchor?: string) => void;
 
 interface PaneProps {
+  line?: number;
   anchor?: string;
   anchorAt?: number;
   view?: ViewRef;
@@ -100,6 +101,7 @@ function renderPane(props: PaneProps = {}) {
       root={taskRoot("t1")}
       view={view}
       path="wiki/services/archive.md"
+      line={p.line}
       anchor={p.anchor}
       anchorAt={p.anchorAt}
       taskHref={p.taskHref}
@@ -210,6 +212,17 @@ test("a click whose listing arrives after the tab closed opens nothing", async (
   expect(onOpenFile).not.toHaveBeenCalled();
 });
 
+test("a line in a markdown file lands on the preview block holding it", () => {
+  const { container } = renderPane({ line: 4 });
+  expect(scrolled).toEqual([container.querySelector("#user-content-retention")]);
+});
+
+test("a same-file #L link opens this file at that line", async () => {
+  const { onOpenFile } = renderPane();
+  fireEvent.click(screen.getByRole("link", { name: "own line" }));
+  await waitFor(() => expect(onOpenFile).toHaveBeenCalledWith("wiki/services/archive.md", 4, undefined));
+});
+
 /** Real URLs (TASK-126). */
 const BASE = "/t/wiki-t1";
 const tabSearch = (href: string | null) => parseTabSearch(defaultParseSearch(href!.slice(href!.indexOf("?"))));
@@ -226,12 +239,35 @@ test("in a task, a repository link carries the URL that opens its tab", () => {
   });
 });
 
-test("a fragment link carries this file's URL with the heading", () => {
+test("a fragment link carries this file's URL with the heading, or the line", () => {
   renderPane({ taskHref: BASE });
   expect(tabSearch(screen.getByRole("link", { name: "below" }).getAttribute("href"))).toEqual({
     tab: "file:wiki/services/archive.md",
     anchor: "retention",
   });
+  expect(tabSearch(screen.getByRole("link", { name: "own line" }).getAttribute("href"))).toEqual({
+    tab: "file:wiki/services/archive.md",
+    line: 4,
+  });
+});
+
+test("a heading request for a CSV in table view is spent, not kept for later", () => {
+  // `previewActive` is true for the table too, but only markdown has headings.
+  const view = viewRef("t1", `file:${Math.random()}`);
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <FilePane
+        root={taskRoot("t1")}
+        view={view}
+        path="data/totals.csv"
+        anchor="totals"
+        anchorAt={300}
+        onOpenFile={vi.fn()}
+        onOpenDiff={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+  expect(getViewState("file", view).jumpedAt).toBe(300);
 });
 
 test("the URL uses the cached listing once it is there, for an extensionless / link", () => {

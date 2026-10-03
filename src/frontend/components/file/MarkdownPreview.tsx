@@ -16,7 +16,7 @@ import type { Element as HastElement, ElementContent, Root } from "hast";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { FrontmatterHeader } from "./FrontmatterHeader";
 import type { Frontmatter } from "@/types/frontmatter";
-import { anchorKey, createSlugger, decode, hrefKind } from "@/frontend/utils/markdown-links";
+import { anchorKey, createSlugger, decode, hrefKind, isLineFragment } from "@/frontend/utils/markdown-links";
 
 /** Source text of a ```mermaid fence, given the hast node of its <pre>. */
 function extractMermaidSource(node: HastElement | undefined): string | null {
@@ -87,15 +87,56 @@ function rehypeHeadingIds() {
   };
 }
 
+const BLOCKS = new Set([...HEADINGS, "p", "li", "pre", "blockquote", "table", "tr", "hr", "dl", "dt", "dd"]);
+const SOURCE_LINE = "data-source-line";
+
+/**
+ * Marks each block with the line of the markdown source it starts on, so a
+ * `#L12` link — a line, not a heading — has somewhere to land in the rendered
+ * preview (TASK-126). Lines count from the start of what the preview was
+ * handed, which is the file without its frontmatter.
+ */
+function rehypeSourceLines() {
+  return (tree: Root) => {
+    for (const el of elements(tree)) {
+      const line = el.position?.start.line;
+      if (line !== undefined && BLOCKS.has(el.tagName)) el.properties[SOURCE_LINE] = line;
+    }
+  };
+}
+
+/**
+ * The block of the preview holding source line `line` (counted as
+ * `rehypeSourceLines` counts): the one starting closest at or before it, the
+ * outermost of those that start on the same line. Not simply the last in
+ * document order — footnote definitions render at the end wherever they were
+ * written. Null before the first block.
+ */
+export function elementForSourceLine(container: ParentNode, line: number): HTMLElement | null {
+  let found: HTMLElement | null = null;
+  let foundLine = 0;
+  for (const el of Array.from(container.querySelectorAll<HTMLElement>(`[${SOURCE_LINE}]`))) {
+    const start = Number(el.getAttribute(SOURCE_LINE));
+    if (start <= line && start > foundLine) {
+      found = el;
+      foundLine = start;
+    }
+  }
+  return found;
+}
+
 /**
  * The element a fragment names inside `container`. Exact ids first — a heading
  * by its prefixed id, a footnote by the prefixed href it already carries — and
  * then any heading whose id agrees on `anchorKey`, which is how a Bitbucket
- * `#markdown-header-…` or a hand-written fragment finds its heading.
+ * `#markdown-header-…` or a hand-written fragment finds its heading. An
+ * unprefixed id is never matched as it stands: a rendered diagram carries ids
+ * of its own, and those are not places to link to.
  */
 function findAnchor(container: ParentNode, fragment: string): Element | null {
+  if (!fragment) return null;
   const byId = (id: string) => container.querySelector(`[id="${CSS.escape(id)}"]`);
-  const exact = byId(`${ID_PREFIX}${fragment}`) ?? byId(fragment);
+  const exact = byId(fragment.startsWith(ID_PREFIX) ? fragment : `${ID_PREFIX}${fragment}`);
   if (exact) return exact;
   const key = anchorKey(fragment);
   if (!key) return null;
@@ -117,21 +158,43 @@ const RELEASE_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as cons
  * Repository images get their `src` only once the file list answers, and
  * mermaid renders asynchronously, so both grow after the jump has scrolled and
  * would push the heading off screen. Each resize of the preview scrolls it back
- * — until the user scrolls, clicks or types, or `PIN_MS` passes. Returns the
- * release, for the effect's cleanup.
+ * — until the user scrolls, clicks or types, or `PIN_MS` passes. A scroll that
+ * leaves the scroller anywhere but where the pin last put it counts as the user
+ * too, whatever moved it: a scrollbar drag need send none of the events above.
+ * Returns the release, for the effect's cleanup.
  */
 function pinWhileLayoutSettles(container: HTMLElement, target: Element): () => void {
   if (typeof ResizeObserver === "undefined") return () => {};
-  const observer = new ResizeObserver(() => target.scrollIntoView({ block: "start" }));
+  const scroller = scrollParentOf(container);
+  let pinnedAt = scroller?.scrollTop;
+  const pin = () => {
+    target.scrollIntoView({ block: "start" });
+    pinnedAt = scroller?.scrollTop;
+  };
+  const onScroll = () => {
+    if (scroller && scroller.scrollTop !== pinnedAt) release();
+  };
+  const observer = new ResizeObserver(pin);
   observer.observe(container);
   const release = () => {
     observer.disconnect();
     clearTimeout(timer);
+    scroller?.removeEventListener("scroll", onScroll);
     for (const type of RELEASE_EVENTS) window.removeEventListener(type, release, true);
   };
   const timer = setTimeout(release, PIN_MS);
+  scroller?.addEventListener("scroll", onScroll, { passive: true });
   for (const type of RELEASE_EVENTS) window.addEventListener(type, release, true);
   return release;
+}
+
+/** The nearest ancestor that scrolls vertically, or null. */
+function scrollParentOf(el: HTMLElement): HTMLElement | null {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node);
+    if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) return node;
+  }
+  return null;
 }
 
 /**
@@ -158,12 +221,18 @@ function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
     if (url && (e.metaKey || e.ctrlKey || e.shiftKey)) return;
     e.preventDefault();
     if (!href) return;
-    if (kind === "file") {
+    const fragment = decode(href.slice(1));
+    // A line (`#L12`) is a position in the file, not a heading, and lands the
+    // way a line from another file does — through the tab.
+    if (kind === "file" || isLineFragment(fragment)) {
       onOpenLink?.(href);
       return;
     }
     // Scoped to this preview: another open file tab can carry the same ids.
-    scrollToAnchor(e.currentTarget.closest(".markdown-preview"), decode(href.slice(1)));
+    const preview = e.currentTarget.closest(".markdown-preview");
+    // A bare `#` is the top of the document, as on GitHub.
+    if (!fragment) preview?.scrollIntoView({ block: "start" });
+    else scrollToAnchor(preview, fragment);
   };
   return (
     <a
@@ -214,7 +283,7 @@ function MarkdownImage({ src, alt, ...props }: ComponentProps<"img">) {
 // any text selection inside one — pressing ⌘ to copy re-renders FileContent
 // (useModifierHeld) and the selection vanished before the C arrived.
 const REMARK_PLUGINS = [remarkGfm];
-const REHYPE_PLUGINS = [rehypeHeadingIds];
+const REHYPE_PLUGINS = [rehypeHeadingIds, rehypeSourceLines];
 const COMPONENTS: Components = {
   pre({ node, ...props }) {
     const mermaidSource = extractMermaidSource(node);

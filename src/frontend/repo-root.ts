@@ -27,6 +27,12 @@ export function rootApi(root: RepoRoot): string {
   return `${base}/${encodeURIComponent(root.id)}`;
 }
 
+/** Where a working-tree image loads from: an image file's tab, and a
+ * markdown preview's repository images (TASK-125). */
+export function rootImageUrl(root: RepoRoot, path: string): string {
+  return `${rootApi(root)}/image?file=${encodeURIComponent(path)}`;
+}
+
 /**
  * The root's identity in caches and stores: the bare task id for a task — so
  * every existing query key, view-state slot and localStorage entry keeps its

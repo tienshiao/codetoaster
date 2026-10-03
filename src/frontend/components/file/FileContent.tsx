@@ -1,6 +1,6 @@
 import { useMemo, useRef, useEffect, useLayoutEffect, type MouseEvent } from "react";
-import { rootApi, type RepoRoot } from "@/frontend/repo-root";
-import { MarkdownPreview, type AnchorJump } from "./MarkdownPreview";
+import { rootImageUrl, type RepoRoot } from "@/frontend/repo-root";
+import { MarkdownPreview, elementForSourceLine, type AnchorJump } from "./MarkdownPreview";
 import { TablePreview } from "./TablePreview";
 import { delimiterForPath, parseDelimited, type DelimitedTable } from "../../utils/delimited";
 import { syntaxTokensFor } from "../../utils/wordDiff";
@@ -143,6 +143,22 @@ export function FileContent({
   useLayoutEffect(() => {
     if (!highlightLine || showTable || !content || content.isBinary || !scrollRef.current) return;
     restoredScrollRef.current = true; // don't fight this with scroll-restore
+    // The rendered preview has no line rows; it lands on the block holding the
+    // line (TASK-126). Its lines start after the frontmatter, which it draws
+    // as a header — a line inside that is the top of the document.
+    if (showMarkdown) {
+      const previewLine = highlightLine - (frontmatter?.lineCount ?? 0);
+      const block = previewLine >= 1 ? elementForSourceLine(scrollRef.current, previewLine) : null;
+      if (!block) {
+        scrollRef.current.scrollTop = 0;
+        return;
+      }
+      block.scrollIntoView({ block: "center" });
+      block.classList.remove("line-flash");
+      void block.offsetWidth;
+      block.classList.add("line-flash");
+      return;
+    }
     const row = scrollRef.current.querySelector<HTMLElement>(`[data-line="${highlightLine}"]`);
     if (!row) return;
     row.scrollIntoView({ block: "center" });
@@ -150,7 +166,7 @@ export function FileContent({
     // Force reflow so re-adding the class restarts the animation.
     void row.offsetWidth;
     row.classList.add("line-flash");
-  }, [highlightLine, content, showTable]);
+  }, [highlightLine, content, showTable, showMarkdown, frontmatter]);
 
   const handleClick = (e: MouseEvent) => {
     if (!onSymbolClick || !(e.metaKey || e.ctrlKey)) return;
@@ -179,7 +195,7 @@ export function FileContent({
 
   if (content.isBinary) {
     if (content.isImage) {
-      const imageUrl = imageUrlProp ?? `${rootApi(root)}/image?file=${encodeURIComponent(filePath)}`;
+      const imageUrl = imageUrlProp ?? rootImageUrl(root, filePath);
       return (
         <div className="flex flex-col items-center justify-center p-8 h-full">
           <img

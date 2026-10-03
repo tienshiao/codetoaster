@@ -1,7 +1,7 @@
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
-import { MarkdownPreview } from "./MarkdownPreview";
+import { MarkdownPreview, elementForSourceLine } from "./MarkdownPreview";
 
 /**
  * Links in the preview (TASK-122): a repository link is handed to the caller
@@ -145,6 +145,32 @@ test("a jump to a heading that is not there scrolls nothing, and is still report
   render(<MarkdownPreview source={DOC} jump={{ anchor: "nowhere", seq: 7 }} onJumped={onJumped} />);
   expect(scrolled).toEqual([]);
   expect(onJumped).toHaveBeenCalledWith(7, false);
+});
+
+test("a same-file #L link is a line, handed to the caller like a file link", () => {
+  const onOpenLink = vi.fn();
+  render(<MarkdownPreview source={"[line 3](#L3)\n\n# Setup"} onOpenLink={onOpenLink} />);
+  fireEvent.click(screen.getByRole("link", { name: "line 3" }));
+  expect(onOpenLink).toHaveBeenCalledWith("#L3");
+  expect(scrolled).toEqual([]);
+});
+
+test("a bare # scrolls to the top of the document", () => {
+  const { container } = render(<MarkdownPreview source={"# Title\n\n[top](#)"} />);
+  fireEvent.click(screen.getByRole("link", { name: "top" }));
+  expect(scrolled).toEqual([container.querySelector(".markdown-preview")]);
+});
+
+test("each block knows its source line, and a line finds the block holding it", () => {
+  const source = ["# Title", "", "First para", "spans two lines", "", "- item", "", "Claim.[^1]", "", "[^1]: Note.", "", "Last"].join("\n");
+  const { container } = render(<MarkdownPreview source={source} />);
+  const at = (line: number) => elementForSourceLine(container, line);
+  expect(at(1)?.tagName).toBe("H1");
+  expect(at(4)?.textContent).toContain("First para");
+  expect(at(6)?.tagName).toBe("LI");
+  // The footnote definition renders at the end but starts on line 10.
+  expect(at(10)?.textContent).toContain("Note.");
+  expect(at(12)?.textContent).toBe("Last");
 });
 
 test("ids are numbered past ones already taken", () => {

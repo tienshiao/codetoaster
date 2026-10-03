@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { rootApi, rootId, type RepoRoot } from "@/frontend/repo-root";
+import { rootId, rootImageUrl, type RepoRoot } from "@/frontend/repo-root";
 import { Eye, FileDiff, FolderSearch, WrapText } from "lucide-react";
 import { toast } from "sonner";
 import { IconButton } from "@/frontend/components/v2";
@@ -14,7 +14,7 @@ import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
 import { delimiterForPath } from "@/frontend/utils/delimited";
-import { decode, resolveMarkdownLink } from "@/frontend/utils/markdown-links";
+import { resolveMarkdownLink } from "@/frontend/utils/markdown-links";
 import { filePathSet } from "@/frontend/utils/path-links";
 import { fileTabHref } from "@/frontend/utils/tab-link";
 
@@ -77,6 +77,7 @@ export function FilePane({
   const scrollKey = previewActive ? `md-preview:${path}` : path;
   const scrollTops = getViewState("file", view).scrollTops;
   const queryClient = useQueryClient();
+  const rootKey = rootId(root);
 
   // A heading to scroll the preview to (TASK-124), one request per `anchorAt`.
   // This pane unmounts whenever its tab is not the active one, while the
@@ -90,12 +91,13 @@ export function FilePane({
     fileView.jumpedAt = seq;
     touchViewState(view);
   };
-  // Only the preview has headings to land on. A request that arrives while the
-  // tab shows source is spent all the same, or turning the preview on minutes
-  // later would jump over the place it restores.
+  // Only a markdown preview has headings to land on. A request that arrives
+  // while the tab shows source, or a CSV's table, is spent all the same, or
+  // turning the preview on minutes later would jump over the place it restores.
+  const showsMarkdown = previewActive && getLanguageFromPath(path)?.name === "Markdown";
   const pendingSeq = jump?.seq;
   useEffect(() => {
-    if (pendingSeq !== undefined && !previewActive) onAnchorJumped(pendingSeq);
+    if (pendingSeq !== undefined && !showsMarkdown) onAnchorJumped(pendingSeq);
   });
 
   // Preview links and images resolve against the Explorer's file list
@@ -140,13 +142,13 @@ export function FilePane({
     latest.current = { resolve, openLink };
   });
   const onOpenLink = useCallback((href: string) => void latest.current.openLink(href), []);
-  const imageBase = `${rootApi(root)}/image?file=`;
   const resolveImage = useCallback(
     async (src: string) => {
       const target = await latest.current.resolve(src);
-      return target ? `${imageBase}${encodeURIComponent(target.path)}` : null;
+      return target ? rootImageUrl(root, target.path) : null;
     },
-    [imageBase, path],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `root` by its key, as above
+    [rootKey, path],
   );
 
   // A link's real URL (TASK-126), for what the browser does with an href on
@@ -157,8 +159,6 @@ export function FilePane({
   // task's markdown preview opens. Until it arrives, a link gets the plain
   // resolution, which is right for every link but an extensionless or `/` one.
   const { data: cachedFiles } = useTaskFiles(root, { enabled: false });
-  const showsMarkdown = previewActive && getLanguageFromPath(path)?.name === "Markdown";
-  const rootKey = rootId(root);
   useEffect(() => {
     if (taskHref && showsMarkdown) void fetchTaskFiles(queryClient, root).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `root` by its key: a new object for the same root is not a new root
@@ -167,9 +167,7 @@ export function FilePane({
     if (!taskHref) return undefined;
     const files = cachedFiles ? filePathSet(cachedFiles) : null;
     return (href: string) => {
-      const target = href.startsWith("#")
-        ? { path, anchor: decode(href.slice(1)) }
-        : resolveMarkdownLink(href, path, files);
+      const target = resolveMarkdownLink(href, path, files);
       return target ? fileTabHref(taskHref, target) : null;
     };
   }, [taskHref, path, cachedFiles]);
