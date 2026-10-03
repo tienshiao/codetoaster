@@ -51,19 +51,24 @@ describe("resolveMarkdownLink", () => {
     expect(resolveMarkdownLink("docs/guide.md", "README.md", FILES)).toEqual({ path: "docs/guide.md" });
   });
 
-  test("a root-absolute link prefers the repository root", () => {
-    expect(resolveMarkdownLink("/src/api/files.ts", "wiki/services/archive.md", FILES)).toEqual({
-      path: "src/api/files.ts",
-    });
-  });
-
-  test("a root-absolute link falls back to the wiki's own root", () => {
+  test("a root-absolute link resolves against the wiki's own root", () => {
     expect(resolveMarkdownLink("/services/cell.md", "wiki/index.md", FILES)).toEqual({
       path: "wiki/services/cell.md",
     });
     expect(resolveMarkdownLink("/conventions/repo-layout.md", "wiki/services/archive.md", FILES)).toEqual({
       path: "wiki/conventions/repo-layout.md",
     });
+  });
+
+  test("the wiki's root beats the repository's for a name both have", () => {
+    expect(resolveMarkdownLink("/index.md", "wiki/services/archive.md", FILES)).toEqual({ path: "wiki/index.md" });
+  });
+
+  test("a root-absolute link falls back to the repository root", () => {
+    expect(resolveMarkdownLink("/src/api/files.ts", "wiki/services/archive.md", FILES)).toEqual({
+      path: "src/api/files.ts",
+    });
+    expect(resolveMarkdownLink("/README.md", "wiki/services/archive.md", FILES)).toEqual({ path: "README.md" });
   });
 
   test("escapes are decoded and an extensionless page finds its .md", () => {
@@ -73,6 +78,21 @@ describe("resolveMarkdownLink", () => {
 
   test("a directory link opens its README", () => {
     expect(resolveMarkdownLink("docs/", "README.md", FILES)).toEqual({ path: "docs/README.md" });
+    expect(resolveMarkdownLink("docs", "README.md", FILES)).toEqual({ path: "docs/README.md" });
+  });
+
+  test("a trailing slash skips a same-named page", () => {
+    const files = new Set(["docs.md", "docs/README.md"]);
+    expect(resolveMarkdownLink("docs/", "README.md", files)).toEqual({ path: "docs/README.md" });
+    expect(resolveMarkdownLink("docs", "README.md", files)).toEqual({ path: "docs.md" });
+    // With no page inside, the README it asked for — the tab says it is missing.
+    expect(resolveMarkdownLink("nothing/", "README.md", files)).toEqual({ path: "nothing/README.md" });
+  });
+
+  test("a link to the repository root opens its README", () => {
+    expect(resolveMarkdownLink("../", "docs/guide.md", FILES)).toEqual({ path: "README.md" });
+    expect(resolveMarkdownLink("./", "puffco/Home.md", FILES)).toEqual({ path: "puffco/README.md" });
+    expect(resolveMarkdownLink("/", "README.md", FILES)).toEqual({ path: "README.md" });
   });
 
   test("the fragment and query are not part of the path", () => {
@@ -91,7 +111,7 @@ describe("resolveMarkdownLink", () => {
 
   test("an unknown file still resolves to its plain path", () => {
     expect(resolveMarkdownLink("missing.md", "wiki/index.md", FILES)).toEqual({ path: "wiki/missing.md" });
-    expect(resolveMarkdownLink("/missing.md", "wiki/index.md", FILES)).toEqual({ path: "missing.md" });
+    expect(resolveMarkdownLink("/missing.md", "wiki/index.md", FILES)).toEqual({ path: "wiki/missing.md" });
   });
 
   test("without a file list, the plain resolution", () => {

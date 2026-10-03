@@ -36,8 +36,9 @@ const OpenLinkContext = createContext<(href: string) => void>(() => {});
  * A link that stays out of the browser's hands unless it leaves the app
  * (TASK-122). Left alone, a relative `href` resolves against the app's own URL
  * and lands on a route that does not exist, and a bare fragment rewrites the
- * URL the router owns. The `href` stays on the element so hovering still shows
- * where it points.
+ * URL the router owns — so a fragment scrolls to its target here instead,
+ * which is what GFM footnotes and their back-references need. The `href`
+ * stays on the element so hovering still shows where it points.
  */
 function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
   const openLink = useContext(OpenLinkContext);
@@ -47,7 +48,15 @@ function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
   }
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
-    if (kind === "file" && href) openLink(href);
+    if (!href) return;
+    if (kind === "file") {
+      openLink(href);
+      return;
+    }
+    // Scoped to this preview: another open file tab can carry the same ids.
+    const id = decodeFragment(href.slice(1));
+    const preview = e.currentTarget.closest(".markdown-preview");
+    preview?.querySelector(`[id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start" });
   };
   // A middle-click would open the app's 404 in a new browser tab.
   return (
@@ -55,6 +64,14 @@ function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
       {children}
     </a>
   );
+}
+
+function decodeFragment(fragment: string): string {
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    return fragment;
+  }
 }
 
 // Module-level constants, not inline literals: react-markdown renders <pre> with

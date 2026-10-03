@@ -1,5 +1,3 @@
-import { normalize } from "./path-links";
-
 /**
  * Links in the markdown preview (TASK-122).
  *
@@ -45,12 +43,15 @@ const LINE_FRAGMENT = /^L(\d+)/;
  * `/`-prefixed one is less settled: GitHub reads it as the repository root,
  * but a wiki kept in a subdirectory means its own root — `wiki/index.md`
  * linking `/services/archive.md` means `wiki/services/archive.md`. Both are
- * covered by trying the repository root and then each of `fromFile`'s
- * ancestors, outermost first, and taking the first that holds the file.
+ * covered by trying each of `fromFile`'s ancestors, outermost first, and the
+ * repository root last, taking the first that holds the file. The root goes
+ * last because a wiki's `/README.md` or `/index.md` means its own, and nearly
+ * every repository has a README of its own to steal the link.
  *
  * Wikis also drop the extension (a Bitbucket wiki writes `LED%20API%203` for
  * `LED API 3.md`) and link a directory for its README, so each base tries the
- * exact path, then the `.md` page, then a README or index inside it.
+ * exact path, then the `.md` page, then a README or index inside it. A link
+ * ending in `/` says it is a directory, and tries only the last two.
  *
  * `files` is the repository's file list. Without it, or when nothing matches,
  * the answer is the first plain resolution: the file tab then says it is
@@ -77,34 +78,58 @@ export function resolveMarkdownLink(
 
   const dir = fromFile.includes("/") ? fromFile.slice(0, fromFile.lastIndexOf("/")) : "";
   const bases = raw.startsWith("/") ? ancestors(dir) : [dir];
+  const isDir = raw.endsWith("/");
 
   let fallback: string | null = null;
   for (const base of bases) {
     const joined = normalize(base ? `${base}/${raw}` : raw);
     if (joined === null) continue;
-    fallback ??= joined;
+    const tried = candidates(joined, isDir);
+    fallback ??= tried[0]!;
     if (!files) break;
-    for (const candidate of candidates(joined)) {
-      if (files.has(candidate)) return target(candidate);
-    }
+    const hit = tried.find((candidate) => files.has(candidate));
+    if (hit) return target(hit);
   }
   return fallback === null ? null : target(fallback);
 }
 
-/** `a/b` → `["", "a", "a/b"]`: the repository root, then inward. */
+/** `a/b` → `["a", "a/b", ""]`: outermost first, the repository root last. */
 function ancestors(dir: string): string[] {
-  const out = [""];
-  if (dir === "") return out;
-  const segments = dir.split("/");
-  for (let i = 1; i <= segments.length; i++) out.push(segments.slice(0, i).join("/"));
+  const out: string[] = [];
+  if (dir !== "") {
+    const segments = dir.split("/");
+    for (let i = 1; i <= segments.length; i++) out.push(segments.slice(0, i).join("/"));
+  }
+  out.push("");
   return out;
 }
 
-function candidates(path: string): string[] {
+/** What `path` may name, most literal first. `""` is the repository root. */
+function candidates(path: string, isDir: boolean): string[] {
+  const inside = path ? `${path}/` : "";
+  const dirPages = [`${inside}README.md`, `${inside}index.md`];
+  if (isDir || path === "") return dirPages;
   const out = [path];
   if (!path.toLowerCase().endsWith(".md")) out.push(`${path}.md`);
-  out.push(`${path}/README.md`, `${path}/index.md`);
-  return out;
+  return [...out, ...dirPages];
+}
+
+/**
+ * `a/./b/../c` → `a/c`; `""` for the repository root itself; null for a path
+ * that climbs out of it, which is not a file of this repository.
+ */
+function normalize(path: string): string | null {
+  const out: string[] = [];
+  for (const segment of path.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (out.length === 0) return null;
+      out.pop();
+    } else {
+      out.push(segment);
+    }
+  }
+  return out.join("/");
 }
 
 /** A malformed escape (`100%.md`) is taken literally rather than thrown. */

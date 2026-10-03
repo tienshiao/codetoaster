@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { taskKeys } from "../query-keys";
 import { refetchOnFocusFor, rootApi, rootId, type RepoRoot } from "../repo-root";
 import type { FileContentResponse, FilesResponse } from "../types/file";
@@ -32,6 +32,17 @@ export function useTaskFiles(
     queryFn: () => fetchFiles(root!),
     enabled: enabled && root != null,
     refetchOnWindowFocus: refetchOnFocusFor(root),
+  });
+}
+
+/** The same file tree on demand, for a one-off lookup that should not keep an
+ * observer — and its refetches — alive. A cached copy answers at once, stale
+ * or not, and a stale one is refreshed behind it. */
+export function ensureTaskFiles(queryClient: QueryClient, root: RepoRoot): Promise<FilesResponse> {
+  return queryClient.ensureQueryData({
+    queryKey: taskKeys.files(rootId(root)),
+    queryFn: () => fetchFiles(root),
+    revalidateIfStale: true,
   });
 }
 

@@ -46,6 +46,23 @@ test("a fragment-only link leaves the app URL alone", () => {
   expect(onOpenLink).not.toHaveBeenCalled();
 });
 
+test("a footnote link scrolls to its note", () => {
+  const scrolled: Element[] = [];
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function (this: Element) {
+    scrolled.push(this);
+  };
+  try {
+    const { container } = render(<MarkdownPreview source={"Claim.[^1]\n\n[^1]: The note."} />);
+    const ref = container.querySelector<HTMLAnchorElement>('a[href^="#"][data-footnote-ref]')!;
+    fireEvent.click(ref);
+    expect(scrolled).toHaveLength(1);
+    expect(scrolled[0]!.id).toBe(ref.getAttribute("href")!.slice(1));
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});
+
 test("a click reaches the latest handler after a re-render", () => {
   const first = vi.fn();
   const second = vi.fn();
