@@ -178,6 +178,9 @@ export function DiffFile({
 
   const total = file.additions + file.deletions;
   const additionWidth = total > 0 ? (file.additions / total) * 100 : 0;
+  // Not `100 - additionWidth`: a rename or a binary file changes no lines, and
+  // would get a bar that reads as all deletions.
+  const deletionWidth = total > 0 ? 100 - additionWidth : 0;
 
   const filePath = file.newPath;
 
@@ -259,7 +262,7 @@ export function DiffFile({
         {/* Change indicator bar */}
         <span className="shrink-0 flex w-12 h-2 rounded-full overflow-hidden bg-muted">
           <span className="bg-green-500 h-full" style={{ width: `${additionWidth}%` }} />
-          <span className="bg-red-500 h-full" style={{ width: `${100 - additionWidth}%` }} />
+          <span className="bg-red-500 h-full" style={{ width: `${deletionWidth}%` }} />
         </span>
         <span className="truncate font-mono text-xs">
           {(file.status === "renamed" || file.status === "copied") && file.oldPath !== file.newPath
