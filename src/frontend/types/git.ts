@@ -49,11 +49,16 @@ export interface GitCommitResponse {
   meta: GitCommitMeta;
   diff: string;
   hash: string;
+  /** The commit the diff's old side was read from: the first parent, or the
+   * merge base with whatever the diff was asked to be relative to. Null for a
+   * root commit, which has no old side. */
+  diffBase: string | null;
 }
 
 export interface GitCommitData {
   meta: GitCommitMeta;
   files: FileDiff[];
+  diffBase: string | null;
 }
 
 export type GitViewMode = "commit" | "changes" | "tree";

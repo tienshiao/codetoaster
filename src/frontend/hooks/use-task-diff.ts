@@ -12,11 +12,13 @@ import type { FileDiff } from "../types/diff";
 // the client regex fallback and upgrades to tree-sitter tokens when they arrive;
 // on any failure/timeout we return null and enhanceWithWordDiff regex-fallbacks.
 // With `sha` (git commit view), the server reads new = `git show sha:path`,
-// old = `git show sha^1:path`; without it, the working tree / index.
+// old = `git show sha^1:path`; without it, the working tree / index. `base`
+// moves that old side to another commit, for a diff taken relative to one.
 export async function fetchDiffTokens(
   root: RepoRoot,
   files: FileDiff[],
   sha?: string,
+  base?: string,
 ): Promise<Map<string, DiffFileTokens> | null> {
   const requestFiles = files
     .filter((f) => !f.isBinary && !f.isImage && !f.oversized)
@@ -32,7 +34,7 @@ export async function fetchDiffTokens(
     const res = await fetch(`${rootApi(root)}/diff-tokens`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(sha ? { sha, files: requestFiles } : { files: requestFiles }),
+      body: JSON.stringify(sha ? { sha, base, files: requestFiles } : { files: requestFiles }),
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;

@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-10-03
+* **Update**: [Commit graph and log pagination](/modules/commit-graph.md) gains a Changes relative to a ref section for TASK-128: the merge-base diff, `diffBase`, and the choice stored as a ref name.
 * **Creation**: [File viewer](/modules/file-viewer.md) for TASK-127: the viewer a file tab and a commit's File Tree share, and the commit-scoped symbol index.
 * **Update**: [Markdown preview](/modules/markdown-preview.md) says the preview is the same in a commit's File Tree, and gains an At a commit section.
 * **Update**: [Markdown preview](/modules/markdown-preview.md) gains a Link URLs section for TASK-126.

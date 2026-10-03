@@ -384,10 +384,25 @@ export const gitRoutes = {
           return Response.json({ error: "Invalid sha" }, { status: 400 });
         }
 
+        // What the diff is relative to (TASK-128). A sha rather than a ref
+        // name: the client resolves the ref it was asked for against
+        // `/git/refs`, so the answer here stays immutable per (sha, base) and
+        // a ref that moves is a different request rather than a stale cache.
+        const base = url.searchParams.get("base");
+        if (base !== null && !SHA_RE.test(base)) {
+          return Response.json({ error: "Invalid base" }, { status: 400 });
+        }
+
         // Verify the object exists and is a commit.
-        const verify = await gitSpawn(dir, ["rev-parse", "--verify", `${sha}^{commit}`]);
+        const [verify, verifyBase] = await Promise.all([
+          gitSpawn(dir, ["rev-parse", "--verify", `${sha}^{commit}`]),
+          base === null ? null : gitSpawn(dir, ["rev-parse", "--verify", `${base}^{commit}`]),
+        ]);
         if (verify.exitCode !== 0) {
           return Response.json({ error: "Commit not found" }, { status: 404 });
+        }
+        if (verifyBase && verifyBase.exitCode !== 0) {
+          return Response.json({ error: "Base commit not found" }, { status: 404 });
         }
         const resolvedSha = verify.stdout.trim();
 
@@ -406,10 +421,23 @@ export const gitRoutes = {
         // Non-merge (≤1 parent): diff-tree against the (possibly empty) parent,
         // with --root so the initial commit shows all files as added. Merge
         // (2+ parents): diff against the first parent.
-        const diffResult =
-          parents.length >= 2
-            ? await gitSpawn(dir, ["diff", "-M", `${resolvedSha}^1`, resolvedSha])
-            : await gitSpawn(dir, ["diff-tree", "--patch", "--root", "-M", resolvedSha]);
+        //
+        // With a base, the old side is where the commit's history left the
+        // base's — `git diff base...sha` — and not the base itself: a base
+        // that has moved on since would otherwise show its own later work
+        // being undone, which is not something the commit did. Two histories
+        // with nothing in common have no such point, and compare directly.
+        let diffBase: string | null = parents[0] ?? null;
+        let diffResult;
+        if (verifyBase) {
+          const mergeBase = await gitSpawn(dir, ["merge-base", verifyBase.stdout.trim(), resolvedSha]);
+          diffBase = mergeBase.exitCode === 0 ? mergeBase.stdout.trim() : verifyBase.stdout.trim();
+          diffResult = await gitSpawn(dir, ["diff", "-M", diffBase, resolvedSha]);
+        } else if (parents.length >= 2) {
+          diffResult = await gitSpawn(dir, ["diff", "-M", `${resolvedSha}^1`, resolvedSha]);
+        } else {
+          diffResult = await gitSpawn(dir, ["diff-tree", "--patch", "--root", "-M", resolvedSha]);
+        }
 
         // Capped like the working-tree diff, so History cannot freeze on the
         // commit that lands a multi-megabyte single-line file. The hash covers
@@ -431,6 +459,10 @@ export const gitRoutes = {
           },
           diff,
           hash: hashOfDiff,
+          // The commit the diff's old side was read from, which is where the
+          // tokens and image previews have to read theirs: the first parent,
+          // the merge base, or null for a root commit.
+          diffBase,
         });
       } catch (error) {
         return Response.json(

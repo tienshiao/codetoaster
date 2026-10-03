@@ -1,7 +1,10 @@
-import { memo, useMemo, useState, useCallback } from "react";
+import { memo, useMemo, useState, useCallback, type ReactNode } from "react";
 import type { RepoRoot } from "@/frontend/repo-root";
 import { Loader2, Copy, Check } from "lucide-react";
+import { Select, type SelectOption } from "@/frontend/components/v2/Select";
 import { useGitCommit } from "../../hooks/use-git-commit";
+import { useGitRefs } from "../../hooks/use-git-refs";
+import { diffBaseOptions, resolveDiffBase, type DiffBaseKind, type DiffBaseOption } from "../../utils/diff-base";
 import { DiffFile } from "../diff/DiffFile";
 import { DiffLayout, type DiffLayoutScroll } from "../diff/DiffLayout";
 import { DiffStat, sumDiffStats } from "../diff/DiffStat";
@@ -81,10 +84,19 @@ const MODES: { key: GitViewMode; label: string }[] = [
   { key: "tree", label: "File Tree" },
 ];
 
-function ModeBar({ mode, onSelectMode }: { mode: GitViewMode; onSelectMode: (mode: GitViewMode) => void }) {
+function ModeBar({
+  mode,
+  onSelectMode,
+  trailing,
+}: {
+  mode: GitViewMode;
+  onSelectMode: (mode: GitViewMode) => void;
+  /** Controls belonging to the mode on screen, drawn after the switch. */
+  trailing?: ReactNode;
+}) {
   return (
-    <div className="shrink-0 px-4 py-2 border-b border-border">
-      <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
+    <div className="shrink-0 px-4 py-2 border-b border-border flex items-center gap-4">
+      <div className="inline-flex shrink-0 rounded-md border border-border overflow-hidden text-xs">
         {MODES.map((m, i) => (
           <button
             key={m.key}
@@ -99,7 +111,55 @@ function ModeBar({ mode, onSelectMode }: { mode: GitViewMode; onSelectMode: (mod
           </button>
         ))}
       </div>
+      {trailing}
     </div>
+  );
+}
+
+const KIND_HINT: Record<DiffBaseKind, string | null> = { branch: null, remote: "remote", tag: "tag" };
+
+// What the Changes diff is relative to (TASK-128): the commit's own parent, or
+// any ref — which is how a branch is reviewed as a whole, against the branch it
+// was cut from, rather than one commit at a time.
+function BaseSelect({
+  options,
+  value,
+  onValueChange,
+  disabled,
+  title,
+}: {
+  options: readonly DiffBaseOption[];
+  value: string;
+  onValueChange: (value: string) => void;
+  disabled: boolean;
+  title: string | undefined;
+}) {
+  const selectOptions = useMemo<SelectOption[]>(
+    () => [
+      { value: "", label: "Parent commit" },
+      ...options.map((option) => {
+        const hint = KIND_HINT[option.kind];
+        return {
+          value: option.value,
+          label: option.name,
+          trailing: hint ? <span className="text-micro text-subtle-foreground">{hint}</span> : undefined,
+        };
+      }),
+    ],
+    [options],
+  );
+  return (
+    <Select
+      label="Relative to"
+      size="sm"
+      options={selectOptions}
+      value={value}
+      onValueChange={onValueChange}
+      disabled={disabled}
+      title={title}
+      filterPlaceholder="Type to filter refs"
+      className="min-w-0 max-w-80"
+    />
   );
 }
 
@@ -256,18 +316,44 @@ function ChangesMode({
 }
 
 export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectCommit, file, onSelectFile, refSets }: CommitDetailProps) {
+  // The stored choice is a ref's name, resolved against the live refs: a
+  // branch that moves takes the diff with it, and one that is gone resolves to
+  // nothing, which reads as the parent again without the choice being thrown
+  // away. Only Changes is relative to anything — Commit mode is the commit's
+  // own diff whatever is chosen here.
+  const [changesBase, setChangesBase] = useViewState("commit", view, "changesBase");
+  const refsQuery = useGitRefs(root);
+  const baseOptions = useMemo(() => diffBaseOptions(refsQuery.data), [refsQuery.data]);
+  const base = mode === "changes" ? resolveDiffBase(baseOptions, changesBase) : null;
+  // A choice that cannot be resolved *yet* is not one that is gone: fetching
+  // the parent's diff in the meantime would paint it and then replace it.
+  const awaitingRefs = mode === "changes" && changesBase !== null && refsQuery.isLoading;
+
   // Tree mode renders no diff, so skip the token fetch until a diff-rendering
   // mode needs it.
-  const { data, isLoading, error } = useGitCommit(root, sha, mode !== "tree");
+  const commit = useGitCommit(root, awaitingRefs ? undefined : sha, mode !== "tree", base?.sha);
+  const { data, error } = commit;
+  const isLoading = commit.isLoading || awaitingRefs;
 
   const meta = data?.meta;
   const files = data?.files;
-  // Both image sides come from this commit: old = first parent (absent for a
+  const diffBase = data?.diffBase ?? null;
+  // Both image sides come from git: old = the commit the diff was taken from
+  // (the first parent, or the merge base with the chosen ref; absent for a
   // root commit, where images are "added" so the old side isn't rendered),
   // new = the commit itself.
   const imageRefs = useMemo(
-    () => ({ old: meta?.parents[0] ?? "", new: meta?.hash ?? "" }),
-    [meta?.parents, meta?.hash],
+    () => ({ old: diffBase ?? "", new: meta?.hash ?? "" }),
+    [diffBase, meta?.hash],
+  );
+
+  const selectBase = useCallback(
+    (value: string) => {
+      setChangesBase(value === "" ? null : value);
+      // A different diff: the offset saved for the old one points nowhere in it.
+      setViewField("commit", view, "changesScrollTop", 0);
+    },
+    [setChangesBase, view],
   );
 
   if (!sha) {
@@ -312,8 +398,24 @@ export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectComm
     }
 
     if (mode === "changes") {
+      // Ordinary against a ref: the commit is already in it, or is the ref.
+      if (files.length === 0) {
+        return (
+          <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+            {base ? `No changes relative to ${base.name}` : "No file changes in this commit"}
+          </div>
+        );
+      }
+      // Keyed by the base as well as the commit: a different base is a
+      // different diff, and the layout restores its scroll once per mount.
       return (
-        <ChangesMode key={meta.hash} root={root} view={view} files={files} imageRefs={imageRefs} />
+        <ChangesMode
+          key={`${meta.hash}:${base?.sha ?? ""}`}
+          root={root}
+          view={view}
+          files={files}
+          imageRefs={imageRefs}
+        />
       );
     }
 
@@ -333,7 +435,25 @@ export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectComm
 
   return (
     <div className="h-full flex flex-col">
-      <ModeBar mode={mode} onSelectMode={onSelectMode} />
+      <ModeBar
+        mode={mode}
+        onSelectMode={onSelectMode}
+        trailing={
+          mode === "changes" ? (
+            <BaseSelect
+              options={baseOptions}
+              value={base?.value ?? ""}
+              onValueChange={selectBase}
+              disabled={refsQuery.isLoading}
+              title={
+                base && diffBase
+                  ? `Changes since this commit's history left ${base.name} (${diffBase.slice(0, 8)})`
+                  : undefined
+              }
+            />
+          ) : null
+        }
+      />
       <div className="flex-1 min-h-0">{renderContent()}</div>
     </div>
   );

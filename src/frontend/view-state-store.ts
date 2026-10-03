@@ -87,6 +87,10 @@ export interface CommitViewState {
   changesViewModeOverride: "all" | "single" | null;
   changesTreeCollapsedPaths: Set<string>;
   changesScrollTop: number;
+  /** What the Changes diff is relative to (TASK-128): a ref as
+   * `diffBaseValue` writes it, or null for the commit's own parent. The ref's
+   * name and not its sha, so the diff follows a branch that moves. */
+  changesBase: string | null;
   treeExpandedPaths: Set<string>;
   /** Tree mode reads files the way a file tab does (TASK-127), so it keeps
    * what a file tab keeps: scroll offsets, keyed by mode and path as
@@ -210,6 +214,7 @@ const DEFAULTS: { [K in ViewSlotKind]: () => ViewStateShapes[K] } = {
     changesViewModeOverride: null,
     changesTreeCollapsedPaths: new Set(),
     changesScrollTop: 0,
+    changesBase: null,
     treeExpandedPaths: new Set(),
     treeScrollTops: new Map(),
     treeTarget: null,
@@ -261,6 +266,7 @@ const PERSISTED: { [K in ViewSlotKind]: ReadonlyArray<keyof ViewStateShapes[K] &
     "changesViewModeOverride",
     "changesTreeCollapsedPaths",
     "changesScrollTop",
+    "changesBase",
     "treeExpandedPaths",
     "treeScrollTops",
     "treeTarget",

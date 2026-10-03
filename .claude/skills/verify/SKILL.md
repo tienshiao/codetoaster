@@ -74,7 +74,8 @@ and stays valid after the PTY is gone.
 
 All task-scoped endpoints live under `/api/tasks/<task-id>/…`: `diff`,
 `context?file=&line=`, `files`, `files/search?q=`, `file?file=`, `git/log`,
-`git/refs`, `git/commit?sha=`, `git/tree?sha=`, `git/file?sha=&file=`,
+`git/refs`, `git/commit?sha=` (`&base=<sha>` for the diff since the merge base
+with it), `git/tree?sha=`, `git/file?sha=&file=`,
 `image/git?ref=&file=`, `symbols?name=` (`&sha=` for one commit's files),
 `symbols/search?q=`, POST
 `diff-tokens` (`{ files, sha? }`). SHAs must be full/abbrev hex (`SHA_RE`);
