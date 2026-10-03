@@ -247,7 +247,7 @@ export function DiffFile({
           scrolling underneath show through. */}
       <div
         className={`sticky top-0 z-10 flex items-center gap-2 px-3 py-1.5 bg-muted text-sm border-t border-b border-border ${
-          onToggle ? "cursor-pointer hover:bg-[linear-gradient(var(--color-hover),var(--color-hover))]" : ""
+          onToggle ? "cursor-pointer hover:bg-[linear-gradient(var(--hover),var(--hover))]" : ""
         }`}
         onClick={onToggle}
       >
