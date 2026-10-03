@@ -69,7 +69,16 @@ export function CommitTree({ root, view, sha, file, onSelectFile }: CommitTreePr
     () => ({
       getScrollTop: (key) => getViewState("commit", view).treeScrollTops.get(key),
       setScrollTop: (key, top) => {
-        getViewState("commit", view).treeScrollTops.set(key, top);
+        const state = getViewState("commit", view);
+        state.treeScrollTops.set(key, top);
+        // A line request is spent once its file has scrolled — landing on the
+        // line is itself that scroll. The viewer remounts on every mode
+        // switch, tab switch, Preview toggle and reload, and a line still
+        // standing would pull each of those back to it over the reader's place.
+        const target = state.treeTarget;
+        if (target?.line !== undefined && (key === target.path || key === `md-preview:${target.path}`)) {
+          state.treeJumpedAt = target.at;
+        }
         touchViewState(view);
       },
       getJumpedAt: () => getViewState("commit", view).treeJumpedAt,
@@ -132,6 +141,9 @@ export function CommitTree({ root, view, sha, file, onSelectFile }: CommitTreePr
   }
 
   const position = target && target.path === selectedFile ? target : null;
+  // Read at render, like the viewer's own heading check: it only has to be
+  // right when the viewer mounts or a new request arrives.
+  const lineSpent = position?.at === getViewState("commit", view).treeJumpedAt;
 
   return (
     // `overflow-hidden` for the same reason as `DiffLayout`: the tree's floor
@@ -179,7 +191,7 @@ export function CommitTree({ root, view, sha, file, onSelectFile }: CommitTreePr
             preview={preview}
             onPreviewChange={setPreview}
             memory={memory}
-            line={position?.line}
+            line={lineSpent ? undefined : position?.line}
             anchor={position?.anchor}
             anchorAt={position?.anchor ? position.at : undefined}
             listFiles={listFiles}

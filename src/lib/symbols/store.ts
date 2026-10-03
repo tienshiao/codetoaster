@@ -16,7 +16,7 @@ const MAX_FILES = 20_000;
 const MAX_ENTRIES = 5_000_000;
 export const MAX_FILE_SIZE = 512 * 1024;
 const VALIDATE_INTERVAL_MS = 5_000;
-const YIELD_EVERY = 200;
+const YIELD_EVERY = 25;
 const LOOKUP_CAP = 200;
 const SEARCH_LIMIT = 50;
 
@@ -70,6 +70,20 @@ function gitProjectSource(dir: string): ProjectSource {
   };
 }
 
+/** A source could not hand over a file's content — as opposed to the content
+ * failing to parse, which is the file's own business. */
+class SourceReadError extends Error {
+  constructor(path: string, cause: unknown) {
+    super(`Failed to read ${path}`, { cause });
+  }
+}
+
+// A turn of the event loop, not a microtask. A working tree's files are read
+// from disk, which lets the loop run between them; a commit's arrive a batch
+// at a time and are then parsed from memory, so without this a build is one
+// uninterrupted stretch of parsing while every terminal and request waits.
+const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 function addEntries(index: ProjectIndex, entries: SymbolEntry[]): void {
   for (const entry of entries) {
     let list = index.byName.get(entry.name);
@@ -104,7 +118,12 @@ async function indexOneFile(
 ): Promise<void> {
   const grammarId = symbolGrammarForPath(path);
   if (!grammarId) return;
-  const content = await source.read(path);
+  let content: string;
+  try {
+    content = await source.read(path);
+  } catch (cause) {
+    throw new SourceReadError(path, cause);
+  }
   let entries = await indexFileContent(path, content, grammarId);
   // Past the entry cap keep definitions only, so navigation to defs still works.
   if (index.totalEntries >= MAX_ENTRIES) {
@@ -127,11 +146,15 @@ async function build(index: ProjectIndex, source: ProjectSource): Promise<void> 
     if (stat && stat.size <= MAX_FILE_SIZE) {
       try {
         await indexOneFile(index, source, path, stat);
-      } catch {
-        // Skip files that fail to parse/read.
+      } catch (error) {
+        // Skip files that fail to parse/read. Except a read from an immutable
+        // source: nothing revalidates that index afterwards, so a file missed
+        // here would be missing for good while the index claimed to be whole.
+        // Failing the build drops it, and the next lookup starts again.
+        if (source.immutable && error instanceof SourceReadError) throw error;
       }
     }
-    if (++processed % YIELD_EVERY === 0) await Promise.resolve();
+    if (++processed % YIELD_EVERY === 0) await yieldToLoop();
   }
   index.lastValidated = source.now();
 }
@@ -157,7 +180,7 @@ async function revalidate(index: ProjectIndex, source: ProjectSource): Promise<v
         // ignore
       }
     }
-    if (++processed % YIELD_EVERY === 0) await Promise.resolve();
+    if (++processed % YIELD_EVERY === 0) await yieldToLoop();
   }
   // Drop files that no longer exist.
   for (const path of [...index.files.keys()]) {

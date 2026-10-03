@@ -435,13 +435,22 @@ export const fileRoutes = {
         // gitSpawnRaw, not Bun.$: a markdown preview read at a commit asks for
         // every image on the page at once, which is the many-shells-buffering
         // case Bun.$ deadlocks on.
-        const { bytes, exitCode } = await gitSpawnRaw(dir, ["show", `${ref}:${filePath}`]);
+        // `--end-of-options`: `ref` is whatever the query string said, and one
+        // starting with a dash would otherwise be read as an option to `show`
+        // (`--output=<path>` writes a file).
+        const { bytes, exitCode } = await gitSpawnRaw(dir, ["show", "--end-of-options", `${ref}:${filePath}`]);
         if (exitCode !== 0) {
           return Response.json({ error: "File not found in git history" }, { status: 404 });
         }
 
         return new Response(bytes.buffer as ArrayBuffer, {
-          headers: { "Content-Type": getImageMimeType(filePath), "Cache-Control": "no-cache" },
+          headers: {
+            "Content-Type": getImageMimeType(filePath),
+            // A full hash names one blob for good, and a preview at a commit
+            // asks for the same images again on every remount. Any other ref
+            // can move.
+            "Cache-Control": /^[0-9a-f]{40}$/i.test(ref) ? "private, max-age=31536000, immutable" : "no-cache",
+          },
         });
       } catch (error) {
         return Response.json(

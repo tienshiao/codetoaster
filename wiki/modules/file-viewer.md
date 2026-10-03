@@ -55,6 +55,7 @@ A file tab is one tab per file. The tree has one viewer for every file it shows,
 A link or a definition followed in the tree selects the target in that tree, at its line or heading. It never opens a working-tree tab: the reader asked about this commit, and the file may be different now or gone.[^commit-tree]
 
 - The position (line, heading, when it was asked for) is stored beside the selection as `treeTarget`. Picking a file from the tree clears it, so the file opens where it was left.
+- A line is landed on once, as a heading is. The viewer remounts on every mode switch, tab switch and reload, and a line still standing would pull each of those back over the reader's place. A file tab still does this with the line on its descriptor.
 - A target the commit does not have is refused with a toast. Selecting it would only have the tree clear the selection again.
 - Links keep their raw `href`. A file at a commit has no URL of its own, so a modified click is kept from the browser rather than sent to a route that does not exist.
 
@@ -65,7 +66,9 @@ A link or a definition followed in the tree selects the target in that tree, at 
 - `ls-tree -r -l` lists the blobs with their sizes. Symlinks and submodules are left out.
 - Blobs are read with `cat-file --batch`, about 8 MB at a time. The store asks for one file after another in listing order, so each read fetches the files that follow it too. One spawn per file would be a `git show` for every source file in the repository.
 - The source is marked `immutable`. The store builds it once, never revalidates it, and keeps it in a cache of its own (three commits), so paging through history does not evict the working tree's index.[^store]
-- A build that fails is dropped rather than kept as an empty index, which would answer "no such symbol" for as long as it stayed cached.
+- A build that fails is dropped rather than kept, and a blob that cannot be read fails the build. Nothing revalidates an immutable index, so a file skipped once would be missing for as long as the index stayed cached, and a symbol in it would read as "no such symbol". A working tree's unreadable file is still skipped: the next revalidation picks it up.
+- Both git calls are killed after a minute. An index that is still building is never evicted, so a git that hung would hold every later lookup at that commit.
+- The build yields a turn of the event loop every 25 files. A batch is parsed from memory, with no file I/O between files to let terminals and other requests through.
 
 On the client a commit's lookup is cached under its own key and never refetched.
 

@@ -96,6 +96,39 @@ test("an immutable source is built once and never revalidated", async () => {
   expect(listings).toBe(1);
 });
 
+test("a read that fails fails an immutable build, and the index is not kept", async () => {
+  const ctx = makeSource({ "a.ts": "function alpha() {}", "b.ts": "function beta() {}" });
+  let failing = true;
+  const source: ProjectSource = {
+    ...ctx.source,
+    immutable: true,
+    read: async (p) => {
+      if (failing && p === "b.ts") throw new Error("blob unreadable");
+      return ctx.source.read(p);
+    },
+  };
+  const dir = nextDir();
+  // Not an index holding `alpha` and silently missing `beta`.
+  await expect(lookupSymbol(dir, "alpha", source)).rejects.toThrow("Failed to read b.ts");
+
+  failing = false;
+  expect((await lookupSymbol(dir, "beta", source)).definitions).toHaveLength(1);
+});
+
+test("a working tree's unreadable file is skipped, as before", async () => {
+  const ctx = makeSource({ "a.ts": "function alpha() {}", "b.ts": "function beta() {}" });
+  const source: ProjectSource = {
+    ...ctx.source,
+    read: async (p) => {
+      if (p === "b.ts") throw new Error("permission denied");
+      return ctx.source.read(p);
+    },
+  };
+  const dir = nextDir();
+  expect((await lookupSymbol(dir, "alpha", source)).definitions).toHaveLength(1);
+  expect((await lookupSymbol(dir, "beta", source)).definitions).toHaveLength(0);
+});
+
 test("immutable indexes do not evict a working tree's", async () => {
   const tree = makeSource({ "a.ts": "function alpha() {}" });
   let treeListings = 0;

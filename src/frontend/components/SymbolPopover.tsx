@@ -24,7 +24,7 @@ interface SymbolPopoverProps {
 }
 
 export function SymbolPopover({ root, sha, target, onClose, onGo }: SymbolPopoverProps) {
-  const { data, isLoading } = useSymbolLookup(root, target?.name ?? null, sha);
+  const { data, isLoading, error } = useSymbolLookup(root, target?.name ?? null, sha);
 
   // Choosing an entry always dismisses: the popover is anchored to the click
   // that opened it, so leaving it up over a pane that has moved on is never
@@ -61,6 +61,12 @@ export function SymbolPopover({ root, sha, target, onClose, onGo }: SymbolPopove
         {isLoading ? (
           <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
             <Loader2 size={13} className="animate-spin" /> Searching…
+          </div>
+        ) : error ? (
+          // Not "nothing found": the index could not be built or asked, and
+          // saying the symbol has no definitions would be an answer it is not.
+          <div className="px-3 py-3 text-xs text-muted-foreground">
+            Could not look up this symbol: {error.message}
           </div>
         ) : defs.length === 0 && refs.length === 0 ? (
           <div className="px-3 py-3 text-xs text-muted-foreground">No definitions or references found</div>

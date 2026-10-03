@@ -15,6 +15,11 @@ import type { SymbolLookupResult } from "./types";
 /** How much blob content one `cat-file --batch` is asked for. */
 const BATCH_BYTES = 8 * 1024 * 1024;
 const BATCH_FILES = 1000;
+/** A git that hangs — a stalled mount, a promisor remote that never answers —
+ * would otherwise leave the build pending for good: an index that is building
+ * is never evicted, and every later lookup at that commit waits on it. Killed,
+ * the read fails, the build fails with it, and the index is dropped. */
+const GIT_TIMEOUT_MS = 60_000;
 
 interface TreeBlob {
   path: string;
@@ -85,6 +90,7 @@ export function parseBatch(bytes: Uint8Array, requested: TreeBlob[]): Map<string
 async function readBatch(dir: string, blobs: TreeBlob[]): Promise<Map<string, string>> {
   const { bytes, exitCode } = await gitSpawnRaw(dir, ["cat-file", "--batch"], {
     stdin: blobs.map((blob) => `${blob.oid}\n`).join(""),
+    timeoutMs: GIT_TIMEOUT_MS,
   });
   if (exitCode !== 0) throw new Error("Failed to read blobs");
   return parseBatch(bytes, blobs);
@@ -98,7 +104,7 @@ export function commitSource(
 ): ProjectSource {
   let listing: Promise<TreeListing> | null = null;
   const tree = () =>
-    (listing ??= gitSpawn(dir, ["ls-tree", "-r", "-l", "-z", sha]).then(({ stdout, exitCode }) => {
+    (listing ??= gitSpawn(dir, ["ls-tree", "-r", "-l", "-z", sha], { timeoutMs: GIT_TIMEOUT_MS }).then(({ stdout, exitCode }) => {
       if (exitCode !== 0) throw new Error("Failed to list the commit's files");
       return parseTree(stdout);
     }));

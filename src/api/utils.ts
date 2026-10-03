@@ -306,19 +306,26 @@ export async function gitSpawn(
 // Raw-bytes variant of gitSpawn for blob content that must not be decoded as
 // text (binary detection needs the raw bytes). Same rationale: Bun.spawn (not
 // Bun.$) so large output streams through a pipe rather than buffering in a shell.
-// `stdin` is for `cat-file --batch`, which is handed its list of objects there.
+// `stdin` is for `cat-file --batch`, which is handed its list of objects there;
+// `timeoutMs` kills a child that hangs, as in `gitSpawn`.
 export async function gitSpawnRaw(
   dir: string,
   args: string[],
-  options?: Pick<GitSpawnOptions, "stdin">,
+  options?: Pick<GitSpawnOptions, "stdin" | "timeoutMs">,
 ): Promise<{ bytes: Uint8Array; exitCode: number }> {
   const proc = Bun.spawn(["git", "-C", dir, ...args], {
     stdout: "pipe",
     stderr: "ignore",
     ...(options?.stdin !== undefined ? { stdin: new Blob([options.stdin]) } : {}),
   });
-  const [buffer, exitCode] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited]);
-  return { bytes: new Uint8Array(buffer), exitCode };
+  const timer =
+    options?.timeoutMs === undefined ? null : setTimeout(() => proc.kill(), options.timeoutMs);
+  try {
+    const [buffer, exitCode] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited]);
+    return { bytes: new Uint8Array(buffer), exitCode };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // Parse a query param that must be a non-negative integer. Returns the default

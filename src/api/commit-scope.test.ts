@@ -86,5 +86,18 @@ test("an image at a ref is the committed blob, byte for byte", async () => {
   expect(res.headers.get("Content-Type")).toBe("image/png");
   expect(new Uint8Array(await res.arrayBuffer())).toEqual(PIXELS);
 
+  // The blob at a full hash cannot change; at a ref that can move, it can.
+  expect(res.headers.get("Cache-Control")).toContain("immutable");
+  const moving = await fetch(`${base}/image/git?ref=HEAD&file=logo.png`);
+  expect(moving.status).toBe(200);
+  expect(moving.headers.get("Cache-Control")).toBe("no-cache");
+
   expect((await fetch(`${base}/image/git?ref=${sha}&file=missing.png`)).status).toBe(404);
+});
+
+test("a ref that looks like an option is not run as one", async () => {
+  const out = path.join(dbDir, "written-by-git");
+  const res = await fetch(`${base}/image/git?ref=${encodeURIComponent(`--output=${out}`)}&file=logo.png`);
+  expect(res.status).toBe(404);
+  expect(fs.existsSync(`${out}:logo.png`)).toBe(false);
 });

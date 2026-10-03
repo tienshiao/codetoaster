@@ -208,6 +208,24 @@ test("scroll offsets are kept per file and mode in the commit's slot", () => {
   expect(getViewState("commit", view).treeScrollTops.get("md-preview:docs/setup.md")).toBe(60);
 });
 
+test("a line is landed on once: coming back keeps the reader's place", () => {
+  // The viewer remounts on every mode switch, tab switch and reload, and the
+  // target outlives all of them.
+  const view = viewRef(TASK, `commit:${SHA}`);
+  getViewState("commit", view).treeTarget = { path: "src/a.ts", line: 2, at: 5 };
+  const first = renderTree("src/a.ts", view);
+  const row = () => document.querySelector('[data-line="2"]');
+  expect(scrolled).toContain(row());
+
+  fireEvent.scroll(row()!.closest(".overflow-auto")!, { target: { scrollTop: 90 } });
+  first.unmount();
+  scrolled.length = 0;
+
+  renderTree("src/a.ts", view);
+  expect(scrolled).toEqual([]);
+  expect(row()!.closest(".overflow-auto")!.scrollTop).toBe(90);
+});
+
 test("a selection the commit does not have is cleared", async () => {
   const { onSelectFile } = renderTree("docs/elsewhere.md");
   await waitFor(() => expect(onSelectFile).toHaveBeenCalledWith(null));
