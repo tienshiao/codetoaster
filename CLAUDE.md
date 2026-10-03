@@ -195,6 +195,24 @@ So when building new frontend work:
   because a `color-mix()` over a `var()` does not survive bundling and renders
   fully opaque.
 
+## Knowledge wiki (`wiki/`)
+
+`wiki/` is this repo's own knowledge base, an OKF v0.2 bundle kept in the
+LLM-wiki style: compiled from this file, `backlog/` and the code, which are
+never edited during wiki work.
+
+- For a question about how something works or why, read `wiki/index.md`
+  first, then only the pages it points to. When a page and the code disagree,
+  trust the code and fix the page.
+- After a change that alters a convention, a decision or a subsystem's design:
+  update the affected pages and `wiki/index.md`, and append to `wiki/log.md`,
+  in the same commit. Set touched pages to `status: draft` and refresh
+  `generated.at`; never add `verified` to your own work.
+- Links between pages are bundle-relative (`/gotchas/bun-shell-deadlock.md`).
+  `wiki-links.test.ts` fails on any that does not resolve.
+- The wiki is a lower trust tier than this file. Full schema and the ingest,
+  query and lint procedures: `wiki/conventions/wiki-maintenance.md`.
+
 ## Model delegation when running as Fable
 
 If the task's complexity does not require Fable to solve, do the planning/analysis with Fable, then delegate the execution/implementation to a subagent running Opus (pass `model: "opus"` on the Agent call). Reserve Fable itself for the genuinely hard parts (e.g. smallest-wins terminal size negotiation across multiple clients, unified diff parsing edge cases in `parseDiff.ts` (renames, path quoting, binary files), commit-graph lane assignment, and PTY/session lifecycle logic in `lib/xtmux/`).

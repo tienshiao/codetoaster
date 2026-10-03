@@ -62,7 +62,7 @@ const LINE_FRAGMENT = /^L(\d+)/;
 export function resolveMarkdownLink(
   href: string,
   fromFile: string,
-  files: ReadonlySet<string> | null,
+  files: Pick<ReadonlySet<string>, "has"> | null,
 ): MarkdownLinkTarget | null {
   const hashAt = href.indexOf("#");
   const fragment = hashAt === -1 ? "" : href.slice(hashAt + 1);
