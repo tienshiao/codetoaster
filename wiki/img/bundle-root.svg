@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="460" height="150" viewBox="0 0 460 150" font-family="ui-monospace, Menlo, monospace" font-size="13">
+  <title>How a / link finds the wiki root</title>
+  <rect x="1" y="1" width="458" height="148" rx="8" fill="none" stroke="#8a94a6" stroke-width="1"/>
+  <text x="20" y="32" fill="#8a94a6">repo/</text>
+  <text x="40" y="56" fill="#3b82f6">wiki/</text>
+  <text x="100" y="56" fill="#8a94a6">index.md  ← bundle root: "/" means here</text>
+  <text x="60" y="80" fill="#8a94a6">services/</text>
+  <text x="80" y="104" fill="#22a06b">archive.md</text>
+  <text x="180" y="104" fill="#8a94a6">links  /index.md</text>
+  <text x="40" y="128" fill="#8a94a6">README.md  ← not this one</text>
+</svg>

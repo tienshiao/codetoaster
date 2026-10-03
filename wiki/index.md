@@ -5,7 +5,7 @@ okf_version: "0.2"
 # Modules
 
 * [Commit graph and log pagination](modules/commit-graph.md) - Graph lanes come from a pure, resumable GraphState so paging stays deterministic, and /git/log detects history drift with after= (409) and seeks with until=.
-* [Markdown preview](modules/markdown-preview.md) - A file tab renders markdown with GFM, mermaid diagrams and a frontmatter header, and its links open the files they name instead of navigating the app.
+* [Markdown preview](modules/markdown-preview.md) - A file tab renders markdown with GFM, mermaid diagrams and a frontmatter header; its links open the files and headings they name, and its images load from the repository.
 * [Task naming](modules/task-naming.md) - A task's stored name is a stable "<dir> · <branch>" label used for slugs and CLI matching, while the displayed label is projected at render time from a rename, the live terminal title, or the stored name.
 * [Terminal links](modules/terminal-links.md) - Task ids, file paths, bare file names and commit hashes in a task's terminals are xterm links that open a task file, a file tab or a commit, each matched by a DOM-free provider.
 * [Terminal size negotiation](modules/terminal-size-negotiation.md) - When several browsers attach to one PTY, the terminal takes the smallest measured cols and rows across clients, ignoring clients that have not measured or reported garbage.

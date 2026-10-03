@@ -1,11 +1,11 @@
 ---
 type: Module
 title: Markdown preview
-description: A file tab renders markdown with GFM, mermaid diagrams and a frontmatter header, and its links open the files they name instead of navigating the app.
+description: A file tab renders markdown with GFM, mermaid diagrams and a frontmatter header; its links open the files and headings they name, and its images load from the repository.
 tags: [markdown, preview, links, wiki, frontend]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-03T00:50:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-03T02:30:00Z }
 sources:
   - id: preview
     resource: ../../src/frontend/components/file/MarkdownPreview.tsx
@@ -19,6 +19,12 @@ sources:
   - id: task-122
     resource: "../../backlog/tasks/task-122 - Relative-links-in-the-markdown-preview-open-the-linked-file.md"
     title: "TASK-122 — Relative links in the markdown preview open the linked file"
+  - id: task-124
+    resource: "../../backlog/tasks/task-124 - Headings-in-the-markdown-preview-get-ids-and-links-to-them-scroll.md"
+    title: "TASK-124 — Headings in the markdown preview get ids, and links to them scroll"
+  - id: task-125
+    resource: "../../backlog/tasks/task-125 - Relative-image-sources-in-the-markdown-preview-load-from-the-repository.md"
+    title: "TASK-125 — Relative image sources in the markdown preview load from the repository"
 ---
 
 # What it renders
@@ -35,12 +41,12 @@ Left to the browser, a relative `href` resolves against the app's own URL and la
 | `href` | What happens |
 | --- | --- |
 | `https://…`, `mailto:…` | Opens in a new browser tab |
-| `#id` | Scrolls to that id inside this preview, which is how GFM footnotes and their back-references work. The app URL is left alone |
+| `#id` | Scrolls to that heading or footnote inside this preview. The app URL is left alone |
 | Anything else | Resolved to a repository path and opened in a file tab |
 
 Resolution, in `markdown-links.ts`:[^markdown-links]
 
-1. Fragment and query are dropped (a `#L12` fragment becomes the line to open at), and percent-escapes are decoded.
+1. Fragment and query come off the path, and percent-escapes are decoded. A `#L12` fragment becomes the line to open at; any other becomes the heading to scroll to.
 2. A relative link resolves against the current file's directory.
 3. A `/` link tries the bundle the file sits in first — the nearest ancestor holding an `index.md`, which is how this wiki marks its root — then the repository root, then any other ancestor. A wiki in a subdirectory means its own root by `/`; GitHub means the repository's, and a file in no bundle gets GitHub's reading. Asking for the bundle by its marker keeps a wiki's `/index.md` from opening an outer page, and a monorepo package's `/README.md` from opening the package's own.
 4. Each base tries the exact path, then `<path>.md` (extensionless wiki pages), then a `README.md`, `readme.md` or `index.md` inside it. A link that says it is a directory (`docs/`, `.`, `..`) tries only the last three.
@@ -71,15 +77,33 @@ This wiki is the fixture for that table. From this page:
 - Extensionless: [the log](../log)
 - Escaped: [bun shell deadlock](../gotchas/bun%2Dshell%2Ddeadlock.md)
 - A directory: [the wiki root](../)
-- In-page: the footnote markers on this page, and the ↩ beside each note at the bottom
+- In-page: [back to Links](#links), and the footnote markers on this page with the ↩ beside each note at the bottom
+- Another page's heading: [no test spawns the real agent](../conventions/testing.md#no-test-spawns-the-real-agent), and the Bitbucket spelling of one, [what goes where](/conventions/testing.md#markdown-header-what-goes-where)
 - External: [the LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+- A bundle-relative image:
+
+![How a / link finds the wiki root](/img/bundle-root.svg)
+
+# Headings
+
+Every heading gets an id:[^task-124] GitHub's slug — lower-cased, punctuation dropped, spaces to hyphens, repeats numbered `-1`, `-2` — behind the `user-content-` prefix react-markdown already gives footnotes, so a heading called "Root" cannot collide with an id the app uses.
+
+A fragment finds its heading by exact id first, then by a looser key that both GitHub's slug and Bitbucket's `markdown-header-…` collapse to. A Bitbucket wiki's links land without rewriting.
+
+A link to another page's heading opens that page with the heading as the tab's anchor, which rides on the tab descriptor the way a go-to-definition line does and is not part of its key. A link to a heading of the page already open scrolls in place, and scrolls again when clicked again.
+
+# Images
+
+An image with a repository path[^task-125] resolves exactly as a link does — relative to the file, or `/` to its bundle — and loads from the working-tree image endpoint. Nothing is requested until the file list answers, and an image that resolves to nothing shows its alt text rather than a broken request. External images load as written; `data:` URIs are dropped by react-markdown's URL policy before they get here.
 
 # Not yet
 
-- Headings carry no ids, so `[x](#links)` has nothing to scroll to, and a fragment on a link to another page is dropped: the target opens at the top.
-- Relative image sources still resolve against the app URL.
+- A fragment on a link to a page that is already open on the same heading does not scroll it again; the anchor is unchanged, so nothing tells the tab.
+- Right-click "Open link in new tab" still gets the app-relative `href`: no app URL opens a file tab.
 
 [^preview]: src/frontend/components/file/MarkdownPreview.tsx
 [^markdown-links]: src/frontend/utils/markdown-links.ts
 [^task-87]: TASK-87 — Render YAML frontmatter as a header in the markdown preview
 [^task-122]: TASK-122 — Relative links in the markdown preview open the linked file
+[^task-124]: TASK-124 — Headings in the markdown preview get ids, and links to them scroll
+[^task-125]: TASK-125 — Relative image sources in the markdown preview load from the repository

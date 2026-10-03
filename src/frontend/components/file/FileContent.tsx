@@ -1,6 +1,6 @@
 import { useMemo, useRef, useEffect, useLayoutEffect, type MouseEvent } from "react";
 import { rootApi, type RepoRoot } from "@/frontend/repo-root";
-import { MarkdownPreview } from "./MarkdownPreview";
+import { MarkdownPreview, type AnchorJump } from "./MarkdownPreview";
 import { TablePreview } from "./TablePreview";
 import { delimiterForPath, parseDelimited, type DelimitedTable } from "../../utils/delimited";
 import { syntaxTokensFor } from "../../utils/wordDiff";
@@ -28,6 +28,10 @@ interface FileContentProps {
   onSymbolClick?: (name: string, x: number, y: number) => void;
   /** A repository link clicked in the markdown preview, by its raw `href`. */
   onOpenLink?: (href: string) => void;
+  /** Where the markdown preview loads a repository image from. */
+  resolveImage?: (src: string) => Promise<string | null>;
+  /** A heading for the markdown preview to scroll to. */
+  anchorJump?: AnchorJump | null;
   // Overrides the default working-tree image endpoint (git view reads a blob at
   // a specific sha via /image/git). When omitted, the working-tree URL is used.
   imageUrl?: string;
@@ -45,6 +49,8 @@ export function FileContent({
   highlightLine,
   onSymbolClick,
   onOpenLink,
+  resolveImage,
+  anchorJump,
   imageUrl: imageUrlProp,
 }: FileContentProps) {
   const langConfig = useMemo(() => getLanguageFromPath(filePath), [filePath]);
@@ -108,15 +114,16 @@ export function FileContent({
   useLayoutEffect(() => {
     if (restoredScrollRef.current || initialScrollTop === undefined) return;
     if (!content || content.isBinary || !scrollRef.current) return;
-    // The table reveals its own target row, and its layout effect has already
-    // run by now (a child's go first): restoring here would undo it.
-    if (showTable && highlightLine) {
+    // The table reveals its own target row, and the preview scrolls to its
+    // own heading, both in layout effects that have already run by now (a
+    // child's go first): restoring here would undo them.
+    if ((showTable && highlightLine) || (showMarkdown && anchorJump)) {
       restoredScrollRef.current = true;
       return;
     }
     scrollRef.current.scrollTop = initialScrollTop;
     restoredScrollRef.current = true;
-  }, [content, initialScrollTop, showTable, highlightLine]);
+  }, [content, initialScrollTop, showTable, highlightLine, showMarkdown, anchorJump]);
 
   // Deep link (go-to-definition): scroll the target line into view and flash it.
   // Takes precedence over the saved scroll position when a line is specified.
@@ -205,7 +212,13 @@ export function FileContent({
         className="overflow-auto h-full"
         onScroll={(e) => onScrollTopChange?.(e.currentTarget.scrollTop)}
       >
-        <MarkdownPreview source={markdownSource} frontmatter={frontmatter} onOpenLink={onOpenLink} />
+        <MarkdownPreview
+          source={markdownSource}
+          frontmatter={frontmatter}
+          onOpenLink={onOpenLink}
+          resolveImage={resolveImage}
+          jump={anchorJump}
+        />
       </div>
     );
   }

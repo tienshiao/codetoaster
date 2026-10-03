@@ -1,5 +1,26 @@
 import { test, expect, describe } from "bun:test";
-import { hrefKind, resolveMarkdownLink } from "./markdown-links";
+import { anchorKey, headingSlug, hrefKind, resolveMarkdownLink } from "./markdown-links";
+
+describe("headingSlug", () => {
+  test("follows GitHub: lower-case, punctuation dropped, spaces to hyphens", () => {
+    expect(headingSlug("LED API 1 and 2")).toBe("led-api-1-and-2");
+    expect(headingSlug("Color (array) subsets")).toBe("color-array-subsets");
+    expect(headingSlug("What's new?")).toBe("whats-new");
+    expect(headingSlug("snake_case & kebab-case")).toBe("snake_case--kebab-case");
+    expect(headingSlug("Café crème")).toBe("café-crème");
+  });
+});
+
+describe("anchorKey", () => {
+  test("a Bitbucket fragment meets the GitHub slug of the same heading", () => {
+    expect(anchorKey("markdown-header-led-api-2")).toBe(anchorKey(headingSlug("LED API 2")));
+    expect(anchorKey("markdown-header-color-array-subsets")).toBe(anchorKey(headingSlug("Color (array) subsets")));
+  });
+
+  test("ids look through the user-content- prefix", () => {
+    expect(anchorKey("user-content-snake_case--kebab-case")).toBe("snake-case-kebab-case");
+  });
+});
 
 const FILES = new Set([
   "README.md",
@@ -124,16 +145,35 @@ describe("resolveMarkdownLink", () => {
   });
 
   test("the fragment and query are not part of the path", () => {
-    expect(resolveMarkdownLink("Home#markdown-header-led-api-2", "puffco/LED API 3.md", FILES)).toEqual({
-      path: "puffco/Home.md",
-    });
     expect(resolveMarkdownLink("guide.md?plain=1", "docs/README.md", FILES)).toEqual({ path: "docs/guide.md" });
   });
 
-  test("a #L fragment carries the line", () => {
+  test("a heading fragment rides along as the anchor, decoded", () => {
+    expect(resolveMarkdownLink("Home#markdown-header-led-api-2", "puffco/LED API 3.md", FILES)).toEqual({
+      path: "puffco/Home.md",
+      anchor: "markdown-header-led-api-2",
+    });
+    expect(resolveMarkdownLink("guide.md#caf%C3%A9", "docs/README.md", FILES)).toEqual({
+      path: "docs/guide.md",
+      anchor: "café",
+    });
+  });
+
+  test("a #L fragment carries the line, and no anchor", () => {
     expect(resolveMarkdownLink("../src/api/files.ts#L263", "docs/guide.md", FILES)).toEqual({
       path: "src/api/files.ts",
       line: 263,
+    });
+    expect(resolveMarkdownLink("../src/api/files.ts#L10-L20", "docs/guide.md", FILES)).toEqual({
+      path: "src/api/files.ts",
+      line: 10,
+    });
+  });
+
+  test("a heading that merely starts with L and a digit is an anchor", () => {
+    expect(resolveMarkdownLink("guide.md#L2-cache", "docs/README.md", FILES)).toEqual({
+      path: "docs/guide.md",
+      anchor: "L2-cache",
     });
   });
 

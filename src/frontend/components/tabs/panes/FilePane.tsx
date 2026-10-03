@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { RepoRoot } from "@/frontend/repo-root";
+import { rootApi, type RepoRoot } from "@/frontend/repo-root";
 import { Eye, FileDiff, FolderSearch, WrapText } from "lucide-react";
 import { toast } from "sonner";
 import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
+import type { AnchorJump } from "@/frontend/components/file/MarkdownPreview";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
 import { fetchTaskFiles, revealFile, useFileContent } from "@/frontend/hooks/use-task-files";
 import { useChangedPaths } from "@/frontend/hooks/use-task-diff";
@@ -24,9 +25,13 @@ interface FilePaneProps {
    * another line in an open file moves the cursor instead of opening the file
    * twice — which means this arrives as a changed prop, not a remount. */
   line?: number;
-  /** Opens a file at a line — where go-to-definition lands. Opening tabs is the
-   * layout's business, so it arrives here as a callback. */
-  onOpenFile: (path: string, line?: number) => void;
+  /** The heading a markdown link pointed at (TASK-124). Like `line`, a
+   * position rather than part of the tab key. */
+  anchor?: string;
+  /** Opens a file at a line or heading — where go-to-definition and markdown
+   * links land. Opening tabs is the layout's business, so it arrives here as
+   * a callback. */
+  onOpenFile: (path: string, line?: number, anchor?: string) => void;
   /** Opens this file's working-tree diff tab (TASK-121). */
   onOpenDiff: (path: string) => void;
 }
@@ -38,7 +43,7 @@ interface FilePaneProps {
  * file tab it opens, so a pane that carried one would be drawing the same tree
  * once per open file.
  */
-export function FilePane({ root, view, path, line, onOpenFile, onOpenDiff }: FilePaneProps) {
+export function FilePane({ root, view, path, line, anchor, onOpenFile, onOpenDiff }: FilePaneProps) {
   const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const [lineWrap, setLineWrap] = useViewState("file", view, "lineWrap");
   const [markdownPreview, setMarkdownPreview] = useViewState("file", view, "markdownPreview");
@@ -55,21 +60,58 @@ export function FilePane({ root, view, path, line, onOpenFile, onOpenDiff }: Fil
   const scrollTops = getViewState("file", view).scrollTops;
   const queryClient = useQueryClient();
 
-  // A preview link resolves against the Explorer's file list (TASK-122),
-  // fetched when one is clicked rather than watched while the preview is up:
-  // most previews are read without a click, and an observer would refetch the
-  // whole listing on every working-tree change. A failed fetch still opens the
-  // plain resolution.
-  const openLink = async (href: string) => {
+  // A heading to scroll the preview to (TASK-124). It arrives two ways: as the
+  // `anchor` prop, when a link from another file opens this one, and from a
+  // link in this file to itself. The second cannot go through the descriptor:
+  // asking for the heading it already holds changes no prop, so a repeat
+  // click would do nothing. Each request gets a fresh `seq` instead.
+  const [jump, setJump] = useState<AnchorJump | null>(anchor ? { anchor, seq: 1 } : null);
+  const [seenAnchor, setSeenAnchor] = useState(anchor);
+  if (anchor !== seenAnchor) {
+    setSeenAnchor(anchor);
+    if (anchor) setJump({ anchor, seq: (jump?.seq ?? 0) + 1 });
+  }
+
+  // Preview links and images resolve against the Explorer's file list
+  // (TASK-122), fetched when needed rather than watched while the preview is
+  // up: most previews are read without a click, and an observer would refetch
+  // the whole listing on every working-tree change. A failed fetch still
+  // yields the plain resolution.
+  const resolve = async (href: string) => {
     const files = await fetchTaskFiles(queryClient, root).catch(() => null);
     const fileSet = files
       ? new Set(files.files.filter((file) => !file.isDirectory).map((file) => file.path))
       : null;
-    const target = resolveMarkdownLink(href, path, fileSet);
-    if (target) onOpenFile(target.path, target.line);
-    // The click was already kept from the browser; say why nothing opened.
-    else toast.error("That link does not name a file in this repository", { description: href });
+    return resolveMarkdownLink(href, path, fileSet);
   };
+
+  const openLink = async (href: string) => {
+    const target = await resolve(href);
+    if (!target) {
+      // The click was already kept from the browser; say why nothing opened.
+      toast.error("That link does not name a file in this repository", { description: href });
+    } else if (target.path === path && target.anchor && !target.line) {
+      setJump((current) => ({ anchor: target.anchor!, seq: (current?.seq ?? 0) + 1 }));
+    } else {
+      onOpenFile(target.path, target.line, target.anchor);
+    }
+  };
+
+  // Stable, because each image asks again whenever this changes (TASK-125).
+  // `path` is a dependency all the same: a relative image means something else
+  // from another file.
+  const resolveRef = useRef(resolve);
+  useLayoutEffect(() => {
+    resolveRef.current = resolve;
+  });
+  const imageBase = `${rootApi(root)}/image?file=`;
+  const resolveImage = useCallback(
+    async (src: string) => {
+      const target = await resolveRef.current(src);
+      return target ? `${imageBase}${encodeURIComponent(target.path)}` : null;
+    },
+    [imageBase, path],
+  );
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -129,6 +171,8 @@ export function FilePane({ root, view, path, line, onOpenFile, onOpenDiff }: Fil
         highlightLine={line}
         onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}
         onOpenLink={(href) => void openLink(href)}
+        resolveImage={resolveImage}
+        anchorJump={jump}
       />
       <SymbolPopover
         root={root}

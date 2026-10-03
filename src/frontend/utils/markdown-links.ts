@@ -32,11 +32,44 @@ export function hrefKind(href: string): HrefKind {
 export interface MarkdownLinkTarget {
   /** Relative to the repository root — what a file tab takes. */
   path: string;
-  /** From a GitHub-style `#L12` fragment. */
+  /** From a GitHub-style `#L12` (or `#L12-L20`) fragment. */
   line?: number;
+  /** Any other fragment, decoded: a heading to scroll the preview to (TASK-124). */
+  anchor?: string;
 }
 
-const LINE_FRAGMENT = /^L(\d+)/;
+const LINE_FRAGMENT = /^L(\d+)(?:-L\d+)?$/;
+
+/**
+ * A heading's id, as GitHub derives it: lower-cased, punctuation dropped,
+ * each space a hyphen. Two headings with the same text get the same slug;
+ * numbering the repeats (`-1`, `-2`) is the caller's, since only it sees the
+ * whole document.
+ */
+export function headingSlug(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\p{Pc}\- ]/gu, "")
+    .replace(/ /g, "-");
+}
+
+/**
+ * What a fragment and a heading id are compared by when they do not match
+ * exactly. GitHub drops punctuation and keeps each space; Bitbucket prefixes
+ * `markdown-header-` and turns every run of anything else into one hyphen —
+ * `#markdown-header-led-api-2` for a heading GitHub calls `led-api-2`, and the
+ * two disagree on `Color (array) subsets`. Collapsing both the same way lets
+ * a wiki written for either host land on its heading.
+ */
+export function anchorKey(fragment: string): string {
+  return fragment
+    .replace(/^user-content-/, "")
+    .replace(/^markdown-header-/, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 /**
  * The file `href`, written in `fromFile`, links to.
@@ -80,7 +113,12 @@ export function resolveMarkdownLink(
 
   const lineMatch = LINE_FRAGMENT.exec(fragment);
   const line = lineMatch ? Number(lineMatch[1]) : undefined;
-  const target = (path: string): MarkdownLinkTarget => (line ? { path, line } : { path });
+  const anchor = !lineMatch && fragment ? decode(fragment) : undefined;
+  const target = (path: string): MarkdownLinkTarget => ({
+    path,
+    ...(line ? { line } : {}),
+    ...(anchor ? { anchor } : {}),
+  });
 
   const dir = fromFile.includes("/") ? fromFile.slice(0, fromFile.lastIndexOf("/")) : "";
   const bases = raw.startsWith("/") ? rootBases(dir, files) : [dir];
@@ -131,7 +169,7 @@ function candidates(path: string, isDir: boolean): string[] {
 }
 
 /** A malformed escape (`100%.md`) is taken literally rather than thrown. */
-function decode(raw: string): string {
+export function decode(raw: string): string {
   try {
     return decodeURIComponent(raw);
   } catch {

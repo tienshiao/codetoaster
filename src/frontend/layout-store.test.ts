@@ -1410,6 +1410,20 @@ test("reviveLayout returns null for a file whose line is a string", () => {
   ).not.toBe(null);
 });
 
+test("reviveLayout keeps a file's string anchor and rejects any other (TASK-124)", () => {
+  const withFile = (descriptor: unknown) =>
+    reviveLayout(
+      rawLayout([{ id: "g1", tabs: [rawTab({ kind: "agent" }, "t1"), rawTab(descriptor, "t2")] }]),
+    );
+  const revived = withFile({ kind: "file", path: "wiki/a.md", anchor: "setup" });
+  expect(revived?.groups[0]!.tabs[1]!.descriptor).toEqual({ kind: "file", path: "wiki/a.md", anchor: "setup" });
+  expect(withFile({ kind: "file", path: "wiki/a.md", anchor: 3 })).toBe(null);
+});
+
+test("an anchor is not part of a file tab's key", () => {
+  expect(tabKey({ kind: "file", path: "wiki/a.md", anchor: "setup" })).toBe(tabKey({ kind: "file", path: "wiki/a.md" }));
+});
+
 test("reviveLayout returns null for a diff or commit with a non-string payload", () => {
   const withTab = (descriptor: unknown) =>
     rawLayout([

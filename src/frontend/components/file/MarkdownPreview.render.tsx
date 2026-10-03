@@ -1,5 +1,5 @@
-import { test, expect, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { test, expect, vi, beforeEach, afterEach } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MarkdownPreview } from "./MarkdownPreview";
 
 /**
@@ -72,4 +72,106 @@ test("a click reaches the latest handler after a re-render", () => {
   fireEvent.click(screen.getByRole("link", { name: "Archive" }));
   expect(first).not.toHaveBeenCalled();
   expect(second).toHaveBeenCalledWith("services/archive.md");
+});
+
+/**
+ * Headings (TASK-124). Happy DOM has no layout, so a scroll is observed by
+ * which element `scrollIntoView` was called on.
+ */
+const scrolled: Element[] = [];
+const originalScrollIntoView = Element.prototype.scrollIntoView;
+beforeEach(() => {
+  scrolled.length = 0;
+  Element.prototype.scrollIntoView = function (this: Element) {
+    scrolled.push(this);
+  };
+});
+afterEach(() => {
+  Element.prototype.scrollIntoView = originalScrollIntoView;
+});
+
+const DOC = [
+  "[To setup](#setup) [To LED](#markdown-header-led-api-2) [To second](#setup-1)",
+  "# Setup",
+  "## LED API 2",
+  "## Color (array) subsets",
+  "# Setup",
+].join("\n\n");
+
+test("headings get prefixed GitHub slugs, repeats numbered", () => {
+  const { container } = render(<MarkdownPreview source={DOC} />);
+  expect(Array.from(container.querySelectorAll("h1, h2"), (h) => h.id)).toEqual([
+    "user-content-setup",
+    "user-content-led-api-2",
+    "user-content-color-array-subsets",
+    "user-content-setup-1",
+  ]);
+});
+
+test("an in-page heading link scrolls to its heading", () => {
+  const { container } = render(<MarkdownPreview source={DOC} />);
+  fireEvent.click(screen.getByRole("link", { name: "To setup" }));
+  expect(scrolled).toEqual([container.querySelector("#user-content-setup")]);
+
+  fireEvent.click(screen.getByRole("link", { name: "To second" }));
+  expect(scrolled.at(-1)).toBe(container.querySelector("#user-content-setup-1"));
+});
+
+test("a Bitbucket markdown-header- fragment finds the same heading", () => {
+  const { container } = render(<MarkdownPreview source={DOC} />);
+  fireEvent.click(screen.getByRole("link", { name: "To LED" }));
+  expect(scrolled).toEqual([container.querySelector("#user-content-led-api-2")]);
+});
+
+test("a jump scrolls on mount and once per seq", () => {
+  const { container, rerender } = render(
+    <MarkdownPreview source={DOC} jump={{ anchor: "markdown-header-color-array-subsets", seq: 1 }} />,
+  );
+  const heading = container.querySelector("#user-content-color-array-subsets");
+  expect(scrolled).toEqual([heading]);
+
+  // Same request re-rendered: no second scroll.
+  rerender(<MarkdownPreview source={DOC} jump={{ anchor: "markdown-header-color-array-subsets", seq: 1 }} />);
+  expect(scrolled).toHaveLength(1);
+
+  // The same heading asked for again: scrolls again.
+  rerender(<MarkdownPreview source={DOC} jump={{ anchor: "markdown-header-color-array-subsets", seq: 2 }} />);
+  expect(scrolled).toEqual([heading, heading]);
+});
+
+test("a jump to a heading that is not there scrolls nothing", () => {
+  render(<MarkdownPreview source={DOC} jump={{ anchor: "nowhere", seq: 1 }} />);
+  expect(scrolled).toEqual([]);
+});
+
+/** Images (TASK-125). */
+const IMAGES = "![local](diagrams/arch.png) ![remote](https://example.com/a.png)";
+
+test("a repository image loads from what the caller resolves it to", async () => {
+  const resolveImage = vi.fn(async (src: string) => `/api/image?file=${encodeURIComponent(`docs/${src}`)}`);
+  render(<MarkdownPreview source={IMAGES} resolveImage={resolveImage} />);
+
+  const local = screen.getByAltText("local");
+  await waitFor(() => expect(local.getAttribute("src")).toBe("/api/image?file=docs%2Fdiagrams%2Farch.png"));
+  expect(resolveImage).toHaveBeenCalledWith("diagrams/arch.png");
+  expect(resolveImage).toHaveBeenCalledTimes(1);
+});
+
+test("an external image is left alone and never resolved", () => {
+  const resolveImage = vi.fn(async () => "/nope");
+  render(<MarkdownPreview source={IMAGES} resolveImage={resolveImage} />);
+  expect(screen.getByAltText("remote").getAttribute("src")).toBe("https://example.com/a.png");
+  expect(resolveImage).not.toHaveBeenCalledWith("https://example.com/a.png");
+});
+
+test("with no one to resolve it, a repository image requests nothing", () => {
+  render(<MarkdownPreview source={IMAGES} />);
+  expect(screen.getByAltText("local").hasAttribute("src")).toBe(false);
+});
+
+test("an image that resolves to nothing requests nothing", async () => {
+  const resolveImage = vi.fn(async () => null);
+  render(<MarkdownPreview source={IMAGES} resolveImage={resolveImage} />);
+  await waitFor(() => expect(resolveImage).toHaveBeenCalled());
+  expect(screen.getByAltText("local").hasAttribute("src")).toBe(false);
 });

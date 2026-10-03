@@ -20,7 +20,7 @@ export type TabDescriptor =
   | { kind: "shell"; ptyId: string }
   | { kind: "diff"; path: string }
   | { kind: "diffAll" }
-  | { kind: "file"; path: string; line?: number }
+  | { kind: "file"; path: string; line?: number; anchor?: string }
   | { kind: "commit"; sha: string }
   | { kind: "history" };
 
@@ -41,7 +41,8 @@ export function isTerminalTab(descriptor: TabDescriptor): boolean {
  * `file`'s `line` is deliberately not part of the key. Going to a definition on
  * line 400 of a file already open on line 12 should move the cursor, not open
  * the file twice — which is the whole point of dedupe in a go-to-definition
- * flow. The caller applies the new line to the focused tab.
+ * flow. The caller applies the new line to the focused tab. `anchor`, a
+ * heading a markdown link pointed at (TASK-124), is a position the same way.
  */
 export function tabKey(descriptor: TabDescriptor): string {
   switch (descriptor.kind) {
@@ -918,7 +919,11 @@ function isDescriptor(value: unknown): value is TabDescriptor {
     case "diff":
       return typeof d.path === "string";
     case "file":
-      return typeof d.path === "string" && (d.line === undefined || typeof d.line === "number");
+      return (
+        typeof d.path === "string" &&
+        (d.line === undefined || typeof d.line === "number") &&
+        (d.anchor === undefined || typeof d.anchor === "string")
+      );
     case "commit":
       return typeof d.sha === "string";
     default:

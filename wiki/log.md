@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-10-03
+* **Update**: [Markdown preview](/modules/markdown-preview.md) gains Headings and Images sections for TASK-124 and TASK-125, with heading, Bitbucket-anchor and image cases added to its test data.
 * **Initialization**: Created the OKF v0.2 knowledge bundle for CodeToaster (root [index](/index.md) pinned to `okf_version: "0.2"`, this log, and the `modules/`, `conventions/`, `decisions/`, `gotchas/` and `runbooks/` directories). Compiled by claude-code/claude-opus-5-5 from CLAUDE.md, backlog tasks and the code; every page is `status: draft` pending human review.
 * **Creation**: Modules: [Commit graph and log pagination](/modules/commit-graph.md), [Markdown preview](/modules/markdown-preview.md), [Task naming](/modules/task-naming.md), [Terminal links](/modules/terminal-links.md), [Terminal size negotiation](/modules/terminal-size-negotiation.md).
 * **Creation**: Conventions: [Two test runners](/conventions/testing.md), [The v2 design system](/conventions/v2-design-system.md), [Wiki maintenance](/conventions/wiki-maintenance.md).

@@ -1,9 +1,11 @@
 ---
 id: TASK-124
 title: 'Headings in the markdown preview get ids, and links to them scroll'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@tma'
 created_date: '2026-10-03 01:08'
+updated_date: '2026-10-03 01:20'
 labels:
   - frontend
 dependencies:
@@ -24,3 +26,9 @@ Follow-up to TASK-122, raised in each of its three reviews. Headings have no ids
 - [ ] #3 Bitbucket markdown-header- fragments resolve to the same heading
 - [ ] #4 Unit tests for slugging; rendering test for scroll on open
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. markdown-links.ts: headingSlug (GitHub style, deduped by the caller) and anchorKey (loose: drop markdown-header-, lowercase, non-alphanumeric runs to -), so GitHub and Bitbucket fragments meet one key; resolveMarkdownLink returns anchor for a non-line fragment. 2. MarkdownPreview: a rehype plugin gives h1-h6 ids user-content-<slug> with -1/-2 dedupe; findAnchor tries the exact id (prefixed, then raw for footnotes), then the loose key over headings; an in-page link scrolls through it. A jump prop {anchor, seq} scrolls once per seq. 3. file descriptor gains anchor (validated on restore, not in the key); TabPane passes it; FilePane turns anchor changes into jumps, and a link to its own file jumps locally so a repeat click scrolls again. FileContent forwards the jump and skips scroll restore when it carries one. 4. Unit tests for slug and key; rendering tests for in-page scroll, jump on mount, Bitbucket alias, dedupe.
+<!-- SECTION:PLAN:END -->

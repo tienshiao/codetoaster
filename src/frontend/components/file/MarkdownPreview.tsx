@@ -1,14 +1,24 @@
-import { createContext, memo, useContext, type ComponentProps, type MouseEvent } from "react";
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type MouseEvent,
+} from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Element } from "hast";
+import type { Element as HastElement, ElementContent, Root } from "hast";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { FrontmatterHeader } from "./FrontmatterHeader";
 import type { Frontmatter } from "@/types/frontmatter";
-import { hrefKind } from "@/frontend/utils/markdown-links";
+import { anchorKey, decode, headingSlug, hrefKind } from "@/frontend/utils/markdown-links";
 
 /** Source text of a ```mermaid fence, given the hast node of its <pre>. */
-function extractMermaidSource(node: Element | undefined): string | null {
+function extractMermaidSource(node: HastElement | undefined): string | null {
   const child = node?.children[0];
   if (!child || child.type !== "element" || child.tagName !== "code") return null;
   const className = child.properties.className;
@@ -17,23 +27,90 @@ function extractMermaidSource(node: Element | undefined): string | null {
   return text?.type === "text" ? text.value : null;
 }
 
+/** A request to scroll the preview to a heading. `seq` changes on every
+ * request, so asking for the same heading twice scrolls twice. */
+export interface AnchorJump {
+  anchor: string;
+  seq: number;
+}
+
 /**
- * Who handles a click on a repository link. A context rather than a closure,
- * because the `a` component has to be a module-level constant (see below).
+ * What the preview needs from its caller, who alone has the file list. A
+ * context rather than a closure, because the `a` and `img` components have
+ * to be module-level constants (see below).
  */
-const noop = () => {};
-const OpenLinkContext = createContext<(href: string) => void>(noop);
+interface PreviewHandlers {
+  /** A repository link was clicked, by its raw `href`. */
+  onOpenLink?: (href: string) => void;
+  /** The URL to load a repository image from, or null for none (TASK-125). */
+  resolveImage?: (src: string) => Promise<string | null>;
+}
+
+const PreviewContext = createContext<PreviewHandlers>({});
+
+const HEADINGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+const ID_PREFIX = "user-content-";
+
+function textOf(nodes: ElementContent[]): string {
+  return nodes.map((n) => (n.type === "text" ? n.value : n.type === "element" ? textOf(n.children) : "")).join("");
+}
+
+/**
+ * Gives every heading an id (TASK-124), so a `#setup` link has somewhere to
+ * land. The slug is GitHub's, repeats numbered as GitHub numbers them, and
+ * the id carries the same `user-content-` prefix react-markdown gives
+ * footnotes, so a heading called "Root" cannot collide with the app's own
+ * element ids. `findAnchor` looks through the prefix.
+ */
+function rehypeHeadingIds() {
+  return (tree: Root) => {
+    const seen = new Map<string, number>();
+    const visit = (node: Root | HastElement) => {
+      for (const child of node.children) {
+        if (child.type !== "element") continue;
+        if (HEADINGS.has(child.tagName) && child.properties.id === undefined) {
+          const slug = headingSlug(textOf(child.children));
+          const count = seen.get(slug) ?? 0;
+          seen.set(slug, count + 1);
+          child.properties.id = `${ID_PREFIX}${count === 0 ? slug : `${slug}-${count}`}`;
+        }
+        visit(child);
+      }
+    };
+    visit(tree);
+  };
+}
+
+/**
+ * The element a fragment names inside `container`. Exact ids first — a heading
+ * by its prefixed id, a footnote by the prefixed href it already carries — and
+ * then any heading whose id agrees on `anchorKey`, which is how a Bitbucket
+ * `#markdown-header-…` or a hand-written fragment finds its heading.
+ */
+function findAnchor(container: ParentNode, fragment: string): Element | null {
+  const byId = (id: string) => container.querySelector(`[id="${CSS.escape(id)}"]`);
+  const exact = byId(`${ID_PREFIX}${fragment}`) ?? byId(fragment);
+  if (exact) return exact;
+  const key = anchorKey(fragment);
+  if (!key) return null;
+  const headings = container.querySelectorAll("h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]");
+  return Array.from(headings).find((h) => anchorKey(h.id) === key) ?? null;
+}
+
+function scrollToAnchor(container: ParentNode | null, fragment: string): void {
+  if (container) findAnchor(container, fragment)?.scrollIntoView({ block: "start" });
+}
 
 /**
  * A link that stays out of the browser's hands unless it leaves the app
  * (TASK-122). Left alone, a relative `href` resolves against the app's own URL
  * and lands on a route that does not exist, and a bare fragment rewrites the
- * URL the router owns — so a fragment scrolls to its target here instead,
- * which is what GFM footnotes and their back-references need. The `href`
- * stays on the element so hovering still shows where it points.
+ * URL the router owns — so a fragment scrolls to its target here instead:
+ * a heading, or a GFM footnote and its back-reference. The `href` stays on
+ * the element so hovering still shows where it points.
  */
 function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
-  const openLink = useContext(OpenLinkContext);
+  const { onOpenLink } = useContext(PreviewContext);
   const kind = href ? hrefKind(href) : "fragment";
   if (kind === "external") {
     return <a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>;
@@ -42,13 +119,11 @@ function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
     e.preventDefault();
     if (!href) return;
     if (kind === "file") {
-      openLink(href);
+      onOpenLink?.(href);
       return;
     }
     // Scoped to this preview: another open file tab can carry the same ids.
-    const id = decodeFragment(href.slice(1));
-    const preview = e.currentTarget.closest(".markdown-preview");
-    preview?.querySelector(`[id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start" });
+    scrollToAnchor(e.currentTarget.closest(".markdown-preview"), decode(href.slice(1)));
   };
   // A middle-click would open the app's 404 in a new browser tab.
   return (
@@ -58,12 +133,33 @@ function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
   );
 }
 
-function decodeFragment(fragment: string): string {
-  try {
-    return decodeURIComponent(fragment);
-  } catch {
-    return fragment;
-  }
+/**
+ * An image whose source is a repository path (TASK-125). Like a link, a
+ * relative `src` would otherwise resolve against the app's URL and break, so
+ * the caller turns it into a URL for the file. Nothing is requested until it
+ * answers, and with no one to ask the image shows its alt text rather than a
+ * request bound to fail. External sources load as they are.
+ */
+function MarkdownImage({ src, alt, ...props }: ComponentProps<"img">) {
+  const { resolveImage } = useContext(PreviewContext);
+  const local = typeof src === "string" && src !== "" && hrefKind(src) === "file" ? src : null;
+  const [resolved, setResolved] = useState<{ src: string; url: string | null } | null>(null);
+
+  useEffect(() => {
+    if (!local || !resolveImage) return;
+    let live = true;
+    resolveImage(local).then(
+      (url) => live && setResolved({ src: local, url }),
+      () => live && setResolved({ src: local, url: null }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [local, resolveImage]);
+
+  if (local === null) return <img {...props} src={src} alt={alt} />;
+  const url = resolved?.src === local ? resolved.url : null;
+  return <img {...props} src={url ?? undefined} alt={alt} />;
 }
 
 // Module-level constants, not inline literals: react-markdown renders <pre> with
@@ -72,6 +168,7 @@ function decodeFragment(fragment: string): string {
 // any text selection inside one — pressing ⌘ to copy re-renders FileContent
 // (useModifierHeld) and the selection vanished before the C arrived.
 const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [rehypeHeadingIds];
 const COMPONENTS: Components = {
   pre({ node, ...props }) {
     const mermaidSource = extractMermaidSource(node);
@@ -81,29 +178,51 @@ const COMPONENTS: Components = {
   a({ node: _node, ...props }) {
     return <MarkdownLink {...props} />;
   },
+  img({ node: _node, ...props }) {
+    return <MarkdownImage {...props} />;
+  },
 };
 
 /**
- * Rendered markdown, with a handler for its repository links.
+ * Rendered markdown, with handlers for its repository links and images.
  *
- * `onOpenLink` receives a clicked link's raw `href`; resolving it is the
- * caller's, since only the caller has the file list. A new callback each
- * render costs only the links' re-render: context reaches its consumers past
- * the body's memo, so the markdown pipeline does not run again.
+ * Resolving either is the caller's, since only the caller has the file list.
+ * New callbacks each render cost only the links' and images' re-render:
+ * context reaches its consumers past the body's memo, so the markdown
+ * pipeline does not run again. `resolveImage` should still be stable, since
+ * an image asks again whenever it changes.
+ *
+ * `jump` scrolls to a heading once per `seq` — how a link from another file
+ * lands on its section.
  */
 export function MarkdownPreview({
   source,
   frontmatter,
-  onOpenLink = noop,
+  onOpenLink,
+  resolveImage,
+  jump,
 }: {
   source: string;
   frontmatter?: Frontmatter;
   onOpenLink?: (href: string) => void;
+  resolveImage?: (src: string) => Promise<string | null>;
+  jump?: AnchorJump | null;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const handledSeq = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    if (!jump || handledSeq.current === jump.seq) return;
+    handledSeq.current = jump.seq;
+    scrollToAnchor(ref.current, jump.anchor);
+  }, [jump]);
+
   return (
-    <OpenLinkContext.Provider value={onOpenLink}>
-      <MarkdownBody source={source} frontmatter={frontmatter} />
-    </OpenLinkContext.Provider>
+    <PreviewContext.Provider value={{ onOpenLink, resolveImage }}>
+      <div ref={ref}>
+        <MarkdownBody source={source} frontmatter={frontmatter} />
+      </div>
+    </PreviewContext.Provider>
   );
 }
 
@@ -125,7 +244,7 @@ const MarkdownBody = memo(function MarkdownBody({
   frontmatter?: Frontmatter;
 }) {
   const body = (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}>
       {source}
     </ReactMarkdown>
   );
