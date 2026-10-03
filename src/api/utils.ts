@@ -265,13 +265,43 @@ export interface GitSpawnOptions {
   // Bun takes a Blob, not a string; with nothing here stdin is left at its
   // default, which is what every other caller wants.
   stdin?: string;
+  // Stop reading, and kill the child, once stdout passes this many bytes. For
+  // the one caller whose output has no natural bound: a commit diffed against
+  // an arbitrary base (TASK-128), where an old tag on a large repository is
+  // gigabytes of patch held as one string in the daemon every task's terminal
+  // lives in. The result says `overflowed`, and its stdout is whatever fitted —
+  // cut mid-line, so for reporting the fact rather than for parsing.
+  maxStdoutBytes?: number;
+}
+
+/** A child's stdout as text, read until it ends or passes `maxBytes`. */
+async function readCapped(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  onOverflow: () => void,
+): Promise<{ text: string; overflowed: boolean }> {
+  const decoder = new TextDecoder();
+  let text = "";
+  let bytes = 0;
+  const reader = stream.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return { text: text + decoder.decode(), overflowed: false };
+    bytes += value.byteLength;
+    if (bytes > maxBytes) {
+      onOverflow();
+      await reader.cancel();
+      return { text, overflowed: true };
+    }
+    text += decoder.decode(value, { stream: true });
+  }
 }
 
 export async function gitSpawn(
   dir: string,
   args: string[],
   options?: GitSpawnOptions,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number; overflowed?: boolean }> {
   const capture = options?.captureStderr === true;
   const proc = Bun.spawn(["git", "-C", dir, ...args], {
     stdout: "pipe",
@@ -292,12 +322,15 @@ export async function gitSpawn(
     //
     // The kill ends every await here: the pipes hit EOF and `exited` resolves,
     // so this never outlives the child.
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
+    const maxBytes = options?.maxStdoutBytes;
+    const [out, stderr, exitCode] = await Promise.all([
+      maxBytes === undefined
+        ? new Response(proc.stdout).text().then((text) => ({ text, overflowed: false }))
+        : readCapped(proc.stdout, maxBytes, () => proc.kill()),
       capture ? new Response(proc.stderr).text() : Promise.resolve(""),
       proc.exited,
     ]);
-    return { stdout, stderr, exitCode };
+    return { stdout: out.text, stderr, exitCode, ...(out.overflowed ? { overflowed: true } : {}) };
   } finally {
     if (timer) clearTimeout(timer);
   }

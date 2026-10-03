@@ -153,10 +153,19 @@ export function sliceUntil(
 // the client didn't ask to render.
 const UNTIL_CAP = 50000;
 
-// How long a commit's diff may run. One commit's own diff is small; a diff
-// against a chosen base (TASK-128) spans whatever lies between them, and an
-// old tag on a large repository must not hold a git process open for good.
-const COMMIT_DIFF_TIMEOUT_MS = 30_000;
+// How long a commit's diff may run, and how much of it is read. One commit's
+// own diff is small; a diff against a chosen base (TASK-128) spans whatever
+// lies between them, and an old tag on a large repository must neither hold a
+// git process open nor be buffered whole into the daemon.
+//
+// The time is under `Bun.serve`'s idle timeout (10s, never overridden in
+// `server.ts`) on purpose: past that the connection is dropped, the client
+// sees a network error instead of this route's, and git runs on for nobody.
+// The size is far above `capDiff`'s own budget because the cap needs the whole
+// text to find its sections — one multi-megabyte file is a diff it reduces to
+// headers, not one to refuse.
+const COMMIT_DIFF_TIMEOUT_MS = 8_000;
+const COMMIT_DIFF_MAX_BYTES = 128 * 1024 * 1024;
 
 const LOG_FORMAT ="--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f%b%x1e";
 const COMMIT_META_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%D%x1f%B";
@@ -290,7 +299,7 @@ export const gitRoutes = {
         const [forEach, symbolic, revParse] = await Promise.all([
           gitSpawn(dir, [
             "for-each-ref",
-            "--format=%(refname)%1f%(objectname)%1f%(*objectname)",
+            "--format=%(refname)%1f%(objectname)%1f%(*objectname)%1f%(objecttype)%1f%(*objecttype)",
             "refs/heads",
             "refs/remotes",
             "refs/tags",
@@ -298,6 +307,12 @@ export const gitRoutes = {
           gitSpawn(dir, ["symbolic-ref", "-q", "HEAD"]),
           gitSpawn(dir, ["rev-parse", "HEAD"]),
         ]);
+        // A listing that failed is not a repository with no refs. A client
+        // holding a choice of ref (a commit's diff base) drops it when the
+        // refs say it is gone, and must not be told so by an error.
+        if (forEach.exitCode !== 0) {
+          return Response.json({ error: "Failed to get git refs" }, { status: 500 });
+        }
 
         const branches: { name: string; sha: string }[] = [];
         const remotes: { name: string; sha: string }[] = [];
@@ -305,8 +320,12 @@ export const gitRoutes = {
 
         for (const line of forEach.stdout.split("\n")) {
           if (!line) continue;
-          const [refname, objectname, peeled] = line.split("\x1f");
+          const [refname, objectname, peeled, type, peeledType] = line.split("\x1f");
           if (!refname || !objectname) continue;
+          // A tag on a tree or a blob (git.git and linux each carry one) names
+          // no commit: there is nothing to open and nothing to diff against.
+          const pointsAt = peeledType || type;
+          if (pointsAt === "tree" || pointsAt === "blob") continue;
           // Annotated tags: %(*objectname) is the peeled commit; use it when set.
           const sha = (peeled && peeled.length > 0 ? peeled : objectname).trim();
           if (refname.startsWith("refs/heads/")) {
@@ -453,8 +472,11 @@ export const gitRoutes = {
           diffBase !== null && (verifyBase || parents.length >= 2)
             ? ["diff-tree", "--patch", "-M", diffBase, resolvedSha]
             : ["diff-tree", "--patch", "--root", "-M", resolvedSha],
-          { timeoutMs: COMMIT_DIFF_TIMEOUT_MS },
+          { timeoutMs: COMMIT_DIFF_TIMEOUT_MS, maxStdoutBytes: COMMIT_DIFF_MAX_BYTES },
         );
+        if (diffResult.overflowed) {
+          return Response.json({ error: "Diff is too large to show" }, { status: 413 });
+        }
         // A diff that could not be taken is not an empty diff: the client
         // would say "no changes" and keep saying it, since it caches by sha.
         if (diffResult.exitCode !== 0) {

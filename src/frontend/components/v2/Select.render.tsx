@@ -132,6 +132,19 @@ describe("filtering", () => {
     expect(screen.queryByText(/type to narrow/)).toBeNull();
     unmount();
 
+    // The chosen row is drawn wherever it falls: a popup with no checked row
+    // reads as nothing being selected.
+    const last = `v${MAX_FILTER_ROWS + 49}`;
+    const chosen = render(
+      <Select label="ref" options={many} value={last} onValueChange={() => {}} filterPlaceholder="Type to filter" />,
+    );
+    openSelect("ref");
+    const rows = screen.getAllByRole("option");
+    expect(rows).toHaveLength(MAX_FILTER_ROWS);
+    expect(rows[0]!.textContent).toBe("ref-249");
+    expect(rows[0]!.getAttribute("data-state")).toBe("checked");
+    chosen.unmount();
+
     // A list that cannot filter has no way to reach what was cut, so it is not.
     render(<Select label="ref" options={many} value="v0" onValueChange={() => {}} />);
     openSelect("ref");

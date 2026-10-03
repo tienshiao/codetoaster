@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { gitRoutes } from "./git";
+import { gitSpawn } from "./utils";
 import { highlightRoutes } from "./highlight";
 import { parseDiff } from "../frontend/utils/parseDiff";
 import { initDatabase } from "../lib/db";
@@ -56,6 +57,11 @@ beforeAll(async () => {
   // A commit with no history in common with any of the above.
   const emptyTree = await git(root, "hash-object", "-t", "tree", "/dev/null");
   lone = await git(root, "commit-tree", emptyTree, "-m", "lone");
+
+  // Two tags: an annotated one on a commit, and one on a tree, which names no
+  // commit at all.
+  await git(root, "tag", "-a", "v1", "-m", "v1", fork);
+  await git(root, "tag", "on-a-tree", await git(root, "rev-parse", "main^{tree}"));
 
   // Last, so `mainTip` above is still the commit before it.
   await git(root, "merge", "-q", "--no-ff", "feature", "-m", "merge feature");
@@ -129,6 +135,25 @@ test("a base that is not a sha is a 400, and one nobody has is a 404", async () 
   expect((await fetch(`${api}/git/commit?sha=${feature}&base=${"0".repeat(40)}`)).status).toBe(404);
 });
 
+test("refs offer a tag by the commit it names, and leave out one that names none", async () => {
+  const res = await fetch(`${api}/git/refs`);
+  expect(res.status).toBe(200);
+  const { tags } = (await res.json()) as { tags: { name: string; sha: string }[] };
+  expect(tags).toEqual([{ name: "v1", sha: fork }]);
+});
+
+test("gitSpawn stops reading past maxStdoutBytes, and says so", async () => {
+  const whole = await gitSpawn(projectRoot, ["cat-file", "-p", feature]);
+  expect(whole.overflowed).toBeUndefined();
+
+  const roomy = await gitSpawn(projectRoot, ["cat-file", "-p", feature], { maxStdoutBytes: 1 << 20 });
+  expect(roomy).toEqual(whole);
+
+  const cut = await gitSpawn(projectRoot, ["cat-file", "-p", feature], { maxStdoutBytes: 10 });
+  expect(cut.overflowed).toBe(true);
+  expect(cut.stdout.length).toBeLessThanOrEqual(10);
+});
+
 async function oldSide(body: Record<string, unknown>): Promise<string> {
   const res = await fetch(`${api}/diff-tokens`, {
     method: "POST",
@@ -140,16 +165,16 @@ async function oldSide(body: Record<string, unknown>): Promise<string> {
   return (files["a.ts"]!.old ?? []).map((line) => line.map((t) => t.text).join("")).join("\n");
 }
 
-test("tokens read the old side from the base when one is named, else the parent", async () => {
+test("tokens read the old side from the commit named, else the parent", async () => {
   expect(await oldSide({ sha: feature })).toContain("a = 2");
-  expect(await oldSide({ sha: feature, base: fork })).toContain("a = 1");
+  expect(await oldSide({ sha: feature, oldSha: fork })).toContain("a = 1");
 });
 
-test("a token base that is not a sha is a 400", async () => {
+test("a token old side that is not a sha is a 400", async () => {
   const res = await fetch(`${api}/diff-tokens`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sha: feature, base: "main", files: [] }),
+    body: JSON.stringify({ sha: feature, oldSha: "main", files: [] }),
   });
   expect(res.status).toBe(400);
 });

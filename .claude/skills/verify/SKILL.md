@@ -78,7 +78,7 @@ All task-scoped endpoints live under `/api/tasks/<task-id>/…`: `diff`,
 with it), `git/tree?sha=`, `git/file?sha=&file=`,
 `image/git?ref=&file=`, `symbols?name=` (`&sha=` for one commit's files),
 `symbols/search?q=`, POST
-`diff-tokens` (`{ files, sha? }`). SHAs must be full/abbrev hex (`SHA_RE`);
+`diff-tokens` (`{ files, sha?, oldSha? }`). SHAs must be full/abbrev hex (`SHA_RE`);
 symbolic refs like `HEAD` are rejected 400 by design.
 
 These read the task row, not a process, so they answer for a task whose PTY is

@@ -64,7 +64,9 @@ let refs: GitRefsResponse = REFS;
 /** Bases whose diff is empty: the commit is already in them. */
 let emptyAgainst = new Set<string>();
 let commitRequests: string[] = [];
-let tokenBodies: { sha?: string; base?: string }[] = [];
+let tokenBodies: { sha?: string; oldSha?: string }[] = [];
+/** Held back when set, so a test can look at the pane while a diff is in flight. */
+let gate: Promise<void> | null = null;
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
@@ -75,6 +77,7 @@ beforeEach(() => {
   emptyAgainst = new Set();
   commitRequests = [];
   tokenBodies = [];
+  gate = null;
   layout.props.mockReset();
   resetViewStates(TASK);
   vi.stubGlobal(
@@ -89,6 +92,7 @@ beforeEach(() => {
       if (url.pathname.endsWith("/git/commit")) {
         commitRequests.push(url.search);
         const base = url.searchParams.get("base");
+        if (gate) await gate;
         const diff = base === null ? diffOf("tip.ts") : emptyAgainst.has(base) ? "" : diffOf("tip.ts") + diffOf("earlier.ts");
         return json({
           meta: {
@@ -186,7 +190,7 @@ test("choosing a ref asks for the diff against it, and reads the old side from t
   expect(getViewState("commit", VIEW).changesScrollTop).toBe(0);
   // The old side is the merge base the server named, not the ref's own tip.
   expect(lastLayout().imageRefs).toEqual({ old: FORK, new: SHA });
-  await waitFor(() => expect(tokenBodies.at(-1)).toMatchObject({ sha: SHA, base: FORK }));
+  await waitFor(() => expect(tokenBodies.at(-1)).toMatchObject({ sha: SHA, oldSha: FORK }));
 
   chooseOption("Relative to", "Parent commit");
   await waitFor(() => expect(shownFiles()).toBe("tip.ts"));
@@ -213,6 +217,50 @@ test("the diff follows the ref when it moves", async () => {
     });
   });
   await waitFor(() => expect(commitRequests.at(-1)).toBe(`?sha=${SHA}&base=${V2_MOVED}`));
+});
+
+test("the diff stays on screen while a moved ref's is fetched, and is not remounted for the same merge base", async () => {
+  setViewField("commit", VIEW, "changesBase", "branch:v2");
+  const client = mount("changes");
+  await waitFor(() => expect(shownFiles()).toBe("earlier.ts,tip.ts"));
+  const layoutNode = screen.getByTestId("layout");
+
+  let release!: () => void;
+  gate = new Promise((resolve) => (release = resolve));
+  act(() => {
+    client.setQueryData(gitKeys.refs(rootId(ROOT)), {
+      ...REFS,
+      branches: [REFS.branches[0]!, { name: "v2", sha: V2_MOVED }],
+    });
+  });
+  await waitFor(() => expect(commitRequests.at(-1)).toBe(`?sha=${SHA}&base=${V2_MOVED}`));
+  // In flight: the old tip's diff, not a spinner.
+  expect(screen.queryByText("Loading commit...")).toBeNull();
+  expect(shownFiles()).toBe("earlier.ts,tip.ts");
+
+  await act(async () => {
+    release();
+    await gate;
+  });
+  // The merge base did not move, so it is the same diff in the same layout.
+  await waitFor(() => expect(client.isFetching()).toBe(0));
+  expect(screen.getByTestId("layout")).toBe(layoutNode);
+});
+
+test("a different choice is a different reading: its diff is waited for", async () => {
+  mount("changes");
+  await refsLoaded();
+  await waitFor(() => expect(shownFiles()).toBe("tip.ts"));
+
+  let release!: () => void;
+  gate = new Promise((resolve) => (release = resolve));
+  chooseOption("Relative to", "v2");
+  await screen.findByText("Loading commit...");
+  await act(async () => {
+    release();
+    await gate;
+  });
+  await waitFor(() => expect(shownFiles()).toBe("earlier.ts,tip.ts"));
 });
 
 test("a chosen ref that is gone reads as the parent again, and the choice goes with it", async () => {

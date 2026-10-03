@@ -22,7 +22,7 @@ async function tokensForFile(
   dir: string,
   file: DiffTokenRequestFile,
   sha: string | undefined,
-  base: string | undefined,
+  oldSha: string | undefined,
 ): Promise<FileSides> {
   const result: FileSides = { old: null, new: null };
   try {
@@ -48,10 +48,10 @@ async function tokensForFile(
       // safePath guards the path shape; the ref is passed to git as argv.
       if (safePath(dir, oldPath)) {
         // With `sha`, the old side is the commit the diff was taken from when
-        // the caller names one (`base`), else the first parent — a root
+        // the caller names one (`oldSha`), else the first parent — a root
         // commit's `<sha>^1` show fails and stays null (client regex fallback).
         const oldContent = sha
-          ? await gitShow(dir, `${base ?? `${sha}^1`}:${oldPath}`)
+          ? await gitShow(dir, `${oldSha ?? `${sha}^1`}:${oldPath}`)
           : await readOldSide(dir, oldPath);
         if (oldContent !== null) {
           result.old = await highlightFile(oldContent, oldPath);
@@ -68,18 +68,18 @@ export const highlightRoutes = {
   ...rootRoutes("diff-tokens", {
     async POST({ repoRoot: dir }, req) {
       try {
-        const body = (await req.json()) as { files?: DiffTokenRequestFile[]; sha?: string; base?: string };
+        const body = (await req.json()) as { files?: DiffTokenRequestFile[]; sha?: string; oldSha?: string };
         // `sha` is optional; validate only when present. Absent => working-tree
         // behavior is unchanged.
         const sha = body.sha;
         if (sha !== undefined && !SHA_RE.test(sha)) {
           return Response.json({ error: "Invalid sha" }, { status: 400 });
         }
-        // `base` names the old side of a commit diff, so it means nothing
+        // `oldSha` names the old side of a commit diff, so it means nothing
         // without `sha` and is ignored there.
-        const base = sha === undefined ? undefined : body.base;
-        if (base !== undefined && !SHA_RE.test(base)) {
-          return Response.json({ error: "Invalid base" }, { status: 400 });
+        const oldSha = sha === undefined ? undefined : body.oldSha;
+        if (oldSha !== undefined && !SHA_RE.test(oldSha)) {
+          return Response.json({ error: "Invalid oldSha" }, { status: 400 });
         }
         const files = (body.files ?? []).slice(0, MAX_FILES);
 
@@ -87,7 +87,7 @@ export const highlightRoutes = {
         for (let i = 0; i < files.length; i += BATCH_SIZE) {
           const batch = files.slice(i, i + BATCH_SIZE);
           const results = await Promise.all(
-            batch.map((file) => tokensForFile(dir, file, sha, base)),
+            batch.map((file) => tokensForFile(dir, file, sha, oldSha)),
           );
           batch.forEach((file, j) => {
             out[file.path] = results[j]!;

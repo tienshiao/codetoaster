@@ -103,7 +103,16 @@ export function Select({
   // first rows and says how many it left out; typing is how the rest are
   // reached. A list that cannot filter is never cut, since it would have no
   // way to reach what was.
-  const shown = filtering && matches.length > MAX_FILTER_ROWS ? matches.slice(0, MAX_FILTER_ROWS) : matches;
+  //
+  // The chosen row is drawn whatever its position, at the top when the cut
+  // would have dropped it: a popup that opens with no checked row reads as
+  // nothing being selected.
+  const shown = useMemo(() => {
+    if (!filtering || matches.length <= MAX_FILTER_ROWS) return matches;
+    const head = matches.slice(0, MAX_FILTER_ROWS);
+    const chosen = matches.find((option) => option.value === value);
+    return chosen && !head.includes(chosen) ? [chosen, ...head.slice(0, -1)] : head;
+  }, [filtering, matches, value]);
 
   // The trigger's text comes from the options rather than from the selected
   // `Select.ItemText` portaling into it, which is Radix's default. Filtering

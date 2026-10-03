@@ -340,7 +340,12 @@ export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectComm
 
   // Tree mode renders no diff, so skip the token fetch until a diff-rendering
   // mode needs it.
-  const commit = useGitCommit(root, awaitingRefs ? undefined : sha, mode !== "tree", base?.sha);
+  const commit = useGitCommit(
+    root,
+    awaitingRefs ? undefined : sha,
+    mode !== "tree",
+    base ? { sha: base.sha, ref: base.value } : undefined,
+  );
   const { data, error } = commit;
   const isLoading = commit.isLoading || awaitingRefs;
 
@@ -415,11 +420,13 @@ export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectComm
           </div>
         );
       }
-      // Keyed by the base as well as the commit: a different base is a
-      // different diff, and the layout restores its scroll once per mount.
+      // Keyed by where the diff starts as well as the commit: a different old
+      // side is a different diff, and the layout restores its scroll once per
+      // mount. Not by the chosen ref's own sha, which moves with every commit
+      // that lands on it while the diff stays what it was.
       return (
         <ChangesMode
-          key={`${meta.hash}:${base?.sha ?? ""}`}
+          key={`${meta.hash}:${diffBase ?? ""}`}
           root={root}
           view={view}
           files={files}
@@ -456,7 +463,7 @@ export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectComm
               disabled={refsQuery.isLoading}
               title={
                 base && diffBase
-                  ? `Changes since this commit's history left ${base.name} (${diffBase.slice(0, 8)})`
+                  ? `Relative to ${base.name}: changes from ${diffBase.slice(0, 8)} to this commit`
                   : undefined
               }
             />
