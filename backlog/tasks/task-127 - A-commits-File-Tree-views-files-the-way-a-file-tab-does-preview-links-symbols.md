@@ -3,10 +3,10 @@ id: TASK-127
 title: >-
   A commit's File Tree views files the way a file tab does: preview, links,
   symbols
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-10-03 19:06'
-updated_date: '2026-10-03 19:21'
+updated_date: '2026-10-03 19:34'
 labels: []
 dependencies: []
 ordinal: 129000
@@ -30,8 +30,6 @@ A commit tab's File Tree mode draws the source of a file and nothing else. A fil
 - [x] #8 Tests cover the commit symbol index and the tree's viewer; the wiki says how a commit's files are viewed
 <!-- AC:END -->
 
-
-
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
@@ -42,4 +40,12 @@ A commit tab's File Tree mode draws the source of a file and nothing else. A fil
 
 <!-- SECTION:NOTES:BEGIN -->
 Decisions. Preview and Wrap in the tree are task-wide prefs, since one viewer shows every file; scroll offsets and the position a link or definition asked for (treeTarget) are per commit. A link or definition target stays inside the commit and is refused with a toast when the commit lacks the file. Preview links keep the raw href there: a file at a commit has no URL of its own. Commit indexes have their own LRU of 3 so browsing history does not evict a working tree's index. The image-at-ref route moved off the Bun shell onto the raw spawn helper, because a preview requests all its images together. Left out: Show changes from the tree (the Changes mode cannot be told which file to scroll to in all-files mode) and symbols in the commit's two diff modes.
+
+Code review (high) on the branch found ten items. Fixed: an unreadable blob now fails an immutable build instead of leaving a cached index that silently lacks files; both spawns time out; the build yields a real turn of the event loop every 25 files; the symbol popover reports a failed lookup instead of nothing found; a line the tree was sent to is spent once scrolled to; the image-at-ref route puts end-of-options before the ref and caches a full hash. Declined: reusing parsed entries across commits by blob id (a real speedup, but a different cache design), a bulk-read method on the source interface in place of read-ahead, and folding the three is-the-preview-showing checks into one.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+A commit's File Tree now reads a file with the same viewer as a file tab (FileViewer, extracted from FilePane): Preview for markdown and CSV/TSV, markdown links and images resolved against the commit's tree, heading and line jumps, scroll memory, and symbol lookup from an index of the commit's own files (symbols route with sha). A followed link or definition selects the file in the same tree. Verified with both test suites, the type-check, and in a browser against an isolated server.
+<!-- SECTION:FINAL_SUMMARY:END -->
