@@ -33,6 +33,12 @@ export function rootImageUrl(root: RepoRoot, path: string): string {
   return `${rootApi(root)}/image?file=${encodeURIComponent(path)}`;
 }
 
+/** The same image as it was at `ref`: what a file read at a commit loads
+ * instead (TASK-127). */
+export function rootGitImageUrl(root: RepoRoot, ref: string, path: string): string {
+  return `${rootApi(root)}/image/git?ref=${encodeURIComponent(ref)}&file=${encodeURIComponent(path)}`;
+}
+
 /**
  * The root's identity in caches and stores: the bare task id for a task — so
  * every existing query key, view-state slot and localStorage entry keeps its

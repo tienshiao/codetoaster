@@ -3,9 +3,10 @@ import { taskKeys } from "../query-keys";
 import { refetchOnFocusFor, rootApi, rootId, type RepoRoot } from "../repo-root";
 import type { SymbolLookupResult } from "../../lib/symbols/types";
 
-async function fetchSymbol(root: RepoRoot, name: string): Promise<SymbolLookupResult> {
+async function fetchSymbol(root: RepoRoot, name: string, sha?: string): Promise<SymbolLookupResult> {
+  const scope = sha ? `&sha=${encodeURIComponent(sha)}` : "";
   const res = await fetch(
-    `${rootApi(root)}/symbols?name=${encodeURIComponent(name)}`,
+    `${rootApi(root)}/symbols?name=${encodeURIComponent(name)}${scope}`,
   );
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -14,12 +15,15 @@ async function fetchSymbol(root: RepoRoot, name: string): Promise<SymbolLookupRe
   return res.json();
 }
 
-export function useSymbolLookup(root: RepoRoot, name: string | null) {
+/** One symbol's definitions and references: in the working tree, or — with
+ * `sha` — in the files of that commit (TASK-127). A commit's answer cannot
+ * change, so it is keyed apart from the working tree's and never refetched. */
+export function useSymbolLookup(root: RepoRoot, name: string | null, sha?: string) {
   return useQuery({
-    queryKey: taskKeys.symbol(rootId(root), name),
-    queryFn: () => fetchSymbol(root, name!),
+    queryKey: sha ? ["git-symbol", rootId(root), sha, name] : taskKeys.symbol(rootId(root), name),
+    queryFn: () => fetchSymbol(root, name!, sha),
     enabled: !!name,
-    staleTime: 5000,
-    refetchOnWindowFocus: refetchOnFocusFor(root),
+    staleTime: sha ? Infinity : 5000,
+    refetchOnWindowFocus: sha ? false : refetchOnFocusFor(root),
   });
 }

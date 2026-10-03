@@ -12,6 +12,8 @@ export interface SymbolTarget {
 
 interface SymbolPopoverProps {
   root: RepoRoot;
+  /** Look the symbol up in this commit's files instead of the working tree. */
+  sha?: string;
   target: SymbolTarget | null;
   onClose: () => void;
   /** Where a chosen definition or reference goes. A callback rather than a
@@ -21,8 +23,8 @@ interface SymbolPopoverProps {
   onGo: (entry: SymbolEntry) => void;
 }
 
-export function SymbolPopover({ root, target, onClose, onGo }: SymbolPopoverProps) {
-  const { data, isLoading } = useSymbolLookup(root, target?.name ?? null);
+export function SymbolPopover({ root, sha, target, onClose, onGo }: SymbolPopoverProps) {
+  const { data, isLoading } = useSymbolLookup(root, target?.name ?? null, sha);
 
   // Choosing an entry always dismisses: the popover is anchored to the click
   // that opened it, so leaving it up over a pane that has moved on is never

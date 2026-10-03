@@ -1,19 +1,14 @@
-import { memo, useMemo, useState, useCallback, useEffect } from "react";
-import { rootApi, type RepoRoot } from "@/frontend/repo-root";
-import { Loader2, Copy, Check, WrapText } from "lucide-react";
+import { memo, useMemo, useState, useCallback } from "react";
+import type { RepoRoot } from "@/frontend/repo-root";
+import { Loader2, Copy, Check } from "lucide-react";
 import { useGitCommit } from "../../hooks/use-git-commit";
-import { useGitTree, useGitFile } from "../../hooks/use-git-tree";
 import { DiffFile } from "../diff/DiffFile";
 import { DiffLayout, type DiffLayoutScroll } from "../diff/DiffLayout";
 import { DiffStat, sumDiffStats } from "../diff/DiffStat";
-import { FileTree } from "../file/FileTree";
-import { FileContent } from "../file/FileContent";
-import { Button } from "../ui/button";
-import { ResizeHandle } from "../v2/ResizeHandle";
-import { usePaneWidth } from "../../hooks/use-pane-width";
 import { relativeDate, absoluteDate } from "../../utils/relativeDate";
-import { toggleInSet, getViewState, setViewField, viewRef, type ViewRef } from "../../view-state-store";
+import { toggleInSet, getViewState, setViewField, type ViewRef } from "../../view-state-store";
 import { useViewState } from "../../hooks/use-view-state";
+import { CommitTree } from "./CommitTree";
 import { RefChip, displayRefs, type RefSets } from "./RefChip";
 import type { FileDiff } from "../../types/diff";
 import type { GitCommitMeta, GitViewMode } from "../../types/git";
@@ -260,137 +255,6 @@ function ChangesMode({
   );
 }
 
-// Tree mode: browse the commit's full tree (git/tree + git/file), mirroring the
-// file view's layout, out of the commit's own slot so it never touches the file
-// view's expansion set.
-function TreeMode({
-  root,
-  view,
-  sha,
-  file,
-  onSelectFile,
-}: {
-  root: RepoRoot;
-  view: ViewRef;
-  // Full 40-char hash — resolved from commit meta so query keys are stable.
-  sha: string;
-  file: string | undefined;
-  onSelectFile: (path: string | null) => void;
-}) {
-  const { data: treeData, isLoading, error } = useGitTree(root, sha);
-  // Expanded folders are per-commit; word wrap is a task-wide Tree-mode
-  // preference, so it must not be re-answered for every commit opened.
-  const [expandedPaths, setExpandedPaths] = useViewState("commit", view, "treeExpandedPaths");
-  const [lineWrap, setLineWrap] = useViewState("prefs", viewRef(view.taskId, "prefs"), "treeLineWrap");
-  const treeWidth = usePaneWidth("file-tree", "left");
-
-  const selectedFile = file ?? null;
-  const {
-    data: fileContent = null,
-    isLoading: contentLoading,
-    error: fileError,
-  } = useGitFile(root, sha, selectedFile);
-
-  // selectCommit deliberately preserves ?file= so the same file stays selected
-  // across commits when it exists; this effect handles the miss. Once the tree
-  // has loaded and the selected path isn't a file in it, the commit switched to
-  // one where that path doesn't exist — clear the selection (dropping ?file=)
-  // instead of showing the 404 pane. The fileError branch below still handles
-  // genuine fetch errors on files that ARE in the tree.
-  useEffect(() => {
-    if (!treeData || !selectedFile) return;
-    if (treeData.files.some((f) => !f.isDirectory && f.path === selectedFile)) return;
-    onSelectFile(null);
-  }, [treeData, selectedFile, onSelectFile]);
-
-  if (isLoading) {
-    return (
-      <div className="h-full flex items-center justify-center text-muted-foreground text-sm gap-2">
-        <Loader2 className="animate-spin" size={16} /> Loading tree...
-      </div>
-    );
-  }
-
-  if (error || !treeData) {
-    return (
-      <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-        {error instanceof Error ? error.message : "Failed to load tree"}
-      </div>
-    );
-  }
-
-  const files = treeData.files;
-  if (files.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-        This commit has no files.
-      </div>
-    );
-  }
-
-  const imageUrl = selectedFile
-    ? `${rootApi(root)}/image/git?ref=${sha}&file=${encodeURIComponent(selectedFile)}`
-    : undefined;
-
-  return (
-    // `overflow-hidden` for the same reason as `DiffLayout`: the tree's floor
-    // and the pane's beside it add up to more than a tab group's minimum, and
-    // the spill has to be clipped rather than painted over the next group.
-    <div className="flex h-full min-w-0 overflow-hidden">
-      <div {...treeWidth.paneProps} className="overflow-hidden">
-        <FileTree
-          files={files}
-          selectedFile={selectedFile}
-          onSelectFile={onSelectFile}
-          expandedPaths={expandedPaths}
-          onExpandedPathsChange={setExpandedPaths}
-        />
-      </div>
-      <ResizeHandle
-        label="Resize file tree"
-        onResizeStart={treeWidth.onResizeStart}
-        onResize={treeWidth.onResize}
-        onResizeEnd={treeWidth.onResizeEnd}
-        onNudge={treeWidth.onNudge}
-      />
-      <div {...treeWidth.restProps} className="flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="font-mono text-foreground">{selectedFile || "No file selected"}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              variant={lineWrap ? "secondary" : "ghost"}
-              size="sm"
-              className="h-6 w-6 p-0"
-              title="Wrap"
-              onClick={() => setLineWrap(!lineWrap)}
-            >
-              <WrapText size={14} />
-            </Button>
-          </div>
-        </div>
-        {fileError && selectedFile ? (
-          // Stale deep link: ?file= no longer exists at this sha (git/file 404s).
-          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-            {fileError instanceof Error ? fileError.message : "File not found in this commit"}
-          </div>
-        ) : (
-          <FileContent
-            key={selectedFile || ""}
-            filePath={selectedFile || ""}
-            root={root}
-            content={fileContent}
-            loading={contentLoading}
-            lineWrap={lineWrap}
-            imageUrl={imageUrl}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectCommit, file, onSelectFile, refSets }: CommitDetailProps) {
   // Tree mode renders no diff, so skip the token fetch until a diff-rendering
   // mode needs it.
@@ -436,7 +300,7 @@ export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectComm
     // per commit.
     if (mode === "tree") {
       return (
-        <TreeMode
+        <CommitTree
           key={meta.hash}
           root={root}
           view={view}

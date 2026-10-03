@@ -5,6 +5,7 @@ okf_version: "0.2"
 # Modules
 
 * [Commit graph and log pagination](modules/commit-graph.md) - Graph lanes come from a pure, resumable GraphState so paging stays deterministic, and /git/log detects history drift with after= (409) and seeks with until=.
+* [File viewer](modules/file-viewer.md) - A file tab and a commit's File Tree draw a file with the same viewer; the tab reads the working tree, the tree reads one commit, including its own symbol index.
 * [Markdown preview](modules/markdown-preview.md) - A file tab renders markdown with GFM, mermaid diagrams and a frontmatter header; its links open the files and headings they name, and its images load from the repository.
 * [Task naming](modules/task-naming.md) - A task's stored name is a stable "<dir> · <branch>" label used for slugs and CLI matching, while the displayed label is projected at render time from a rename, the live terminal title, or the stored name.
 * [Terminal links](modules/terminal-links.md) - Task ids, file paths, bare file names and commit hashes in a task's terminals are xterm links that open a task file, a file tab or a commit, each matched by a DOM-free provider.

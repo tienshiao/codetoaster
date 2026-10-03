@@ -306,8 +306,17 @@ export async function gitSpawn(
 // Raw-bytes variant of gitSpawn for blob content that must not be decoded as
 // text (binary detection needs the raw bytes). Same rationale: Bun.spawn (not
 // Bun.$) so large output streams through a pipe rather than buffering in a shell.
-export async function gitSpawnRaw(dir: string, args: string[]): Promise<{ bytes: Uint8Array; exitCode: number }> {
-  const proc = Bun.spawn(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "ignore" });
+// `stdin` is for `cat-file --batch`, which is handed its list of objects there.
+export async function gitSpawnRaw(
+  dir: string,
+  args: string[],
+  options?: Pick<GitSpawnOptions, "stdin">,
+): Promise<{ bytes: Uint8Array; exitCode: number }> {
+  const proc = Bun.spawn(["git", "-C", dir, ...args], {
+    stdout: "pipe",
+    stderr: "ignore",
+    ...(options?.stdin !== undefined ? { stdin: new Blob([options.stdin]) } : {}),
+  });
   const [buffer, exitCode] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited]);
   return { bytes: new Uint8Array(buffer), exitCode };
 }

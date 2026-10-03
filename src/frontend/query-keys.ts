@@ -20,9 +20,10 @@
  * — for a project root too, when the task that changed runs in the project's
  * own directory.
  *
- * Not here: `git-commit`, `git-tree`, `git-file` and `diff-tokens`. All four
- * are keyed by a content hash, nothing on the other side of this module ever
- * invalidates them, and a hash's content cannot change.
+ * Not here: `git-commit`, `git-tree`, `git-file`, `git-symbol` and
+ * `diff-tokens`. All five are keyed by a content hash, nothing on the other
+ * side of this module ever invalidates them, and a hash's content cannot
+ * change.
  */
 
 /** Everything under one task's checkout — `["tasks", id, …]`. The prefixes are

@@ -1,19 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { rootId, rootImageUrl, type RepoRoot } from "@/frontend/repo-root";
-import { Eye, FileDiff, FolderSearch, WrapText } from "lucide-react";
+import { rootId, type RepoRoot } from "@/frontend/repo-root";
 import { toast } from "sonner";
-import { IconButton } from "@/frontend/components/v2";
-import { FileContent } from "@/frontend/components/file/FileContent";
-import type { AnchorJump } from "@/frontend/components/file/MarkdownPreview";
-import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
+import { FileViewer, isMarkdown, type FileViewerMemory } from "@/frontend/components/file/FileViewer";
 import { fetchTaskFiles, revealFile, useFileContent, useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useChangedPaths } from "@/frontend/hooks/use-task-diff";
 import { canRevealInFinder } from "@/frontend/utils/platform";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
-import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
-import { delimiterForPath } from "@/frontend/utils/delimited";
 import { resolveMarkdownLink } from "@/frontend/utils/markdown-links";
 import { filePathSet } from "@/frontend/utils/path-links";
 import { fileTabHref } from "@/frontend/utils/tab-link";
@@ -45,11 +39,15 @@ interface FilePaneProps {
 }
 
 /**
- * A `file` tab: one file's contents.
+ * A `file` tab: one file's contents, from the working tree.
  *
  * There is no tree here. The tree is the Explorer's (§7.1) and outlives every
  * file tab it opens, so a pane that carried one would be drawing the same tree
  * once per open file.
+ *
+ * What is drawn is `FileViewer`'s, shared with a commit's File Tree
+ * (TASK-127). This pane is the working tree's side of it: the content, the
+ * file list, and the `file:<path>` slot the state lives in.
  */
 export function FilePane({
   root,
@@ -62,7 +60,6 @@ export function FilePane({
   onOpenFile,
   onOpenDiff,
 }: FilePaneProps) {
-  const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const [lineWrap, setLineWrap] = useViewState("file", view, "lineWrap");
   const [markdownPreview, setMarkdownPreview] = useViewState("file", view, "markdownPreview");
   const { data: content = null, isLoading } = useFileContent(root, path);
@@ -70,85 +67,33 @@ export function FilePane({
   // is not `useTaskDiff`.
   const changed = useChangedPaths(root)?.has(path) ?? false;
 
-  const hasPreview = getLanguageFromPath(path)?.name === "Markdown" || delimiterForPath(path) !== null;
-  const previewActive = hasPreview && markdownPreview;
-  // Source and a rendered preview have unrelated content heights, so the
-  // offset — and FileContent's mount — are keyed by mode, not just by the file.
-  const scrollKey = previewActive ? `md-preview:${path}` : path;
-  const scrollTops = getViewState("file", view).scrollTops;
   const queryClient = useQueryClient();
   const rootKey = rootId(root);
 
-  // A heading to scroll the preview to (TASK-124), one request per `anchorAt`.
-  // This pane unmounts whenever its tab is not the active one, while the
-  // descriptor keeps its anchor, so the request is served once and recorded
-  // in the view state — which outlives the mount, and the reload — or every
-  // return to the tab would scroll back over the user's place.
-  const fileView = getViewState("file", view);
-  const jump: AnchorJump | null =
-    anchor && anchorAt !== undefined && anchorAt !== fileView.jumpedAt ? { anchor, seq: anchorAt } : null;
-  const onAnchorJumped = (seq: number) => {
-    fileView.jumpedAt = seq;
-    touchViewState(view);
-  };
-  // Only a markdown preview has headings to land on. A request that arrives
-  // while the tab shows source, or a CSV's table, is spent all the same, or
-  // turning the preview on minutes later would jump over the place it restores.
-  const showsMarkdown = previewActive && getLanguageFromPath(path)?.name === "Markdown";
-  const pendingSeq = jump?.seq;
-  useEffect(() => {
-    if (pendingSeq !== undefined && !showsMarkdown) onAnchorJumped(pendingSeq);
-  });
+  const memory = useMemo<FileViewerMemory>(
+    () => ({
+      getScrollTop: (key) => getViewState("file", view).scrollTops.get(key),
+      setScrollTop: (key, top) => {
+        getViewState("file", view).scrollTops.set(key, top);
+        touchViewState(view);
+      },
+      getJumpedAt: () => getViewState("file", view).jumpedAt,
+      setJumpedAt: (seq) => {
+        getViewState("file", view).jumpedAt = seq;
+        touchViewState(view);
+      },
+    }),
+    [view],
+  );
 
   // Preview links and images resolve against the Explorer's file list
   // (TASK-122), fetched when needed rather than watched while the preview is
   // up: most previews are read without a click, and an observer would refetch
-  // the whole listing on every working-tree change. A failed fetch still
-  // yields the plain resolution.
-  const resolve = async (href: string) => {
-    const files = await fetchTaskFiles(queryClient, root).catch(() => null);
-    return resolveMarkdownLink(href, path, files ? filePathSet(files) : null);
-  };
-
-  // Only the latest click acts, and only while the pane is still here: the
-  // listing can be slow, and a link should not open after the user clicked
-  // another or closed the tab.
-  const latestClick = useRef(0);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  const openLink = async (href: string) => {
-    const click = ++latestClick.current;
-    const target = await resolve(href);
-    if (click !== latestClick.current || !mounted.current) return;
-    // A link to a heading of this very file goes through the descriptor too:
-    // `anchorAt` makes it a new request even when the heading is the same.
-    if (target) onOpenFile(target.path, target.line, target.anchor);
-    // The click was already kept from the browser; say why nothing opened.
-    else toast.error("That link does not name a file in this repository", { description: href });
-  };
-
-  // Both stable: every link and image is a context consumer, and an image asks
-  // again whenever its resolver changes (TASK-125). `path` stays a dependency
-  // of the image resolver all the same: a relative image means something else
-  // from another file.
-  const latest = useRef({ resolve, openLink });
-  useLayoutEffect(() => {
-    latest.current = { resolve, openLink };
-  });
-  const onOpenLink = useCallback((href: string) => void latest.current.openLink(href), []);
-  const resolveImage = useCallback(
-    async (src: string) => {
-      const target = await latest.current.resolve(src);
-      return target ? rootImageUrl(root, target.path) : null;
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `root` by its key, as above
-    [rootKey, path],
+  // the whole listing on every working-tree change.
+  const listFiles = useCallback(
+    async () => filePathSet(await fetchTaskFiles(queryClient, root)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `root` by its key: a new object for the same root is not a new root
+    [queryClient, rootKey],
   );
 
   // A link's real URL (TASK-126), for what the browser does with an href on
@@ -158,6 +103,7 @@ export function FilePane({
   // refetches nothing on this pane's account — and asks for it once when a
   // task's markdown preview opens. Until it arrives, a link gets the plain
   // resolution, which is right for every link but an extensionless or `/` one.
+  const showsMarkdown = markdownPreview && isMarkdown(path);
   const { data: cachedFiles } = useTaskFiles(root, { enabled: false });
   useEffect(() => {
     if (taskHref && showsMarkdown) void fetchTaskFiles(queryClient, root).catch(() => {});
@@ -173,74 +119,33 @@ export function FilePane({
   }, [taskHref, path, cachedFiles]);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex h-row flex-none items-center gap-2 border-b border-border bg-chrome px-3">
-        <span className="truncate font-mono text-micro tracking-mono text-muted-foreground">
-          {path}
-        </span>
-        <div className="ml-auto flex flex-none items-center gap-0.5">
-          {changed && (
-            <IconButton icon={FileDiff} label="Show changes" size="sm" onClick={() => onOpenDiff(path)} />
-          )}
-          {hasPreview && (
-            <IconButton
-              icon={Eye}
-              label="Preview"
-              size="sm"
-              active={markdownPreview}
-              onClick={() => setMarkdownPreview(!markdownPreview)}
-            />
-          )}
-          <IconButton
-            icon={WrapText}
-            label="Wrap"
-            size="sm"
-            active={lineWrap}
-            onClick={() => setLineWrap(!lineWrap)}
-          />
-          {/* The daemon reveals the file on its own machine, so the button is
-              only offered to a browser that is plausibly sitting at it. */}
-          {canRevealInFinder() && (
-            <IconButton
-              icon={FolderSearch}
-              label="Show in Finder"
-              size="sm"
-              onClick={() =>
-                revealFile(root, path).catch((e: Error) =>
-                  toast.error("Could not show the file in Finder", { description: e.message }),
-                )
-              }
-            />
-          )}
-        </div>
-      </div>
-      <FileContent
-        key={scrollKey}
-        filePath={path}
-        root={root}
-        content={content}
-        loading={isLoading}
-        lineWrap={lineWrap}
-        markdownPreview={markdownPreview}
-        initialScrollTop={scrollTops.get(scrollKey)}
-        onScrollTopChange={(top) => {
-          scrollTops.set(scrollKey, top);
-          touchViewState(view);
-        }}
-        highlightLine={line}
-        onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}
-        onOpenLink={onOpenLink}
-        resolveImage={resolveImage}
-        hrefFor={hrefFor}
-        anchorJump={jump}
-        onAnchorJumped={onAnchorJumped}
-      />
-      <SymbolPopover
-        root={root}
-        target={symbolTarget}
-        onClose={() => setSymbolTarget(null)}
-        onGo={(entry) => onOpenFile(entry.path, entry.line)}
-      />
-    </div>
+    <FileViewer
+      root={root}
+      path={path}
+      content={content}
+      loading={isLoading}
+      lineWrap={lineWrap}
+      onLineWrapChange={setLineWrap}
+      preview={markdownPreview}
+      onPreviewChange={setMarkdownPreview}
+      memory={memory}
+      line={line}
+      anchor={anchor}
+      anchorAt={anchorAt}
+      listFiles={listFiles}
+      hrefFor={hrefFor}
+      onOpenFile={onOpenFile}
+      onShowChanges={changed ? () => onOpenDiff(path) : undefined}
+      // The daemon reveals the file on its own machine, so the button is only
+      // offered to a browser that is plausibly sitting at it.
+      onReveal={
+        canRevealInFinder()
+          ? () =>
+              revealFile(root, path).catch((e: Error) =>
+                toast.error("Could not show the file in Finder", { description: e.message }),
+              )
+          : undefined
+      }
+    />
   );
 }

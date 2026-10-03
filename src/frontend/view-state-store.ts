@@ -88,6 +88,27 @@ export interface CommitViewState {
   changesTreeCollapsedPaths: Set<string>;
   changesScrollTop: number;
   treeExpandedPaths: Set<string>;
+  /** Tree mode reads files the way a file tab does (TASK-127), so it keeps
+   * what a file tab keeps: scroll offsets, keyed by mode and path as
+   * `FileViewState.scrollTops` is. */
+  treeScrollTops: Map<string, number>;
+  /** Where the tree's selected file was asked to open: the line a
+   * go-to-definition landed on, or a markdown link's line or heading. A file
+   * tab carries these on its descriptor; the tree has one viewer and no
+   * descriptor per file, so they live here. Picking a file from the tree
+   * clears it. */
+  treeTarget: CommitTreeTarget | null;
+  /** The `at` of the last heading request carried out — `FileViewState.jumpedAt`. */
+  treeJumpedAt: number | null;
+}
+
+export interface CommitTreeTarget {
+  path: string;
+  line?: number;
+  anchor?: string;
+  /** When it was asked for: a new value is a new request, even for the same
+   * heading. */
+  at: number;
 }
 
 /** `history`: the commit graph and the ref sidebar beside it. */
@@ -149,6 +170,10 @@ export interface ExplorerViewState {
 export interface PrefsViewState {
   /** Word wrap in a commit's tree mode. */
   treeLineWrap: boolean;
+  /** Rendered markdown and tables in a commit's tree mode — a file tab's
+   * `markdownPreview`, on by default for the same reason. Task-wide like the
+   * wrap beside it: the tree shows many files through one toggle. */
+  treePreview: boolean;
 }
 
 export interface ViewStateShapes {
@@ -186,6 +211,9 @@ const DEFAULTS: { [K in ViewSlotKind]: () => ViewStateShapes[K] } = {
     changesTreeCollapsedPaths: new Set(),
     changesScrollTop: 0,
     treeExpandedPaths: new Set(),
+    treeScrollTops: new Map(),
+    treeTarget: null,
+    treeJumpedAt: null,
   }),
   history: () => ({
     refsClosedSections: new Set(),
@@ -207,7 +235,7 @@ const DEFAULTS: { [K in ViewSlotKind]: () => ViewStateShapes[K] } = {
     backlogOpenSort: null,
     backlogClosedSort: null,
   }),
-  prefs: () => ({ treeLineWrap: false }),
+  prefs: () => ({ treeLineWrap: false, treePreview: true }),
 };
 
 /** What survives a reload, per kind. An allowlist rather than a denylist: a
@@ -234,6 +262,9 @@ const PERSISTED: { [K in ViewSlotKind]: ReadonlyArray<keyof ViewStateShapes[K] &
     "changesTreeCollapsedPaths",
     "changesScrollTop",
     "treeExpandedPaths",
+    "treeScrollTops",
+    "treeTarget",
+    "treeJumpedAt",
   ],
   history: [
     "refsClosedSections",
@@ -255,7 +286,7 @@ const PERSISTED: { [K in ViewSlotKind]: ReadonlyArray<keyof ViewStateShapes[K] &
     "backlogOpenSort",
     "backlogClosedSort",
   ],
-  prefs: ["treeLineWrap"],
+  prefs: ["treeLineWrap", "treePreview"],
 };
 
 /** Slots a closing tab may take with it. The others outlive every tab in the

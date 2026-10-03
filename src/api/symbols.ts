@@ -1,5 +1,6 @@
-import { rootRoutes } from "./utils";
+import { gitSpawn, rootRoutes, SHA_RE } from "./utils";
 import { lookupSymbol, searchSymbolNames } from "../lib/symbols/store";
+import { lookupCommitSymbol } from "../lib/symbols/commitSource";
 
 export const symbolRoutes = {
   // Fuzzy/prefix search over symbol names (the palette "Find Symbol…" flow).
@@ -24,12 +25,27 @@ export const symbolRoutes = {
   ...rootRoutes("symbols", {
     async GET({ repoRoot: dir }, req) {
       try {
-        const name = new URL(req.url).searchParams.get("name");
+        const url = new URL(req.url);
+        const name = url.searchParams.get("name");
         if (!name) {
           return Response.json({ error: "Missing name parameter" }, { status: 400 });
         }
 
-        const lookup = await lookupSymbol(dir, name);
+        // `sha` scopes the lookup to one commit's files — a commit's File Tree
+        // (TASK-127), where the working tree's index would name files and
+        // lines that commit does not have.
+        const sha = url.searchParams.get("sha");
+        if (sha === null) return Response.json(await lookupSymbol(dir, name));
+        if (!SHA_RE.test(sha)) {
+          return Response.json({ error: "Invalid sha" }, { status: 400 });
+        }
+        // Resolved to the full hash, which is what the index is cached by: an
+        // abbreviation would otherwise build a second index of the same commit.
+        const verify = await gitSpawn(dir, ["rev-parse", "--verify", `${sha}^{commit}`]);
+        if (verify.exitCode !== 0) {
+          return Response.json({ error: "Commit not found" }, { status: 404 });
+        }
+        const lookup = await lookupCommitSymbol(dir, verify.stdout.trim(), name);
         return Response.json(lookup);
       } catch (error) {
         return Response.json(

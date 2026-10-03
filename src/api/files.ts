@@ -2,6 +2,7 @@ import {
   rootRoutes,
   cachedPromise,
   getImageMimeType,
+  gitSpawnRaw,
   IMAGE_MIME_TYPES,
   listGitFiles,
   safePath,
@@ -431,12 +432,15 @@ export const fileRoutes = {
           return Response.json({ error: "Invalid file path" }, { status: 400 });
         }
 
-        const gitResult = await Bun.$`git -C ${dir} show ${ref}:${filePath}`.quiet().nothrow();
-        if (gitResult.exitCode !== 0) {
+        // gitSpawnRaw, not Bun.$: a markdown preview read at a commit asks for
+        // every image on the page at once, which is the many-shells-buffering
+        // case Bun.$ deadlocks on.
+        const { bytes, exitCode } = await gitSpawnRaw(dir, ["show", `${ref}:${filePath}`]);
+        if (exitCode !== 0) {
           return Response.json({ error: "File not found in git history" }, { status: 404 });
         }
 
-        return new Response(new Uint8Array(gitResult.stdout), {
+        return new Response(bytes.buffer as ArrayBuffer, {
           headers: { "Content-Type": getImageMimeType(filePath), "Cache-Control": "no-cache" },
         });
       } catch (error) {

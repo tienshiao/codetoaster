@@ -9,9 +9,12 @@ import type { SymbolEntry, SymbolLookupResult, SymbolNameMatch, SymbolSearchResu
 // large repo is a few seconds (see benchmark), so there is no on-disk index.
 
 const MAX_PROJECTS = 4;
+// Commit indexes are counted apart from the working trees': paging through a
+// few commits must not evict the index of the checkout the user is working in.
+const MAX_COMMITS = 3;
 const MAX_FILES = 20_000;
 const MAX_ENTRIES = 5_000_000;
-const MAX_FILE_SIZE = 512 * 1024;
+export const MAX_FILE_SIZE = 512 * 1024;
 const VALIDATE_INTERVAL_MS = 5_000;
 const YIELD_EVERY = 200;
 const LOOKUP_CAP = 200;
@@ -23,6 +26,9 @@ export interface ProjectSource {
   stat(path: string): Promise<{ mtimeMs: number; size: number } | null>;
   read(path: string): Promise<string>;
   now(): number;
+  /** The files can never change — a commit's tree (`commitSource.ts`). Built
+   * once and never revalidated, and kept in its own cache. */
+  immutable?: boolean;
 }
 
 interface FileIndex {
@@ -42,6 +48,7 @@ interface ProjectIndex {
 }
 
 const projects = new Map<string, ProjectIndex>();
+const commits = new Map<string, ProjectIndex>();
 
 function gitProjectSource(dir: string): ProjectSource {
   return {
@@ -159,16 +166,16 @@ async function revalidate(index: ProjectIndex, source: ProjectSource): Promise<v
   index.lastValidated = source.now();
 }
 
-function touchLru(dir: string, index: ProjectIndex): void {
-  projects.delete(dir);
-  projects.set(dir, index);
-  while (projects.size > MAX_PROJECTS) {
+function touchLru(cache: Map<string, ProjectIndex>, cap: number, key: string, index: ProjectIndex): void {
+  cache.delete(key);
+  cache.set(key, index);
+  while (cache.size > cap) {
     // Evict the oldest project that isn't mid-build/revalidate; dropping a
     // busy index would silently discard its in-flight work and force a rebuild.
     let evicted = false;
-    for (const [key, proj] of projects) {
+    for (const [oldest, proj] of cache) {
       if (proj.building || proj.revalidating) continue;
-      projects.delete(key);
+      cache.delete(oldest);
       evicted = true;
       break;
     }
@@ -176,10 +183,11 @@ function touchLru(dir: string, index: ProjectIndex): void {
   }
 }
 
-async function ensureIndex(dir: string, source: ProjectSource): Promise<ProjectIndex> {
-  let index = projects.get(dir);
+async function ensureIndex(key: string, source: ProjectSource): Promise<ProjectIndex> {
+  const cache = source.immutable ? commits : projects;
+  let index = cache.get(key);
   if (!index) {
-    index = {
+    const created: ProjectIndex = {
       files: new Map(),
       byName: new Map(),
       totalEntries: 0,
@@ -188,15 +196,26 @@ async function ensureIndex(dir: string, source: ProjectSource): Promise<ProjectI
       revalidating: null,
       partial: false,
     };
-    projects.set(dir, index);
-    index.building = build(index, source).finally(() => {
-      index!.building = null;
-    });
+    index = created;
+    cache.set(key, created);
+    created.building = build(created, source).then(
+      () => {
+        created.building = null;
+      },
+      (error) => {
+        created.building = null;
+        // A build that failed outright leaves an empty index. Revalidation
+        // would refill a working tree's, but an immutable one is never
+        // revalidated and would answer "no such symbol" for good.
+        if (cache.get(key) === created) cache.delete(key);
+        throw error;
+      },
+    );
   }
-  touchLru(dir, index);
+  touchLru(cache, source.immutable ? MAX_COMMITS : MAX_PROJECTS, key, index);
   if (index.building) {
     await index.building;
-  } else if (source.now() - index.lastValidated > VALIDATE_INTERVAL_MS) {
+  } else if (!source.immutable && source.now() - index.lastValidated > VALIDATE_INTERVAL_MS) {
     // Dedupe concurrent revalidations against the shared, mutable index:
     // a burst of lookups shares one in-flight pass instead of racing.
     if (!index.revalidating) {
@@ -290,4 +309,5 @@ export async function searchSymbolNames(
 /** Test-only: drop all cached project indexes. */
 export function _resetStore(): void {
   projects.clear();
+  commits.clear();
 }

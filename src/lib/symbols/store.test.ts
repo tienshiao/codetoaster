@@ -76,6 +76,48 @@ test("does not revalidate within the throttle interval", async () => {
   expect(res.definitions).toHaveLength(0); // stale index still served
 });
 
+test("an immutable source is built once and never revalidated", async () => {
+  const ctx = makeSource({ "a.ts": "function alpha() {}" });
+  let listings = 0;
+  const source: ProjectSource = {
+    ...ctx.source,
+    immutable: true,
+    listFiles: () => {
+      listings++;
+      return ctx.source.listFiles();
+    },
+  };
+  const dir = nextDir();
+  await lookupSymbol(dir, "alpha", source);
+
+  ctx.advance(60_000);
+  const res = await lookupSymbol(dir, "alpha", source);
+  expect(res.definitions).toHaveLength(1);
+  expect(listings).toBe(1);
+});
+
+test("immutable indexes do not evict a working tree's", async () => {
+  const tree = makeSource({ "a.ts": "function alpha() {}" });
+  let treeListings = 0;
+  const treeSource: ProjectSource = {
+    ...tree.source,
+    listFiles: () => {
+      treeListings++;
+      return tree.source.listFiles();
+    },
+  };
+  const dir = nextDir();
+  await lookupSymbol(dir, "alpha", treeSource);
+
+  // More commits than either cache holds.
+  for (let i = 0; i < 8; i++) {
+    const commit = makeSource({ "a.ts": "function alpha() {}" });
+    await lookupSymbol(`${dir}\0${i}`, "alpha", { ...commit.source, immutable: true });
+  }
+  await lookupSymbol(dir, "alpha", treeSource);
+  expect(treeListings).toBe(1); // still the first build, and inside the throttle
+});
+
 test("fuzzy search matches names, counts occurrences, and jumps to the definition", async () => {
   const { source } = makeSource({
     "a.ts": "export function getDiffTokens() { return 1; }",

@@ -5,7 +5,7 @@ description: A file tab renders markdown with GFM, mermaid diagrams and a frontm
 tags: [markdown, preview, links, wiki, frontend]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-03T02:30:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-03T19:40:00Z }
 sources:
   - id: preview
     resource: ../../src/frontend/components/file/MarkdownPreview.tsx
@@ -32,7 +32,7 @@ sources:
 
 # What it renders
 
-A markdown file tab has a Preview toggle. The preview is `react-markdown` with `remark-gfm`, so tables, task lists, strikethrough and footnotes work.[^preview] This page's frontmatter, for example, is drawn as a header above the body rather than as a raw YAML block (TASK-87).[^task-87]
+A markdown file tab has a Preview toggle, and so does a markdown file in a commit's File Tree: both are the same [file viewer](/modules/file-viewer.md), and everything below holds for either unless it says otherwise. The preview is `react-markdown` with `remark-gfm`, so tables, task lists, strikethrough and footnotes work.[^preview] This page's frontmatter, for example, is drawn as a header above the body rather than as a raw YAML block (TASK-87).[^task-87]
 
 - A ` ```mermaid ` fence renders as a diagram.
 - The `components` passed to `react-markdown` are module-level constants. A fresh `components.pre` each render would rebuild every code block and wipe a text selection the moment ⌘ is pressed to copy it.[^preview]
@@ -119,7 +119,11 @@ The task route ensures the tab named by `tab` (§7.3) and lands it on `line` or 
 
 The `href` is drawn before any click, so it resolves against the file list the cache already holds, and a task's preview asks for that list once as it opens. Until it arrives an extensionless or `/` link gets the plain resolution in its `href`; a plain click always resolves against a fresh list.
 
-The composer's Explorer browses a project, which has no route that opens tabs, so its previews keep the raw `href` and only the in-page behaviour.
+The composer's Explorer browses a project, which has no route that opens tabs, so its previews keep the raw `href` and only the in-page behaviour. So does a preview in a commit's File Tree: a file at a commit has no URL of its own.
+
+# At a commit
+
+In a commit's File Tree the same preview reads from that commit ([file viewer](/modules/file-viewer.md)). Links and images resolve against the commit's file list, an image loads the blob from the commit, and a followed link selects its target in the tree rather than opening a tab.
 
 # Not yet
 
