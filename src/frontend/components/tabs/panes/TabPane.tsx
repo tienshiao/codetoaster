@@ -96,9 +96,13 @@ export function TabPane({
   // file by name, and the next preview open would otherwise take its place.
   // The line rides on the descriptor, so jumping into a file already open
   // moves the cursor instead of opening it twice (`tabKey` ignores `line`).
-  // A markdown link's heading rides the same way (TASK-124).
+  // A markdown link's heading rides the same way (TASK-124), stamped so that
+  // following the same link again is a new request the tab will act on.
   const openFile = useCallback(
-    (path: string, line?: number, anchor?: string) => onOpenTab({ kind: "file", path, line, anchor }),
+    (path: string, line?: number, anchor?: string) =>
+      onOpenTab(
+        anchor ? { kind: "file", path, line, anchor, anchorAt: Date.now() } : { kind: "file", path, line },
+      ),
     [onOpenTab],
   );
   // A file tab's Show changes (TASK-121), the way back from a diff's View file.
@@ -226,6 +230,7 @@ export function TabPane({
             path={descriptor.path}
             line={descriptor.line}
             anchor={descriptor.anchor}
+            anchorAt={descriptor.anchorAt}
             onOpenFile={openFile}
             onOpenDiff={openDiff}
           />

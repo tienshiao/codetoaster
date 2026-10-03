@@ -55,6 +55,30 @@ export function headingSlug(text: string): string {
 }
 
 /**
+ * Slugs for one document's headings, numbered the way GitHub's slugger
+ * numbers them: a repeat gets `-1`, `-2`, skipping any number already taken,
+ * so `A`, `A-1`, `A` come out `a`, `a-1`, `a-2` rather than two `a-1`s.
+ * `reserved` are ids already in the document — footnotes — that a heading
+ * must not take, or a heading called "fn 1" would steal footnote 1's target.
+ * Shared by the preview and the wiki lint so both number alike.
+ */
+export function createSlugger(reserved: Iterable<string> = []): (text: string) => string {
+  const occurrences = new Map<string, number>();
+  for (const id of reserved) occurrences.set(id, 0);
+  return (text) => {
+    const base = headingSlug(text);
+    let slug = base;
+    while (occurrences.has(slug)) {
+      const next = (occurrences.get(base) ?? 0) + 1;
+      occurrences.set(base, next);
+      slug = `${base}-${next}`;
+    }
+    occurrences.set(slug, 0);
+    return slug;
+  };
+}
+
+/**
  * What a fragment and a heading id are compared by when they do not match
  * exactly. GitHub drops punctuation and keeps each space; Bitbucket prefixes
  * `markdown-header-` and turns every run of anything else into one hyphen —

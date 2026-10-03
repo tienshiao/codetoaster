@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentProps,
@@ -15,7 +16,7 @@ import type { Element as HastElement, ElementContent, Root } from "hast";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { FrontmatterHeader } from "./FrontmatterHeader";
 import type { Frontmatter } from "@/types/frontmatter";
-import { anchorKey, decode, headingSlug, hrefKind } from "@/frontend/utils/markdown-links";
+import { anchorKey, createSlugger, decode, hrefKind } from "@/frontend/utils/markdown-links";
 
 /** Source text of a ```mermaid fence, given the hast node of its <pre>. */
 function extractMermaidSource(node: HastElement | undefined): string | null {
@@ -55,29 +56,31 @@ function textOf(nodes: ElementContent[]): string {
   return nodes.map((n) => (n.type === "text" ? n.value : n.type === "element" ? textOf(n.children) : "")).join("");
 }
 
+function elements(node: Root | HastElement): HastElement[] {
+  return node.children.flatMap((child) => (child.type === "element" ? [child, ...elements(child)] : []));
+}
+
 /**
  * Gives every heading an id (TASK-124), so a `#setup` link has somewhere to
  * land. The slug is GitHub's, repeats numbered as GitHub numbers them, and
  * the id carries the same `user-content-` prefix react-markdown gives
  * footnotes, so a heading called "Root" cannot collide with the app's own
- * element ids. `findAnchor` looks through the prefix.
+ * element ids. The footnotes' ids are reserved first, so no heading takes
+ * one. `findAnchor` looks through the prefix.
  */
 function rehypeHeadingIds() {
   return (tree: Root) => {
-    const seen = new Map<string, number>();
-    const visit = (node: Root | HastElement) => {
-      for (const child of node.children) {
-        if (child.type !== "element") continue;
-        if (HEADINGS.has(child.tagName) && child.properties.id === undefined) {
-          const slug = headingSlug(textOf(child.children));
-          const count = seen.get(slug) ?? 0;
-          seen.set(slug, count + 1);
-          child.properties.id = `${ID_PREFIX}${count === 0 ? slug : `${slug}-${count}`}`;
-        }
-        visit(child);
+    const all = elements(tree);
+    const taken = all.flatMap((el) => {
+      const id = el.properties.id;
+      return typeof id === "string" && id.startsWith(ID_PREFIX) ? [id.slice(ID_PREFIX.length)] : [];
+    });
+    const slug = createSlugger(taken);
+    for (const el of all) {
+      if (HEADINGS.has(el.tagName) && el.properties.id === undefined) {
+        el.properties.id = `${ID_PREFIX}${slug(textOf(el.children))}`;
       }
-    };
-    visit(tree);
+    }
   };
 }
 
@@ -99,6 +102,33 @@ function findAnchor(container: ParentNode, fragment: string): Element | null {
 
 function scrollToAnchor(container: ParentNode | null, fragment: string): void {
   if (container) findAnchor(container, fragment)?.scrollIntoView({ block: "start" });
+}
+
+/** How long a jump keeps its heading in place while the page settles. */
+const PIN_MS = 3000;
+/** Anything the user does to move the page ends the pin at once. */
+const RELEASE_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+
+/**
+ * Keeps `target` at the top while content above it is still arriving.
+ * Repository images get their `src` only once the file list answers, and
+ * mermaid renders asynchronously, so both grow after the jump has scrolled and
+ * would push the heading off screen. Each resize of the preview scrolls it back
+ * — until the user scrolls, clicks or types, or `PIN_MS` passes. Returns the
+ * release, for the effect's cleanup.
+ */
+function pinWhileLayoutSettles(container: HTMLElement, target: Element): () => void {
+  if (typeof ResizeObserver === "undefined") return () => {};
+  const observer = new ResizeObserver(() => target.scrollIntoView({ block: "start" }));
+  observer.observe(container);
+  const release = () => {
+    observer.disconnect();
+    clearTimeout(timer);
+    for (const type of RELEASE_EVENTS) window.removeEventListener(type, release, true);
+  };
+  const timer = setTimeout(release, PIN_MS);
+  for (const type of RELEASE_EVENTS) window.addEventListener(type, release, true);
+  return release;
 }
 
 /**
@@ -201,24 +231,43 @@ export function MarkdownPreview({
   onOpenLink,
   resolveImage,
   jump,
+  onJumped,
 }: {
   source: string;
   frontmatter?: Frontmatter;
   onOpenLink?: (href: string) => void;
   resolveImage?: (src: string) => Promise<string | null>;
   jump?: AnchorJump | null;
+  /** The jump with this `seq` has been carried out, or its heading is not
+   * there — either way it should not be asked for again. */
+  onJumped?: (seq: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const handledSeq = useRef<number | null>(null);
-
+  const onJumpedRef = useRef(onJumped);
   useLayoutEffect(() => {
-    if (!jump || handledSeq.current === jump.seq) return;
-    handledSeq.current = jump.seq;
-    scrollToAnchor(ref.current, jump.anchor);
-  }, [jump]);
+    onJumpedRef.current = onJumped;
+  });
+
+  // Keyed on the request's fields, not the object: a caller that rebuilds the
+  // same request each render must not release the pin below.
+  const seq = jump?.seq;
+  const anchor = jump?.anchor;
+  useLayoutEffect(() => {
+    if (seq === undefined || anchor === undefined || handledSeq.current === seq) return;
+    handledSeq.current = seq;
+    const container = ref.current;
+    const target = container && findAnchor(container, anchor);
+    onJumpedRef.current?.(seq);
+    if (!container || !target) return;
+    target.scrollIntoView({ block: "start" });
+    return pinWhileLayoutSettles(container, target);
+  }, [seq, anchor]);
+
+  const handlers = useMemo(() => ({ onOpenLink, resolveImage }), [onOpenLink, resolveImage]);
 
   return (
-    <PreviewContext.Provider value={{ onOpenLink, resolveImage }}>
+    <PreviewContext.Provider value={handlers}>
       <div ref={ref}>
         <MarkdownBody source={source} frontmatter={frontmatter} />
       </div>

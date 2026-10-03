@@ -46,10 +46,24 @@ export function indexPaths(root: string, paths: Iterable<string>): PathLinkIndex
 
 export function indexFiles(data: FilesResponse | undefined): PathLinkIndex | null {
   if (!data) return null;
-  return indexPaths(
-    data.directory,
-    data.files.filter((file) => !file.isDirectory).map((file) => file.path),
-  );
+  return indexPaths(data.directory, filePathSet(data));
+}
+
+const pathSets = new WeakMap<FilesResponse, ReadonlySet<string>>();
+
+/**
+ * The file (not directory) paths of a listing, built once per response: a
+ * markdown preview asks for it per link and per image (TASK-122, TASK-125),
+ * and the query hands every caller the same response object until it
+ * refetches.
+ */
+export function filePathSet(data: FilesResponse): ReadonlySet<string> {
+  let set = pathSets.get(data);
+  if (!set) {
+    set = new Set(data.files.filter((file) => !file.isDirectory).map((file) => file.path));
+    pathSets.set(data, set);
+  }
+  return set;
 }
 
 export interface PathLinkMatch {

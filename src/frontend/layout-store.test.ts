@@ -1415,9 +1415,10 @@ test("reviveLayout keeps a file's string anchor and rejects any other (TASK-124)
     reviveLayout(
       rawLayout([{ id: "g1", tabs: [rawTab({ kind: "agent" }, "t1"), rawTab(descriptor, "t2")] }]),
     );
-  const revived = withFile({ kind: "file", path: "wiki/a.md", anchor: "setup" });
-  expect(revived?.groups[0]!.tabs[1]!.descriptor).toEqual({ kind: "file", path: "wiki/a.md", anchor: "setup" });
+  const descriptor: TabDescriptor = { kind: "file", path: "wiki/a.md", anchor: "setup", anchorAt: 1790000000000 };
+  expect(withFile(descriptor)?.groups[0]!.tabs[1]!.descriptor).toEqual(descriptor);
   expect(withFile({ kind: "file", path: "wiki/a.md", anchor: 3 })).toBe(null);
+  expect(withFile({ kind: "file", path: "wiki/a.md", anchor: "setup", anchorAt: "now" })).toBe(null);
 });
 
 test("an anchor is not part of a file tab's key", () => {

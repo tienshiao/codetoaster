@@ -90,7 +90,11 @@ Every heading gets an id:[^task-124] GitHub's slug — lower-cased, punctuation 
 
 A fragment finds its heading by exact id first, then by a looser key that both GitHub's slug and Bitbucket's `markdown-header-…` collapse to. A Bitbucket wiki's links land without rewriting.
 
-A link to another page's heading opens that page with the heading as the tab's anchor, which rides on the tab descriptor the way a go-to-definition line does and is not part of its key. A link to a heading of the page already open scrolls in place, and scrolls again when clicked again.
+A link to a heading in a file — another page or this one — opens the file with the heading as the tab's anchor. The anchor rides on the tab descriptor the way a go-to-definition line does, outside the tab key, stamped with when it was asked for. Each stamp is one request: the tab records the last one it carried out in its view state, so following the same link again scrolls again, while switching back to the tab (file panes unmount when inactive) or reloading keeps the reader's place.
+
+Repository images and mermaid diagrams fill in after the jump has scrolled and would push the heading down, so the preview holds the heading at the top as the page grows, until the reader scrolls, clicks or types, or three seconds pass.
+
+Ids are numbered the way GitHub numbers them, skipping any already taken, and footnote ids are reserved first so a heading cannot steal one.
 
 # Images
 
@@ -98,7 +102,6 @@ An image with a repository path[^task-125] resolves exactly as a link does — r
 
 # Not yet
 
-- A fragment on a link to a page that is already open on the same heading does not scroll it again; the anchor is unchanged, so nothing tells the tab.
 - Right-click "Open link in new tab" still gets the app-relative `href`: no app URL opens a file tab.
 
 [^preview]: src/frontend/components/file/MarkdownPreview.tsx

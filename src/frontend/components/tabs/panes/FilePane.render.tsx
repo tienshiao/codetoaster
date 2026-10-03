@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { taskRoot } from "@/frontend/repo-root";
-import { viewRef } from "@/frontend/view-state-store";
+import { viewRef, type ViewRef } from "@/frontend/view-state-store";
 import type { FileContentResponse, FilesResponse } from "@/frontend/types/file";
 import { FilePane } from "./FilePane";
 
@@ -68,24 +68,33 @@ afterEach(() => {
   Element.prototype.scrollIntoView = originalScrollIntoView;
 });
 
-function renderPane(props: { anchor?: string; onOpenFile?: () => void } = {}) {
-  const onOpenFile = props.onOpenFile ?? vi.fn();
+type OpenFile = (path: string, line?: number, anchor?: string) => void;
+
+interface PaneProps {
+  anchor?: string;
+  anchorAt?: number;
+  view?: ViewRef;
+}
+
+function renderPane(props: PaneProps = {}) {
+  const onOpenFile = vi.fn<OpenFile>();
+  const view = props.view ?? viewRef("t1", `file:${Math.random()}`);
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={new QueryClient()}>{children}</QueryClientProvider>
   );
-  const view = viewRef("t1", `file:${Math.random()}`);
-  const result = render(
+  const pane = (p: PaneProps) => (
     <FilePane
       root={taskRoot("t1")}
       view={view}
       path="wiki/services/archive.md"
-      anchor={props.anchor}
+      anchor={p.anchor}
+      anchorAt={p.anchorAt}
       onOpenFile={onOpenFile}
       onOpenDiff={vi.fn()}
-    />,
-    { wrapper },
+    />
   );
-  return { ...result, onOpenFile, view, wrapper };
+  const result = render(pane(props), { wrapper });
+  return { ...result, onOpenFile, view, rerenderWith: (p: PaneProps) => result.rerender(pane(p)) };
 }
 
 test("a link to another page's heading opens that page with the anchor", async () => {
@@ -100,40 +109,70 @@ test("a #L link still opens at the line, with no anchor", async () => {
   await waitFor(() => expect(onOpenFile).toHaveBeenCalledWith("src/a.ts", 3, undefined));
 });
 
-test("a link to this page's own heading scrolls here, every time it is clicked", async () => {
-  const { onOpenFile, container } = renderPane();
-  const heading = container.querySelector("#user-content-retention");
-  const link = screen.getByRole("link", { name: "retention here" });
-
+test("a link to this page's own heading is a request like any other", async () => {
   // A bare-fragment link scrolls in the preview itself; this one names the
-  // file too, so it goes through the pane — and must not reopen the tab.
-  fireEvent.click(link);
-  await waitFor(() => expect(scrolled).toEqual([heading]));
-  fireEvent.click(link);
-  await waitFor(() => expect(scrolled).toEqual([heading, heading]));
-  expect(onOpenFile).not.toHaveBeenCalled();
+  // file too, so it goes through the tab, where `anchorAt` makes a repeat a
+  // new request.
+  const { onOpenFile } = renderPane();
+  fireEvent.click(screen.getByRole("link", { name: "retention here" }));
+  await waitFor(() =>
+    expect(onOpenFile).toHaveBeenCalledWith("wiki/services/archive.md", undefined, "retention"),
+  );
 });
 
 test("opened with an anchor, the preview lands on that heading", () => {
-  const { container } = renderPane({ anchor: "retention" });
+  const { container } = renderPane({ anchor: "retention", anchorAt: 100 });
   expect(scrolled).toEqual([container.querySelector("#user-content-retention")]);
 });
 
-test("a new anchor on the open tab scrolls to it", () => {
-  const onOpenFile = vi.fn();
-  const { container, rerender, view } = renderPane({ onOpenFile });
+test("a request is served once: coming back to the tab keeps the user's place", () => {
+  // The pane unmounts whenever its tab is not the active one, and the
+  // descriptor keeps its anchor — a remount must not jump again.
+  const first = renderPane({ anchor: "retention", anchorAt: 100 });
+  expect(scrolled).toHaveLength(1);
+  first.unmount();
+
+  renderPane({ anchor: "retention", anchorAt: 100, view: first.view });
+  expect(scrolled).toHaveLength(1);
+});
+
+test("the same heading asked for again is a new request and scrolls again", () => {
+  const { container, rerenderWith } = renderPane({ anchor: "retention", anchorAt: 100 });
+  const heading = container.querySelector("#user-content-retention");
+  rerenderWith({ anchor: "retention", anchorAt: 100 });
+  expect(scrolled).toEqual([heading]);
+  rerenderWith({ anchor: "retention", anchorAt: 200 });
+  expect(scrolled).toEqual([heading, heading]);
+});
+
+test("an anchor with no request stamp does not scroll", () => {
+  renderPane({ anchor: "retention" });
   expect(scrolled).toEqual([]);
-  rerender(
-    <FilePane
-      root={taskRoot("t1")}
-      view={view}
-      path="wiki/services/archive.md"
-      anchor="archive"
-      onOpenFile={onOpenFile}
-      onOpenDiff={vi.fn()}
-    />,
-  );
-  expect(scrolled).toEqual([container.querySelector("#user-content-archive")]);
+});
+
+test("only the latest of two quick clicks opens anything", async () => {
+  let release!: (files: FilesResponse) => void;
+  stubs.fetchFiles.mockReset().mockImplementationOnce(() => new Promise((resolve) => (release = resolve)));
+  stubs.fetchFiles.mockResolvedValue(FILES);
+  const { onOpenFile } = renderPane();
+
+  fireEvent.click(screen.getByRole("link", { name: "cell setup" })); // slow
+  fireEvent.click(screen.getByRole("link", { name: "line" })); // fast
+  await waitFor(() => expect(onOpenFile).toHaveBeenCalledWith("src/a.ts", 3, undefined));
+  release(FILES);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(onOpenFile).toHaveBeenCalledTimes(1);
+});
+
+test("a click whose listing arrives after the tab closed opens nothing", async () => {
+  let release!: (files: FilesResponse) => void;
+  stubs.fetchFiles.mockReset().mockImplementation(() => new Promise((resolve) => (release = resolve)));
+  const { onOpenFile, unmount } = renderPane();
+  fireEvent.click(screen.getByRole("link", { name: "cell setup" }));
+  unmount();
+  release(FILES);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(onOpenFile).not.toHaveBeenCalled();
 });
 
 test("a / image resolves against the wiki's root and loads from the image endpoint", async () => {

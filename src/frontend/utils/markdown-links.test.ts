@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { anchorKey, headingSlug, hrefKind, resolveMarkdownLink } from "./markdown-links";
+import { anchorKey, createSlugger, headingSlug, hrefKind, resolveMarkdownLink } from "./markdown-links";
 
 describe("headingSlug", () => {
   test("follows GitHub: lower-case, punctuation dropped, spaces to hyphens", () => {
@@ -8,6 +8,19 @@ describe("headingSlug", () => {
     expect(headingSlug("What's new?")).toBe("whats-new");
     expect(headingSlug("snake_case & kebab-case")).toBe("snake_case--kebab-case");
     expect(headingSlug("Café crème")).toBe("café-crème");
+  });
+});
+
+describe("createSlugger", () => {
+  test("numbers repeats as GitHub does, skipping numbers already taken", () => {
+    const slug = createSlugger();
+    expect(["A", "A-1", "A", "A"].map(slug)).toEqual(["a", "a-1", "a-2", "a-3"]);
+  });
+
+  test("never hands out a reserved id", () => {
+    const slug = createSlugger(["fn-1", "fnref-1"]);
+    expect(slug("fn 1")).toBe("fn-1-1");
+    expect(slug("Setup")).toBe("setup");
   });
 });
 

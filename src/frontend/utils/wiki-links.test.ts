@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { anchorKey, headingSlug, hrefKind, resolveMarkdownLink } from "./markdown-links";
+import { anchorKey, createSlugger, hrefKind, resolveMarkdownLink } from "./markdown-links";
 
 /**
  * Every link and image in `wiki/` reaches something that exists (TASK-123).
@@ -46,9 +46,9 @@ function links(source: string): string[] {
 }
 
 /** The `anchorKey` of every heading in a page, numbered repeats included —
- * the ids the preview's heading plugin would give them. */
+ * the ids the preview's heading plugin gives them, through the same slugger. */
 function headingKeys(source: string): Set<string> {
-  const seen = new Map<string, number>();
+  const slugger = createSlugger();
   const keys = new Set<string>();
   // A code span's text is part of a heading's text, so only fences come out.
   for (const [, text] of withoutFences(source).matchAll(/^#{1,6}[ \t]+(.+?)[ \t#]*$/gm)) {
@@ -56,10 +56,7 @@ function headingKeys(source: string): Set<string> {
       .replace(/`([^`]*)`/g, "$1")
       .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
       .replace(/[*_]{1,2}([^*_]+)[*_]{1,2}/g, "$1");
-    const slug = headingSlug(plain);
-    const count = seen.get(slug) ?? 0;
-    seen.set(slug, count + 1);
-    keys.add(anchorKey(count === 0 ? slug : `${slug}-${count}`));
+    keys.add(anchorKey(slugger(plain)));
   }
   return keys;
 }

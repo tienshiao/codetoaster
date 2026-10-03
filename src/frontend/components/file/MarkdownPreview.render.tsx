@@ -139,9 +139,59 @@ test("a jump scrolls on mount and once per seq", () => {
   expect(scrolled).toEqual([heading, heading]);
 });
 
-test("a jump to a heading that is not there scrolls nothing", () => {
-  render(<MarkdownPreview source={DOC} jump={{ anchor: "nowhere", seq: 1 }} />);
+test("a jump to a heading that is not there scrolls nothing, and is still reported done", () => {
+  const onJumped = vi.fn();
+  render(<MarkdownPreview source={DOC} jump={{ anchor: "nowhere", seq: 7 }} onJumped={onJumped} />);
   expect(scrolled).toEqual([]);
+  expect(onJumped).toHaveBeenCalledWith(7);
+});
+
+test("ids are numbered past ones already taken", () => {
+  const { container } = render(<MarkdownPreview source={"# A\n\n# A-1\n\n# A"} />);
+  expect(Array.from(container.querySelectorAll("h1"), (h) => h.id)).toEqual([
+    "user-content-a",
+    "user-content-a-1",
+    "user-content-a-2",
+  ]);
+});
+
+test("a heading cannot take a footnote's id", () => {
+  const { container } = render(<MarkdownPreview source={"Claim.[^1]\n\n## fn 1\n\n[^1]: The note."} />);
+  const heading = container.querySelector("h2:not(.sr-only)")!;
+  expect(heading.id).not.toBe("user-content-fn-1");
+  fireEvent.click(container.querySelector('a[data-footnote-ref]')!);
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]!.tagName).toBe("LI");
+});
+
+test("after a jump the heading is held in place while the page grows, until the user moves it", () => {
+  let onResize: (() => void) | undefined;
+  const OriginalResizeObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    constructor(callback: () => void) {
+      onResize = callback;
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {
+      onResize = undefined;
+    }
+  } as unknown as typeof ResizeObserver;
+  try {
+    const { container } = render(<MarkdownPreview source={DOC} jump={{ anchor: "setup-1", seq: 1 }} />);
+    const heading = container.querySelector("#user-content-setup-1");
+    expect(scrolled).toEqual([heading]);
+
+    // An image above it loads: scrolled back to the heading.
+    onResize?.();
+    expect(scrolled).toEqual([heading, heading]);
+
+    // The user scrolls: the pin lets go.
+    fireEvent.wheel(window);
+    expect(onResize).toBeUndefined();
+  } finally {
+    globalThis.ResizeObserver = OriginalResizeObserver;
+  }
 });
 
 /** Images (TASK-125). */

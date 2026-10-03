@@ -67,6 +67,12 @@ export interface FileViewState {
    * for their table view (TASK-119); other files ignore it. */
   markdownPreview: boolean;
   scrollTops: Map<string, number>;
+  /** The `anchorAt` of the last heading jump this tab carried out (TASK-124).
+   * A file pane unmounts whenever its tab is not the active one, and the
+   * descriptor keeps its anchor, so without this every return to the tab —
+   * and every reload — would scroll back to the heading over the user's
+   * place. Persisted for the reload. */
+  jumpedAt: number | null;
 }
 
 /** `commit:<sha>`. Everything the old `GitDetailViewState` held, minus the
@@ -169,7 +175,7 @@ const DEFAULTS: { [K in ViewSlotKind]: () => ViewStateShapes[K] } = {
     hunkExpansions: new Map(),
   }),
   diffFile: () => ({ scrollTop: 0, hunkExpansions: new Map() }),
-  file: () => ({ lineWrap: false, markdownPreview: true, scrollTops: new Map() }),
+  file: () => ({ lineWrap: false, markdownPreview: true, scrollTops: new Map(), jumpedAt: null }),
   commit: () => ({
     mode: "commit",
     file: null,
@@ -217,7 +223,7 @@ const PERSISTED: { [K in ViewSlotKind]: ReadonlyArray<keyof ViewStateShapes[K] &
     "treeCollapsedPaths",
   ],
   diffFile: ["scrollTop"],
-  file: ["lineWrap", "markdownPreview", "scrollTops"],
+  file: ["lineWrap", "markdownPreview", "scrollTops", "jumpedAt"],
   commit: [
     "mode",
     "file",

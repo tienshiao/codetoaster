@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { rootApi, type RepoRoot } from "@/frontend/repo-root";
 import { Eye, FileDiff, FolderSearch, WrapText } from "lucide-react";
@@ -15,6 +15,7 @@ import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-stat
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
 import { delimiterForPath } from "@/frontend/utils/delimited";
 import { resolveMarkdownLink } from "@/frontend/utils/markdown-links";
+import { filePathSet } from "@/frontend/utils/path-links";
 
 interface FilePaneProps {
   root: RepoRoot;
@@ -28,6 +29,9 @@ interface FilePaneProps {
   /** The heading a markdown link pointed at (TASK-124). Like `line`, a
    * position rather than part of the tab key. */
   anchor?: string;
+  /** When that heading was asked for: a new value is a new request, even for
+   * the same heading. */
+  anchorAt?: number;
   /** Opens a file at a line or heading — where go-to-definition and markdown
    * links land. Opening tabs is the layout's business, so it arrives here as
    * a callback. */
@@ -43,7 +47,7 @@ interface FilePaneProps {
  * file tab it opens, so a pane that carried one would be drawing the same tree
  * once per open file.
  */
-export function FilePane({ root, view, path, line, anchor, onOpenFile, onOpenDiff }: FilePaneProps) {
+export function FilePane({ root, view, path, line, anchor, anchorAt, onOpenFile, onOpenDiff }: FilePaneProps) {
   const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const [lineWrap, setLineWrap] = useViewState("file", view, "lineWrap");
   const [markdownPreview, setMarkdownPreview] = useViewState("file", view, "markdownPreview");
@@ -60,17 +64,18 @@ export function FilePane({ root, view, path, line, anchor, onOpenFile, onOpenDif
   const scrollTops = getViewState("file", view).scrollTops;
   const queryClient = useQueryClient();
 
-  // A heading to scroll the preview to (TASK-124). It arrives two ways: as the
-  // `anchor` prop, when a link from another file opens this one, and from a
-  // link in this file to itself. The second cannot go through the descriptor:
-  // asking for the heading it already holds changes no prop, so a repeat
-  // click would do nothing. Each request gets a fresh `seq` instead.
-  const [jump, setJump] = useState<AnchorJump | null>(anchor ? { anchor, seq: 1 } : null);
-  const [seenAnchor, setSeenAnchor] = useState(anchor);
-  if (anchor !== seenAnchor) {
-    setSeenAnchor(anchor);
-    if (anchor) setJump({ anchor, seq: (jump?.seq ?? 0) + 1 });
-  }
+  // A heading to scroll the preview to (TASK-124), one request per `anchorAt`.
+  // This pane unmounts whenever its tab is not the active one, while the
+  // descriptor keeps its anchor, so the request is served once and recorded
+  // in the view state — which outlives the mount, and the reload — or every
+  // return to the tab would scroll back over the user's place.
+  const fileView = getViewState("file", view);
+  const jump: AnchorJump | null =
+    anchor && anchorAt !== undefined && anchorAt !== fileView.jumpedAt ? { anchor, seq: anchorAt } : null;
+  const onAnchorJumped = (seq: number) => {
+    fileView.jumpedAt = seq;
+    touchViewState(view);
+  };
 
   // Preview links and images resolve against the Explorer's file list
   // (TASK-122), fetched when needed rather than watched while the preview is
@@ -79,35 +84,45 @@ export function FilePane({ root, view, path, line, anchor, onOpenFile, onOpenDif
   // yields the plain resolution.
   const resolve = async (href: string) => {
     const files = await fetchTaskFiles(queryClient, root).catch(() => null);
-    const fileSet = files
-      ? new Set(files.files.filter((file) => !file.isDirectory).map((file) => file.path))
-      : null;
-    return resolveMarkdownLink(href, path, fileSet);
+    return resolveMarkdownLink(href, path, files ? filePathSet(files) : null);
   };
+
+  // Only the latest click acts, and only while the pane is still here: the
+  // listing can be slow, and a link should not open after the user clicked
+  // another or closed the tab.
+  const latestClick = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const openLink = async (href: string) => {
+    const click = ++latestClick.current;
     const target = await resolve(href);
-    if (!target) {
-      // The click was already kept from the browser; say why nothing opened.
-      toast.error("That link does not name a file in this repository", { description: href });
-    } else if (target.path === path && target.anchor && !target.line) {
-      setJump((current) => ({ anchor: target.anchor!, seq: (current?.seq ?? 0) + 1 }));
-    } else {
-      onOpenFile(target.path, target.line, target.anchor);
-    }
+    if (click !== latestClick.current || !mounted.current) return;
+    // A link to a heading of this very file goes through the descriptor too:
+    // `anchorAt` makes it a new request even when the heading is the same.
+    if (target) onOpenFile(target.path, target.line, target.anchor);
+    // The click was already kept from the browser; say why nothing opened.
+    else toast.error("That link does not name a file in this repository", { description: href });
   };
 
-  // Stable, because each image asks again whenever this changes (TASK-125).
-  // `path` is a dependency all the same: a relative image means something else
+  // Both stable: every link and image is a context consumer, and an image asks
+  // again whenever its resolver changes (TASK-125). `path` stays a dependency
+  // of the image resolver all the same: a relative image means something else
   // from another file.
-  const resolveRef = useRef(resolve);
+  const latest = useRef({ resolve, openLink });
   useLayoutEffect(() => {
-    resolveRef.current = resolve;
+    latest.current = { resolve, openLink };
   });
+  const onOpenLink = useCallback((href: string) => void latest.current.openLink(href), []);
   const imageBase = `${rootApi(root)}/image?file=`;
   const resolveImage = useCallback(
     async (src: string) => {
-      const target = await resolveRef.current(src);
+      const target = await latest.current.resolve(src);
       return target ? `${imageBase}${encodeURIComponent(target.path)}` : null;
     },
     [imageBase, path],
@@ -170,9 +185,10 @@ export function FilePane({ root, view, path, line, anchor, onOpenFile, onOpenDif
         }}
         highlightLine={line}
         onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}
-        onOpenLink={(href) => void openLink(href)}
+        onOpenLink={onOpenLink}
         resolveImage={resolveImage}
         anchorJump={jump}
+        onAnchorJumped={onAnchorJumped}
       />
       <SymbolPopover
         root={root}

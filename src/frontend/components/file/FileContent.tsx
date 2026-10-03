@@ -32,6 +32,8 @@ interface FileContentProps {
   resolveImage?: (src: string) => Promise<string | null>;
   /** A heading for the markdown preview to scroll to. */
   anchorJump?: AnchorJump | null;
+  /** The preview carried out the jump with this `seq`. */
+  onAnchorJumped?: (seq: number) => void;
   // Overrides the default working-tree image endpoint (git view reads a blob at
   // a specific sha via /image/git). When omitted, the working-tree URL is used.
   imageUrl?: string;
@@ -51,6 +53,7 @@ export function FileContent({
   onOpenLink,
   resolveImage,
   anchorJump,
+  onAnchorJumped,
   imageUrl: imageUrlProp,
 }: FileContentProps) {
   const langConfig = useMemo(() => getLanguageFromPath(filePath), [filePath]);
@@ -218,6 +221,7 @@ export function FileContent({
           onOpenLink={onOpenLink}
           resolveImage={resolveImage}
           jump={anchorJump}
+          onJumped={onAnchorJumped}
         />
       </div>
     );
