@@ -107,7 +107,7 @@ function ancestors(dir: string): string[] {
 /** What `path` may name, most literal first. `""` is the repository root. */
 function candidates(path: string, isDir: boolean): string[] {
   const inside = path ? `${path}/` : "";
-  const dirPages = [`${inside}README.md`, `${inside}index.md`];
+  const dirPages = [`${inside}README.md`, `${inside}readme.md`, `${inside}index.md`];
   if (isDir || path === "") return dirPages;
   const out = [path];
   if (!path.toLowerCase().endsWith(".md")) out.push(`${path}.md`);

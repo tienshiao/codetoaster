@@ -81,6 +81,12 @@ describe("resolveMarkdownLink", () => {
     expect(resolveMarkdownLink("docs", "README.md", FILES)).toEqual({ path: "docs/README.md" });
   });
 
+  test("a lower-case readme counts", () => {
+    expect(resolveMarkdownLink("notes/", "README.md", new Set(["notes/readme.md"]))).toEqual({
+      path: "notes/readme.md",
+    });
+  });
+
   test("a trailing slash skips a same-named page", () => {
     const files = new Set(["docs.md", "docs/README.md"]);
     expect(resolveMarkdownLink("docs/", "README.md", files)).toEqual({ path: "docs/README.md" });

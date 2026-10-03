@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@tma'
 created_date: '2026-10-03 00:28'
-updated_date: '2026-10-03 00:28'
+updated_date: '2026-10-03 00:53'
 labels:
   - frontend
 dependencies: []
@@ -32,3 +32,9 @@ Repos carrying a markdown wiki (Karpathy-style knowledge base, Bitbucket wiki ex
 <!-- SECTION:PLAN:BEGIN -->
 1. utils/markdown-links.ts (DOM-free): isExternalHref, resolveMarkdownLink(href, fromFile, files) returning a repo-relative path (plus line for #L12) or null. Relative hrefs resolve against the file's dir; /-prefixed ones try every ancestor from the repo root inward. Per base: exact, then .md, then README.md/index.md inside; first in the file set wins, else the first base's plain path. Paths escaping the root are null. 2. MarkdownPreview: an a component (module-level, stable identity) reading the click handler from a context fed by a latest-ref, so the memoized body does not re-render on a new callback. External gets target _blank; fragment-only is preventDefault; others preventDefault and call onOpenLink(href). 3. FileContent passes onOpenLink through; FilePane resolves it against useTaskFiles via indexFiles and calls onOpenFile. 4. Unit tests for the resolver, render test for activation.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Review pass 1 (code-review high) fixed: wiki root before repo root for / links (atlas's /index.md vs a root README); fragment links scroll in-preview so GFM footnotes work; file list fetched on click via ensureTaskFiles (no observer, no load race); ./, ../, / and trailing-slash links open README.md/index.md. Deferred: cross-page heading fragments (headings have no ids) and relative image sources. Declined: colons in page names are treated as schemes. Validation: bun run test green, tsc clean; in Chrome on an isolated server every link form in wiki/modules/markdown-preview.md opened the right tab, the footnote scrolled, the app URL never changed.
+<!-- SECTION:NOTES:END -->

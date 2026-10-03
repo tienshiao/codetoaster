@@ -67,6 +67,8 @@ export function FilePane({ root, view, path, line, onOpenFile, onOpenDiff }: Fil
       : null;
     const target = resolveMarkdownLink(href, path, fileSet);
     if (target) onOpenFile(target.path, target.line);
+    // The click was already kept from the browser; say why nothing opened.
+    else toast.error("That link does not name a file in this repository", { description: href });
   };
 
   return (
