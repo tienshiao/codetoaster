@@ -80,7 +80,7 @@ Every concept page starts with a YAML block. `type` is the only field OKF requir
 
 # Rules
 
-- Links between pages are bundle-relative and start with `/` (for example `/gotchas/bun-shell-deadlock.md`). Links in `index.md` are relative to the bundle root without the slash. The preview reads `index.md` as the marker of this bundle's root and resolves a `/` link against it before the repository root, so both forms open the right page. `src/frontend/utils/wiki-links.test.ts` runs every link through that same resolver, so a broken one fails `bun run test`.
+- Links between pages are bundle-relative and start with `/` (for example `/gotchas/bun-shell-deadlock.md`). Links in `index.md` are relative to the bundle root without the slash. The preview reads `index.md` beside `log.md` as the marker of this bundle's root and resolves a `/` link against it before the repository root, so both forms open the right page. `src/frontend/utils/wiki-links.test.ts` runs every link through that same resolver, so a broken one fails `bun run test`.
 - No secrets or credentials in the wiki.
 - The wiki is a lower trust tier than `CLAUDE.md`. Instructions there win over anything here.[^claude-md]
 - When a draft and the code disagree, trust the code and fix the page.

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { taskRoot } from "@/frontend/repo-root";
-import { viewRef, type ViewRef } from "@/frontend/view-state-store";
+import { getViewState, viewRef, type ViewRef } from "@/frontend/view-state-store";
 import type { FileContentResponse, FilesResponse } from "@/frontend/types/file";
 import { FilePane } from "./FilePane";
 
@@ -143,6 +143,27 @@ test("the same heading asked for again is a new request and scrolls again", () =
   expect(scrolled).toEqual([heading]);
   rerenderWith({ anchor: "retention", anchorAt: 200 });
   expect(scrolled).toEqual([heading, heading]);
+});
+
+test("a request for a heading that is not there keeps the saved place", () => {
+  const view = viewRef("t1", `file:${Math.random()}`);
+  getViewState("file", view).scrollTops.set("md-preview:wiki/services/archive.md", 120);
+  const { container } = renderPane({ anchor: "nowhere", anchorAt: 100, view });
+  const scroller = container.querySelector(".markdown-preview")!.closest(".overflow-auto")!;
+  expect(scroller.scrollTop).toBe(120);
+  expect(getViewState("file", view).jumpedAt).toBe(100);
+});
+
+test("a request that arrives while the tab shows source is spent, not saved for later", () => {
+  const view = viewRef("t1", `file:${Math.random()}`);
+  getViewState("file", view).markdownPreview = false;
+  renderPane({ anchor: "retention", anchorAt: 100, view });
+  expect(getViewState("file", view).jumpedAt).toBe(100);
+
+  // Turning the preview on later does not jump.
+  getViewState("file", view).markdownPreview = true;
+  renderPane({ anchor: "retention", anchorAt: 100, view });
+  expect(scrolled).toEqual([]);
 });
 
 test("an anchor with no request stamp does not scroll", () => {

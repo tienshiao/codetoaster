@@ -238,30 +238,47 @@ export function MarkdownPreview({
   onOpenLink?: (href: string) => void;
   resolveImage?: (src: string) => Promise<string | null>;
   jump?: AnchorJump | null;
-  /** The jump with this `seq` has been carried out, or its heading is not
-   * there — either way it should not be asked for again. */
-  onJumped?: (seq: number) => void;
+  /** The jump with this `seq` has been served and should not be asked for
+   * again; `landed` says whether its heading was there to scroll to. */
+  onJumped?: (seq: number, landed: boolean) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const handledSeq = useRef<number | null>(null);
   const onJumpedRef = useRef(onJumped);
   useLayoutEffect(() => {
     onJumpedRef.current = onJumped;
   });
 
-  // Keyed on the request's fields, not the object: a caller that rebuilds the
-  // same request each render must not release the pin below.
+  // The jump served by this mount, and the pin it left. Neither follows the
+  // `jump` prop once served: the caller stops asking as soon as `onJumped`
+  // has recorded the request, and that re-render must not cut the pin short.
+  // Both are reset when the preview unmounts — which includes StrictMode's
+  // rehearsal unmount, so the remount that follows serves the jump again
+  // rather than finding it already marked done with its pin released.
+  const servedSeq = useRef<number | null>(null);
+  const releasePin = useRef<(() => void) | null>(null);
+  useLayoutEffect(
+    () => () => {
+      releasePin.current?.();
+      releasePin.current = null;
+      servedSeq.current = null;
+    },
+    [],
+  );
+
   const seq = jump?.seq;
   const anchor = jump?.anchor;
   useLayoutEffect(() => {
-    if (seq === undefined || anchor === undefined || handledSeq.current === seq) return;
-    handledSeq.current = seq;
+    if (seq === undefined || anchor === undefined || servedSeq.current === seq) return;
+    servedSeq.current = seq;
+    releasePin.current?.();
+    releasePin.current = null;
     const container = ref.current;
     const target = container && findAnchor(container, anchor);
-    onJumpedRef.current?.(seq);
-    if (!container || !target) return;
-    target.scrollIntoView({ block: "start" });
-    return pinWhileLayoutSettles(container, target);
+    if (container && target) {
+      target.scrollIntoView({ block: "start" });
+      releasePin.current = pinWhileLayoutSettles(container, target);
+    }
+    onJumpedRef.current?.(seq, target !== null);
   }, [seq, anchor]);
 
   const handlers = useMemo(() => ({ onOpenLink, resolveImage }), [onOpenLink, resolveImage]);

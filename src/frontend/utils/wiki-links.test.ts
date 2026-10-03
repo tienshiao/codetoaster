@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { anchorKey, createSlugger, hrefKind, resolveMarkdownLink } from "./markdown-links";
+import { anchorKey, createSlugger, decode, hrefKind, resolveMarkdownLink } from "./markdown-links";
 
 /**
  * Every link and image in `wiki/` reaches something that exists (TASK-123).
@@ -25,8 +25,10 @@ function markdownFiles(dir: string): string[] {
   });
 }
 
+/** The body the preview renders: no frontmatter (it becomes a header, and a
+ * `# comment` in it is not a heading) and no fenced code. */
 function withoutFences(source: string): string {
-  return source.replace(/^```[\s\S]*?^```/gm, "");
+  return source.replace(/^---\n[\s\S]*?\n---\n/, "").replace(/^```[\s\S]*?^```/gm, "");
 }
 
 /** Markdown with fenced blocks and inline code spans taken out: neither links. */
@@ -88,6 +90,10 @@ test("heading keys follow the preview's ids", () => {
   expect(headingKeys("# Setup\n\n## LED `API` 2\n\n# Setup")).toEqual(new Set(["setup", "led-api-2", "setup-1"]));
 });
 
+test("a # line in frontmatter is not a heading", () => {
+  expect(headingKeys("---\ntitle: x\n# Setup\n---\n# Setup")).toEqual(new Set(["setup"]));
+});
+
 test("every wiki link and image resolves to a file, and every anchor to a heading", async () => {
   const pages = new Map<string, string>();
   for (const file of markdownFiles(WIKI)) pages.set(relative(REPO, file), await Bun.file(file).text());
@@ -99,7 +105,9 @@ test("every wiki link and image resolves to a file, and every anchor to a headin
       if (kind === "external") continue;
 
       if (kind === "fragment") {
-        if (!headingKeys(source).has(anchorKey(href.slice(1)))) broken.push(`${fromFile}: ${href} → no such heading`);
+        if (!headingKeys(source).has(anchorKey(decode(href.slice(1))))) {
+          broken.push(`${fromFile}: ${href} → no such heading`);
+        }
         continue;
       }
 

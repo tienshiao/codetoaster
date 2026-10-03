@@ -33,7 +33,7 @@ interface FileContentProps {
   /** A heading for the markdown preview to scroll to. */
   anchorJump?: AnchorJump | null;
   /** The preview carried out the jump with this `seq`. */
-  onAnchorJumped?: (seq: number) => void;
+  onAnchorJumped?: (seq: number, landed: boolean) => void;
   // Overrides the default working-tree image endpoint (git view reads a blob at
   // a specific sha via /image/git). When omitted, the working-tree URL is used.
   imageUrl?: string;
@@ -59,6 +59,7 @@ export function FileContent({
   const langConfig = useMemo(() => getLanguageFromPath(filePath), [filePath]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const restoredScrollRef = useRef(false);
+  const jumpLandedRef = useRef(false);
   const modHeld = useModifierHeld();
   const symbolHover = useSymbolHighlight(modHeld && !!onSymbolClick, content);
 
@@ -119,14 +120,20 @@ export function FileContent({
     if (!content || content.isBinary || !scrollRef.current) return;
     // The table reveals its own target row, and the preview scrolls to its
     // own heading, both in layout effects that have already run by now (a
-    // child's go first): restoring here would undo them.
-    if ((showTable && highlightLine) || (showMarkdown && anchorJump)) {
+    // child's go first): restoring here would undo them. A jump whose heading
+    // was not there scrolled nothing, so the saved place still stands.
+    if ((showTable && highlightLine) || jumpLandedRef.current) {
       restoredScrollRef.current = true;
       return;
     }
     scrollRef.current.scrollTop = initialScrollTop;
     restoredScrollRef.current = true;
-  }, [content, initialScrollTop, showTable, highlightLine, showMarkdown, anchorJump]);
+  }, [content, initialScrollTop, showTable, highlightLine]);
+
+  const handleAnchorJumped = (seq: number, landed: boolean) => {
+    if (landed) jumpLandedRef.current = true;
+    onAnchorJumped?.(seq, landed);
+  };
 
   // Deep link (go-to-definition): scroll the target line into view and flash it.
   // Takes precedence over the saved scroll position when a line is specified.
@@ -221,7 +228,7 @@ export function FileContent({
           onOpenLink={onOpenLink}
           resolveImage={resolveImage}
           jump={anchorJump}
-          onJumped={onAnchorJumped}
+          onJumped={handleAnchorJumped}
         />
       </div>
     );

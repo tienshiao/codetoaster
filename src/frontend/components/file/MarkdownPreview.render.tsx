@@ -1,5 +1,6 @@
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { MarkdownPreview } from "./MarkdownPreview";
 
 /**
@@ -143,7 +144,7 @@ test("a jump to a heading that is not there scrolls nothing, and is still report
   const onJumped = vi.fn();
   render(<MarkdownPreview source={DOC} jump={{ anchor: "nowhere", seq: 7 }} onJumped={onJumped} />);
   expect(scrolled).toEqual([]);
-  expect(onJumped).toHaveBeenCalledWith(7);
+  expect(onJumped).toHaveBeenCalledWith(7, false);
 });
 
 test("ids are numbered past ones already taken", () => {
@@ -164,9 +165,11 @@ test("a heading cannot take a footnote's id", () => {
   expect(scrolled[0]!.tagName).toBe("LI");
 });
 
-test("after a jump the heading is held in place while the page grows, until the user moves it", () => {
-  let onResize: (() => void) | undefined;
-  const OriginalResizeObserver = globalThis.ResizeObserver;
+/** A ResizeObserver the test can fire by hand; `onResize` is unset once the
+ * pin disconnects. Happy DOM has no layout to resize. */
+let onResize: (() => void) | undefined;
+const OriginalResizeObserver = globalThis.ResizeObserver;
+function stubResizeObserver() {
   globalThis.ResizeObserver = class {
     constructor(callback: () => void) {
       onResize = callback;
@@ -177,21 +180,48 @@ test("after a jump the heading is held in place while the page grows, until the 
       onResize = undefined;
     }
   } as unknown as typeof ResizeObserver;
-  try {
-    const { container } = render(<MarkdownPreview source={DOC} jump={{ anchor: "setup-1", seq: 1 }} />);
-    const heading = container.querySelector("#user-content-setup-1");
-    expect(scrolled).toEqual([heading]);
+}
+afterEach(() => {
+  globalThis.ResizeObserver = OriginalResizeObserver;
+  onResize = undefined;
+});
 
-    // An image above it loads: scrolled back to the heading.
-    onResize?.();
-    expect(scrolled).toEqual([heading, heading]);
+test("after a jump the heading is held in place while the page grows, until the user moves it", () => {
+  stubResizeObserver();
+  const { container } = render(<MarkdownPreview source={DOC} jump={{ anchor: "setup-1", seq: 1 }} />);
+  const heading = container.querySelector("#user-content-setup-1");
+  expect(scrolled).toEqual([heading]);
 
-    // The user scrolls: the pin lets go.
-    fireEvent.wheel(window);
-    expect(onResize).toBeUndefined();
-  } finally {
-    globalThis.ResizeObserver = OriginalResizeObserver;
-  }
+  // An image above it loads: scrolled back to the heading.
+  onResize?.();
+  expect(scrolled).toEqual([heading, heading]);
+
+  // The user scrolls: the pin lets go.
+  fireEvent.wheel(window);
+  expect(onResize).toBeUndefined();
+});
+
+test("the pin outlasts the caller's ceasing to ask for the jump", () => {
+  // The caller records the request as served and re-renders with no jump at
+  // all; that must not cut the pin short.
+  stubResizeObserver();
+  const { container, rerender } = render(<MarkdownPreview source={DOC} jump={{ anchor: "setup-1", seq: 1 }} />);
+  rerender(<MarkdownPreview source={DOC} jump={null} />);
+  onResize?.();
+  const heading = container.querySelector("#user-content-setup-1");
+  expect(scrolled).toEqual([heading, heading]);
+});
+
+test("under StrictMode the jump is served and pinned all the same", () => {
+  stubResizeObserver();
+  const { container } = render(
+    <StrictMode>
+      <MarkdownPreview source={DOC} jump={{ anchor: "setup-1", seq: 1 }} />
+    </StrictMode>,
+  );
+  expect(onResize).toBeDefined();
+  onResize?.();
+  expect(scrolled.at(-1)).toBe(container.querySelector("#user-content-setup-1"));
 });
 
 /** Images (TASK-125). */

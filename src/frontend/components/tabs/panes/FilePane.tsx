@@ -76,6 +76,13 @@ export function FilePane({ root, view, path, line, anchor, anchorAt, onOpenFile,
     fileView.jumpedAt = seq;
     touchViewState(view);
   };
+  // Only the preview has headings to land on. A request that arrives while the
+  // tab shows source is spent all the same, or turning the preview on minutes
+  // later would jump over the place it restores.
+  const pendingSeq = jump?.seq;
+  useEffect(() => {
+    if (pendingSeq !== undefined && !previewActive) onAnchorJumped(pendingSeq);
+  });
 
   // Preview links and images resolve against the Explorer's file list
   // (TASK-122), fetched when needed rather than watched while the preview is

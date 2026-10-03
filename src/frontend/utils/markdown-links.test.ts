@@ -105,9 +105,25 @@ describe("resolveMarkdownLink", () => {
     expect(resolveMarkdownLink("/README.md", "packages/app/docs/setup.md", monorepo)).toEqual({ path: "README.md" });
   });
 
-  test("the nearest bundle wins over an outer one", () => {
-    const nested = new Set(["docs/index.md", "docs/wiki/index.md", "docs/wiki/a/b.md"]);
+  test("a wiki nested in a docs tree is its own bundle, by its index and log", () => {
+    const nested = new Set(["docs/index.md", "docs/wiki/index.md", "docs/wiki/log.md", "docs/wiki/a/b.md"]);
     expect(resolveMarkdownLink("/index.md", "docs/wiki/a/b.md", nested)).toEqual({ path: "docs/wiki/index.md" });
+  });
+
+  test("a section's own index.md is not the wiki's root", () => {
+    const wiki = new Set([
+      "README.md",
+      "wiki/index.md",
+      "wiki/log.md",
+      "wiki/README.md",
+      "wiki/modules/index.md",
+      "wiki/modules/foo.md",
+    ]);
+    expect(resolveMarkdownLink("/index.md", "wiki/modules/foo.md", wiki)).toEqual({ path: "wiki/index.md" });
+    expect(resolveMarkdownLink("/README.md", "wiki/modules/foo.md", wiki)).toEqual({ path: "wiki/README.md" });
+    // Without a log to mark the root, the outermost index.md below the repo root.
+    wiki.delete("wiki/log.md");
+    expect(resolveMarkdownLink("/index.md", "wiki/modules/foo.md", wiki)).toEqual({ path: "wiki/index.md" });
   });
 
   test("without a file list, a root-absolute link means the repository root", () => {

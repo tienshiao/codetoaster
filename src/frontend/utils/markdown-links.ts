@@ -103,13 +103,13 @@ export function anchorKey(fragment: string): string {
  * but a wiki kept in a subdirectory means its own root — `wiki/index.md`
  * linking `/services/archive.md` means `wiki/services/archive.md`. So a `/`
  * link first tries the bundle `fromFile` sits in — the nearest ancestor
- * holding an `index.md`, which is how an LLM wiki (OKF) marks its root — and
- * then the repository root. A file in no bundle gets GitHub's reading. Any
- * other ancestor is tried last, for a wiki that marks its root some other way.
- * Asking for the bundle by its marker, rather than taking the first ancestor
- * that happens to hold the name, is what keeps a wiki's `/index.md` from
- * opening an outer docs page and a monorepo package's `/README.md` from
- * opening the package's.
+ * holding an LLM wiki's `index.md` and `log.md`, else the outermost holding an
+ * `index.md` — and then the repository root. A file in no bundle gets GitHub's
+ * reading. Any other ancestor is tried last, for a wiki that marks its root
+ * some other way. Asking for the bundle by its markers, rather than taking the
+ * first ancestor that happens to hold the name, is what keeps a wiki's
+ * `/index.md` from opening an outer docs page or a section's own index, and a
+ * monorepo package's `/README.md` from opening the package's.
  *
  * Wikis also drop the extension (a Bitbucket wiki writes `LED%20API%203` for
  * `LED API 3.md`) and link a directory for its README, so each base tries the
@@ -175,9 +175,14 @@ function rootBases(dir: string, files: Pick<ReadonlySet<string>, "has"> | null):
     const segments = dir.split("/");
     for (let i = 1; i <= segments.length; i++) ancestors.push(segments.slice(0, i).join("/"));
   }
-  const bundle = files
-    ? ancestors.findLast((base) => files.has(base ? `${base}/index.md` : "index.md"))
-    : undefined;
+  const has = (base: string, name: string) => files?.has(base ? `${base}/${name}` : name) ?? false;
+  // An LLM wiki's root holds both its catalog and its log; a section of one
+  // may hold an index.md of its own and must not be taken for the root. The
+  // nearest such pair wins, so a wiki nested in a larger docs tree is its own
+  // bundle. Failing that, the outermost index.md below the repository root.
+  const bundle =
+    ancestors.findLast((base) => has(base, "index.md") && has(base, "log.md")) ??
+    ancestors.find((base) => base !== "" && has(base, "index.md"));
   const first = bundle === undefined ? [""] : [bundle, ""];
   return [...new Set([...first, ...ancestors])];
 }
