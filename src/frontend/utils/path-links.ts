@@ -80,7 +80,7 @@ const POSITION = /^:(\d+)(?::(\d+))?/;
 
 /** `a/./b/../c` → `a/c`, or null for a path that climbs out of where it
  * started — which is out of the repository, and so not a file of this task. */
-function normalize(path: string): string | null {
+export function normalize(path: string): string | null {
   const out: string[] = [];
   for (const segment of path.split("/")) {
     if (segment === "" || segment === ".") continue;

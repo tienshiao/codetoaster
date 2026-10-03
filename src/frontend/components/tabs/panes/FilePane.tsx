@@ -1,17 +1,19 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { RepoRoot } from "@/frontend/repo-root";
 import { Eye, FileDiff, FolderSearch, WrapText } from "lucide-react";
 import { toast } from "sonner";
 import { IconButton } from "@/frontend/components/v2";
 import { FileContent } from "@/frontend/components/file/FileContent";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
-import { revealFile, useFileContent } from "@/frontend/hooks/use-task-files";
+import { revealFile, useFileContent, useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useChangedPaths } from "@/frontend/hooks/use-task-diff";
 import { canRevealInFinder } from "@/frontend/utils/platform";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
 import { delimiterForPath } from "@/frontend/utils/delimited";
+import { indexFiles } from "@/frontend/utils/path-links";
+import { resolveMarkdownLink } from "@/frontend/utils/markdown-links";
 
 interface FilePaneProps {
   root: RepoRoot;
@@ -51,6 +53,10 @@ export function FilePane({ root, view, path, line, onOpenFile, onOpenDiff }: Fil
   // offset — and FileContent's mount — are keyed by mode, not just by the file.
   const scrollKey = previewActive ? `md-preview:${path}` : path;
   const scrollTops = getViewState("file", view).scrollTops;
+  // The Explorer's file list, which a preview's links are resolved against
+  // (TASK-122). Only fetched while there is a preview to click in.
+  const { data: files } = useTaskFiles(root, { enabled: previewActive });
+  const fileSet = useMemo(() => indexFiles(files)?.files ?? null, [files]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -109,6 +115,10 @@ export function FilePane({ root, view, path, line, onOpenFile, onOpenDiff }: Fil
         }}
         highlightLine={line}
         onSymbolClick={(name, x, y) => setSymbolTarget({ name, x, y })}
+        onOpenLink={(href) => {
+          const target = resolveMarkdownLink(href, path, fileSet);
+          if (target) onOpenFile(target.path, target.line);
+        }}
       />
       <SymbolPopover
         root={root}

@@ -26,6 +26,8 @@ interface FileContentProps {
   onScrollTopChange?: (top: number) => void;
   highlightLine?: number;
   onSymbolClick?: (name: string, x: number, y: number) => void;
+  /** A repository link clicked in the markdown preview, by its raw `href`. */
+  onOpenLink?: (href: string) => void;
   // Overrides the default working-tree image endpoint (git view reads a blob at
   // a specific sha via /image/git). When omitted, the working-tree URL is used.
   imageUrl?: string;
@@ -42,6 +44,7 @@ export function FileContent({
   onScrollTopChange,
   highlightLine,
   onSymbolClick,
+  onOpenLink,
   imageUrl: imageUrlProp,
 }: FileContentProps) {
   const langConfig = useMemo(() => getLanguageFromPath(filePath), [filePath]);
@@ -202,7 +205,7 @@ export function FileContent({
         className="overflow-auto h-full"
         onScroll={(e) => onScrollTopChange?.(e.currentTarget.scrollTop)}
       >
-        <MarkdownPreview source={markdownSource} frontmatter={frontmatter} />
+        <MarkdownPreview source={markdownSource} frontmatter={frontmatter} onOpenLink={onOpenLink} />
       </div>
     );
   }
