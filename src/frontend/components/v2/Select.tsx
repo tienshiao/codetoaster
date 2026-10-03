@@ -51,6 +51,9 @@ const UNSET_SENTINEL = "__ct_unset";
 const toRadix = (value: string) => (value === "" ? UNSET_SENTINEL : value);
 const fromRadix = (value: string) => (value === UNSET_SENTINEL ? "" : value);
 
+/** How many rows a filtering popup draws before it asks for a narrower query. */
+export const MAX_FILTER_ROWS = 200;
+
 /** Whether a keystroke is a character being typed rather than a command.
  * Radix reads the same thing the same way for its own typeahead, which is what
  * `filterPlaceholder` replaces. */
@@ -89,11 +92,18 @@ export function Select({
   const filtering = filterPlaceholder !== undefined;
   const [query, setQuery] = useState("");
 
-  const shown = useMemo(() => {
+  const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return options;
     return options.filter((option) => option.label.toLowerCase().includes(needle));
   }, [options, query]);
+  // A filtering list is one too long to scan, and some have no upper bound at
+  // all — every ref in a repository (TASK-128). Radix mounts a node per row
+  // and nothing here is virtualised, so past a point the popup draws the
+  // first rows and says how many it left out; typing is how the rest are
+  // reached. A list that cannot filter is never cut, since it would have no
+  // way to reach what was.
+  const shown = filtering && matches.length > MAX_FILTER_ROWS ? matches.slice(0, MAX_FILTER_ROWS) : matches;
 
   // The trigger's text comes from the options rather than from the selected
   // `Select.ItemText` portaling into it, which is Radix's default. Filtering
@@ -255,6 +265,11 @@ export function Select({
             ))}
             {shown.length === 0 ? (
               <p className="px-2 py-1.5 text-xs text-subtle-foreground">No matches</p>
+            ) : null}
+            {shown.length < matches.length ? (
+              <p className="px-2 py-1.5 text-xs text-subtle-foreground">
+                {matches.length - shown.length} more — type to narrow
+              </p>
             ) : null}
           </RadixSelect.Viewport>
         </RadixSelect.Content>

@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { chooseOption, openSelect, selectValue, typeInSelect } from "../../../../test/v2-select";
 import { Dialog } from "./Dialog";
-import { Select, type SelectOption } from "./Select";
+import { MAX_FILTER_ROWS, Select, type SelectOption } from "./Select";
 
 /**
  * The v2 `Select`, which is Radix and no longer a native `<select>` (TASK-75).
@@ -110,6 +110,32 @@ describe("filtering", () => {
 
     expect(screen.queryByRole("option", { name: "Fable" })).toBeNull();
     expect(selectValue("model")).toBe("Fable");
+  });
+
+  test("a list past the row cap draws the first rows, says how many are left, and typing reaches them", () => {
+    // Every ref in a repository is a list with no upper bound (TASK-128), and
+    // Radix mounts a node per row.
+    const many: SelectOption[] = Array.from({ length: MAX_FILTER_ROWS + 50 }, (_, i) => ({
+      value: `v${i}`,
+      label: `ref-${i}`,
+    }));
+    const { unmount } = render(
+      <Select label="ref" options={many} value="v0" onValueChange={() => {}} filterPlaceholder="Type to filter" />,
+    );
+    openSelect("ref");
+    expect(screen.getAllByRole("option")).toHaveLength(MAX_FILTER_ROWS);
+    expect(screen.getByText("50 more — type to narrow")).toBeTruthy();
+
+    // The last row is past the cap, and a query still finds it.
+    typeInSelect(..."ref-249");
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["ref-249"]);
+    expect(screen.queryByText(/type to narrow/)).toBeNull();
+    unmount();
+
+    // A list that cannot filter has no way to reach what was cut, so it is not.
+    render(<Select label="ref" options={many} value="v0" onValueChange={() => {}} />);
+    openSelect("ref");
+    expect(screen.getAllByRole("option")).toHaveLength(MAX_FILTER_ROWS + 50);
   });
 
   test("without the placeholder, typing is left to Radix's own typeahead", async () => {

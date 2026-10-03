@@ -215,13 +215,15 @@ test("the diff follows the ref when it moves", async () => {
   await waitFor(() => expect(commitRequests.at(-1)).toBe(`?sha=${SHA}&base=${V2_MOVED}`));
 });
 
-test("a chosen ref that is gone reads as the parent again, and is not forgotten", async () => {
+test("a chosen ref that is gone reads as the parent again, and the choice goes with it", async () => {
   setViewField("commit", VIEW, "changesBase", "branch:deleted");
   mount("changes");
   await waitFor(() => expect(shownFiles()).toBe("tip.ts"));
   expect(selectValue("Relative to")).toBe("Parent commit");
   expect(commitRequests).toEqual([`?sha=${SHA}`]);
-  expect(getViewState("commit", VIEW).changesBase).toBe("branch:deleted");
+  // Dropped rather than kept: a later branch reusing the name must not
+  // become what this tab is relative to.
+  await waitFor(() => expect(getViewState("commit", VIEW).changesBase).toBeNull());
 });
 
 test("Commit mode is the commit's own diff, whatever Changes is relative to", async () => {

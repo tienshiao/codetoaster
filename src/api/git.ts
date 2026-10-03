@@ -153,7 +153,12 @@ export function sliceUntil(
 // the client didn't ask to render.
 const UNTIL_CAP = 50000;
 
-const LOG_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f%b%x1e";
+// How long a commit's diff may run. One commit's own diff is small; a diff
+// against a chosen base (TASK-128) spans whatever lies between them, and an
+// old tag on a large repository must not hold a git process open for good.
+const COMMIT_DIFF_TIMEOUT_MS = 30_000;
+
+const LOG_FORMAT ="--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f%b%x1e";
 const COMMIT_META_FORMAT = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%D%x1f%B";
 
 // Strip any leading non-"diff --git" lines (git diff-tree prefixes its patch
@@ -428,15 +433,32 @@ export const gitRoutes = {
         // being undone, which is not something the commit did. Two histories
         // with nothing in common have no such point, and compare directly.
         let diffBase: string | null = parents[0] ?? null;
-        let diffResult;
         if (verifyBase) {
-          const mergeBase = await gitSpawn(dir, ["merge-base", verifyBase.stdout.trim(), resolvedSha]);
-          diffBase = mergeBase.exitCode === 0 ? mergeBase.stdout.trim() : verifyBase.stdout.trim();
-          diffResult = await gitSpawn(dir, ["diff", "-M", diffBase, resolvedSha]);
-        } else if (parents.length >= 2) {
-          diffResult = await gitSpawn(dir, ["diff", "-M", `${resolvedSha}^1`, resolvedSha]);
-        } else {
-          diffResult = await gitSpawn(dir, ["diff-tree", "--patch", "--root", "-M", resolvedSha]);
+          const baseSha = verifyBase.stdout.trim();
+          const mergeBase = await gitSpawn(dir, ["merge-base", baseSha, resolvedSha]);
+          // Exit 1 is git saying there is no common ancestor. Anything else is
+          // git failing to answer, and comparing directly then would present
+          // the very diff the merge base exists to avoid as if it were right.
+          if (mergeBase.exitCode !== 0 && mergeBase.exitCode !== 1) {
+            return Response.json({ error: "Failed to find the merge base" }, { status: 500 });
+          }
+          diffBase = mergeBase.exitCode === 0 ? mergeBase.stdout.trim() : baseSha;
+        }
+
+        // `diff-tree` throughout: plumbing reads none of the user's diff
+        // config, so an external diff driver or `diff.noprefix` cannot hand
+        // the client's parser something it does not read.
+        const diffResult = await gitSpawn(
+          dir,
+          diffBase !== null && (verifyBase || parents.length >= 2)
+            ? ["diff-tree", "--patch", "-M", diffBase, resolvedSha]
+            : ["diff-tree", "--patch", "--root", "-M", resolvedSha],
+          { timeoutMs: COMMIT_DIFF_TIMEOUT_MS },
+        );
+        // A diff that could not be taken is not an empty diff: the client
+        // would say "no changes" and keep saying it, since it caches by sha.
+        if (diffResult.exitCode !== 0) {
+          return Response.json({ error: "Failed to diff commit" }, { status: 500 });
         }
 
         // Capped like the working-tree diff, so History cannot freeze on the

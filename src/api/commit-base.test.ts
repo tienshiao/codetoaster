@@ -24,11 +24,13 @@ import type { FileTokens } from "../types/highlight";
 let server: ReturnType<typeof Bun.serve>;
 let api: string;
 let dbDir: string;
+let projectRoot: string;
 let fork: string;
 let f1: string;
 let feature: string;
 let mainTip: string;
 let lone: string;
+let merge: string;
 
 beforeAll(async () => {
   dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-commitbase-"));
@@ -36,6 +38,7 @@ beforeAll(async () => {
   taskManager.loadProjects();
 
   const { root } = await tempRepo();
+  projectRoot = root;
   const commit = async (file: string, content: string, message: string) => {
     fs.writeFileSync(path.join(root, file), content);
     await git(root, "add", "-A");
@@ -53,6 +56,10 @@ beforeAll(async () => {
   // A commit with no history in common with any of the above.
   const emptyTree = await git(root, "hash-object", "-t", "tree", "/dev/null");
   lone = await git(root, "commit-tree", emptyTree, "-m", "lone");
+
+  // Last, so `mainTip` above is still the commit before it.
+  await git(root, "merge", "-q", "--no-ff", "feature", "-m", "merge feature");
+  merge = await git(root, "rev-parse", "HEAD");
 
   taskManager.createProject("based", "based", root);
   server = Bun.serve({
@@ -78,6 +85,15 @@ async function commitDiff(query: string): Promise<{ paths: string[]; diffBase: s
 
 test("without a base, the diff is the commit's own, from its parent", async () => {
   expect(await commitDiff(`sha=${feature}`)).toEqual({ paths: ["b.txt"], diffBase: f1 });
+});
+
+test("a merge commit's own diff is against its first parent", async () => {
+  expect(await commitDiff(`sha=${merge}`)).toEqual({ paths: ["a.ts", "b.txt"], diffBase: mainTip });
+});
+
+test("a root commit's own diff is everything it added, from nothing", async () => {
+  const root = await git(projectRoot, "rev-list", "--max-parents=0", "main");
+  expect(await commitDiff(`sha=${root}`)).toEqual({ paths: ["README.md"], diffBase: null });
 });
 
 test("with a base, the diff is everything since the commit's history left it", async () => {

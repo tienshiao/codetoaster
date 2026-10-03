@@ -54,7 +54,8 @@ A commit tab has three modes: Commit, Changes and File Tree. Commit is always th
 
 - **Merge base, not the ref's tip.** `/git/commit?sha=&base=` diffs from `git merge-base base sha` to `sha`, the same as `git diff base...sha`. A base that has moved on since the branch left it would otherwise show its own later work as deleted. Two histories with no common commit compare directly.[^git-api]
 - **`diffBase`.** The response names the commit the old side was read from: the first parent, the merge base, or null for a root commit. Image previews and `/diff-tokens` (through its own `base`) read their old side from it, so highlighting matches the diff on screen.[^git-api] [^use-git-commit]
-- **A name is stored, a sha is sent.** The choice lives in the commit tab's view state as `<kind>:<name>` (`branch:v2`) and is resolved against `/git/refs` on every render. The diff follows a branch that moves, each (sha, base) answer stays immutable in the query cache, and a ref that was deleted reads as "Parent commit" again without being an error.[^diff-base] [^commit-detail]
+- **A name is stored, a sha is sent.** The choice lives in the commit tab's view state as `<kind>:<name>` (`branch:v2`) and is resolved against `/git/refs` on every render. The diff follows a branch that moves, each (sha, base) answer stays immutable in the query cache, and a ref that was deleted reads as "Parent commit" again. The stored choice is dropped once `/git/refs` has answered without it, so a later branch reusing the name does not take the tab over.[^diff-base] [^commit-detail]
+- **A diff that fails is an error.** The route diffs with `git diff-tree` (plumbing, so the user's diff config and external drivers do not apply), under a timeout, and answers 500 when git fails. A failed diff shown as empty would read as "no changes", and the client caches the answer per (sha, base).[^git-api]
 
 [^commit-graph]: src/frontend/utils/commitGraph.ts
 [^git-api]: src/api/git.ts

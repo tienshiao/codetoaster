@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useCallback, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useState, useCallback, type ReactNode } from "react";
 import type { RepoRoot } from "@/frontend/repo-root";
 import { Loader2, Copy, Check } from "lucide-react";
 import { Select, type SelectOption } from "@/frontend/components/v2/Select";
@@ -318,13 +318,22 @@ function ChangesMode({
 export function CommitDetail({ root, view, sha, mode, onSelectMode, onSelectCommit, file, onSelectFile, refSets }: CommitDetailProps) {
   // The stored choice is a ref's name, resolved against the live refs: a
   // branch that moves takes the diff with it, and one that is gone resolves to
-  // nothing, which reads as the parent again without the choice being thrown
-  // away. Only Changes is relative to anything — Commit mode is the commit's
-  // own diff whatever is chosen here.
+  // nothing, which reads as the parent again. Only Changes is relative to
+  // anything — Commit mode is the commit's own diff whatever is chosen here.
   const [changesBase, setChangesBase] = useViewState("commit", view, "changesBase");
   const refsQuery = useGitRefs(root);
   const baseOptions = useMemo(() => diffBaseOptions(refsQuery.data), [refsQuery.data]);
-  const base = mode === "changes" ? resolveDiffBase(baseOptions, changesBase) : null;
+  const chosenBase = resolveDiffBase(baseOptions, changesBase);
+  const base = mode === "changes" ? chosenBase : null;
+  // A ref that is gone takes the choice with it, once the refs have actually
+  // answered. Kept, it could not be cleared by hand — the selector already
+  // reads "Parent commit", and re-picking the shown value is not a change —
+  // and a new branch that happened to reuse the name would quietly become
+  // what this tab is relative to.
+  const baseGone = changesBase !== null && refsQuery.data !== undefined && chosenBase === null;
+  useEffect(() => {
+    if (baseGone) setChangesBase(null);
+  }, [baseGone, setChangesBase]);
   // A choice that cannot be resolved *yet* is not one that is gone: fetching
   // the parent's diff in the meantime would paint it and then replace it.
   const awaitingRefs = mode === "changes" && changesBase !== null && refsQuery.isLoading;

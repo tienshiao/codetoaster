@@ -70,7 +70,11 @@ export function useGitCommit(
       return fetchDiffTokens(root, parsed, meta!.hash, base ? (diffBase ?? undefined) : undefined);
     },
     enabled: wantTokens && Array.isArray(parsed) && parsed.length > 0 && !!meta,
-    staleTime: Infinity,
+    // Tokens are as immutable as the commit; their absence is not. A null is
+    // a timeout or a failure — likelier across a whole branch than across one
+    // commit — and the server keeps warming its cache after the client gave
+    // up, so the next mount asks again instead of keeping the fallback.
+    staleTime: (query) => (query.state.data ? Infinity : 0),
   });
 
   const data = useMemo<GitCommitData | undefined>(() => {
