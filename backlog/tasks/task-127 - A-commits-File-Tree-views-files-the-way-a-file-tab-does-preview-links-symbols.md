@@ -6,6 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-10-03 19:06'
+updated_date: '2026-10-03 19:21'
 labels: []
 dependencies: []
 ordinal: 129000
@@ -19,12 +20,26 @@ A commit tab's File Tree mode draws the source of a file and nothing else. A fil
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A markdown file selected in a commit's File Tree has a Preview toggle and renders as it does in a file tab, frontmatter header and mermaid included
-- [ ] #2 A CSV or TSV file selected there renders as a table under the same toggle
-- [ ] #3 A repository link in that preview selects the linked file in the same commit's tree, at its line or heading, resolved against the commit's file list; a link to a file the commit does not have says so and selects nothing
-- [ ] #4 A repository image in that preview loads the blob from the commit, not the working tree
-- [ ] #5 ⌘/Ctrl-click on a symbol lists definitions and references found in the commit's files, and choosing one selects that file in the tree at that line; a symbol that only exists in the working tree is not listed
-- [ ] #6 Scroll position per file and per mode survives switching files, tabs and a reload, as in a file tab
-- [ ] #7 The file tab itself behaves as before
-- [ ] #8 Tests cover the commit symbol index and the tree's viewer; the wiki says how a commit's files are viewed
+- [x] #1 A markdown file selected in a commit's File Tree has a Preview toggle and renders as it does in a file tab, frontmatter header and mermaid included
+- [x] #2 A CSV or TSV file selected there renders as a table under the same toggle
+- [x] #3 A repository link in that preview selects the linked file in the same commit's tree, at its line or heading, resolved against the commit's file list; a link to a file the commit does not have says so and selects nothing
+- [x] #4 A repository image in that preview loads the blob from the commit, not the working tree
+- [x] #5 ⌘/Ctrl-click on a symbol lists definitions and references found in the commit's files, and choosing one selects that file in the tree at that line; a symbol that only exists in the working tree is not listed
+- [x] #6 Scroll position per file and per mode survives switching files, tabs and a reload, as in a file tab
+- [x] #7 The file tab itself behaves as before
+- [x] #8 Tests cover the commit symbol index and the tree's viewer; the wiki says how a commit's files are viewed
 <!-- AC:END -->
+
+
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Server: a symbol source over one commit (tree listing plus batched blob reads), marked immutable so the store builds it once and caches it apart from working trees; the symbols route takes sha. 2. Extract the file tab's viewer (toolbar, FileContent, link and image resolution, symbol popover) into FileViewer, with content, file list, state and open-file as props; FilePane becomes the working-tree binding. 3. CommitTree binds FileViewer to a commit: content from the blob, links and images against the commit's tree, symbols with sha, state in the commit slot, an opened file selected in the tree. 4. Tests for the commit source, the routes and the tree; wiki page.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Decisions. Preview and Wrap in the tree are task-wide prefs, since one viewer shows every file; scroll offsets and the position a link or definition asked for (treeTarget) are per commit. A link or definition target stays inside the commit and is refused with a toast when the commit lacks the file. Preview links keep the raw href there: a file at a commit has no URL of its own. Commit indexes have their own LRU of 3 so browsing history does not evict a working tree's index. The image-at-ref route moved off the Bun shell onto the raw spawn helper, because a preview requests all its images together. Left out: Show changes from the tree (the Changes mode cannot be told which file to scroll to in all-files mode) and symbols in the commit's two diff modes.
+<!-- SECTION:NOTES:END -->
