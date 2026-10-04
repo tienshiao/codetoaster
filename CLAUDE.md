@@ -163,6 +163,54 @@ Happy DOM has no layout engine, so anything depending on real geometry has to
 stub it (see `TabArea.render.tsx`) and is better verified in a browser via the
 `verify` skill.
 
+### Test-driven development
+
+Prefer TDD where it makes sense:
+
+- **Logic and server code** — `lib/` (PTY and task lifecycle, naming, the
+  symbol index, highlighting), the helpers in `api/`, `frontend/utils/` (diff
+  parsing, commit-graph lanes, the ref tree) and the stores
+  (`view-state-store.ts`, `layout-store.ts`): write the failing test first, make
+  it pass, then refactor. A change that adds behaviour without a test that would
+  have failed before it needs a stated reason.
+- **API routes** (`src/api/`): every new or changed route has route-level tests
+  through a real `Bun.serve` on port 0, in addition to unit tests of whatever it
+  calls; `tasks.test.ts` is the worked example. They cover the happy path and
+  the common error cases: validation failure (400), not found (404), conflict
+  (409). Unit tests do not exercise param and body parsing or the status codes
+  and error bodies a client actually gets, so these are not optional. There is
+  no authentication or per-role authorization to cover: the daemon's one guard
+  is the origin check, which `guardApiRoutes` applies to the whole route table
+  and `origin.test.ts` covers. A route mounted outside that table needs its own
+  refusal test.
+- **Frontend**: TDD is optional. Test the behaviour that matters (routing, data
+  loading, state transitions, what survives a remount), preferably as a
+  `.test.ts` against logic pulled out of the component, otherwise as a
+  `*.render.tsx`. Markup and styling do not need tests first; they are checked
+  in a browser.
+- **Keep tests deterministic.** Inject the clock (a `now: () => number`
+  dependency, as `symbols/store.ts` takes one) rather than reading `Date.now()`
+  in the code under test. The fake agent above stands in for every task. Wait on
+  a condition with `waitFor` from `test/wait.ts`, not a bare sleep, and build git
+  fixtures with `test/git-repo.ts`.
+
+## Before committing a code change
+
+Run `/code-review --fix` first, then `/verify`. Commit only when all of these
+hold:
+
+- `bun run test` and `bunx tsc --noEmit` are clean.
+- `/verify` (`.claude/skills/verify/SKILL.md`) has driven the change on an
+  isolated server: the endpoint answers as intended, or the UI does in a real
+  browser.
+- The change has its test (see above), and its Backlog task and wiki pages are
+  up to date.
+
+If any of them reports a gap, fix it through normal editing and run it again.
+Summarize both results, the review's and the verification's, in the Backlog
+task's final summary, and in the PR description when there is one. Commits that
+touch only docs, the wiki or `backlog/` skip this.
+
 ## Frontend
 
 Uses Bun HTML imports with `Bun.serve()` - not Vite. HTML files import `.tsx` directly. Tailwind via `bun-plugin-tailwind`.
