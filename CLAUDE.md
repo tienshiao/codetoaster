@@ -42,7 +42,18 @@ src/
 bun run dev          # tsr watch + bun --hot src/index.ts
 bun run start        # NODE_ENV=production bun src/index.ts
 bun run build:server # Build standalone binary for current platform
+bun run typecheck    # bun check: the whole tree in about a second
 ```
+
+`bun check` is Bun's own type checker and follows TypeScript 7 rules whatever
+`typescript` is installed, so `tsconfig.json` has to stay valid for 7 (no
+`baseUrl`; `paths` entries start with `./`). Inside a `bun run` script `bun` is
+`node_modules/.bin/bun`, not the one on `PATH`, which is what the `bun`
+devDependency pins: a `node_modules` holding an older one answers
+`Script not found "check"` until `bun install`. It has no watch mode, which is why
+`bun run dev` still runs `tsc --watch`, and the `typescript` package stays on
+5.x because a tsserver-based editor reads its `lib.*.d.ts` from there and the 7
+package does not ship them.
 
 ## CLI
 
@@ -199,7 +210,7 @@ Prefer TDD where it makes sense:
 Run `/code-review --fix` first, then `/verify`. Commit only when all of these
 hold:
 
-- `bun run test` and `bunx tsc --noEmit` are clean.
+- `bun run test` and `bun run typecheck` are clean.
 - `/verify` (`.claude/skills/verify/SKILL.md`) has driven the change on an
   isolated server: the endpoint answers as intended, or the UI does in a real
   browser.

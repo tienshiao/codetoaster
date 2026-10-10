@@ -1,5 +1,9 @@
 # Wiki Update Log
 
+## 2026-10-10
+* **Creation**: [bun check is TypeScript 7](/gotchas/bun-check-is-typescript-7.md) for TASK-129: the TS 7 rules it applies, which Bun a `bun run` script resolves, the missing watch mode, and why the `typescript` package stays on 5.x.
+* **Update**: [Two test runners](/conventions/testing.md) names `bun run typecheck` in the commit gate in place of `bunx tsc --noEmit`.
+
 ## 2026-10-03
 * **Update**: [Two test runners](/conventions/testing.md) gains Test first and Before committing sections, from the TDD and pre-commit notes added to CLAUDE.md.
 * **Update**: [Commit graph and log pagination](/modules/commit-graph.md) gains a Changes relative to a ref section for TASK-128: the merge-base diff, `diffBase`, and the choice stored as a ref name.

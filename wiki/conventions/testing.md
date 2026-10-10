@@ -5,7 +5,7 @@ description: Non-rendering tests run under bun test as *.test.ts, rendering test
 tags: [testing, bun, vitest, happy-dom]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T01:07:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-10T08:10:00Z }
 sources:
   - id: claude-md
     resource: ../../CLAUDE.md
@@ -57,7 +57,7 @@ A file that needs a different agent sets the variable from its own `beforeEach` 
 
 # Before committing a code change
 
-`/code-review --fix`, then `/verify`. Commit only when `bun run test` and `bunx tsc --noEmit` are clean, the change has been driven on an [isolated server](/runbooks/verify-on-isolated-server.md), and its test, Backlog task and wiki pages are in place. Docs-, wiki- and backlog-only commits skip this.[^claude-md]
+`/code-review --fix`, then `/verify`. Commit only when `bun run test` and `bun run typecheck` are clean (the latter is [`bun check`](/gotchas/bun-check-is-typescript-7.md)), the change has been driven on an [isolated server](/runbooks/verify-on-isolated-server.md), and its test, Backlog task and wiki pages are in place. Docs-, wiki- and backlog-only commits skip this.[^claude-md]
 
 [^claude-md]: CodeToaster CLAUDE.md
 [^preload]: test/preload.ts

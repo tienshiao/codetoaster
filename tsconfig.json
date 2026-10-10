@@ -20,8 +20,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
+    // The default from TypeScript 6 on, which is what `bun check` applies.
+    // Named so the 5.x `tsc --watch` in `bun run dev` and the editor agree.
+    "noUncheckedSideEffectImports": true,
 
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     },
