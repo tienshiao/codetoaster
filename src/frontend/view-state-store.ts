@@ -24,6 +24,7 @@
 // filtered on the way out, so it cannot be added back by accident.
 
 import { createKeyedListeners } from "./keyed-listeners";
+import { isUnder } from "./utils/ignored-files";
 import type { LineComment, HunkExpansionState } from "./types/diff";
 import type { FileInfo } from "./types/file";
 import type { GitViewMode } from "./types/git";
@@ -662,12 +663,20 @@ export function resetViewStates(taskId: string): void {
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 /** Returns `set` unchanged (same reference) when nothing needs pruning, so
- * setState callers can bail out without re-rendering. */
-export function pruneSet(set: Set<string>, valid: Set<string>): Set<string> {
+ * setState callers can bail out without re-rendering.
+ *
+ * `opaque` is for a set of paths checked against a tree that does not hold
+ * everything (TASK-130): a path under one of them is kept, because `valid`
+ * cannot say whether it is still there. */
+export function pruneSet(
+  set: Set<string>,
+  valid: Set<string>,
+  opaque?: ReadonlySet<string>,
+): Set<string> {
   let changed = false;
   const next = new Set<string>();
   for (const item of set) {
-    if (valid.has(item)) {
+    if (valid.has(item) || (opaque && opaque.size > 0 && isUnder(item, opaque))) {
       next.add(item);
     } else {
       changed = true;

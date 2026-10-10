@@ -84,3 +84,91 @@ test("a collapse survives the section being unmounted and mounted again", () => 
   view.rerender(<Section mounted selected={FILE} />);
   expect(screen.queryByText("frontend")).toBeNull();
 });
+
+/**
+ * Ignored directories (TASK-130). Their children arrive after the tree does,
+ * so the prune effect runs against a listing that does not hold them yet —
+ * the lifecycle half of the feature. What is fetched, and when, is
+ * `walkIgnored`'s and tested as a function.
+ */
+const DIST: FileInfo = { path: "dist", name: "dist", isDirectory: true, depth: 0, ignored: true };
+const DEEP: FileInfo = { path: "dist/deep", name: "deep", isDirectory: true, depth: 1, ignored: true };
+const CHUNK: FileInfo = { path: "dist/deep/chunk.js", name: "chunk.js", isDirectory: false, depth: 2, ignored: true };
+
+function IgnoredTree({
+  files,
+  expanded,
+  unloaded,
+  notes,
+}: {
+  files: FileInfo[];
+  expanded: { current: Set<string> };
+  unloaded: string[];
+  notes?: Record<string, string>;
+}) {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  const onExpandedPathsChange = useCallback(
+    (action: SetStateAction<Set<string>>) => {
+      const next = typeof action === "function" ? action(expanded.current) : action;
+      if (next === expanded.current) return;
+      expanded.current = next;
+      bump();
+    },
+    [expanded],
+  );
+  return (
+    <FileTree
+      files={files}
+      selectedFile={null}
+      onSelectFile={() => {}}
+      expandedPaths={expanded.current}
+      onExpandedPathsChange={onExpandedPathsChange}
+      unloadedDirs={new Set(unloaded)}
+      notes={notes ? new Map(Object.entries(notes)) : undefined}
+    />
+  );
+}
+
+test("an expansion under an ignored directory outlives the wait for its children", () => {
+  // A reload: both expansions are in the store, and the listing has `dist`
+  // with nothing under it.
+  const expanded = { current: new Set(["dist", "dist/deep"]) };
+  const view = render(
+    <IgnoredTree files={[...FILES, DIST]} expanded={expanded} unloaded={["dist"]} notes={{ dist: "Loading…" }} />,
+  );
+  screen.getByText("Loading…");
+  expect([...expanded.current].sort()).toEqual(["dist", "dist/deep"]);
+
+  // `dist` answers, then `dist/deep`: the nested directory is still open.
+  view.rerender(<IgnoredTree files={[...FILES, DIST, DEEP]} expanded={expanded} unloaded={["dist/deep"]} />);
+  view.rerender(<IgnoredTree files={[...FILES, DIST, DEEP, CHUNK]} expanded={expanded} unloaded={[]} />);
+  screen.getByText("chunk.js");
+  expect(screen.queryByText("Loading…")).toBeNull();
+});
+
+test("an expansion the fetched children do not hold is pruned once they are here", () => {
+  const expanded = { current: new Set(["dist", "dist/gone"]) };
+  const view = render(<IgnoredTree files={[...FILES, DIST]} expanded={expanded} unloaded={["dist"]} />);
+  expect(expanded.current.has("dist/gone")).toBe(true);
+
+  view.rerender(<IgnoredTree files={[...FILES, DIST, DEEP]} expanded={expanded} unloaded={["dist/deep"]} />);
+  expect([...expanded.current]).toEqual(["dist"]);
+});
+
+test("an ignored entry is marked as one, and a note is drawn only under an open directory", () => {
+  const expanded = { current: new Set<string>() };
+  render(
+    <IgnoredTree
+      files={[...FILES, DIST]}
+      expanded={expanded}
+      unloaded={["dist"]}
+      notes={{ dist: "12 more not shown" }}
+    />,
+  );
+  expect(screen.getByTitle("dist (ignored)").dataset.ignored).toBe("true");
+  expect(screen.getByTitle("src").dataset.ignored).toBeUndefined();
+  expect(screen.queryByText("12 more not shown")).toBeNull();
+
+  fireEvent.click(screen.getByText("dist"));
+  screen.getByText("12 more not shown");
+});

@@ -12,13 +12,16 @@ import { toast } from "sonner";
 import { sessionDisplayNames } from "../lib/xtmux/naming";
 import { invalidationsFor } from "./change-invalidation";
 import { queryClient } from "./query-client";
+import { taskKeys } from "./query-keys";
 import { playNotificationSound } from "./hooks/use-notification-sound";
 import { usePty } from "./PtyContext";
 import { retainLayouts } from "./layout-store";
 import { projectRoot, rootId } from "./repo-root";
 import { byRecency } from "./task-list";
 import { retainTaskViewStates } from "./view-state-store";
+import { ignoredEntriesOf } from "./utils/ignored-files";
 import { generateUUID } from "./utils/uuid";
+import type { FilesResponse } from "./types/file";
 import type { TaskState } from "./components/v2/StatusDot";
 import type {
   ArchivePreview,
@@ -529,7 +532,13 @@ export function TaskProvider({ children }: { children: ReactNode }) {
             const task = tasksRef.current.find((t) => t.id === message.taskId);
             const extra =
               task && task.worktreePath === null ? [rootId(projectRoot(task.projectId))] : [];
-            for (const queryKey of invalidationsFor(message, [message.taskId, ...extra])) {
+            // What each root's file listing already holds, for a frame naming
+            // ignored paths (TASK-130): a build writing under a listed `dist`
+            // has nothing to tell the listing.
+            const listedIgnored = (id: string) =>
+              ignoredEntriesOf(queryClient.getQueryData<FilesResponse>(taskKeys.files(id)));
+            const keys = invalidationsFor(message, [message.taskId, ...extra], listedIgnored);
+            for (const queryKey of keys) {
               void queryClient.invalidateQueries({ queryKey });
             }
             return;

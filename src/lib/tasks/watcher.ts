@@ -29,6 +29,17 @@ export interface ChangeBatch {
   files: string[] | null;
   /** HEAD or a ref moved: a commit, a checkout, a rebase, a fetch. */
   history: boolean;
+  /**
+   * The paths of the burst that the repository ignores (TASK-130), kept apart
+   * from `files` because almost nothing shows them: the diff, the search and
+   * the symbol index never do, and the tree only where an ignored directory
+   * has been opened. Absent when there are none, which is nearly always; and
+   * absent from an overflow, where `files: null` already says everything.
+   */
+  ignored?: string[];
+  /** The ones of `ignored` that were no longer on disk when the batch went
+   * out: removals, as opposed to writes. Absent when there are none. */
+  gone?: string[];
 }
 
 export interface WatchRoots {
@@ -69,10 +80,13 @@ export const MAX_FILES = 200;
  * at `<repo>/.claude/worktrees/*`, and this repository's own `ls-files -o`
  * duly lists them.
  *
- * The cheap synchronous half. Everything else a view would not show —
- * `dist/`, `target/`, `coverage/` — is dropped at flush time by the
+ * The cheap synchronous half. Everything else most views would not show —
+ * `dist/`, `target/`, `coverage/` — is set apart at flush time by the
  * repository's own ignore rules, which cost a `git check-ignore` and so are
- * asked once per batch rather than once per event.
+ * asked once per batch rather than once per event. Set apart rather than
+ * dropped (TASK-130), which is the difference from the three above: these
+ * never reach a batch at all, so `node_modules` opened in the tree is as old
+ * as its last fetch.
  */
 export function isReportableCheckoutPath(rel: string): boolean {
   if (!rel) return false;
@@ -274,33 +288,68 @@ export class TaskWatcher {
   private async deliver(batch: ChangeBatch): Promise<void> {
     // `null` is the overflow, which nothing can filter: there is no list to
     // ask about, and the answer the client acts on is "everything".
-    const files = batch.files === null ? null : await this.withoutIgnored(batch.files);
-    // `close()` drops what is pending, and the await above is a window in
+    const { files, ignored } =
+      batch.files === null ? { files: null, ignored: [] } : await this.splitIgnored(batch.files);
+    const gone = await this.missing(ignored);
+    // `close()` drops what is pending, and the awaits above are a window in
     // which it can happen.
     if (this.closed) return;
-    if (!batch.history && files !== null && files.length === 0) return;
-    this.onBatch({ files, history: batch.history });
+    if (!batch.history && files !== null && files.length === 0 && ignored.length === 0) return;
+    this.onBatch({
+      files,
+      history: batch.history,
+      ...(ignored.length > 0 ? { ignored } : {}),
+      ...(gone.length > 0 ? { gone } : {}),
+    });
   }
 
   /**
-   * Drop the paths the repository is told to ignore.
+   * The ones of `files` that are not on disk any more.
    *
-   * Every view a batch invalidates is gitignore-aware — the tree is
-   * `ls-files --others --cached --exclude-standard`, the diff is `git diff`
-   * plus `--cached` plus those same untracked files — so a build writing into
-   * `dist/`, `.next/`, `target/` or `coverage/` invalidates the tree, the diff
-   * and the search for content none of them would ever show, once per settle
-   * window for the whole length of the build. One `check-ignore` per batch is
-   * far cheaper than that.
+   * An event says a path moved and not how, and for an ignored file the
+   * difference matters: one that was written is still where the tree lists it,
+   * one that was removed is not. Without this a log file a dev server appends
+   * to would have to be treated as possibly deleted on every write, and the
+   * listing refetched for it once a second.
+   */
+  private async missing(files: string[]): Promise<string[]> {
+    if (files.length === 0) return files;
+    const present = await Promise.all(
+      files.map((file) =>
+        fs.promises.lstat(path.join(this.roots.checkout, file)).then(
+          () => true,
+          () => false,
+        ),
+      ),
+    );
+    return files.filter((_, i) => !present[i]);
+  }
+
+  /**
+   * Set the paths the repository is told to ignore apart from the rest.
+   *
+   * The expensive views a batch invalidates are gitignore-aware — the diff is
+   * `git diff` plus `--cached` plus the untracked files `--exclude-standard`
+   * leaves, and the search and the symbol index are built from the same
+   * listing — so a build writing into `dist/`, `.next/`, `target/` or
+   * `coverage/` would invalidate all of them for content none would ever
+   * show, once per settle window for the whole length of the build. One
+   * `check-ignore` per batch is far cheaper than that.
+   *
+   * They are reported all the same, under their own name (TASK-130): the tree
+   * lists an ignored directory and opens it on request, and a file in one can
+   * be open in a tab. What those cost to keep current is a listing of one
+   * directory, and only while it is on screen.
    *
    * Fail open: exit 1 is "none of them", and anything else — no git, the
    * timeout, 128 from a repository being rewritten underneath — keeps every
-   * path, because a file reported that needed no refetch costs one query and a
-   * file dropped that needed it costs a view that is quietly wrong. Tracked
-   * files are safe by construction: `check-ignore` consults the index and does
-   * not call a tracked path ignored, however the ignore rules read. A path
-   * that has just been deleted is still answered for, from the rules alone,
-   * so a removal inside `dist/` is dropped and one in `src/` is not.
+   * path among the files, because a file reported that needed no refetch costs
+   * one query and a file left out that needed it costs a view that is quietly
+   * wrong. Tracked files are safe by construction: `check-ignore` consults the
+   * index and does not call a tracked path ignored, however the ignore rules
+   * read. A path that has just been deleted is still answered for, from the
+   * rules alone, so a removal inside `dist/` is ignored and one in `src/` is
+   * not.
    *
    * Paths go as arguments and the answers come back a line each. `-z` is not
    * an option here — git rejects it outright unless the paths arrive on stdin,
@@ -311,17 +360,23 @@ export class TaskWatcher {
    * line matches no path in the batch, so the file is kept, which is the side
    * to be wrong on.
    */
-  private async withoutIgnored(files: string[]): Promise<string[]> {
-    if (files.length === 0 || this.roots.gitDirs.length === 0) return files;
+  private async splitIgnored(files: string[]): Promise<{ files: string[]; ignored: string[] }> {
+    if (files.length === 0 || this.roots.gitDirs.length === 0) return { files, ignored: [] };
     const { stdout, exitCode } = await gitSpawn(
       this.roots.checkout,
       // A batch is capped at `maxFiles` entries, well inside any argv limit.
       ["-c", "core.quotePath=false", "check-ignore", "--", ...files],
       { timeoutMs: 5000 },
     );
-    if (exitCode !== 0) return files;
-    const ignored = new Set(stdout.split("\n").filter((p) => p !== ""));
-    return ignored.size === 0 ? files : files.filter((file) => !ignored.has(file));
+    if (exitCode !== 0) return { files, ignored: [] };
+    const answered = new Set(stdout.split("\n").filter((p) => p !== ""));
+    if (answered.size === 0) return { files, ignored: [] };
+    return {
+      files: files.filter((file) => !answered.has(file)),
+      // From the batch rather than from git's output, so the order is the
+      // batch's and a line that matches no path in it is not passed on.
+      ignored: files.filter((file) => answered.has(file)),
+    };
   }
 
   /** Idempotent. Anything pending is dropped rather than flushed: a task that

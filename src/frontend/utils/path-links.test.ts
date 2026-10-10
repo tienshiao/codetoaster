@@ -241,6 +241,82 @@ describe("a bare name or a partial path", () => {
   });
 });
 
+/**
+ * Ignored files (TASK-130). The listing names an ignored file like any other,
+ * and stops at an ignored directory — so a path under one is not something the
+ * index can confirm, and is taken at its word instead.
+ */
+describe("ignored files", () => {
+  const IGNORING = indexFiles({
+    directory: ROOT,
+    files: [
+      { path: "src", name: "src", isDirectory: true, depth: 0 },
+      { path: "src/a.ts", name: "a.ts", isDirectory: false, depth: 1 },
+      { path: ".env", name: ".env", isDirectory: false, depth: 0, ignored: true },
+      { path: "dist", name: "dist", isDirectory: true, depth: 0, ignored: true },
+      { path: "web/node_modules", name: "node_modules", isDirectory: true, depth: 1, ignored: true },
+      // A listed `build` at the root, and an ignored one under `web`.
+      { path: "build", name: "build", isDirectory: true, depth: 0 },
+      { path: "build/config.js", name: "config.js", isDirectory: false, depth: 1 },
+      { path: "web/build", name: "build", isDirectory: true, depth: 1, ignored: true },
+    ],
+  })!;
+
+  const at = (text: string, cwd: string | null = ROOT) => paths(text, cwd, IGNORING);
+
+  test("a listed ignored file is a link like any other", () => {
+    expect(at("wrote .env")).toEqual([".env"]);
+  });
+
+  test("a file under a listed ignored directory is a link, unconfirmed", () => {
+    expect(at("built dist/assets/app.js:12")).toEqual(["dist/assets/app.js"]);
+    expect(findPathLinks("built dist/assets/app.js:12", IGNORING, ROOT)[0]!.line).toBe(12);
+  });
+
+  test("absolute, and relative to a cwd, resolve to the same place", () => {
+    expect(at(`${ROOT}/dist/app.js`)).toEqual(["dist/app.js"]);
+    expect(at("node_modules/react/index.js", `${ROOT}/web`)).toEqual(["web/node_modules/react/index.js"]);
+    expect(at("../dist/app.js", `${ROOT}/src`)).toEqual(["dist/app.js"]);
+  });
+
+  test("the directory itself is not a link, nor a path under it without an extension", () => {
+    // Nothing confirms these, so the rule is the one a bare name is held to:
+    // `dist/assets` is as likely a directory, and a file tab has nothing to
+    // show for one.
+    expect(at("see dist and dist/assets and dist/")).toEqual([]);
+  });
+
+  test("a name is not searched for under an ignored directory", () => {
+    // A tail match needs a list to match against, and there is none in there.
+    expect(at("app.js")).toEqual([]);
+  });
+
+  test("a directory that only looks like a listed one", () => {
+    expect(at("distribution/app.js and src/dist/app.js")).toEqual([]);
+  });
+
+  test("a listed file is never outranked by a guess", () => {
+    // From `web`, `build/config.js` could be under the ignored `web/build` —
+    // but the root has that very file, and one known to be there is a better
+    // answer than one that might be.
+    expect(at("build/config.js", `${ROOT}/web`)).toEqual(["build/config.js"]);
+    // With nothing listed to prefer, the cwd's reading stands.
+    expect(at("build/out.js", `${ROOT}/web`)).toEqual(["web/build/out.js"]);
+  });
+
+  test("standing in an ignored directory does not make every dotted word a file", () => {
+    // The agent has `cd`'d into `dist`. Everything is under an ignored
+    // directory from there, so the cwd alone confirms nothing.
+    const cwd = `${ROOT}/dist`;
+    expect(at("e.g. v1.2 or example.com", cwd)).toEqual([]);
+    // A name still finds the listed file it is the tail of.
+    expect(at("a.ts", cwd)).toEqual(["src/a.ts"]);
+    // And a path that itself names an ignored directory is taken at its word.
+    expect(at("dist/app.js", cwd)).toEqual(["dist/app.js"]);
+    expect(at("../web/node_modules/react/index.js", cwd)).toEqual(["web/node_modules/react/index.js"]);
+  });
+});
+
 test("several paths on a line keep their own offsets", () => {
   const line = "moved src/api/files.ts:3 into src/frontend/Terminal.tsx";
   const links = findPathLinks(line, INDEX, ROOT);

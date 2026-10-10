@@ -2,14 +2,17 @@ import {
   rootRoutes,
   cachedPromise,
   getImageMimeType,
+  gitSpawn,
   gitSpawnRaw,
   IMAGE_MIME_TYPES,
   listGitFiles,
+  listIgnoredEntries,
   safePath,
   buildFileListing,
   type CachedPromise,
+  type FileInfo,
 } from "./utils";
-import { realpath } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { highlightFile } from "../lib/highlight/tokenize";
 import { extractFrontmatter } from "../lib/frontmatter";
@@ -63,12 +66,21 @@ const FILE_LIST_TTL_MS = 3000;
  */
 const fileListCache = new Map<string, CachedPromise<string[]>>();
 
+/**
+ * With the files the repository ignores one at a time (TASK-130) — `.env`, a
+ * local settings file — and without what is under an ignored directory, which
+ * `listIgnoredEntries` does not walk into. That is the line that keeps
+ * `node_modules` from outranking the user's own code for every query.
+ */
 function cachedGitFiles(dir: string): Promise<string[]> {
-  return cachedPromise(fileListCache, dir, FILE_LIST_TTL_MS, () => listGitFiles(dir));
+  return cachedPromise(fileListCache, dir, FILE_LIST_TTL_MS, async () => {
+    const [files, ignored] = await Promise.all([listGitFiles(dir), listIgnoredEntries(dir)]);
+    return [...files, ...ignored.filter((entry) => !entry.endsWith("/"))];
+  });
 }
 
 /**
- * The tracked files of `dir` that fuzzy-match `q`, best first.
+ * The files of `dir` that fuzzy-match `q`, best first.
  *
  * One matcher for the palette (task scope) and the composer (project scope):
  * a composer whose suggestions ranked differently from the palette's would be
@@ -215,15 +227,94 @@ export function isLoopbackAddress(address: string | undefined): boolean {
  * LaunchServices answers the click rather than leaving it pending. */
 const REVEAL_TIMEOUT_MS = 10_000;
 
+/**
+ * `lexical` with its links followed: null when nothing is there, false when
+ * what is there is outside `dir`.
+ *
+ * `safePath` is lexical, and a link in the tree can point anywhere. `realpath`
+ * also answers whether the path exists — a directory included, which
+ * `Bun.file` says is not.
+ */
+async function resolveInside(dir: string, lexical: string): Promise<string | null | false> {
+  let fullPath: string;
+  try {
+    fullPath = await realpath(lexical);
+  } catch {
+    return null;
+  }
+  return fullPath.startsWith((await realpath(dir)) + path.sep) ? fullPath : false;
+}
+
+/**
+ * The part of `relative` that `git check-ignore` can be asked about: all of
+ * it, or as far as its first symbolic link.
+ *
+ * git refuses a path beyond a link outright (exit 128, "beyond a symbolic
+ * link"), and that is every directory of a package in a `node_modules` whose
+ * packages are links into a store or a workspace. What lies beyond is the
+ * link's to answer for anyway: the repository rules on the link, not on where
+ * it leads.
+ */
+async function upToFirstLink(dir: string, relative: string): Promise<string> {
+  const parts = relative.split("/");
+  for (let i = 1; i < parts.length; i++) {
+    const prefix = parts.slice(0, i).join("/");
+    const info = await lstat(path.join(dir, prefix)).catch(() => null);
+    if (info?.isSymbolicLink()) return prefix;
+  }
+  return relative;
+}
+
+/** How many children of one ignored directory are sent. The tree draws every
+ * row it is given, and a cache directory can hold a hundred thousand. */
+export const MAX_DIR_ENTRIES = 1000;
+
+/**
+ * One level of `fullPath`, as entries of the listing it hangs off (TASK-130).
+ *
+ * Read from the disk rather than asked of git: everything under an ignored
+ * directory is ignored, so there is nothing for git to decide, and a walk it
+ * was not asked to make is the reason the directory was one entry to begin
+ * with. By name, so that what the cap cuts is the same each time.
+ *
+ * A link is followed to see what it is — a package manager fills
+ * `node_modules` with them — and one that leads nowhere is listed as a file,
+ * which is what opening it will say.
+ */
+async function readDirEntries(
+  fullPath: string,
+  relativeDir: string,
+): Promise<{ entries: (FileInfo & { size?: number })[]; truncated: number }> {
+  const dirents = await readdir(fullPath, { withFileTypes: true });
+  dirents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const shown = dirents.slice(0, MAX_DIR_ENTRIES);
+  const depth = relativeDir.split("/").length;
+  const entries = await Promise.all(
+    shown.map(async (dirent) => {
+      const info = await stat(path.join(fullPath, dirent.name)).catch(() => null);
+      const isDirectory = info ? info.isDirectory() : dirent.isDirectory();
+      return {
+        path: `${relativeDir}/${dirent.name}`,
+        name: dirent.name,
+        isDirectory,
+        depth,
+        ignored: true as const,
+        ...(!isDirectory && info ? { size: info.size } : {}),
+      };
+    }),
+  );
+  return { entries, truncated: dirents.length - shown.length };
+}
+
 export const fileRoutes = {
   ...rootRoutes("files", {
     async GET({ repoRoot: dir }) {
       try {
-        const filePaths = await listGitFiles(dir);
+        const [filePaths, ignored] = await Promise.all([listGitFiles(dir), listIgnoredEntries(dir)]);
 
         // Shared directory-synthesis derivation; layer the per-file stat size on
         // top (non-directories only) preserving the try/catch semantics.
-        const files = buildFileListing(filePaths).map((f) => {
+        const files = buildFileListing(filePaths, ignored).map((f) => {
           if (f.isDirectory) return f;
           let size: number | undefined;
           try {
@@ -236,6 +327,60 @@ export const fileRoutes = {
       } catch (error) {
         return Response.json(
           { error: "Failed to list files", message: error instanceof Error ? error.message : String(error) },
+          { status: 500 }
+        );
+      }
+    },
+  }),
+
+  /**
+   * The children of an ignored directory, one level (TASK-130).
+   *
+   * `files` lists such a directory as a single entry — it is where most of a
+   * checkout's files are, and almost never what the reader came for — and the
+   * tree asks here when one is opened.
+   *
+   * Only for a directory the repository ignores. Everything under any other is
+   * already in the listing, and answering for one would hand back tracked
+   * files flagged as ignored. The link check is `reveal`'s, `resolveInside`.
+   */
+  ...rootRoutes("files/children", {
+    async GET({ repoRoot: dir }, req) {
+      try {
+        const relativeDir = new URL(req.url).searchParams.get("dir")?.replace(/\/+$/, "");
+        if (!relativeDir) {
+          return Response.json({ error: "Missing dir parameter" }, { status: 400 });
+        }
+
+        const lexical = safePath(dir, relativeDir);
+        if (!lexical) {
+          return Response.json({ error: "Invalid directory path" }, { status: 400 });
+        }
+        const fullPath = await resolveInside(dir, lexical);
+        if (fullPath === null) {
+          return Response.json({ error: "Directory not found" }, { status: 404 });
+        }
+        if (fullPath === false) {
+          return Response.json({ error: "Invalid directory path" }, { status: 400 });
+        }
+        if (!(await stat(fullPath)).isDirectory()) {
+          return Response.json({ error: "Directory not found" }, { status: 404 });
+        }
+
+        // The path as the client named it, relative to the root: 0 is ignored
+        // and 1 is not; anything else is git failing, which is the catch's.
+        const relative = path.relative(dir, lexical).split(path.sep).join("/");
+        const asked = await upToFirstLink(dir, relative);
+        const { exitCode } = await gitSpawn(dir, ["check-ignore", "-q", "--", asked]);
+        if (exitCode === 1) {
+          return Response.json({ error: "Not an ignored directory" }, { status: 400 });
+        }
+        if (exitCode !== 0) throw new Error(`git check-ignore exited ${exitCode}`);
+
+        return Response.json(await readDirEntries(fullPath, relative));
+      } catch (error) {
+        return Response.json(
+          { error: "Failed to list directory", message: error instanceof Error ? error.message : String(error) },
           { status: 500 }
         );
       }
@@ -346,16 +491,13 @@ export const fileRoutes = {
       if (!lexical) {
         return Response.json({ error: "Invalid file path" }, { status: 400 });
       }
-      // Resolved, because `safePath` is lexical: a symlink in the tree can
-      // point anywhere, and Finder would follow it. `realpath` also answers
-      // whether it exists — a directory included, which `Bun.file` says is not.
-      let fullPath: string;
-      try {
-        fullPath = await realpath(lexical);
-      } catch {
+      // Resolved, because a symlink in the tree can point anywhere, and Finder
+      // would follow it.
+      const fullPath = await resolveInside(dir, lexical);
+      if (fullPath === null) {
         return Response.json({ error: "File not found" }, { status: 404 });
       }
-      if (!fullPath.startsWith((await realpath(dir)) + path.sep)) {
+      if (fullPath === false) {
         return Response.json({ error: "Invalid file path" }, { status: 400 });
       }
 

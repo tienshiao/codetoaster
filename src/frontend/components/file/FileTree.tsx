@@ -20,6 +20,13 @@ interface FileTreeProps {
   /** Merged onto the outer container, so the Explorer can host the tree
    * without v1's route chrome. */
   className?: string;
+  /** Directories in `files` whose children are not — ignored ones that are
+   * collapsed, or open and still loading (TASK-130). An expansion under one is
+   * not pruned for being absent. A tree that holds everything passes none. */
+  unloadedDirs?: ReadonlySet<string>;
+  /** A line to draw under an expanded directory, after its children: that
+   * they are loading, or were cut short. */
+  notes?: ReadonlyMap<string, string>;
 }
 
 interface TreeNode {
@@ -28,9 +35,10 @@ interface TreeNode {
   isDirectory: boolean;
   children: TreeNode[];
   size?: number;
+  ignored?: boolean;
 }
 
-function buildTree(files: FileInfo[]): TreeNode[] {
+function buildTree(files: FileInfo[], ignoredPaths: ReadonlySet<string>): TreeNode[] {
   const root: TreeNode = { name: "", path: "", isDirectory: true, children: [] };
 
   files.forEach((file) => {
@@ -49,6 +57,10 @@ function buildTree(files: FileInfo[]): TreeNode[] {
           isDirectory: isDir,
           children: [],
           size: file.size,
+          // By path rather than off `file`: a directory synthesized on the way
+          // to an ignored file is an ordinary one, and an ignored directory
+          // the filter dropped is still ignored when a child brings it back.
+          ignored: ignoredPaths.has(fullPath),
         };
         current.children.push(child);
       } else if (file.isDirectory && !child.isDirectory) {
@@ -73,7 +85,7 @@ function sortTree(nodes: TreeNode[]): TreeNode[] {
     .sort((a, b) => compareTreeSiblings(a.isDirectory, b.isDirectory, a.name, b.name));
 }
 
-export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onExpandedPathsChange: setExpandedPaths, className }: FileTreeProps) {
+export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onExpandedPathsChange: setExpandedPaths, className, unloadedDirs, notes }: FileTreeProps) {
   const [filter, setFilter] = useState("");
 
   const filteredFiles = useMemo(() => {
@@ -81,15 +93,24 @@ export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onE
     return files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase()));
   }, [files, filter]);
 
-  const tree = useMemo(() => sortTree(buildTree(filteredFiles)), [filteredFiles]);
+  const ignoredPaths = useMemo(
+    () => new Set(files.filter((f) => f.ignored).map((f) => f.path)),
+    [files],
+  );
+  const tree = useMemo(
+    () => sortTree(buildTree(filteredFiles, ignoredPaths)),
+    [filteredFiles, ignoredPaths],
+  );
 
   // Drop expansion entries for directories that no longer exist (pruneSet
-  // returns the same reference when nothing changed, so this doesn't loop)
+  // returns the same reference when nothing changed, so this doesn't loop).
+  // Under a directory whose children have not been fetched there is no telling
+  // which those are, so they are left for when it has been.
   useEffect(() => {
     if (files.length === 0) return;
     const validDirs = collectDirectoryPaths(files);
-    setExpandedPaths((prev) => pruneSet(prev, validDirs));
-  }, [files, setExpandedPaths]);
+    setExpandedPaths((prev) => pruneSet(prev, validDirs, unloadedDirs));
+  }, [files, setExpandedPaths, unloadedDirs]);
 
   // Reveal the selection's ancestor directories when the selection *changes*,
   // not on every mount. The Explorer unmounts this tree on every rail switch
@@ -117,6 +138,7 @@ export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onE
     return nodes.map((node) => {
       const isExpanded = expandedPaths.has(node.path);
       const isSelected = selectedFile === node.path;
+      const note = node.isDirectory && isExpanded ? notes?.get(node.path) : undefined;
 
       return (
         <div key={node.path}>
@@ -125,7 +147,8 @@ export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onE
               isSelected ? "bg-accent text-accent-foreground" : "text-foreground/80"
             }`}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
-            title={node.path}
+            title={node.ignored ? `${node.path} (ignored)` : node.path}
+            data-ignored={node.ignored || undefined}
             onClick={() => (node.isDirectory ? toggleDirectory(node.path) : onSelectFile(node.path))}
           >
             {node.isDirectory && (
@@ -133,10 +156,15 @@ export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onE
                 {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </span>
             )}
-            <span className="shrink-0">
+            {/* Dimmed rather than hidden: an ignored file is there to be opened,
+                and should not read as part of the work. The selection keeps
+                its own contrast. */}
+            <span className={cn("shrink-0", node.ignored && "opacity-50")}>
               <FileIcon filename={node.name} isFolder={node.isDirectory} />
             </span>
-            <span className="truncate">{node.name}</span>
+            <span className={cn("truncate", node.ignored && !isSelected && "text-muted-foreground")}>
+              {node.name}
+            </span>
             {!node.isDirectory && node.size !== undefined && (
               <span className="ml-auto text-[10px] text-muted-foreground">
                 {formatSize(node.size)}
@@ -144,6 +172,14 @@ export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onE
             )}
           </div>
           {node.isDirectory && isExpanded && renderTree(node.children, depth + 1)}
+          {note && (
+            <div
+              className="py-0.5 px-2 text-xs italic text-muted-foreground"
+              style={{ paddingLeft: `${(depth + 1) * 16 + 8 + 18}px` }}
+            >
+              {note}
+            </div>
+          )}
         </div>
       );
     });

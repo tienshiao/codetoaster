@@ -404,6 +404,31 @@ test("a changed frame invalidates the task's file, diff and search queries", asy
   ]);
 });
 
+// TASK-130. The mapping takes the listed ignored directories as an argument;
+// what is pinned here is that the argument is the shared cache's listing, under
+// the key the Files tree fetches it by. A build writing into a `dist` the
+// listing already holds must not refetch that listing.
+test("a changed frame naming ignored paths is checked against the cached listing", async () => {
+  const { queryClient } = await import("./query-client");
+  queryClient.setQueryData(["tasks", "t1", "files"], {
+    directory: "/repo",
+    files: [{ path: "dist", name: "dist", isDirectory: true, depth: 0, ignored: true }],
+  });
+  const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+  render(<TaskProvider>{null}</TaskProvider>);
+
+  deliver({ type: "changed", taskId: "t1", files: [], history: false, ignored: ["dist/a.js"] });
+
+  try {
+    expect(invalidate.mock.calls.map(([arg]) => arg?.queryKey)).toEqual([
+      ["tasks", "t1", "file", "dist/a.js"],
+      ["tasks", "t1", "dir-children", "dist"],
+    ]);
+  } finally {
+    queryClient.removeQueries({ queryKey: ["tasks", "t1", "files"] });
+  }
+});
+
 // TASK-57. Where a mutation's failure is reported is decided once, in
 // `request`: it toasts unless the caller says it is showing the message itself.
 // The alternative — every caller doing its own reporting — is how the composer

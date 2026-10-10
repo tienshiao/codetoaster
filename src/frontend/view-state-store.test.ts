@@ -627,6 +627,22 @@ test("pruneSet returns the same reference when nothing changes", () => {
   expect(pruneSet(set, new Set(["a", "b", "c"]))).toBe(set);
 });
 
+// TASK-130. An ignored directory's children are fetched when it is opened, so
+// a tree that has just mounted holds `dist` and nothing under it — and the
+// expansions the user made under it are exactly what must not be forgotten for
+// not being there yet.
+test("pruneSet keeps what lies under a path it cannot see into", () => {
+  const set = new Set(["src", "dist", "dist/deep", "dist/deep/er", "gone", "distribution/x"]);
+  const pruned = pruneSet(set, new Set(["src", "dist"]), new Set(["dist"]));
+  expect([...pruned].sort()).toEqual(["dist", "dist/deep", "dist/deep/er", "src"]);
+});
+
+test("pruneSet with nothing to see past prunes as before, and keeps the reference when it can", () => {
+  const set = new Set(["dist", "dist/deep"]);
+  expect([...pruneSet(set, new Set(["dist"]), new Set())]).toEqual(["dist"]);
+  expect(pruneSet(set, new Set(["dist"]), new Set(["dist"]))).toBe(set);
+});
+
 test("pruneComments drops comments for files outside the diff", () => {
   const comments = new Map([
     ["src/a.ts:1:addition", makeComment("src/a.ts")],

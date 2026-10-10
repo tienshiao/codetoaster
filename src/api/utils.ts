@@ -225,6 +225,44 @@ export async function listGitFiles(dir: string, { cached = true }: { cached?: bo
   return stdout.split("\0").filter(Boolean);
 }
 
+/**
+ * What `listGitFiles` leaves out: the entries of `dir` the repository ignores
+ * (TASK-130). A directory ends in `/` and stands for everything inside it.
+ *
+ * `--directory` is the point. An ignore rule usually names a directory, and
+ * what is under one is the bulk of any checkout — `node_modules`, a build
+ * directory, other tasks' worktrees — so git is asked for the directory and
+ * never walks into it. That keeps this the size of the ignore file rather than
+ * of the disk, and as quick as the listing it sits beside.
+ *
+ * One shape needs taking back out. For a directory no rule names but which
+ * holds nothing except ignored files, git lists the directory *and* the files
+ * (`out/` beside `out/a.log`, under `*.log`). That directory is an ordinary
+ * one, and reported as ignored it would stand in for the files it was listed
+ * for, so an entry that is the parent of another is dropped. `--no-empty-
+ * directory` looks like the flag for this and is not: it also drops ignored
+ * directories that have files in them.
+ */
+export async function listIgnoredEntries(dir: string): Promise<string[]> {
+  const { stdout, exitCode } = await gitSpawn(dir, [
+    "ls-files",
+    "-z",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "--directory",
+  ]);
+  if (exitCode !== 0) throw new Error("Failed to list ignored files");
+  const entries = stdout.split("\0").filter(Boolean);
+  const parents = new Set<string>();
+  for (const entry of entries) {
+    for (let slash = entry.indexOf("/"); slash >= 0 && slash < entry.length - 1; slash = entry.indexOf("/", slash + 1)) {
+      parents.add(entry.slice(0, slash + 1));
+    }
+  }
+  return parents.size === 0 ? entries : entries.filter((entry) => !parents.has(entry));
+}
+
 // Run git via Bun.spawn (not Bun.$) so large output streams through a pipe
 // rather than buffering in a shell — Bun.$ deadlocks when many concurrent shells
 // each buffer large stdout (e.g. multi-MB files or patch output).
@@ -642,6 +680,9 @@ export interface FileInfo {
   name: string;
   isDirectory: boolean;
   depth: number;
+  /** The repository ignores this entry (TASK-130). On a directory it means the
+   * listing stops here: what is inside is asked for separately. */
+  ignored?: true;
 }
 
 /**
@@ -649,12 +690,16 @@ export interface FileInfo {
  * set of blob paths. Each parent directory is synthesized once, before the first
  * file living under it; depth is the path's segment count minus one. `size` is
  * omitted — git blobs aren't stat'd.
+ *
+ * `ignored` is `listIgnoredEntries`' answer, and its entries follow the listed
+ * files, flagged. They share the synthesized parents, which are never flagged
+ * themselves: a directory is ignored when git names it, not because of what it
+ * holds.
  */
-export function buildFileListing(paths: string[]): FileInfo[] {
+export function buildFileListing(paths: string[], ignored: string[] = []): FileInfo[] {
   const dirSet = new Set<string>();
   const files: FileInfo[] = [];
-  for (const relativePath of paths) {
-    const parts = relativePath.split("/");
+  const addParents = (parts: string[]) => {
     for (let i = 1; i < parts.length; i++) {
       const dirPath = parts.slice(0, i).join("/");
       if (!dirSet.has(dirPath)) {
@@ -662,11 +707,30 @@ export function buildFileListing(paths: string[]): FileInfo[] {
         files.push({ path: dirPath, name: parts[i - 1]!, isDirectory: true, depth: i - 1 });
       }
     }
+  };
+  for (const relativePath of paths) {
+    const parts = relativePath.split("/");
+    addParents(parts);
     files.push({
       path: relativePath,
       name: parts[parts.length - 1]!,
       isDirectory: false,
       depth: parts.length - 1,
+    });
+  }
+  for (const entry of ignored) {
+    const isDirectory = entry.endsWith("/");
+    const relativePath = isDirectory ? entry.slice(0, -1) : entry;
+    if (dirSet.has(relativePath)) continue;
+    const parts = relativePath.split("/");
+    addParents(parts);
+    if (isDirectory) dirSet.add(relativePath);
+    files.push({
+      path: relativePath,
+      name: parts[parts.length - 1]!,
+      isDirectory,
+      depth: parts.length - 1,
+      ignored: true,
     });
   }
   return files;

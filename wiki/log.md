@@ -1,6 +1,9 @@
 # Wiki Update Log
 
 ## 2026-10-10
+* **Creation**: [File listing and ignored files](/modules/file-listing.md) for TASK-130: the two git listings, who reads ignored entries, the children route, and how the watcher reports ignored paths.
+* **Update**: [Terminal links](/modules/terminal-links.md) drops "a gitignored file is never a link": listed ignored files link, and a path under an ignored directory links on its shape, when the text itself reaches into the directory and no listed file answers to it.
+* **Update**: [File viewer](/modules/file-viewer.md) links the Explorer's listing to its new page.
 * **Creation**: [bun check is TypeScript 7](/gotchas/bun-check-is-typescript-7.md) for TASK-129: the TS 7 rules it applies, which Bun a `bun run` script resolves, the missing watch mode, and why the `typescript` package stays on 5.x.
 * **Update**: [Two test runners](/conventions/testing.md) names `bun run typecheck` in the commit gate in place of `bunx tsc --noEmit`.
 

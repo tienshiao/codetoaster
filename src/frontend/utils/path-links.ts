@@ -1,5 +1,6 @@
 import type { ILink, ILinkProvider } from "@xterm/xterm";
 import type { FilesResponse } from "../types/file";
+import { ignoredDirsOf } from "./ignored-files";
 import { columnMapper, linkRange, type LinkBuffer } from "./terminal-links";
 
 /**
@@ -14,9 +15,13 @@ import { columnMapper, linkRange, type LinkBuffer } from "./terminal-links";
  * Files section already fetches. That makes the check a set lookup: nothing is
  * requested per hover, and the list is refetched when the working tree changes
  * (TASK-103), so a file the agent has just written becomes a link without
- * anyone asking. The cost is that an ignored file — build output,
- * `node_modules` — is never a link, which is the right answer for nearly
- * every path an agent names.
+ * anyone asking.
+ *
+ * The list stops at an ignored directory (TASK-130): `dist` is in it, what
+ * `dist` holds is not. A path under one therefore cannot be confirmed, and
+ * the provider cannot go and ask — it has to answer in the call it was made
+ * in — so such a path is linked on its shape alone. Sometimes that is a link
+ * to a file that is not there, which the tab it opens says.
  */
 
 export interface PathLinkIndex {
@@ -28,10 +33,16 @@ export interface PathLinkIndex {
   /** The same files by their last segment, for a name written without its
    * directory (TASK-109). */
   byName: ReadonlyMap<string, readonly string[]>;
+  /** The ignored directories the list stops at, relative to the root. */
+  ignoredDirs: readonly string[];
 }
 
 /** An index over `root` holding `paths`, each relative to it. */
-export function indexPaths(root: string, paths: Iterable<string>): PathLinkIndex {
+export function indexPaths(
+  root: string,
+  paths: Iterable<string>,
+  ignoredDirs: readonly string[] = [],
+): PathLinkIndex {
   const files = new Set<string>();
   const byName = new Map<string, string[]>();
   for (const path of paths) {
@@ -41,12 +52,35 @@ export function indexPaths(root: string, paths: Iterable<string>): PathLinkIndex
     if (same) same.push(path);
     else byName.set(name, [path]);
   }
-  return { root: root.replace(/\/+$/, ""), files, byName };
+  return { root: root.replace(/\/+$/, ""), files, byName, ignoredDirs };
 }
 
 export function indexFiles(data: FilesResponse | undefined): PathLinkIndex | null {
   if (!data) return null;
-  return indexPaths(data.directory, filePathSet(data));
+  return indexPaths(data.directory, filePathSet(data), ignoredDirsOf(data));
+}
+
+/**
+ * Whether `path`, which is not in the list, may still be a file of the task:
+ * one under an ignored directory the list stops at.
+ *
+ * A guess, held to the rule a bare name is held to — the last segment has an
+ * extension — because `dist/assets` is as likely a directory as a file, and
+ * prose mentions directories all the time.
+ *
+ * `base` is what `path` was resolved against, when that was the cwd. The text
+ * has to reach into the ignored directory itself: an agent that has `cd`'d
+ * into `dist` puts *everything* it prints under one, and `e.g`, `v1.2` and
+ * the name of every file elsewhere in the repository would light up as files
+ * of `dist`.
+ */
+function mayBeIgnoredFile(path: string, index: PathLinkIndex, base: string | null = null): boolean {
+  if (!EXTENSION.test(path.slice(path.lastIndexOf("/") + 1))) return false;
+  for (const dir of index.ignoredDirs) {
+    if (!path.startsWith(`${dir}/`)) continue;
+    if (base === null || !`${base}/`.startsWith(`${dir}/`)) return true;
+  }
+  return false;
 }
 
 const pathSets = new WeakMap<FilesResponse, ReadonlySet<string>>();
@@ -132,14 +166,19 @@ function resolve(raw: string, index: PathLinkIndex, cwd: string | null): string[
   if (raw.startsWith("/")) {
     if (!raw.startsWith(`${index.root}/`)) return [];
     const path = normalize(raw.slice(index.root.length + 1));
-    return path && index.files.has(path) ? [path] : [];
+    return path && (index.files.has(path) || mayBeIgnoredFile(path, index)) ? [path] : [];
   }
   // The home directory is the daemon's, not something this side can expand.
   if (raw.startsWith("~")) return [];
   const bases = cwd ? [cwd, ""] : [""];
-  for (const base of bases) {
-    const path = normalize(base ? `${base}/${raw}` : raw);
+  const readings = bases.map((base) => ({ base, path: normalize(base ? `${base}/${raw}` : raw) }));
+  // A listed file under either base before a guess under the first: one that
+  // is known to be there outranks one that might be.
+  for (const { path } of readings) {
     if (path && index.files.has(path)) return [path];
+  }
+  for (const { base, path } of readings) {
+    if (path && mayBeIgnoredFile(path, index, base || null)) return [path];
   }
 
   if (raw.startsWith("./") || raw.startsWith("../")) return [];

@@ -21,7 +21,7 @@ import { RefSidebar, type RefSidebarHeadExpanded } from "@/frontend/components/g
 import { useBacklog } from "@/frontend/hooks/use-backlog";
 import { useGitHistory } from "@/frontend/hooks/use-git-history";
 import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
-import { useTaskFiles } from "@/frontend/hooks/use-task-files";
+import { useIgnoredTree, useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import {
   EXPLORER_SECTIONS,
@@ -275,6 +275,9 @@ function FilesSection({ root, open, handlers }: SectionProps) {
   const view = useMemo(() => viewRef(rootId(root), "files"), [root]);
   const [selectedFile, setSelectedFile] = useViewState("files", view, "selectedFile");
   const [expandedPaths, setExpandedPaths] = useViewState("files", view, "expandedPaths");
+  // The listing stops at an ignored directory; what is inside one arrives as
+  // it is expanded (TASK-130).
+  const tree = useIgnoredTree(root, data?.files, expandedPaths);
 
   if (isLoading) return <ExplorerLoading>Loading files…</ExplorerLoading>;
 
@@ -286,14 +289,13 @@ function FilesSection({ root, open, handlers }: SectionProps) {
     );
   }
 
-  const files = data?.files ?? [];
-  if (files.length === 0) return <ExplorerNote>No files.</ExplorerNote>;
+  if (tree.files.length === 0) return <ExplorerNote>No files.</ExplorerNote>;
 
   return (
     <div className="flex h-full min-h-0 flex-col" {...handlers}>
       <WorkspaceFileTree
         className="border-r-0"
-        files={files}
+        files={tree.files}
         selectedFile={selectedFile}
         onSelectFile={(path) => {
           setSelectedFile(path);
@@ -301,6 +303,8 @@ function FilesSection({ root, open, handlers }: SectionProps) {
         }}
         expandedPaths={expandedPaths}
         onExpandedPathsChange={setExpandedPaths}
+        unloadedDirs={tree.unloaded}
+        notes={tree.notes}
       />
     </div>
   );

@@ -169,7 +169,18 @@ export type ServerMessage =
   // the burst was small enough for the list to mean anything, which files —
   // `null` is "too many to name, assume everything". The client turns this
   // into query invalidations; nothing is re-read on the server's behalf.
-  | { type: "changed"; taskId: string; files: string[] | null; history: boolean };
+  // `ignored` is the part of the burst the repository ignores (TASK-130),
+  // apart from `files` because only the tree and an open tab ever show it;
+  // absent when there is none. `gone` is the ones of those that were removed
+  // rather than written.
+  | {
+      type: "changed";
+      taskId: string;
+      files: string[] | null;
+      history: boolean;
+      ignored?: string[];
+      gone?: string[];
+    };
 
 /** A checkout on disk that no task accounts for (§5.6, TASK-32).
  *

@@ -2,7 +2,7 @@ import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { fileRoutes, isLoopbackAddress, revealCommand, serializeFileContent } from "./files";
+import { fileRoutes, isLoopbackAddress, MAX_DIR_ENTRIES, revealCommand, serializeFileContent } from "./files";
 import { initDatabase } from "../lib/db";
 import { taskManager } from "../lib/tasks/manager";
 import { cleanupRepos, tempDir, tempRepo } from "../../test/git-repo";
@@ -269,6 +269,200 @@ describe("GET /api/projects/:id/files/search", () => {
     );
     const res: Response = await handler(req, { requestIP: () => ({ address: "192.168.1.20" }) });
     expect(res.status).toBe(403);
+  });
+});
+
+/**
+ * What the listing routes say about files the repository ignores (TASK-130).
+ *
+ * The tree lists an ignored directory as one entry and asks for its children
+ * when it is opened, so the two routes are covered together: what the first
+ * leaves for the second, and every way the second refuses.
+ */
+describe("ignored files in the listing routes", () => {
+  let server: ReturnType<typeof Bun.serve>;
+  let base: string;
+  let dbDir: string;
+  let repoRoot: string;
+
+  function write(file: string, content = "x\n"): void {
+    fs.mkdirSync(path.dirname(path.join(repoRoot, file)), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, file), content);
+  }
+
+  beforeAll(async () => {
+    dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "codetoaster-ignored-"));
+    initDatabase(path.join(dbDir, "codetoaster.db"));
+    taskManager.loadProjects();
+
+    repoRoot = fs.realpathSync((await tempRepo()).root);
+    write(".gitignore", "dist/\n.env\nmany/\nlinked/\n");
+    write(".env", "SECRET=1\n");
+    write("src/parser.ts");
+    write("src/inner/x.ts");
+    write("dist/bundle.js", "built\n");
+    write("dist/deep/chunk.js");
+    for (let i = 0; i < MAX_DIR_ENTRIES + 5; i++) write(`many/f${String(i).padStart(4, "0")}.txt`);
+    const outside = tempDir("codetoaster-outside-");
+    fs.writeFileSync(path.join(outside, "secret.txt"), "x");
+    fs.symlinkSync(outside, path.join(repoRoot, "dist", "escape"));
+    // The shape a package manager leaves: the package is a link into a store
+    // beside it, and what the reader opens next is a directory beyond the link.
+    write("linked/store/pkg/lib/a.js");
+    fs.symlinkSync(path.join("store", "pkg"), path.join(repoRoot, "linked", "pkg"));
+    // And a link the repository does not ignore, to a directory it does not.
+    fs.symlinkSync("src", path.join(repoRoot, "alias"));
+
+    taskManager.createProject("ign", "ign", repoRoot);
+
+    server = Bun.serve({
+      port: 0,
+      routes: fileRoutes as any,
+      fetch: () => new Response("", { status: 404 }),
+    });
+    base = `http://localhost:${server.port}`;
+  });
+
+  afterAll(() => {
+    server.stop(true);
+    cleanupRepos();
+    fs.rmSync(dbDir, { recursive: true, force: true });
+  });
+
+  type Entry = { path: string; name: string; isDirectory: boolean; depth: number; size?: number; ignored?: true };
+
+  function children(id: string, dir?: string) {
+    const query = dir === undefined ? "" : `?dir=${encodeURIComponent(dir)}`;
+    return fetch(`${base}/api/projects/${id}/files/children${query}`);
+  }
+
+  test("the listing flags an ignored file and stops at an ignored directory", async () => {
+    const res = await fetch(`${base}/api/projects/ign/files`);
+    expect(res.status).toBe(200);
+    const { files } = (await res.json()) as { files: Entry[] };
+    const byPath = new Map(files.map((f) => [f.path, f]));
+
+    expect(byPath.get(".env")).toEqual({
+      path: ".env",
+      name: ".env",
+      isDirectory: false,
+      depth: 0,
+      ignored: true,
+      size: 9,
+    });
+    expect(byPath.get("dist")).toEqual({ path: "dist", name: "dist", isDirectory: true, depth: 0, ignored: true });
+    expect(files.some((f) => f.path.startsWith("dist/"))).toBe(false);
+    // What was listed before still is, and is not flagged.
+    expect(byPath.get("src/parser.ts")?.ignored).toBeUndefined();
+  });
+
+  test("children are one level of an ignored directory, flagged, with sizes", async () => {
+    const res = await children("ign", "dist");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      entries: [
+        { path: "dist/bundle.js", name: "bundle.js", isDirectory: false, depth: 1, ignored: true, size: 6 },
+        { path: "dist/deep", name: "deep", isDirectory: true, depth: 1, ignored: true },
+        // A link to a directory is one: it opens like any other, and where it
+        // leads is checked when it does.
+        { path: "dist/escape", name: "escape", isDirectory: true, depth: 1, ignored: true },
+      ],
+      truncated: 0,
+    });
+  });
+
+  test("a directory inside an ignored one is asked for the same way", async () => {
+    const res = await children("ign", "dist/deep");
+    expect(res.status).toBe(200);
+    const { entries } = (await res.json()) as { entries: Entry[] };
+    expect(entries.map((e) => e.path)).toEqual(["dist/deep/chunk.js"]);
+    expect(entries[0]!.depth).toBe(2);
+  });
+
+  test("a directory past the cap answers with the first of them and how many it left out", async () => {
+    const res = await children("ign", "many");
+    expect(res.status).toBe(200);
+    const { entries, truncated } = (await res.json()) as { entries: Entry[]; truncated: number };
+    expect(entries).toHaveLength(MAX_DIR_ENTRIES);
+    expect(truncated).toBe(5);
+    // By name, so what is cut is the same each time it is asked.
+    expect(entries[0]!.name).toBe("f0000.txt");
+  });
+
+  test("children without a directory is a 400", async () => {
+    const res = await children("ign");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Missing dir parameter" });
+  });
+
+  test("children of a path that climbs out of the repository is a 400", async () => {
+    const res = await children("ign", "../outside");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid directory path" });
+  });
+
+  test("children of a link that leads out of the repository is a 400", async () => {
+    // Lexically inside, and ignored, so only the resolved path says no.
+    const res = await children("ign", "dist/escape");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid directory path" });
+  });
+
+  test("children of a directory the repository does not ignore is a 400", async () => {
+    // The listing already holds everything under it; answering here would
+    // flag tracked files as ignored.
+    const res = await children("ign", "src");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Not an ignored directory" });
+  });
+
+  test("a directory beyond a link inside an ignored one is listed, under the path it was asked by", async () => {
+    // `git check-ignore` refuses a path beyond a symbolic link outright, so
+    // the question it is asked is about the link: that is what is ignored.
+    const link = await children("ign", "linked/pkg");
+    expect(link.status).toBe(200);
+    expect(((await link.json()) as { entries: Entry[] }).entries.map((e) => e.path)).toEqual(["linked/pkg/lib"]);
+
+    const beyond = await children("ign", "linked/pkg/lib");
+    expect(beyond.status).toBe(200);
+    expect(((await beyond.json()) as { entries: Entry[] }).entries.map((e) => e.path)).toEqual([
+      "linked/pkg/lib/a.js",
+    ]);
+  });
+
+  test("children beyond a link the repository does not ignore is a 400", async () => {
+    const res = await children("ign", "alias/inner");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Not an ignored directory" });
+  });
+
+  test("children of a directory that is not there is a 404", async () => {
+    const res = await children("ign", "dist/missing");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Directory not found" });
+  });
+
+  test("children of a file is a 404 too", async () => {
+    const res = await children("ign", "dist/bundle.js");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Directory not found" });
+  });
+
+  test("children on an unknown project is a 404", async () => {
+    const res = await children("nope", "dist");
+    expect(res.status).toBe(404);
+  });
+
+  test("search finds an ignored file, and nothing inside an ignored directory", async () => {
+    const search = async (q: string) => {
+      const res = await fetch(`${base}/api/projects/ign/files/search?q=${encodeURIComponent(q)}`);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { results: { path: string }[] }).results.map((r) => r.path);
+    };
+    expect(await search(".env")).toContain(".env");
+    expect(await search("bundle")).toEqual([]);
+    // The directory itself is not a file to open.
+    expect(await search("dist")).toEqual([]);
   });
 });
 

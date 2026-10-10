@@ -36,6 +36,11 @@ export const taskKeys = {
   file: (id: string | null, path: string | null) => ["tasks", id, "file", path] as const,
   /** Every open file at once, for a change too broad to list. */
   filePrefix: (id: string | null) => ["tasks", id, "file"] as const,
+  /** use-task-files.ts — one level of an ignored directory (TASK-130). Not
+   * under `files`: that key is matched by prefix, and a change to an ordinary
+   * file has nothing to say about what a build directory holds. */
+  dirChildren: (id: string | null, dir: string) => ["tasks", id, "dir-children", dir] as const,
+  dirChildrenPrefix: (id: string | null) => ["tasks", id, "dir-children"] as const,
   /** use-task-diff.ts — the working-tree diff. */
   diff: (id: string | null) => ["tasks", id, "diff"] as const,
   /** use-file-search.ts — the palette's file hits for one query. */

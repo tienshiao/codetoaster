@@ -4,6 +4,9 @@ export interface FileInfo {
   isDirectory: boolean;
   size?: number;
   depth: number;
+  /** The repository ignores this entry (TASK-130). On a directory it means the
+   * listing stops here: its children come from `DirChildrenResponse`. */
+  ignored?: true;
 }
 
 import type { FileTokens } from "../../types/highlight";
@@ -32,4 +35,11 @@ export type FileContentResponse =
 export interface FilesResponse {
   files: FileInfo[];
   directory: string;
+}
+
+/** One level of an ignored directory (TASK-130). */
+export interface DirChildrenResponse {
+  entries: FileInfo[];
+  /** How many more the directory holds than the server sent. */
+  truncated: number;
 }

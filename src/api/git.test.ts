@@ -269,6 +269,35 @@ test("buildFileListing: dedups shared prefixes across deeper trees, preserving f
   ]);
 });
 
+// Ignored entries (TASK-130) arrive as `listIgnoredEntries` hands them over: a
+// directory carries its trailing slash, and is one entry with nothing under it.
+
+test("buildFileListing: an ignored file and an ignored directory are flagged, after the listed files", () => {
+  expect(buildFileListing(["README.md"], [".env", "dist/"])).toEqual([
+    { path: "README.md", name: "README.md", isDirectory: false, depth: 0 },
+    { path: ".env", name: ".env", isDirectory: false, depth: 0, ignored: true },
+    { path: "dist", name: "dist", isDirectory: true, depth: 0, ignored: true },
+  ]);
+});
+
+test("buildFileListing: an ignored entry shares the parent a listed file already synthesized", () => {
+  expect(buildFileListing(["src/a.ts"], ["src/debug.log", "src/cache/"])).toEqual([
+    { path: "src", name: "src", isDirectory: true, depth: 0 },
+    { path: "src/a.ts", name: "a.ts", isDirectory: false, depth: 1 },
+    { path: "src/debug.log", name: "debug.log", isDirectory: false, depth: 1, ignored: true },
+    { path: "src/cache", name: "cache", isDirectory: true, depth: 1, ignored: true },
+  ]);
+});
+
+test("buildFileListing: a parent only ignored entries live under is synthesized, and is not itself ignored", () => {
+  // `out/a.log` under `*.log`: no rule names `out`, so it is an ordinary
+  // directory that happens to hold one ignored file.
+  expect(buildFileListing([], ["out/a.log"])).toEqual([
+    { path: "out", name: "out", isDirectory: true, depth: 0 },
+    { path: "out/a.log", name: "a.log", isDirectory: false, depth: 1, ignored: true },
+  ]);
+});
+
 // --- parseBatchCheck (TASK-110) ----------------------------------------------
 
 // `git cat-file --batch-check` writes one line per input, in order, whatever

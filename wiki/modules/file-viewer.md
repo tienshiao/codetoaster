@@ -5,7 +5,7 @@ description: A file tab and a commit's File Tree draw a file with the same viewe
 tags: [files, commit, symbols, preview, frontend]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-03T19:40:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-10T09:10:00Z }
 sources:
   - id: viewer
     resource: ../../src/frontend/components/file/FileViewer.tsx
@@ -41,7 +41,7 @@ Before TASK-127 the commit's tree drew the bare source and nothing else, because
 | | File tab (`FilePane`) | Commit's File Tree (`CommitTree`) |
 | --- | --- | --- |
 | Content | working tree | the blob at the commit |
-| File list for links and images | the Explorer's listing, fetched at a click | the commit's tree, already loaded |
+| File list for links and images | the Explorer's [listing](/modules/file-listing.md), fetched at a click | the commit's tree, already loaded |
 | Images | working-tree image endpoint | `image/git` at the commit |
 | Symbols | the working tree's index | an index of the commit's files |
 | State | the `file:<path>` slot | the `commit:<sha>` slot; Wrap and Preview in `prefs` |

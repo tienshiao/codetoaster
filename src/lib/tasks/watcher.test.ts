@@ -194,6 +194,13 @@ describe("TaskWatcher", () => {
     expect(batches).toEqual([{ files: ["a.txt"], history: true }]);
   });
 
+  // Every path the batches put under one name. These tests ask where a path
+  // landed rather than what the batches are exactly, because on a loaded
+  // machine the fixture's own creation arrives late enough to be in them.
+  function reported(batches: ChangeBatch[], key: "files" | "ignored" | "gone"): string[] {
+    return batches.flatMap((batch) => batch[key] ?? []);
+  }
+
   // A real repository, because what is under test is git's answer about the
   // paths and not a rule reimplemented here.
   async function ignoringDist(prefix: string): Promise<string> {
@@ -211,27 +218,71 @@ describe("TaskWatcher", () => {
     await Bun.sleep(100);
 
     // A build and an edit in the same burst, which is what a watch task does
-    // to itself: the tree, the diff and the search are all
-    // `--exclude-standard`, so `dist/out.js` would invalidate three queries for
-    // content none of them can show.
+    // to itself. The diff and the search are `--exclude-standard`, so
+    // `dist/out.js` among `files` would refetch both for content neither can
+    // show; under `ignored` it reaches only the views that do show it.
     fs.writeFileSync(path.join(repo, "dist", "out.js"), "built");
     fs.writeFileSync(path.join(repo, "src", "a.ts"), "a");
 
-    expect(await waitFor(() => batches.length > 0, 3000)).toBe(true);
+    expect(await waitFor(() => reported(batches, "files").includes("src/a.ts"), 3000)).toBe(true);
+    expect(await waitFor(() => reported(batches, "ignored").includes("dist/out.js"), 3000)).toBe(true);
     await Bun.sleep(SETTLE * 3);
-    expect(batches).toEqual([{ files: ["src/a.ts"], history: false }]);
+    expect(reported(batches, "files")).not.toContain("dist/out.js");
+    expect(reported(batches, "ignored")).not.toContain("src/a.ts");
   });
 
-  test("a burst that is entirely ignored says nothing at all", async () => {
+  test("a burst that is entirely ignored is reported as that, and not among the files", async () => {
     const repo = await ignoringDist("watch-ignore-all");
     const { batches } = await watching({ checkout: repo, gitDirs: [path.join(repo, ".git")] });
     await Bun.sleep(100);
 
-    // The whole of a build, and the point of the filter: an empty file list
-    // with nothing else to report is not a batch worth sending.
-    for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(repo, "dist", `out${i}.js`), "built");
-    await Bun.sleep(CAP + SETTLE * 4);
-    expect(batches).toEqual([]);
+    // The whole of a build. An ignored directory can be open in the tree and
+    // one of its files in a tab (TASK-130), so this is no longer nothing — but
+    // none of it is in `files`, which is what keeps the diff out of it.
+    const outs = [0, 1, 2, 3, 4].map((i) => `dist/out${i}.js`);
+    for (const out of outs) fs.writeFileSync(path.join(repo, out), "built");
+
+    const all = () => outs.every((out) => reported(batches, "ignored").includes(out));
+    expect(await waitFor(all, 3000)).toBe(true);
+    await Bun.sleep(SETTLE * 3);
+    for (const out of outs) expect(reported(batches, "files")).not.toContain(out);
+  });
+
+  test("an ignored file that was removed is named as gone, and one that was written is not", async () => {
+    const repo = await ignoringDist("watch-ignore-gone");
+    fs.writeFileSync(path.join(repo, "dist", "old.js"), "built");
+    const { batches } = await watching({ checkout: repo, gitDirs: [path.join(repo, ".git")] });
+    await Bun.sleep(100);
+
+    // The same event for both, as far as the platform says. Only the disk
+    // tells a rewrite from a removal, and only a removal changes what the
+    // tree lists.
+    fs.rmSync(path.join(repo, "dist", "old.js"));
+    fs.writeFileSync(path.join(repo, "dist", "new.js"), "built");
+
+    const both = () =>
+      ["dist/old.js", "dist/new.js"].every((file) => reported(batches, "ignored").includes(file));
+    expect(await waitFor(both, 3000)).toBe(true);
+    await Bun.sleep(SETTLE * 3);
+    expect(reported(batches, "gone")).toContain("dist/old.js");
+    expect(reported(batches, "gone")).not.toContain("dist/new.js");
+  });
+
+  test("a batch with nothing ignored in it carries no such field", async () => {
+    // No `dist` on disk: its creation is itself an ignored path, and FSEvents
+    // can deliver a fixture's last writes as a stream's first events.
+    const repo = tmp("watch-ignore-none");
+    await git(repo, "init", "-q");
+    fs.writeFileSync(path.join(repo, ".gitignore"), "dist/\n");
+    fs.mkdirSync(path.join(repo, "src"));
+    const { batches } = await watching({ checkout: repo, gitDirs: [path.join(repo, ".git")] });
+    await Bun.sleep(100);
+
+    fs.writeFileSync(path.join(repo, "src", "a.ts"), "a");
+
+    expect(await waitFor(() => reported(batches, "files").includes("src/a.ts"), 3000)).toBe(true);
+    await Bun.sleep(SETTLE * 3);
+    for (const batch of batches) expect("ignored" in batch).toBe(false);
   });
 
   test("close stops delivery and drops what was pending", async () => {
