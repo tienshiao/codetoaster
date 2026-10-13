@@ -99,6 +99,9 @@ interface DiffLayoutProps {
   /** A View file button on each file header (TASK-121). The working-tree
    * consumers pass it; the commit view does not, so it does not render. */
   onViewFile?: (path: string, line?: number) => void;
+  /** A Show in Finder button on each file header (TASK-131), passed and
+   * withheld as `onViewFile` is. */
+  onRevealFile?: (path: string) => void;
 
   // Extra toolbar content, right-aligned (e.g. the Submit Review button).
   toolbarExtra?: ReactNode;
@@ -134,6 +137,7 @@ export function DiffLayout({
   commentCounts,
   imageRefs,
   onViewFile,
+  onRevealFile,
   toolbarExtra,
   showFileTree = true,
   showViewModeToggle = true,
@@ -340,6 +344,7 @@ export function DiffLayout({
             root={root}
             imageRefs={imageRefs}
             onViewFile={onViewFile}
+            onRevealFile={onRevealFile}
           />
         </div>
       );
@@ -363,6 +368,7 @@ export function DiffLayout({
           root={root}
           imageRefs={imageRefs}
           onViewFile={onViewFile}
+          onRevealFile={onRevealFile}
         />
       </div>
     ));

@@ -1,4 +1,4 @@
-import { useState, useEffect, type Dispatch, type SetStateAction } from "react";
+import { useState, useEffect, type Dispatch, type MouseEvent, type SetStateAction } from "react";
 import { ChevronRight, ChevronDown, MessageCircle } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 import { DiffStat } from "./DiffStat";
@@ -25,9 +25,14 @@ interface FileTreeProps {
   /** Merged onto the outer container, so the Explorer can host the tree
    * without v1's route chrome. */
   className?: string;
+  /** A right-click on a file that is still on disk (TASK-131): not on one the
+   * diff deletes, and not on a directory, which here is only a grouping of
+   * changed paths and may itself be gone. The tree only reports it; whether a
+   * menu opens, and the default with it, is the caller's. */
+  onRowContextMenu?: (event: MouseEvent, path: string) => void;
 }
 
-export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts, collapsedPaths, onCollapsedPathsChange: setCollapsedPaths, className }: FileTreeProps) {
+export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts, collapsedPaths, onCollapsedPathsChange: setCollapsedPaths, className, onRowContextMenu }: FileTreeProps) {
   const [filter, setFilter] = useState("");
 
   const filteredFiles = filter
@@ -79,6 +84,11 @@ export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, to
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
             title={fullPath}
             onClick={() => isFile ? onSelectFile(file!.newPath) : toggleDirectory(fullPath)}
+            onContextMenu={
+              onRowContextMenu && file && file.status !== "deleted"
+                ? (event) => onRowContextMenu(event, file.newPath)
+                : undefined
+            }
           >
             {!isFile && (
               <span className="shrink-0 text-muted-foreground">

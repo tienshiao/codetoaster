@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ContextMenu as RadixContextMenu, DropdownMenu as RadixDropdownMenu } from "radix-ui";
 import { Check, type LucideIcon } from "lucide-react";
@@ -178,7 +178,8 @@ export interface PointMenuProps {
   items: readonly DropdownMenuItem[];
   /** Where to open, in viewport coordinates; null is closed. */
   at: { x: number; y: number } | null;
-  /** Escape, a press outside, or a row chosen — the host clears `at`. */
+  /** Escape, a press outside, a row chosen, or the menu taken out of the tree
+   * while open — the host clears `at`. */
   onDismiss: () => void;
   "aria-label"?: string;
 }
@@ -203,6 +204,22 @@ export function PointMenu({ items, at, onDismiss, "aria-label": ariaLabel }: Poi
   useLayoutEffect(() => {
     if (open) returnTo.current = document.activeElement as HTMLElement | null;
   }, [open]);
+
+  // Unmounted while open, the host is told as it would be of any other close.
+  // Radix reports a close, not an unmount, and a host that stops drawing the
+  // menu along with the list it belongs to — a section swapping its tree for
+  // a note — would be left holding `at`: the menu would open by itself, at the
+  // old point, the moment the list came back.
+  const openNow = useRef(open);
+  openNow.current = open;
+  const dismiss = useRef(onDismiss);
+  dismiss.current = onDismiss;
+  useEffect(
+    () => () => {
+      if (openNow.current) dismiss.current();
+    },
+    [],
+  );
 
   return (
     <RadixDropdownMenu.Root open={open} onOpenChange={(next) => !next && onDismiss()}>

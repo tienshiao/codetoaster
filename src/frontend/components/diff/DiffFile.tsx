@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import type { RepoRoot } from "@/frontend/repo-root";
-import { ChevronDown, ChevronRight, ChevronUp, FileText, MessageCircle, MessageSquare, MessageSquarePlus, MoreHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, FileText, FolderSearch, MessageCircle, MessageSquare, MessageSquarePlus, MoreHorizontal } from "lucide-react";
 import { firstChangedLine } from "../../utils/firstChangedLine";
 import { CommentInput } from "./CommentInput";
 import { CommentDisplay } from "./CommentDisplay";
@@ -36,9 +36,16 @@ interface DiffFileProps {
    * diff passes it: there the file on disk *is* the new side, where a commit's
    * new side may be long gone from the tree. */
   onViewFile?: (path: string, line?: number) => void;
+  /** Shows the file in Finder (TASK-131). The working-tree diff's, for the
+   * same reason as `onViewFile`, and absent where Finder cannot be shown. */
+  onRevealFile?: (path: string) => void;
 }
 
 const EMPTY_EXPANSIONS = new Map<string, HunkExpansionState>();
+
+/** The icon buttons at the trailing edge of a file header. */
+const HEADER_BUTTON_CLASS =
+  "shrink-0 flex items-center gap-1 text-xs font-sans text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-accent";
 
 function ExpandButton({
   direction,
@@ -169,6 +176,7 @@ export function DiffFile({
   root,
   imageRefs,
   onViewFile,
+  onRevealFile,
 }: DiffFileProps) {
   const hunkExpansions = hunkExpansionsProp ?? EMPTY_EXPANSIONS;
   const comments = commentState?.comments;
@@ -280,7 +288,7 @@ export function DiffFile({
         {/* A deleted file has nothing on disk to show. */}
         {onViewFile && file.status !== "deleted" && (
           <button
-            className="shrink-0 flex items-center gap-1 text-xs font-sans text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-accent"
+            className={HEADER_BUTTON_CLASS}
             onClick={(e) => {
               e.stopPropagation();
               onViewFile(filePath, firstChangedLine(file));
@@ -291,9 +299,22 @@ export function DiffFile({
             <FileText size={12} />
           </button>
         )}
+        {onRevealFile && file.status !== "deleted" && (
+          <button
+            className={HEADER_BUTTON_CLASS}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRevealFile(filePath);
+            }}
+            title="Show in Finder"
+            aria-label="Show in Finder"
+          >
+            <FolderSearch size={12} />
+          </button>
+        )}
         {commentState && (
           <button
-            className="shrink-0 flex items-center gap-1 text-xs font-sans text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-accent"
+            className={HEADER_BUTTON_CLASS}
             onClick={(e) => {
               e.stopPropagation();
               commentState.openFileComment(filePath);

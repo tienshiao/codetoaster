@@ -7,6 +7,7 @@ import {
   ListTodo,
   type LucideIcon,
 } from "lucide-react";
+import { PointMenu } from "@/frontend/components/v2/DropdownMenu";
 import type { ExplorerRailItem } from "@/frontend/components/v2/ExplorerRail";
 import { BacklogSection } from "@/frontend/components/BacklogSection";
 import {
@@ -20,6 +21,7 @@ import { CommitList } from "@/frontend/components/git/CommitList";
 import { RefSidebar, type RefSidebarHeadExpanded } from "@/frontend/components/git/RefSidebar";
 import { useBacklog } from "@/frontend/hooks/use-backlog";
 import { useGitHistory } from "@/frontend/hooks/use-git-history";
+import { useRevealMenu } from "@/frontend/hooks/use-reveal";
 import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
 import { useIgnoredTree, useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useViewState } from "@/frontend/hooks/use-view-state";
@@ -235,6 +237,7 @@ function ChangesSection({ root, open, handlers }: SectionProps) {
       deletions: files.reduce((sum, f) => sum + f.deletions, 0),
     };
   }, [data]);
+  const revealMenu = useRevealMenu(root);
 
   if (isLoading) return <ExplorerLoading>Loading changes…</ExplorerLoading>;
 
@@ -249,21 +252,28 @@ function ChangesSection({ root, open, handlers }: SectionProps) {
   if (!data || data.length === 0) return <ExplorerNote>No changes.</ExplorerNote>;
 
   return (
-    <div className="flex h-full min-h-0 flex-col" {...handlers}>
-      <DiffFileTree
-        className="border-r-0"
-        files={data}
-        selectedFile={selectedFile}
-        onSelectFile={(path) => {
-          setSelectedFile(path);
-          open({ kind: "diff", path });
-        }}
-        totalAdditions={totals.additions}
-        totalDeletions={totals.deletions}
-        collapsedPaths={collapsedPaths}
-        onCollapsedPathsChange={setCollapsedPaths}
-      />
-    </div>
+    <>
+      <div className="flex h-full min-h-0 flex-col" {...handlers}>
+        <DiffFileTree
+          className="border-r-0"
+          files={data}
+          selectedFile={selectedFile}
+          onSelectFile={(path) => {
+            setSelectedFile(path);
+            open({ kind: "diff", path });
+          }}
+          totalAdditions={totals.additions}
+          totalDeletions={totals.deletions}
+          collapsedPaths={collapsedPaths}
+          onCollapsedPathsChange={setCollapsedPaths}
+          onRowContextMenu={revealMenu.onContextMenu}
+        />
+      </div>
+      {/* Beside the tree rather than inside it: React events cross a portal,
+          and a click on a menu row is not a click the preview/pin pair should
+          hear. */}
+      <PointMenu {...revealMenu.menu} />
+    </>
   );
 }
 
@@ -278,6 +288,7 @@ function FilesSection({ root, open, handlers }: SectionProps) {
   // The listing stops at an ignored directory; what is inside one arrives as
   // it is expanded (TASK-130).
   const tree = useIgnoredTree(root, data?.files, expandedPaths);
+  const revealMenu = useRevealMenu(root);
 
   if (isLoading) return <ExplorerLoading>Loading files…</ExplorerLoading>;
 
@@ -292,21 +303,25 @@ function FilesSection({ root, open, handlers }: SectionProps) {
   if (tree.files.length === 0) return <ExplorerNote>No files.</ExplorerNote>;
 
   return (
-    <div className="flex h-full min-h-0 flex-col" {...handlers}>
-      <WorkspaceFileTree
-        className="border-r-0"
-        files={tree.files}
-        selectedFile={selectedFile}
-        onSelectFile={(path) => {
-          setSelectedFile(path);
-          open({ kind: "file", path });
-        }}
-        expandedPaths={expandedPaths}
-        onExpandedPathsChange={setExpandedPaths}
-        unloadedDirs={tree.unloaded}
-        notes={tree.notes}
-      />
-    </div>
+    <>
+      <div className="flex h-full min-h-0 flex-col" {...handlers}>
+        <WorkspaceFileTree
+          className="border-r-0"
+          files={tree.files}
+          selectedFile={selectedFile}
+          onSelectFile={(path) => {
+            setSelectedFile(path);
+            open({ kind: "file", path });
+          }}
+          expandedPaths={expandedPaths}
+          onExpandedPathsChange={setExpandedPaths}
+          unloadedDirs={tree.unloaded}
+          notes={tree.notes}
+          onRowContextMenu={revealMenu.onContextMenu}
+        />
+      </div>
+      <PointMenu {...revealMenu.menu} />
+    </>
   );
 }
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { test, expect } from "vitest";
+import { test, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { DiffLayout } from "./DiffLayout";
 import type { FileDiff } from "../../types/diff";
@@ -38,13 +38,22 @@ const FILES = ["a.ts", "b.ts", "c.ts"].map(fileDiff);
 /** One pane, with the persistence-backed props the real consumers inject held
  * in local state. The tree is off: this is about the keys, and a pane's own
  * "n of N" counter already says which file it is showing. */
-function Pane({ mode }: { mode: "all" | "single" }) {
+function Pane({
+  mode,
+  files = FILES,
+  onRevealFile,
+}: {
+  mode: "all" | "single";
+  files?: FileDiff[];
+  onRevealFile?: (path: string) => void;
+}) {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [treeCollapsedPaths, setTreeCollapsedPaths] = useState<Set<string>>(new Set());
   return (
     <DiffLayout
-      files={FILES}
+      files={files}
+      onRevealFile={onRevealFile}
       viewModeOverride={mode}
       onViewModeOverride={() => {}}
       selectedFile={selectedFile}
@@ -135,4 +144,28 @@ test("a file header collapses its file among others, and offers nothing when it 
   expect(tables(single)).toHaveLength(1);
   single.rerender(<Pane mode="all" />);
   expect(tables(single)).toHaveLength(3);
+});
+
+/** Show in Finder on a file header (TASK-131). */
+test("a file header shows its file in Finder without collapsing it", () => {
+  const onRevealFile = vi.fn();
+  const view = render(<Pane mode="all" onRevealFile={onRevealFile} />);
+  const buttons = screen.getAllByRole("button", { name: "Show in Finder" });
+  expect(buttons).toHaveLength(3);
+
+  fireEvent.click(buttons[1]!);
+  expect(onRevealFile).toHaveBeenCalledWith("b.ts");
+  // The header is itself a collapse toggle; the button must not be one too.
+  expect(view.container.querySelectorAll("table")).toHaveLength(3);
+});
+
+test("a deleted file has nothing on disk to show, and a consumer that passes nothing gets no button", () => {
+  const gone: FileDiff = { ...fileDiff("gone.ts"), status: "deleted" };
+  const view = render(<Pane mode="all" files={[fileDiff("a.ts"), gone]} onRevealFile={vi.fn()} />);
+  expect(screen.getAllByRole("button", { name: "Show in Finder" })).toHaveLength(1);
+  view.unmount();
+
+  // A commit's diff: the file as it was then is not a file on disk now.
+  render(<Pane mode="all" />);
+  expect(screen.queryByRole("button", { name: "Show in Finder" })).toBeNull();
 });

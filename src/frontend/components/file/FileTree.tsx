@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
+import { useState, useEffect, useMemo, useRef, type Dispatch, type MouseEvent, type SetStateAction } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { FileIcon } from "../diff/FileIcon";
 import { FilterInput } from "../FilterInput";
@@ -27,6 +27,9 @@ interface FileTreeProps {
   /** A line to draw under an expanded directory, after its children: that
    * they are loading, or were cut short. */
   notes?: ReadonlyMap<string, string>;
+  /** A right-click on a row, file or directory (TASK-131). The tree only
+   * reports it; whether a menu opens, and the default with it, is the caller's. */
+  onRowContextMenu?: (event: MouseEvent, path: string) => void;
 }
 
 interface TreeNode {
@@ -85,7 +88,7 @@ function sortTree(nodes: TreeNode[]): TreeNode[] {
     .sort((a, b) => compareTreeSiblings(a.isDirectory, b.isDirectory, a.name, b.name));
 }
 
-export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onExpandedPathsChange: setExpandedPaths, className, unloadedDirs, notes }: FileTreeProps) {
+export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onExpandedPathsChange: setExpandedPaths, className, unloadedDirs, notes, onRowContextMenu }: FileTreeProps) {
   const [filter, setFilter] = useState("");
 
   const filteredFiles = useMemo(() => {
@@ -150,6 +153,7 @@ export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onE
             title={node.ignored ? `${node.path} (ignored)` : node.path}
             data-ignored={node.ignored || undefined}
             onClick={() => (node.isDirectory ? toggleDirectory(node.path) : onSelectFile(node.path))}
+            onContextMenu={onRowContextMenu && ((event) => onRowContextMenu(event, node.path))}
           >
             {node.isDirectory && (
               <span className="shrink-0 text-muted-foreground">

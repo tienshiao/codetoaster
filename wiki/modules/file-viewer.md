@@ -5,7 +5,7 @@ description: A file tab and a commit's File Tree draw a file with the same viewe
 tags: [files, commit, symbols, preview, frontend]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-10T09:10:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-13T01:17:00Z }
 sources:
   - id: viewer
     resource: ../../src/frontend/components/file/FileViewer.tsx
@@ -46,7 +46,7 @@ Before TASK-127 the commit's tree drew the bare source and nothing else, because
 | Symbols | the working tree's index | an index of the commit's files |
 | State | the `file:<path>` slot | the `commit:<sha>` slot; Wrap and Preview in `prefs` |
 | An opened file | another tab | selected in the same tree |
-| Extra buttons | Show changes, Show in Finder | none |
+| Extra buttons | Show changes, [Show in Finder](/modules/show-in-finder.md) | none |
 
 A file tab is one tab per file. The tree has one viewer for every file it shows, so its Wrap and Preview toggles are task-wide, and its scroll offsets are a map in the commit's slot.[^commit-tree]
 

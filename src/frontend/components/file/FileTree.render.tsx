@@ -1,5 +1,5 @@
 import { useCallback, useReducer, type SetStateAction } from "react";
-import { test, expect } from "vitest";
+import { test, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { FileTree } from "./FileTree";
 import type { FileInfo } from "../../types/file";
@@ -83,6 +83,24 @@ test("a collapse survives the section being unmounted and mounted again", () => 
   view.rerender(<Section mounted={false} selected={FILE} />);
   view.rerender(<Section mounted selected={FILE} />);
   expect(screen.queryByText("frontend")).toBeNull();
+});
+
+test("a right-click on any row, a directory included, is reported with its path", () => {
+  // What the Explorer hangs Show in Finder off (TASK-131).
+  const onRowContextMenu = vi.fn();
+  render(
+    <FileTree
+      files={FILES}
+      selectedFile={null}
+      onSelectFile={() => {}}
+      expandedPaths={new Set(["src", "src/frontend"])}
+      onExpandedPathsChange={() => {}}
+      onRowContextMenu={onRowContextMenu}
+    />,
+  );
+  fireEvent.contextMenu(screen.getByText("frontend"));
+  fireEvent.contextMenu(screen.getByText("AppShell.tsx"));
+  expect(onRowContextMenu.mock.calls.map(([, path]) => path)).toEqual(["src/frontend", FILE]);
 });
 
 /**

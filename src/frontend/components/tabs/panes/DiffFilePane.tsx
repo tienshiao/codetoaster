@@ -7,6 +7,7 @@ import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPo
 import { useComments } from "@/frontend/hooks/use-comments";
 import { useHunkExpansions } from "@/frontend/hooks/use-hunk-expansions";
 import { useModifierHeld } from "@/frontend/hooks/use-modifier-held";
+import { useRevealInFinder } from "@/frontend/hooks/use-reveal";
 import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
 import { useSymbolHighlight } from "@/frontend/hooks/use-symbol-highlight";
 import { getViewState, setViewField, viewRef, type ViewRef } from "@/frontend/view-state-store";
@@ -55,6 +56,7 @@ export function DiffFilePane({ root, view, path, onOpenFile }: DiffFilePaneProps
   const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const modHeld = useModifierHeld();
   const symbolHover = useSymbolHighlight(modHeld, data);
+  const reveal = useRevealInFinder(root);
 
   const files = useMemo(() => {
     const file = data?.find((f) => f.newPath === path);
@@ -127,6 +129,7 @@ export function DiffFilePane({ root, view, path, onOpenFile }: DiffFilePaneProps
         hunkExpansions={hunkExpansions}
         onExpandContext={expandContext}
         onViewFile={onOpenFile}
+        onRevealFile={reveal}
         symbol={{
           modHeld,
           hoverHandlers: symbolHover,

@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { rootId, type RepoRoot } from "@/frontend/repo-root";
-import { toast } from "sonner";
 import { FileViewer, isMarkdown, type FileViewerMemory } from "@/frontend/components/file/FileViewer";
-import { fetchTaskFiles, revealFile, useFileContent, useTaskFiles } from "@/frontend/hooks/use-task-files";
+import { fetchTaskFiles, useFileContent, useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useChangedPaths } from "@/frontend/hooks/use-task-diff";
-import { canRevealInFinder } from "@/frontend/utils/platform";
+import { useRevealInFinder } from "@/frontend/hooks/use-reveal";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { getViewState, touchViewState, type ViewRef } from "@/frontend/view-state-store";
 import { resolveMarkdownLink } from "@/frontend/utils/markdown-links";
@@ -66,6 +65,7 @@ export function FilePane({
   // Whether there is a diff to switch to — see `useChangedPaths` for why this
   // is not `useTaskDiff`.
   const changed = useChangedPaths(root)?.has(path) ?? false;
+  const reveal = useRevealInFinder(root);
 
   const queryClient = useQueryClient();
   const rootKey = rootId(root);
@@ -136,16 +136,7 @@ export function FilePane({
       hrefFor={hrefFor}
       onOpenFile={onOpenFile}
       onShowChanges={changed ? () => onOpenDiff(path) : undefined}
-      // The daemon reveals the file on its own machine, so the button is only
-      // offered to a browser that is plausibly sitting at it.
-      onReveal={
-        canRevealInFinder()
-          ? () =>
-              revealFile(root, path).catch((e: Error) =>
-                toast.error("Could not show the file in Finder", { description: e.message }),
-              )
-          : undefined
-      }
+      onReveal={reveal ? () => reveal(path) : undefined}
     />
   );
 }

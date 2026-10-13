@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "./components/ui/alert-dialog";
 import { useModifierHeld } from "./hooks/use-modifier-held";
+import { useRevealInFinder } from "./hooks/use-reveal";
 import { useSymbolHighlight } from "./hooks/use-symbol-highlight";
 import { maybeShowSymbolTip } from "./utils/tips";
 import { SymbolPopover, type SymbolTarget } from "./components/SymbolPopover";
@@ -81,6 +82,7 @@ export function DiffView({ root, onSubmit, onOpenFile, destination = "terminal" 
   const [symbolTarget, setSymbolTarget] = useState<SymbolTarget | null>(null);
   const modHeld = useModifierHeld();
   const symbolHover = useSymbolHighlight(modHeld, data);
+  const reveal = useRevealInFinder(root);
 
   // First time a diff with content is shown, nudge the ⌘/Ctrl-click gesture.
   useEffect(() => {
@@ -199,6 +201,7 @@ export function DiffView({ root, onSubmit, onOpenFile, destination = "terminal" 
         hunkExpansions={hunkExpansions}
         onExpandContext={expandContext}
         onViewFile={onOpenFile}
+        onRevealFile={reveal}
         symbol={{
           modHeld,
           hoverHandlers: symbolHover,

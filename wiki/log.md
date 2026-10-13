@@ -1,5 +1,9 @@
 # Wiki Update Log
 
+## 2026-10-13
+* **Creation**: [Show in Finder](/modules/show-in-finder.md) for TASK-131: the surfaces that offer it, the one gate, the per-list menu, and the route's refusals from TASK-120.
+* **Update**: [File viewer](/modules/file-viewer.md) links its Show in Finder button to the new page.
+
 ## 2026-10-10
 * **Creation**: [File listing and ignored files](/modules/file-listing.md) for TASK-130: the two git listings, who reads ignored entries, the children route, and how the watcher reports ignored paths.
 * **Update**: [Terminal links](/modules/terminal-links.md) drops "a gitignored file is never a link": listed ignored files link, and a path under an ignored directory links on its shape, when the text itself reaches into the directory and no listed file answers to it.

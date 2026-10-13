@@ -1,10 +1,11 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type MouseEvent, type ReactNode } from "react";
 import { ArrowDownUp } from "lucide-react";
 import { rootId, type RepoRoot } from "@/frontend/repo-root";
 import {
   Badge,
   ExplorerTabs,
   FilterInput,
+  PointMenu,
   SectionLabel,
   Select,
 } from "@/frontend/components/v2";
@@ -16,6 +17,7 @@ import {
 import { BACKLOG_TABS, type BacklogTab } from "@/frontend/explorer-store";
 import { useBacklog } from "@/frontend/hooks/use-backlog";
 import { useHoverPointer } from "@/frontend/hooks/use-hover-pointer";
+import { useRevealMenu } from "@/frontend/hooks/use-reveal";
 import { useViewState } from "@/frontend/hooks/use-view-state";
 import { viewRef } from "@/frontend/view-state-store";
 import {
@@ -85,6 +87,7 @@ export function BacklogSection({
     () => groupBacklog(data?.detected ? data : null, { filter, openSort, closedSort }),
     [data, filter, openSort, closedSort],
   );
+  const revealMenu = useRevealMenu(root);
 
   // "Nothing has answered yet", rather than `isLoading`: React Query's
   // `isLoading` is `isPending && isFetching`, so a first load the browser has
@@ -125,76 +128,85 @@ export function BacklogSection({
     else setOpenSort(value);
   };
 
+  const { onContextMenu } = revealMenu;
+
   return (
-    <div className="flex h-full min-h-0 flex-col" {...handlers}>
-      {/* Above the tabs rather than over them: the list underneath is stale but
-          still readable, and the Retry is the only way back for a poll whose
-          failures the interval is not going to fix on its own. */}
-      {error ? (
-        <ExplorerError onRetry={() => refetch()}>
-          Could not refresh: {error instanceof Error ? error.message : String(error)}
-        </ExplorerError>
-      ) : null}
-      <ExplorerTabs
-        tabs={BACKLOG_TABS.map((label) => ({
-          label,
-          count: label === "Closed" ? grouped.closedCount : grouped.openCount,
-        }))}
-        value={backlogTab}
-        onChange={(label) => {
-          if (label === "Open" || label === "Closed") onBacklogTabChange(label);
-        }}
-      />
-      {/* One filter for both tabs, so switching tabs while hunting for a task
-          keeps the hunt; the sort is the showing tab's own. */}
-      <div
-        className="flex flex-none items-center gap-1 px-2 pt-2 pb-1"
-        onKeyDown={(e) => {
-          if (e.key === "Escape" && filter) {
-            e.stopPropagation();
-            setFilter("");
-          }
-        }}
-      >
-        <FilterInput
-          className="min-w-0 flex-1"
-          placeholder="Filter tasks"
-          shortcut={null}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        <Select
-          size="sm"
-          icon={ArrowDownUp}
-          aria-label="Sort"
-          options={SORT_OPTIONS}
-          value={sort}
-          onValueChange={(next) => {
-            if (isBacklogSort(next)) setSort(next);
+    <>
+      <div className="flex h-full min-h-0 flex-col" {...handlers}>
+        {/* Above the tabs rather than over them: the list underneath is stale but
+            still readable, and the Retry is the only way back for a poll whose
+            failures the interval is not going to fix on its own. */}
+        {error ? (
+          <ExplorerError onRetry={() => refetch()}>
+            Could not refresh: {error instanceof Error ? error.message : String(error)}
+          </ExplorerError>
+        ) : null}
+        <ExplorerTabs
+          tabs={BACKLOG_TABS.map((label) => ({
+            label,
+            count: label === "Closed" ? grouped.closedCount : grouped.openCount,
+          }))}
+          value={backlogTab}
+          onChange={(label) => {
+            if (label === "Open" || label === "Closed") onBacklogTabChange(label);
           }}
         />
+        {/* One filter for both tabs, so switching tabs while hunting for a task
+            keeps the hunt; the sort is the showing tab's own. */}
+        <div
+          className="flex flex-none items-center gap-1 px-2 pt-2 pb-1"
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && filter) {
+              e.stopPropagation();
+              setFilter("");
+            }
+          }}
+        >
+          <FilterInput
+            className="min-w-0 flex-1"
+            placeholder="Filter tasks"
+            shortcut={null}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <Select
+            size="sm"
+            icon={ArrowDownUp}
+            aria-label="Sort"
+            options={SORT_OPTIONS}
+            value={sort}
+            onValueChange={(next) => {
+              if (isBacklogSort(next)) setSort(next);
+            }}
+          />
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto py-1">
+          {showing.length === 0 ? (
+            <ExplorerNote>{filter.trim() ? "No matching tasks." : "No tasks."}</ExplorerNote>
+          ) : (
+            showing.map((group) => (
+              <div key={group.status}>
+                {/* Closed is one status by definition, so it says nothing a header
+                    would repeat. */}
+                {group.header ? <SectionLabel>{group.status}</SectionLabel> : null}
+                {group.tasks.map((task) => (
+                  <BacklogCard
+                    key={task.id + task.path}
+                    task={task}
+                    onOpen={() => open({ kind: "file", path: task.path })}
+                    onContextMenu={onContextMenu && ((event) => onContextMenu(event, task.path))}
+                  />
+                ))}
+              </div>
+            ))
+          )}
+        </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto py-1">
-        {showing.length === 0 ? (
-          <ExplorerNote>{filter.trim() ? "No matching tasks." : "No tasks."}</ExplorerNote>
-        ) : (
-          showing.map((group) => (
-            <div key={group.status}>
-              {/* Closed is one status by definition, so it says nothing a header
-                  would repeat. */}
-              {group.header ? <SectionLabel>{group.status}</SectionLabel> : null}
-              {group.tasks.map((task) => (
-                <BacklogCard
-                  key={task.id + task.path}
-                  task={task}
-                  onOpen={() => open({ kind: "file", path: task.path })}
-                />
-              ))}
-            </div>
-          ))
-        )}
-      </div>
-    </div>
+      {/* Show in Finder for the card's file (TASK-131). Beside the section rather
+          than inside it: React events cross a portal, and a click on a menu row
+          is not a click the preview/pin pair should hear. */}
+      <PointMenu {...revealMenu.menu} />
+    </>
   );
 }
 
@@ -208,7 +220,15 @@ function priorityTone(priority: string): "danger" | "warning" | "neutral" {
   return "neutral";
 }
 
-function BacklogCard({ task, onOpen }: { task: BacklogTask; onOpen: () => void }) {
+function BacklogCard({
+  task,
+  onOpen,
+  onContextMenu,
+}: {
+  task: BacklogTask;
+  onOpen: () => void;
+  onContextMenu?: (event: MouseEvent) => void;
+}) {
   const chips = task.priority || task.labels.length > 0;
   const hoverable = useHoverPointer();
   return (
@@ -224,6 +244,7 @@ function BacklogCard({ task, onOpen }: { task: BacklogTask; onOpen: () => void }
       <button
         type="button"
         onClick={onOpen}
+        onContextMenu={onContextMenu}
         // The native `title` only where the shell mounts no card: with one, the
         // browser's tooltip would open on top of it and say the title a second
         // time; without one — a device with a coarse pointer attached, see

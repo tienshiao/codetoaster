@@ -1,5 +1,5 @@
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { ExplorerSection } from "@/frontend/explorer-store";
@@ -35,9 +35,19 @@ const ONE_CHANGE = [
   "",
 ].join("\n");
 
+/** Whether this browser could be shown a Finder window. Off, as it is under
+ * happy DOM, except where a test is about the menu. */
+const finder = vi.hoisted(() => ({ available: false }));
+vi.mock("@/frontend/utils/platform", async (original) => ({
+  ...(await original<typeof import("@/frontend/utils/platform")>()),
+  canRevealInFinder: () => finder.available,
+}));
+
 /** What `/diff` answers; empty is a clean tree. */
 let diff = "";
 let requests: string[] = [];
+/** What was asked to be shown in Finder, by route. */
+let revealed: Array<{ url: string; file: string }> = [];
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
@@ -46,12 +56,18 @@ function json(body: unknown): Response {
 beforeEach(() => {
   diff = "";
   requests = [];
+  revealed = [];
+  finder.available = false;
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: string | URL) => {
+    vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       requests.push(url);
       const path = url.split("?")[0]!;
+      if (path.endsWith("/reveal")) {
+        revealed.push({ url, file: JSON.parse(String(init?.body)).file });
+        return new Response(null, { status: 204 });
+      }
       if (path.endsWith("/files")) return json(FILES);
       if (path.endsWith("/diff")) return json({ diff, hash: diff ? "h1" : "h0" });
       if (path.endsWith("/diff-tokens")) return json({ files: {} });
@@ -63,8 +79,10 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function mount(node: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function mount(
+  node: ReactNode,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -109,6 +127,69 @@ test("a task root reads the task's files, as it always did", async () => {
   await screen.findByText("README.md");
   expect(requests).toContain("/api/tasks/t1/files");
   expect(requests.some((r) => r.startsWith("/api/projects/"))).toBe(false);
+});
+
+// ── Show in Finder (TASK-131) ───────────────────────────────────────────────
+
+function Section({ root, section }: { root: RepoRoot; section: ExplorerSection }) {
+  return (
+    <Explorer
+      root={root}
+      placeholder=""
+      section={section}
+      backlogTab="Open"
+      onBacklogTabChange={vi.fn()}
+      onOpenTab={vi.fn()}
+    />
+  );
+}
+
+test("a right-click in Files shows that entry in Finder, under the root being browsed", async () => {
+  finder.available = true;
+  mount(<Section root={projectRoot("web")} section="Files" />);
+
+  fireEvent.contextMenu(await screen.findByText("package.json"), { clientX: 10, clientY: 20 });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Show in Finder" }));
+  await waitFor(() => expect(revealed).toEqual([{ url: "/api/projects/web/reveal", file: "package.json" }]));
+});
+
+test("a right-click in Changes shows the changed file in Finder", async () => {
+  finder.available = true;
+  diff = ONE_CHANGE;
+  mount(<Section root={taskRoot("t1")} section="Changes" />);
+
+  fireEvent.contextMenu(await screen.findByText("a.ts"), { clientX: 10, clientY: 20 });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Show in Finder" }));
+  await waitFor(() => expect(revealed).toEqual([{ url: "/api/tasks/t1/reveal", file: "a.ts" }]));
+});
+
+test("a menu whose tree goes away under it does not come back with the tree", async () => {
+  finder.available = true;
+  diff = ONE_CHANGE;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  mount(<Section root={taskRoot("t1")} section="Changes" />, client);
+
+  fireEvent.contextMenu(await screen.findByText("a.ts"), { clientX: 10, clientY: 20 });
+  expect(screen.getByRole("menuitem", { name: "Show in Finder" })).toBeTruthy();
+
+  // The agent reverts its change with the menu still open, then makes another.
+  // The section draws a note in between, and the menu is not part of a note.
+  diff = "";
+  await act(() => client.invalidateQueries());
+  await screen.findByText("No changes.");
+  expect(screen.queryByRole("menuitem")).toBeNull();
+
+  diff = ONE_CHANGE;
+  await act(() => client.invalidateQueries());
+  await screen.findByText("a.ts");
+  expect(screen.queryByRole("menuitem")).toBeNull();
+});
+
+test("where Finder cannot be shown, a row's right-click is the browser's", async () => {
+  mount(<Section root={taskRoot("t1")} section="Files" />);
+  // fireEvent returns false when the default was prevented.
+  expect(fireEvent.contextMenu(await screen.findByText("README.md"))).toBe(true);
+  expect(screen.queryByRole("menuitem")).toBeNull();
 });
 
 // ── the rail ────────────────────────────────────────────────────────────────

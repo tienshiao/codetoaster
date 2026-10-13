@@ -68,16 +68,32 @@ function response(): BacklogResponse {
   };
 }
 
+/** Whether this browser could be shown a Finder window. Off, as it is under
+ * happy DOM, except where a test is about the menu. */
+const finder = vi.hoisted(() => ({ available: false }));
+vi.mock("@/frontend/utils/platform", async (original) => ({
+  ...(await original<typeof import("@/frontend/utils/platform")>()),
+  canRevealInFinder: () => finder.available,
+}));
+
 let body: BacklogResponse;
+/** What was asked to be shown in Finder, by route. */
+let revealed: Array<{ url: string; file: string }>;
 
 beforeEach(() => {
   body = response();
+  finder.available = false;
+  revealed = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }),
-    ),
+    vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/reveal")) {
+        revealed.push({ url, file: JSON.parse(String(init?.body)).file });
+        return new Response(null, { status: 204 });
+      }
+      return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+    }),
   );
 });
 
@@ -160,6 +176,33 @@ test("a card opens the task's own .md, the way the Files section opens a file", 
     kind: "file",
     path: "backlog/tasks/task-12 - in flight.md",
   });
+});
+
+test("a right-click on a card offers to show the task's file in Finder, without opening it", async () => {
+  finder.available = true;
+  const open = vi.fn();
+  mountSection("Open", vi.fn(), open);
+  const card = await screen.findByRole("button", { name: /TASK-12 in flight/ });
+
+  // fireEvent returns false when the default was prevented: the browser's own
+  // menu must not open over this one.
+  expect(fireEvent.contextMenu(card, { clientX: 30, clientY: 40 })).toBe(false);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Show in Finder" }));
+
+  await waitFor(() =>
+    expect(revealed).toEqual([
+      { url: "/api/tasks/t1/reveal", file: "backlog/tasks/task-12 - in flight.md" },
+    ]),
+  );
+  expect(open).not.toHaveBeenCalled();
+});
+
+test("where Finder cannot be shown, a card's right-click is the browser's", async () => {
+  mountSection("Open");
+  const card = await screen.findByRole("button", { name: /TASK-12 in flight/ });
+
+  expect(fireEvent.contextMenu(card)).toBe(true);
+  expect(screen.queryByRole("menuitem")).toBeNull();
 });
 
 /** Every media query answering the same way: `matches` for a mouse-and-nothing-
