@@ -204,16 +204,27 @@ export async function serializeFileContent(buffer: ArrayBuffer, filePath: string
 }
 
 /**
- * The command that reveals `fullPath` in the platform's file manager, or null
- * where there is none worth running.
+ * The commands that reveal `fullPath` in the platform's file manager, for
+ * `runRevealCommands` to run in order, or null where there are none worth
+ * running.
  *
  * macOS only: `open -R` selects the file in a Finder window, which is the whole
  * point. `xdg-open` on the parent directory would open *a* window but select
  * nothing, and the button is only offered to a browser on a Mac anyway. The
  * absolute path, so a launchd PATH or a user's shim cannot change what runs.
+ *
+ * The second brings Finder to the front (TASK-132). `open -R` leaves that to
+ * Finder, and with a browser in front Finder does not get the foreground: the
+ * file is selected in a window behind the one the click came from. Opening
+ * Finder itself is a request macOS does honour from a background process.
+ * After the reveal, so the window that comes forward is the one it selected in.
  */
-export function revealCommand(fullPath: string, platform: NodeJS.Platform = process.platform): string[] | null {
-  return platform === "darwin" ? ["/usr/bin/open", "-R", fullPath] : null;
+export function revealCommands(fullPath: string, platform: NodeJS.Platform = process.platform): string[][] | null {
+  if (platform !== "darwin") return null;
+  return [
+    ["/usr/bin/open", "-R", fullPath],
+    ["/usr/bin/open", "-b", "com.apple.finder"],
+  ];
 }
 
 /** Loopback peers, the only ones for whom a Finder window on this machine is
@@ -223,9 +234,38 @@ export function isLoopbackAddress(address: string | undefined): boolean {
   return address === "::1" || address.startsWith("127.") || address.startsWith("::ffff:127.");
 }
 
-/** Long enough for a Finder that is relaunching; short enough that a wedged
- * LaunchServices answers the click rather than leaving it pending. */
+/** Per command. Long enough for a Finder that is relaunching; short enough that
+ * a wedged LaunchServices answers the click rather than leaving it pending. */
 const REVEAL_TIMEOUT_MS = 10_000;
+
+/**
+ * Run `cmds` in order and answer for the route: 204 when all of them succeeded,
+ * otherwise the first failure's answer, with nothing after it run. A reveal
+ * that failed therefore brings no Finder forward (TASK-132).
+ *
+ * Apart from the route so that stopping can be tested with commands that open
+ * no window.
+ */
+export async function runRevealCommands(cmds: string[][], timeoutMs = REVEAL_TIMEOUT_MS): Promise<Response> {
+  try {
+    for (const cmd of cmds) {
+      const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "pipe", timeout: timeoutMs });
+      const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+      if (proc.signalCode) {
+        return Response.json({ error: "Finder did not answer in time" }, { status: 504 });
+      }
+      if (exitCode !== 0) {
+        return Response.json({ error: "Could not show the file in Finder", message: stderr.trim() }, { status: 500 });
+      }
+    }
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return Response.json(
+      { error: "Could not show the file in Finder", message: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    );
+  }
+}
 
 /**
  * `lexical` with its links followed: null when nothing is there, false when
@@ -501,30 +541,12 @@ export const fileRoutes = {
         return Response.json({ error: "Invalid file path" }, { status: 400 });
       }
 
-      const cmd = revealCommand(fullPath);
-      if (!cmd) {
+      const cmds = revealCommands(fullPath);
+      if (!cmds) {
         return Response.json({ error: "Show in Finder needs a macOS daemon" }, { status: 501 });
       }
 
-      try {
-        const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "pipe", timeout: REVEAL_TIMEOUT_MS });
-        const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-        if (proc.signalCode) {
-          return Response.json({ error: "Finder did not answer in time" }, { status: 504 });
-        }
-        if (exitCode !== 0) {
-          return Response.json(
-            { error: "Could not show the file in Finder", message: stderr.trim() },
-            { status: 500 },
-          );
-        }
-        return new Response(null, { status: 204 });
-      } catch (error) {
-        return Response.json(
-          { error: "Could not show the file in Finder", message: error instanceof Error ? error.message : String(error) },
-          { status: 500 },
-        );
-      }
+      return runRevealCommands(cmds);
     },
   }),
 

@@ -3,6 +3,7 @@
 ## 2026-10-13
 * **Creation**: [Show in Finder](/modules/show-in-finder.md) for TASK-131: the surfaces that offer it, the one gate, the per-list menu, and the route's refusals from TASK-120.
 * **Update**: [File viewer](/modules/file-viewer.md) links its Show in Finder button to the new page.
+* **Update**: [Show in Finder](/modules/show-in-finder.md) for TASK-132: the route runs a second `open` that brings Finder to the front, and why `open -R` alone does not.
 
 ## 2026-10-10
 * **Creation**: [File listing and ignored files](/modules/file-listing.md) for TASK-130: the two git listings, who reads ignored entries, the children route, and how the watcher reports ignored paths.

@@ -5,7 +5,7 @@ description: A file tab, a working-tree diff's file headers and the Explorer's r
 tags: [files, diff, explorer, backlog, finder, frontend, api]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-13T01:26:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-13T08:21:00Z }
 sources:
   - id: use-reveal
     resource: ../../src/frontend/hooks/use-reveal.ts
@@ -34,6 +34,9 @@ sources:
   - id: task-131
     resource: "../../backlog/tasks/task-131 - Show-in-Finder-from-diffs-and-Explorer-rows.md"
     title: "TASK-131 — Show in Finder from diffs and Explorer rows"
+  - id: task-132
+    resource: "../../backlog/tasks/task-132 - Show-in-Finder-brings-Finder-to-the-front.md"
+    title: "TASK-132 — Show in Finder brings Finder to the front"
 ---
 
 # Where it is offered
@@ -72,7 +75,11 @@ An open menu does not outlive its rows. A section swaps its tree for a note when
 
 # The route
 
-`POST /api/{tasks,projects}/:id/reveal` with `{ file }` runs `/usr/bin/open -R` and answers 204.[^files-route] It refuses, before spawning anything:
+`POST /api/{tasks,projects}/:id/reveal` with `{ file }` runs `/usr/bin/open -R <path>`, then `/usr/bin/open -b com.apple.finder`, and answers 204.[^files-route]
+
+The second command brings Finder to the front. `open -R` leaves activation to Finder, and with a browser in front Finder does not get the foreground: measured on macOS 26, the file is selected in a window behind the browser. Opening Finder itself is honoured from a background process. It runs after the reveal, so the window that comes forward is the one holding the selection, and only if the reveal succeeded.[^task-132]
+
+The route refuses, before spawning anything:
 
 | Status | When |
 | --- | --- |
@@ -81,7 +88,7 @@ An open menu does not outlive its rows. A section swaps its tree for a note when
 | 404 | nothing is there |
 | 501 | the daemon is not on macOS |
 
-After the spawn: 504 when `open` has not answered in ten seconds, 500 with its stderr when it failed. Directories are valid paths.[^files-route]
+After a spawn: 504 when that `open` has not answered in ten seconds, 500 with its stderr when it failed; the commands after it do not run. Directories are valid paths.[^files-route]
 
 The absolute `/usr/bin/open` is used so a launchd `PATH` or a user's shim cannot change what runs.[^files-route]
 
@@ -99,3 +106,4 @@ The absolute `/usr/bin/open` is used so a launchd `PATH` or a user's shim cannot
 [^backlog-section]: src/frontend/components/BacklogSection.tsx
 [^task-120]: TASK-120 — File viewer: Show in Finder
 [^task-131]: TASK-131 — Show in Finder from diffs and Explorer rows
+[^task-132]: TASK-132 — Show in Finder brings Finder to the front

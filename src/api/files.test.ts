@@ -2,7 +2,14 @@ import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { fileRoutes, isLoopbackAddress, MAX_DIR_ENTRIES, revealCommand, serializeFileContent } from "./files";
+import {
+  fileRoutes,
+  isLoopbackAddress,
+  MAX_DIR_ENTRIES,
+  revealCommands,
+  runRevealCommands,
+  serializeFileContent,
+} from "./files";
 import { initDatabase } from "../lib/db";
 import { taskManager } from "../lib/tasks/manager";
 import { cleanupRepos, tempDir, tempRepo } from "../../test/git-repo";
@@ -204,8 +211,9 @@ describe("GET /api/projects/:id/files/search", () => {
   /**
    * Show in Finder (TASK-120). Only the refusals are driven through the route:
    * a request that passes them opens a real Finder window, which is no thing
-   * for a test run to do. Which platforms get a command is `revealCommand`'s,
-   * covered below.
+   * for a test run to do. What runs, and on which platforms, is
+   * `revealCommands`'s, and how it is run `runRevealCommands`'s, both covered
+   * below.
    */
   function reveal(id: string, body: unknown) {
     return fetch(`${base}/api/projects/${id}/reveal`, {
@@ -480,13 +488,64 @@ describe("isLoopbackAddress", () => {
   });
 });
 
-describe("revealCommand", () => {
-  test("macOS selects the file in Finder", () => {
-    expect(revealCommand("/repo/src/a.ts", "darwin")).toEqual(["/usr/bin/open", "-R", "/repo/src/a.ts"]);
+describe("revealCommands", () => {
+  test("macOS selects the file in Finder, then brings Finder to the front", () => {
+    // In that order (TASK-132): the window to raise is the one the reveal made
+    // Finder's frontmost.
+    expect(revealCommands("/repo/src/a.ts", "darwin")).toEqual([
+      ["/usr/bin/open", "-R", "/repo/src/a.ts"],
+      ["/usr/bin/open", "-b", "com.apple.finder"],
+    ]);
   });
 
   test("anywhere else there is nothing to run, which the route answers with a 501", () => {
-    expect(revealCommand("/repo/src/a.ts", "linux")).toBeNull();
-    expect(revealCommand("/repo/src/a.ts", "win32")).toBeNull();
+    expect(revealCommands("/repo/src/a.ts", "linux")).toBeNull();
+    expect(revealCommands("/repo/src/a.ts", "win32")).toBeNull();
+  });
+});
+
+/**
+ * The half of the route that spawns, driven with commands that open no window:
+ * each leaves a line in a file, so what ran, and in what order, can be read
+ * back.
+ */
+describe("runRevealCommands", () => {
+  afterAll(cleanupRepos);
+
+  function scratch() {
+    const ran = path.join(tempDir("codetoaster-reveal-"), "ran");
+    const mark = (word: string) => ["/bin/sh", "-c", `echo ${word} >> "${ran}"`];
+    const read = () => (fs.existsSync(ran) ? fs.readFileSync(ran, "utf8") : "");
+    return { mark, read };
+  }
+
+  test("runs every command in order and answers 204", async () => {
+    const { mark, read } = scratch();
+    const res = await runRevealCommands([mark("reveal"), mark("activate")]);
+    expect(res.status).toBe(204);
+    expect(read()).toBe("reveal\nactivate\n");
+  });
+
+  test("a command that fails is a 500 with its stderr, and nothing after it runs", async () => {
+    // TASK-132: a reveal that failed must not bring Finder forward.
+    const { mark, read } = scratch();
+    const res = await runRevealCommands([["/bin/sh", "-c", "echo no such file >&2; exit 1"], mark("activate")]);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Could not show the file in Finder", message: "no such file" });
+    expect(read()).toBe("");
+  });
+
+  test("a command that outruns the timeout is a 504, and nothing after it runs", async () => {
+    const { mark, read } = scratch();
+    const res = await runRevealCommands([["/bin/sleep", "5"], mark("activate")], 50);
+    expect(res.status).toBe(504);
+    expect(await res.json()).toEqual({ error: "Finder did not answer in time" });
+    expect(read()).toBe("");
+  });
+
+  test("a command that cannot be started is a 500, not a throw", async () => {
+    const res = await runRevealCommands([["/nonexistent/open"]]);
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Could not show the file in Finder");
   });
 });
