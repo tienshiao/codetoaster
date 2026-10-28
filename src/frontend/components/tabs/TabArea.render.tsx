@@ -679,6 +679,33 @@ test("in front of a terminal it acts, and says which key does the same", () => {
   expect(onSearchTab).toHaveBeenCalledWith(expect.objectContaining({ id: agent.id }));
 });
 
+test("a click on a terminal tab asks for its grid to take the caret, and on any other tab does not", () => {
+  resetIdCounter();
+  let layout = createLayout(); // the agent tab
+  layout = openTab(layout, { kind: "shell", ptyId: "pty-2" });
+  layout = openTab(layout, { kind: "diffAll" });
+  const [agent, shell] = layout.groups[0]!.tabs;
+
+  const onFocusTerminal = vi.fn();
+  const view = render(<Controlled initial={layout} onFocusTerminal={onFocusTerminal} />);
+  const tab = (id: string) =>
+    view.container.querySelector<HTMLElement>(`[data-tab-id="${id}"] [role="tab"]`)!;
+  const click = (id: string) => act(() => fireEvent.click(tab(id)));
+
+  // Back to the agent tab from a diff: the case that left the caret on the
+  // tab button, one click short of typing.
+  click(agent!.id);
+  expect(onFocusTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ id: agent!.id }));
+  expect(tab(agent!.id).getAttribute("aria-selected")).toBe("true");
+
+  click(shell!.id);
+  expect(onFocusTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ id: shell!.id }));
+
+  onFocusTerminal.mockClear();
+  click(layout.groups[0]!.tabs[2]!.id);
+  expect(onFocusTerminal).not.toHaveBeenCalled();
+});
+
 test("a strip with nobody to answer draws no magnifier at all", () => {
   resetIdCounter();
   const view = render(<Controlled initial={createLayout()} />);

@@ -613,6 +613,9 @@ export function TaskShell({ taskId, pendingTab = null, pendingPosition, onTabEns
                   // A project root's only terminal-kind tab is the composer,
                   // which has nothing to search.
                   onSearchTab={taskId ? (tab) => requestSearch(tab.id) : undefined}
+                  // The pulse the focus chord raises, so a click on the agent
+                  // tab lands the caret in its grid as the keyboard does.
+                  onFocusTerminal={(tab) => pulseTab(tab.id)}
                   // At the composer the agent tab is the composer, and says so.
                   presentTab={taskId ? undefined : presentComposerTab}
                   env={env}

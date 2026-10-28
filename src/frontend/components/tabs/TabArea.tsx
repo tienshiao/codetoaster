@@ -100,6 +100,16 @@ export interface TabAreaProps {
   /** Open search in this group's active terminal tab — the strip's magnifier.
    * Absent where nothing can answer it. */
   onSearchTab?: (tab: TabState) => void;
+  /**
+   * A terminal tab was clicked in the strip, so its grid should take the caret
+   * (TASK-133). Without it the click leaves focus on the tab button and the
+   * user has to click again into the terminal before typing.
+   *
+   * Terminal tabs only: a click on a diff or a file tab leaves focus where it
+   * always has. Fired after `onLayoutChange`, so the pane is in front by the
+   * time the caller's focus request lands.
+   */
+  onFocusTerminal?: (tab: TabState) => void;
   /** The shell's device policy — see `LayoutEnv`. Absent is a desktop: every
    * rule at its default. */
   env?: LayoutEnv;
@@ -166,6 +176,7 @@ export function TabArea({
   onNewShell,
   onCloseTab,
   onSearchTab,
+  onFocusTerminal,
   env,
   presentTab = defaultPresentTab,
   className,
@@ -539,7 +550,10 @@ export function TabArea({
             tabId: tab.id,
             active: tab.id === group.activeTabId,
             preview: tab.preview,
-            onClick: () => onLayoutChange(focusTab(layout, tab.id)),
+            onClick: () => {
+              onLayoutChange(focusTab(layout, tab.id));
+              if (isTerminalTab(tab.descriptor)) onFocusTerminal?.(tab);
+            },
             // The pin gesture. `pinTab` is a no-op on a permanent tab, so a
             // double-click anywhere in the strip needs no guard of its own.
             onDoubleClick: () => onLayoutChange(pinTab(layout, tab.id)),
