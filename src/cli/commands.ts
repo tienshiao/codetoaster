@@ -375,6 +375,12 @@ async function printDiagnostics(port: number): Promise<void> {
   } catch {
     return;
   }
+  // A body of another shape — a daemon from a build whose route differs — is
+  // skipped here, not left to throw into `cmdStatus`'s catch, which would
+  // print "not responding to HTTP" under a status it has just printed.
+  if (typeof d?.memory !== "object" || d.memory === null || typeof d.counts !== "object" || d.counts === null) {
+    return;
+  }
   const m = d.memory;
   const peak = [
     m.lifetimeMaxFootprint !== null ? `peak ${formatBytes(m.lifetimeMaxFootprint)}` : null,

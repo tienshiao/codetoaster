@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-29T09:47:00Z'
-updated_date: '2026-10-29T10:15:00Z'
+updated_date: '2026-10-29T10:30:00Z'
 labels:
   - backend
   - watcher
@@ -38,6 +38,8 @@ Every live task opens its own recursive FSEvents stream on its repo root, plus s
 
 <!-- SECTION:NOTES:BEGIN -->
 Pool keyed by resolved dir and recursion. Review (/code-review high --fix) found the fan-out let one throwing subscriber starve the rest of the stream; each callback is now isolated and reported (default: rethrown on a microtask). Verified on an isolated server: two shell tasks in one linked worktree hold 5 streams and 10 subscriptions (10 streams before), both receive the same changed batch for one write, and all streams close when the last client leaves.
+
+Re-review of v2...HEAD (high): the pool now opens fs.watch on the resolved path its key names, not the first subscriber's spelling. Skipped as intended behaviour: a subscriber added during dispatch hearing that event (no caller does it).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -10,6 +10,7 @@ import {
   readMemory,
   type MemoryReading,
 } from "./diagnostics";
+import { waitFor } from "../../test/wait";
 
 const MB = 2 ** 20;
 const GB = 2 ** 30;
@@ -100,7 +101,7 @@ describe("MemorySampler", () => {
     });
     sampler.start(20);
     expect(reads).toBe(1);
-    await Bun.sleep(70);
+    expect(await waitFor(() => reads > 1, 2000)).toBe(true);
     sampler.stop();
     const after = reads;
     expect(after).toBeGreaterThan(1);

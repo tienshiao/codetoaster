@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-29T09:47:00Z'
-updated_date: '2026-10-29T10:15:00Z'
+updated_date: '2026-10-29T10:30:00Z'
 labels:
   - backend
   - diagnostics
@@ -39,6 +39,8 @@ A long-running daemon reached a 7.9 GB physical footprint (13 GB peak) after 11 
 
 <!-- SECTION:NOTES:BEGIN -->
 Struct offsets for rusage_info_v4 checked against footprint(1) on the live daemon (8008/13267 MB vs 8010 MB/13 GB). Found while verifying: Bun's process.memoryUsage().rss on macOS is the physical footprint, not resident size, so rss is taken from ri_resident_size. Review findings fixed: infinite loop on a non-positive threshold, formatBytes unit boundary rounding, watchedTasks counting dead watches, order-dependent route test; the heap walk made opt-in so status does not pause the event loop; unreadable /dev/fd reported as unknown. Verified on an isolated dev server and on a compiled binary (bun:ffi works under --compile: 13 MB vs footprint(1) 12 MB).
+
+Re-review of v2...HEAD (high): status skips a diagnostics body of another shape instead of throwing into its not-responding path; the sampler interval test waits on a condition. Skipped: Linux peak uses VmHWM by design, readFileSync because sampling is synchronous, a second byte formatter beside frontend formatSize.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

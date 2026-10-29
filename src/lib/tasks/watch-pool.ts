@@ -72,9 +72,13 @@ export class WatchPool {
     onPath: (filename: string) => void,
     onError: (error: Error) => void,
   ): WatchSubscription {
-    const key = `${recursive ? "r" : "s"}:${path.resolve(dir)}`;
+    // The stream is opened on the resolved path, not on whichever spelling
+    // its first subscriber happened to use, so every subscriber sharing the
+    // key is watching exactly the directory the key names.
+    const resolved = path.resolve(dir);
+    const key = `${recursive ? "r" : "s"}:${resolved}`;
     let stream = this.streams.get(key);
-    if (!stream) stream = this.start(key, dir, recursive);
+    if (!stream) stream = this.start(key, resolved, recursive);
     const subscriber: Subscriber = { onPath, onError };
     stream.subscribers.add(subscriber);
     // Bound to this stream, not to the key: a subscription that outlives a
