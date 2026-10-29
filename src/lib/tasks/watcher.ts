@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { gitSpawn } from "../../api/utils";
+import { watchPool, type WatchPool, type WatchSubscription } from "./watch-pool";
 
 /**
  * What tells a client its view of a task's checkout is stale (TASK-103).
@@ -152,6 +153,9 @@ export interface TaskWatcherOptions {
    * the task goes on without refresh until something restarts it.
    */
   onError?: (error: Error) => void;
+  /** Where the streams come from. The daemon's shared pool unless a test
+   * wants to count its own. */
+  pool?: WatchPool;
 }
 
 /**
@@ -169,9 +173,14 @@ export interface TaskWatcherOptions {
  * exactly two places, so those are what is opened: the dir itself, shallow,
  * for `HEAD`, `ORIG_HEAD`, `packed-refs` and a `refs` entry appearing, and
  * `refs/` recursively when it is already there.
+ *
+ * The streams themselves come from a `WatchPool` (TASK-135): tasks in one
+ * repository ask for the same directories, and get one stream between them.
+ * What this class holds is its subscriptions and its own fold.
  */
 export class TaskWatcher {
-  private readonly watchers: fs.FSWatcher[] = [];
+  private readonly subscriptions: WatchSubscription[] = [];
+  private readonly pool: WatchPool;
   private readonly settleMs: number;
   private readonly maxWaitMs: number;
   private readonly maxFiles: number;
@@ -195,6 +204,7 @@ export class TaskWatcher {
     this.maxWaitMs = options.maxWaitMs ?? MAX_WAIT_MS;
     this.maxFiles = options.maxFiles ?? MAX_FILES;
     this.onError = options.onError;
+    this.pool = options.pool ?? watchPool;
     try {
       this.open(roots.checkout, { recursive: true }, (rel) => {
         if (isReportableCheckoutPath(rel)) this.noteFile(rel);
@@ -221,13 +231,16 @@ export class TaskWatcher {
     options: { recursive: boolean; prefix?: string },
     onPath: (rel: string) => void,
   ): void {
-    const watcher = fs.watch(dir, { recursive: options.recursive }, (_event, filename) => {
-      if (this.closed || filename === null) return;
-      const name = String(filename);
-      onPath((options.prefix ?? "") + (path.sep === "/" ? name : name.split(path.sep).join("/")));
-    });
-    watcher.on("error", (error: Error) => this.fail(error));
-    this.watchers.push(watcher);
+    const subscription = this.pool.open(
+      dir,
+      options.recursive,
+      (name) => {
+        if (this.closed) return;
+        onPath((options.prefix ?? "") + (path.sep === "/" ? name : name.split(path.sep).join("/")));
+      },
+      (error) => this.fail(error),
+    );
+    this.subscriptions.push(subscription);
   }
 
   private fail(error: Error): void {
@@ -388,13 +401,7 @@ export class TaskWatcher {
     if (this.cap) clearTimeout(this.cap);
     this.settle = null;
     this.cap = null;
-    for (const watcher of this.watchers.splice(0)) {
-      try {
-        watcher.close();
-      } catch {
-        // Already gone; that is what was wanted.
-      }
-    }
+    for (const subscription of this.subscriptions.splice(0)) subscription.close();
   }
 }
 

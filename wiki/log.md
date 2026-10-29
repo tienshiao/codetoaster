@@ -1,5 +1,7 @@
 # Wiki Update Log
 
+## 2026-10-29
+* **Creation**: [Change watcher and shared watch streams](/modules/change-watcher.md) for TASK-135: the streams a task watches, the refcounted WatchPool that shares them per directory, error fan-out and retry, and why there is no watch without a browser.
 ## 2026-10-13
 * **Creation**: [Show in Finder](/modules/show-in-finder.md) for TASK-131: the surfaces that offer it, the one gate, the per-list menu, and the route's refusals from TASK-120.
 * **Update**: [File viewer](/modules/file-viewer.md) links its Show in Finder button to the new page.
