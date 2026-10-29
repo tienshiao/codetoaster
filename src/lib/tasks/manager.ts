@@ -3742,6 +3742,16 @@ export class TaskManager {
     return this.ptys.clientPtyIds(clientId);
   }
 
+  /** What the manager is holding, for `/api/diagnostics` (TASK-134). */
+  diagnosticCounts(): { ptys: number; clients: number; watchedTasks: number } {
+    return {
+      ptys: this.ptys.size,
+      clients: this.connectedClients.size,
+      // A watch that died stays in the map until its retry, holding no stream.
+      watchedTasks: [...this.watchers.values()].filter((entry) => entry.failedAt === undefined).length,
+    };
+  }
+
   getConnections(): Array<{ clientId: string; ptyIds: string[] }> {
     return [...this.connectedClients.keys()].map((clientId) => ({
       clientId,

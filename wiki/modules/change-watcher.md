@@ -40,11 +40,11 @@ The streams come from a `WatchPool`, keyed by the resolved directory and its rec
 
 # When there is a watch at all
 
-`reconcileWatchers` gives a live task a watcher only while at least one browser is connected: a `changed` message has nobody to reach otherwise, and a daemon left running should not hold streams over large checkouts for the hours between sessions. The root is the task's `repo_root`, because every route a batch invalidates speaks paths relative to it.[^manager] Streams are therefore opened and closed with every browser disconnect and reconnect.
+`reconcileWatchers` gives a live task a watcher only while at least one browser is connected: a `changed` message has nobody to reach otherwise, and a daemon left running should not hold streams over large checkouts for the hours between sessions. The root is the task's `repo_root`, because every route a batch invalidates speaks paths relative to it.[^manager] Streams are therefore opened and closed with every browser disconnect and reconnect, which on Bun 1.3.9 leaked a descriptor each time; see [Bun 1.3.9 leaks a directory descriptor per closed fs.watch](/gotchas/bun-fs-watch-descriptor-leak.md).
 
 # Related
 
-How ignored paths are reported and who reads them: [File listing and ignored files](/modules/file-listing.md).
+How ignored paths are reported and who reads them: [File listing and ignored files](/modules/file-listing.md). The pool's stream and subscription counts are in `GET /api/diagnostics`: [Diagnose daemon memory](/runbooks/diagnose-daemon-memory.md).
 
 [^watcher]: src/lib/tasks/watcher.ts
 [^watch-pool]: src/lib/tasks/watch-pool.ts

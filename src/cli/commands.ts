@@ -12,6 +12,8 @@ import {
 } from "./daemon";
 import type { DaemonOptions } from "./daemon";
 import { formatTable, formatAge, formatSessionId } from "./format";
+import { formatBytes } from "../lib/diagnostics";
+import type { Diagnostics } from "../api/diagnostics";
 import { startServer, reachableOrigin } from "../server";
 
 // Asked of the daemon rather than assumed. `--host` binds one address
@@ -356,9 +358,48 @@ export async function cmdStatus(port: number): Promise<void> {
     console.log(`  Uptime:   ${formatAge(Date.now() - info.uptime * 1000)}`);
     console.log(`  Sessions: ${info.sessions}`);
     console.log(`  Web UI:   ${getBaseUrl(port)}`);
+    await printDiagnostics(port);
   } catch {
     console.log(`Running (pid ${pidInfo.pid}, port ${port}) but not responding to HTTP`);
   }
+}
+
+/** The memory and descriptor half of `status` (TASK-134). Silent against a
+ * daemon too old to have the route: `status` still says it is running. */
+async function printDiagnostics(port: number): Promise<void> {
+  let d: Diagnostics;
+  try {
+    const res = await fetch(`${getBaseUrl(port)}/api/diagnostics`);
+    if (!res.ok) return;
+    d = (await res.json()) as Diagnostics;
+  } catch {
+    return;
+  }
+  const m = d.memory;
+  const peak = [
+    m.lifetimeMaxFootprint !== null ? `peak ${formatBytes(m.lifetimeMaxFootprint)}` : null,
+    m.sampledPeak
+      ? `sampled peak ${formatBytes(m.sampledPeak.bytes)} at ${new Date(m.sampledPeak.at).toLocaleString()}`
+      : null,
+  ].filter(Boolean);
+  const footprint = m.footprint !== null ? `footprint ${formatBytes(m.footprint)}` : "footprint unknown";
+  console.log(`  Bun:      ${d.bun}`);
+  console.log(`  Memory:   ${footprint}${peak.length > 0 ? ` (${peak.join(", ")})` : ""}`);
+  console.log(`            resident ${formatBytes(m.rss)}, JS heap ${formatBytes(m.heapUsed)}`);
+  if (d.descriptors) {
+    const { total, ...kinds } = d.descriptors;
+    const byKind = Object.entries(kinds)
+      .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
+      .map(([kind, n]) => `${n} ${kind}`);
+    console.log(`  Descriptors: ${total} open${byKind.length > 0 ? ` (${byKind.join(", ")})` : ""}`);
+  } else {
+    console.log(`  Descriptors: unknown`);
+  }
+  const c = d.counts;
+  console.log(
+    `  Holding:  ${c.ptys ?? 0} PTYs, ${c.clients ?? 0} clients, ` +
+      `${c.watchStreams ?? 0} watch streams for ${c.watchedTasks ?? 0} tasks`,
+  );
 }
 
 export async function cmdInstances(): Promise<void> {
@@ -393,7 +434,7 @@ Commands:
   connections     List connected WebSocket clients
   open            Open web UI in default browser
   stop            Stop the daemon
-  status          Check if daemon is running
+  status          Check if daemon is running, and its memory and descriptors
   instances       List all running instances (across all ports)
   hook            Report a Claude Code hook to the daemon (run by the agent)
   help            Show this help message

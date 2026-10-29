@@ -27,6 +27,7 @@ okf_version: "0.2"
 # Gotchas
 
 * [bun check is TypeScript 7, whatever typescript is installed](gotchas/bun-check-is-typescript-7.md) - bun check follows TypeScript 7 rules regardless of the installed typescript package, has no watch mode, and the typescript package stays on 5.x because the 7 package ships no lib files for a tsserver-based editor.
+* [Bun 1.3.9 leaks a directory descriptor per closed fs.watch](gotchas/bun-fs-watch-descriptor-leak.md) - On Bun 1.3.9 every fs.watch, recursive or not, keeps its directory descriptor open after close(); 1.4.x does not, and a compiled daemon keeps the Bun it was built with until it is rebuilt.
 * [Bun.$ deadlocks on large git output](gotchas/bun-shell-deadlock.md) - Bun's shell buffers output and deadlocks on large payloads, so every git invocation goes through gitSpawn/gitSpawnRaw, which use Bun.spawn.
 * [bunfig test options go quiet under bun run](gotchas/bunfig-test-options-under-bun-run.md) - --path-ignore-patterns and bunfig's pathIgnorePatterns work from a shell but are silently ignored under bun run, so anything the test suite depends on must not rest on them.
 * [color-mix over a var() renders opaque](gotchas/color-mix-over-var.md) - Tailwind emits a color-mix over a CSS variable as an opaque fallback plus a nested @supports override that Bun's CSS bundler drops, so washes must be written oklch(var(--ct-x-ch) / alpha).
@@ -34,4 +35,5 @@ okf_version: "0.2"
 
 # Runbooks
 
+* [Diagnose daemon memory](runbooks/diagnose-daemon-memory.md) - Read the daemon's real footprint, its peak and when it was reached, its descriptors and what it is holding from codetoaster status or GET /api/diagnostics, and find threshold crossings in its log.
 * [Verify on an isolated server](runbooks/verify-on-isolated-server.md) - Check a change at runtime from a second server on its own port and database, driving tasks with the shell profile so no real agent starts.

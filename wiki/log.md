@@ -2,6 +2,9 @@
 
 ## 2026-10-29
 * **Creation**: [Change watcher and shared watch streams](/modules/change-watcher.md) for TASK-135: the streams a task watches, the refcounted WatchPool that shares them per directory, error fan-out and retry, and why there is no watch without a browser.
+* **Creation**: [Bun 1.3.9 leaks a directory descriptor per closed fs.watch](/gotchas/bun-fs-watch-descriptor-leak.md): the leak, how a compiled daemon keeps an old Bun, and the rebuild.
+* **Creation**: [Diagnose daemon memory](/runbooks/diagnose-daemon-memory.md) for TASK-134: footprint over RSS, `codetoaster status` and `/api/diagnostics`, the threshold log lines, and how to read vmmap's categories for a Bun process.
+
 ## 2026-10-13
 * **Creation**: [Show in Finder](/modules/show-in-finder.md) for TASK-131: the surfaces that offer it, the one gate, the per-list menu, and the route's refusals from TASK-120.
 * **Update**: [File viewer](/modules/file-viewer.md) links its Show in Finder button to the new page.

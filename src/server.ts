@@ -18,6 +18,10 @@ import { backlogRoutes } from "./api/backlog";
 import { gitRoutes } from "./api/git";
 import { highlightRoutes } from "./api/highlight";
 import { symbolRoutes } from "./api/symbols";
+import { diagnosticsRoutes } from "./api/diagnostics";
+import { MemorySampler } from "./lib/diagnostics";
+import { watchPool } from "./lib/tasks/watch-pool";
+import { cacheStats as highlightCacheStats } from "./lib/highlight/cache";
 import { initDatabase } from "./lib/db";
 import { loadProfiles, profilesPath } from "./lib/agent/profiles";
 import {
@@ -179,6 +183,12 @@ export function startServer(options?: ServerOptions) {
   }
   harvester.start();
 
+  // Once a minute for the life of the daemon (TASK-134): cheap — a syscall and
+  // `process.memoryUsage()` — and what leaves a "passed 4 GB at …" line in the
+  // log for the next time the footprint runs away.
+  const memorySampler = new MemorySampler();
+  memorySampler.start(60_000);
+
   // Read lazily, not computed here: `--port 0` means the real port does not
   // exist until `serve()` has returned.
   const selfOrigin = (): string => reachableOrigin(HOSTNAME, server.port ?? PORT);
@@ -256,6 +266,21 @@ export function startServer(options?: ServerOptions) {
         ...gitRoutes,
         ...highlightRoutes,
         ...symbolRoutes,
+        ...diagnosticsRoutes({
+          sampler: memorySampler,
+          startedAt: startTime,
+          counts: () => {
+            const watch = watchPool.stats();
+            const highlight = highlightCacheStats();
+            return {
+              ...taskManager.diagnosticCounts(),
+              watchStreams: watch.streams,
+              watchSubscriptions: watch.subscriptions,
+              highlightCacheEntries: highlight.entries,
+              highlightCacheChars: highlight.chars,
+            };
+          },
+        }),
       }),
 
       "/api/ping": guardRoute({
@@ -292,6 +317,7 @@ export function startServer(options?: ServerOptions) {
           // runs alongside it rather than after it.
           const drained = harvester.stop();
           taskManager.stopWatchers();
+          memorySampler.stop();
           setTimeout(() => {
             // `finally`, so a tick that somehow rejected still lets the daemon
             // go: the pid file has to come off whatever the sweep did.

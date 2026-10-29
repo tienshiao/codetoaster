@@ -42,6 +42,11 @@ export class PtyManager {
     return this.ptys.get(ptyId);
   }
 
+  /** How many PTYs are held, live or exited-but-not-killed. */
+  get size(): number {
+    return this.ptys.size;
+  }
+
   has(ptyId: string): boolean {
     return this.ptys.has(ptyId);
   }

@@ -62,6 +62,11 @@ function evict(): void {
   }
 }
 
+/** How full the cache is, for `/api/diagnostics`. */
+export function cacheStats(): { entries: number; chars: number } {
+  return { entries: cache.size, chars: totalChars };
+}
+
 /** Test-only: clear the cache between cases. */
 export function _clearCache(): void {
   cache.clear();
