@@ -174,16 +174,8 @@ Happy DOM has no layout engine, so anything depending on real geometry has to
 stub it (see `TabArea.render.tsx`) and is better verified in a browser via the
 `verify` skill.
 
-### Test-driven development
+### Test requirements
 
-Prefer TDD where it makes sense:
-
-- **Logic and server code** — `lib/` (PTY and task lifecycle, naming, the
-  symbol index, highlighting), the helpers in `api/`, `frontend/utils/` (diff
-  parsing, commit-graph lanes, the ref tree) and the stores
-  (`view-state-store.ts`, `layout-store.ts`): write the failing test first, make
-  it pass, then refactor. A change that adds behaviour without a test that would
-  have failed before it needs a stated reason.
 - **API routes** (`src/api/`): every new or changed route has route-level tests
   through a real `Bun.serve` on port 0, in addition to unit tests of whatever it
   calls; `tasks.test.ts` is the worked example. They cover the happy path and
@@ -194,11 +186,6 @@ Prefer TDD where it makes sense:
   is the origin check, which `guardApiRoutes` applies to the whole route table
   and `origin.test.ts` covers. A route mounted outside that table needs its own
   refusal test.
-- **Frontend**: TDD is optional. Test the behaviour that matters (routing, data
-  loading, state transitions, what survives a remount), preferably as a
-  `.test.ts` against logic pulled out of the component, otherwise as a
-  `*.render.tsx`. Markup and styling do not need tests first; they are checked
-  in a browser.
 - **Keep tests deterministic.** Inject the clock (a `now: () => number`
   dependency, as `symbols/store.ts` takes one) rather than reading `Date.now()`
   in the code under test. The fake agent above stands in for every task. Wait on
@@ -214,7 +201,7 @@ hold:
 - `/verify` (`.claude/skills/verify/SKILL.md`) has driven the change on an
   isolated server: the endpoint answers as intended, or the UI does in a real
   browser.
-- The change has its test (see above), and its Backlog task and wiki pages are
+- The change has its tests, and its Backlog task and wiki pages are
   up to date.
 
 If any of them reports a gap, fix it through normal editing and run it again.

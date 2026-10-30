@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-10-29
+* **Update**: [Two test runners](/conventions/testing.md) drops the test-first preference, following CLAUDE.md; its Test first section becomes Test requirements, keeping route-level tests and determinism.
 * **Creation**: [Change watcher and shared watch streams](/modules/change-watcher.md) for TASK-135: the streams a task watches, the refcounted WatchPool that shares them per directory, error fan-out and retry, and why there is no watch without a browser.
 * **Creation**: [Bun 1.3.9 leaks a directory descriptor per closed fs.watch](/gotchas/bun-fs-watch-descriptor-leak.md): the leak, how a compiled daemon keeps an old Bun, and the rebuild.
 * **Creation**: [Diagnose daemon memory](/runbooks/diagnose-daemon-memory.md) for TASK-134: footprint over RSS, `codetoaster status` and `/api/diagnostics`, the threshold log lines, and how to read vmmap's categories for a Bun process.

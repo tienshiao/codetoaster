@@ -5,7 +5,7 @@ description: Non-rendering tests run under bun test as *.test.ts, rendering test
 tags: [testing, bun, vitest, happy-dom]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-10T08:10:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-29T12:00:00Z }
 sources:
   - id: claude-md
     resource: ../../CLAUDE.md
@@ -48,11 +48,9 @@ A file that needs a different agent sets the variable from its own `beforeEach` 
 
 `agent-bin.test.ts` guards the guard: if the preload stops applying, it fails with `Received: "claude"` instead of the suite quietly spawning agents.[^agent-bin]
 
-# Test first, where it makes sense
+# Test requirements
 
-- **Logic and server code** (`lib/`, the helpers in `api/`, `frontend/utils/`, the stores): failing test first, then the change, then refactor. A change that adds behaviour without a test that would have failed before it needs a stated reason.[^claude-md]
 - **API routes**: every new or changed route has route-level tests through a real `Bun.serve` on port 0, as `tasks.test.ts` does, covering the happy path, validation failure (400), not found (404) and conflict (409). Unit tests of what the route calls do not exercise parsing, status codes or error bodies. The daemon has no authentication to cover; its one guard is the origin check that `guardApiRoutes` applies to the whole route table, covered by `origin.test.ts`.[^claude-md]
-- **Frontend**: optional. Behaviour that matters gets a test, preferably against logic pulled out of the component; markup and styling are checked in a browser.[^claude-md]
 - **Determinism**: inject the clock as a `now: () => number` dependency, wait on a condition with `waitFor` from `test/wait.ts` rather than sleeping, and build git fixtures with `test/git-repo.ts`.[^claude-md]
 
 # Before committing a code change
