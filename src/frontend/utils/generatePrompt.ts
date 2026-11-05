@@ -138,3 +138,12 @@ export function generatePrompt({ comments, files, hunkExpansions }: GenerateProm
 
   return lines.join("\n");
 }
+
+/** A review of a worktree's diff goes to the task's agent (TASK-138.2), which
+ * works in its own checkout: without the path it would read the repo-relative
+ * paths as its own files and change the wrong copy. Null for the task's own
+ * checkout, and when there is nothing to review. */
+export function worktreeReviewPreamble(worktreePath: string | null, hasComments: boolean): string | null {
+  if (!worktreePath || !hasComments) return null;
+  return `These comments are on the worktree at ${worktreePath}; the paths below are relative to it.`;
+}

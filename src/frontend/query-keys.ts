@@ -57,6 +57,8 @@ export const taskKeys = {
   backlog: (id: string | null) => ["tasks", id, "backlog"] as const,
   /** use-task-processes.ts — the process tree under the task's terminals. */
   processes: (id: string | null) => ["tasks", id, "processes"] as const,
+  /** use-worktrees.ts — the repository's worktrees (TASK-138.2). */
+  worktrees: (id: string | null) => ["tasks", id, "worktrees"] as const,
 };
 
 /** The git views. Keyed by task rather than by repository because that is what

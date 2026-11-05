@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { rootId, type RepoRoot } from "@/frontend/repo-root";
+import { isWatchedRoot, rootId, type RepoRoot } from "@/frontend/repo-root";
 import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/frontend/components/v2";
 import { DiffLayout, type DiffLayoutScroll } from "@/frontend/components/diff/DiffLayout";
@@ -111,7 +111,8 @@ export function DiffFilePane({ root, view, path, onOpenFile }: DiffFilePaneProps
       <DiffLayout
         files={files}
         root={root}
-        highlightChanges
+        // Off for a worktree root (TASK-138.2), which nothing watches.
+        highlightChanges={isWatchedRoot(root)}
         showFileTree={false}
         showViewModeToggle={false}
         // Not a mode the user can leave: there is one file, and "all" of it is

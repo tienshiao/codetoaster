@@ -56,6 +56,10 @@ vi.mock("@/frontend/hooks/use-root-branch", () => ({
   useRootBranch: (root: { kind: string; id: string } | null) =>
     root?.kind === "project" ? (stubs.branches[root.id] ?? null) : null,
 }));
+// The worktree list is HTTP too, and the picker is the Explorer's own test's.
+vi.mock("@/frontend/hooks/use-worktrees", () => ({
+  useExplorerWorktree: (root: unknown) => ({ worktrees: [], chosen: null, browseRoot: root, choose: () => {} }),
+}));
 vi.mock("@/frontend/hooks/use-explorer-panel", () => ({
   useExplorerPanel: () => ({
     section: "Changes",

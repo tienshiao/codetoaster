@@ -67,3 +67,14 @@ test("the kind is carried through, since it is the strip's only colour", () => {
   expect(presentTab({ kind: "history" }).kind).toBe("history");
   expect(presentTab({ kind: "shell", ptyId: "p" }).kind).toBe("shell");
 });
+
+test("a tab on another worktree names it, after any line, and its path is in the tooltip", () => {
+  const file = presentTab({ kind: "file", path: "src/a.ts", line: 3, worktree: "/repo/wt/agent-a" });
+  expect(file.label).toBe("a.ts");
+  expect(file.detail).toBe(":3 @agent-a");
+  expect(file.title).toContain("/repo/wt/agent-a");
+
+  const diff = presentTab({ kind: "diff", path: "src/a.ts", worktree: "/w/6f1c2b8e-0000-4000-8000-000000000001" });
+  expect(diff.detail).toBe("@6f1c2b8e-0000-4…");
+  expect(presentTab({ kind: "diff", path: "src/a.ts" }).detail).toBeUndefined();
+});

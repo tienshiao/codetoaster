@@ -36,7 +36,10 @@ vi.mock("./hooks/use-hunk-expansions", () => ({
 }));
 vi.mock("./hooks/use-symbol-highlight", () => ({ useSymbolHighlight: () => ({}) }));
 vi.mock("./utils/tips", () => ({ maybeShowSymbolTip: vi.fn() }));
-vi.mock("./utils/generatePrompt", () => ({ generatePrompt: () => "THE REVIEW" }));
+vi.mock("./utils/generatePrompt", () => ({
+  generatePrompt: () => "THE REVIEW",
+  worktreeReviewPreamble: () => null,
+}));
 vi.mock("./components/SymbolPopover", () => ({ SymbolPopover: () => null }));
 vi.mock("./components/diff/DiffLayout", () => ({
   DiffLayout: ({ toolbarExtra }: { toolbarExtra?: ReactNode }) => <div>{toolbarExtra}</div>,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { rootId, type RepoRoot } from "@/frontend/repo-root";
+import { isWatchedRoot, rootId, type RepoRoot } from "@/frontend/repo-root";
 import { toast } from "sonner";
-import { generatePrompt } from "./utils/generatePrompt";
+import { generatePrompt, worktreeReviewPreamble } from "./utils/generatePrompt";
 import { useComments } from "./hooks/use-comments";
 import { useTaskDiff } from "./hooks/use-task-diff";
 import { useViewState } from "./hooks/use-view-state";
@@ -124,9 +124,13 @@ export function DiffView({ root, onSubmit, onOpenFile, destination = "terminal" 
       files,
       hunkExpansions,
     });
-    setPromptText(prompt);
+    const preamble = worktreeReviewPreamble(
+      root.kind === "worktree" ? root.path : null,
+      commentState.comments.size > 0,
+    );
+    setPromptText(preamble ? `${preamble}\n\n${prompt}` : prompt);
     setShowSubmitDialog(true);
-  }, [commentState.comments, files, hunkExpansions]);
+  }, [commentState.comments, files, hunkExpansions, root]);
 
   const handleConfirmSubmit = useCallback(() => {
     setShowSubmitDialog(false);
@@ -191,7 +195,8 @@ export function DiffView({ root, onSubmit, onOpenFile, destination = "terminal" 
       <DiffLayout
         files={files}
         root={root}
-        highlightChanges
+        // Off for a worktree root (TASK-138.2), which nothing watches.
+        highlightChanges={isWatchedRoot(root)}
         changeSince={changeSince}
         viewModeOverride={viewModeOverride}
         onViewModeOverride={setViewModeOverride}

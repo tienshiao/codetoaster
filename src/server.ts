@@ -16,6 +16,7 @@ import { directoryRoutes } from "./api/directories";
 import { fileRoutes } from "./api/files";
 import { backlogRoutes } from "./api/backlog";
 import { gitRoutes } from "./api/git";
+import { worktreeRoutes } from "./api/worktrees";
 import { highlightRoutes } from "./api/highlight";
 import { symbolRoutes } from "./api/symbols";
 import { diagnosticsRoutes } from "./api/diagnostics";
@@ -264,6 +265,7 @@ export function startServer(options?: ServerOptions) {
         ...directoryRoutes,
         ...backlogRoutes,
         ...gitRoutes,
+        ...worktreeRoutes,
         ...highlightRoutes,
         ...symbolRoutes,
         ...diagnosticsRoutes({

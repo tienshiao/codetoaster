@@ -29,6 +29,9 @@ interface FilePaneProps {
   /** The task's route, which markdown links build real URLs on (TASK-126).
    * Absent for a project root: its links keep the in-page behaviour only. */
   taskHref?: string;
+  /** The worktree this tab reads, when it is not the task's own checkout
+   * (TASK-138.2) — so a markdown link's URL names the same worktree. */
+  worktree?: string;
   /** Opens a file at a line or heading — where go-to-definition and markdown
    * links land. Opening tabs is the layout's business, so it arrives here as
    * a callback. */
@@ -56,6 +59,7 @@ export function FilePane({
   anchor,
   anchorAt,
   taskHref,
+  worktree,
   onOpenFile,
   onOpenDiff,
 }: FilePaneProps) {
@@ -114,9 +118,9 @@ export function FilePane({
     const files = cachedFiles ? filePathSet(cachedFiles) : null;
     return (href: string) => {
       const target = resolveMarkdownLink(href, path, files);
-      return target ? fileTabHref(taskHref, target) : null;
+      return target ? fileTabHref(taskHref, { ...target, ...(worktree ? { worktree } : {}) }) : null;
     };
-  }, [taskHref, path, cachedFiles]);
+  }, [taskHref, path, cachedFiles, worktree]);
 
   return (
     <FileViewer

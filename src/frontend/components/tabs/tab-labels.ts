@@ -1,4 +1,4 @@
-import type { TabDescriptor } from "@/frontend/layout-store";
+import { descriptorWorktree, type TabDescriptor } from "@/frontend/layout-store";
 import type { TabKind } from "@/frontend/components/v2/TabStrip";
 
 /**
@@ -31,7 +31,28 @@ export function basename(path: string): string {
   return index === -1 ? trimmed : trimmed.slice(index + 1);
 }
 
+/**
+ * A working-tree tab on another worktree (TASK-138.2) says so in the strip:
+ * the worktree's directory in the detail slot, after any line, and its path in
+ * the tooltip. The same file on the task's checkout and on a subagent's would
+ * otherwise be two tabs that read identically.
+ */
 export function presentTab(descriptor: TabDescriptor): TabPresentation {
+  const own = presentOwnTab(descriptor);
+  const worktree = descriptorWorktree(descriptor);
+  if (!worktree) return own;
+  // Cut, since a generated checkout's directory is a 36-character uuid and the
+  // strip is scanned; the whole path is in the tooltip.
+  const dir = basename(worktree);
+  const where = dir.length > 16 ? `${dir.slice(0, 15)}…` : dir;
+  return {
+    ...own,
+    detail: own.detail ? `${own.detail} @${where}` : `@${where}`,
+    title: `${own.title} — worktree ${worktree}`,
+  };
+}
+
+function presentOwnTab(descriptor: TabDescriptor): TabPresentation {
   switch (descriptor.kind) {
     case "agent":
       // Prose, not a path: it is the one tab that names a conversation rather

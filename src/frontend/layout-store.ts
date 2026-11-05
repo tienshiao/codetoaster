@@ -14,15 +14,51 @@
 import type { ShellCommand } from "@/frontend/keymap";
 
 /** §7.2. The one thing a tab can be. `diffAll` is the whole-working-tree diff;
- * `diff` is one file of it. */
+ * `diff` is one file of it.
+ *
+ * `worktree` on the three working-tree kinds is the absolute path of another
+ * worktree of the task's repository the tab reads instead of the task's own
+ * checkout (TASK-138.2). Absent is the task's checkout, as it always was. It
+ * is part of the tab key: the same file on two worktrees is two tabs. */
 export type TabDescriptor =
   | { kind: "agent" }
   | { kind: "shell"; ptyId: string }
-  | { kind: "diff"; path: string }
-  | { kind: "diffAll" }
-  | { kind: "file"; path: string; line?: number; anchor?: string; anchorAt?: number }
+  | { kind: "diff"; path: string; worktree?: string }
+  | { kind: "diffAll"; worktree?: string }
+  | {
+      kind: "file";
+      path: string;
+      line?: number;
+      anchor?: string;
+      anchorAt?: number;
+      worktree?: string;
+    }
   | { kind: "commit"; sha: string }
   | { kind: "history" };
+
+/** The descriptor kinds that read a working tree, and so can be rooted at
+ * another worktree. */
+export type WorkingTreeDescriptor = Extract<TabDescriptor, { kind: "diff" | "diffAll" | "file" }>;
+
+export function isWorkingTreeDescriptor(descriptor: TabDescriptor): descriptor is WorkingTreeDescriptor {
+  return descriptor.kind === "diff" || descriptor.kind === "diffAll" || descriptor.kind === "file";
+}
+
+/** `descriptor` rooted at `worktree` when it is a working-tree kind and a
+ * worktree is given; otherwise unchanged. What the Explorer stamps on every
+ * tab it opens while a worktree is chosen. */
+export function withWorktree(descriptor: TabDescriptor, worktree: string | null | undefined): TabDescriptor {
+  if (!worktree || !isWorkingTreeDescriptor(descriptor)) return descriptor;
+  return { ...descriptor, worktree };
+}
+
+/** The worktree a descriptor is rooted at, or undefined for the task's own
+ * checkout. */
+export function descriptorWorktree(descriptor: TabDescriptor): string | undefined {
+  return isWorkingTreeDescriptor(descriptor) ? descriptor.worktree : undefined;
+}
+
+const WORKTREE_KEY_PREFIX = "worktree:";
 
 export type TabKind = TabDescriptor["kind"];
 
@@ -45,8 +81,17 @@ export function isTerminalTab(descriptor: TabDescriptor): boolean {
  * heading a markdown link pointed at (TASK-124), is a position the same way;
  * `anchorAt` stamps each request for it, so following the same link twice is
  * two requests and a tab knows which it has already carried out.
+ *
+ * A tab on another worktree (TASK-138.2) is the same key behind
+ * `worktree:<path, URI-encoded>:`, so it never collides with the task's own
+ * tab on the same path, and the encoding holds no colon for
+ * `descriptorFromKey` to trip on.
  */
 export function tabKey(descriptor: TabDescriptor): string {
+  if (isWorkingTreeDescriptor(descriptor) && descriptor.worktree) {
+    const { worktree, ...own } = descriptor;
+    return `${WORKTREE_KEY_PREFIX}${encodeURIComponent(worktree)}:${tabKey(own)}`;
+  }
   switch (descriptor.kind) {
     case "agent":
       return "agent";
@@ -95,6 +140,24 @@ export function descriptorFromKey(key: string): TabDescriptor | null {
   const rest = key.slice(colon + 1);
   // An empty payload names no file, no PTY and no commit, so it is not a tab.
   if (!rest) return null;
+
+  // `worktree:<encoded path>:<key>` — a working-tree tab on another worktree.
+  if (key.startsWith(WORKTREE_KEY_PREFIX)) {
+    const end = rest.indexOf(":");
+    if (end <= 0) return null;
+    let worktree: string;
+    try {
+      worktree = decodeURIComponent(rest.slice(0, end));
+    } catch {
+      return null;
+    }
+    const inner = descriptorFromKey(rest.slice(end + 1));
+    if (!worktree.startsWith("/") || !inner || !isWorkingTreeDescriptor(inner) || inner.worktree) {
+      return null;
+    }
+    return { ...inner, worktree };
+  }
+
   switch (key.slice(0, colon)) {
     case "shell":
       return { kind: "shell", ptyId: rest };
@@ -911,18 +974,22 @@ function storage(): Storage | null {
 function isDescriptor(value: unknown): value is TabDescriptor {
   if (!value || typeof value !== "object") return false;
   const d = value as Record<string, unknown>;
+  // An absolute path when present, on the kinds that read a working tree.
+  const worktreeOk = d.worktree === undefined || (typeof d.worktree === "string" && d.worktree.startsWith("/"));
   switch (d.kind) {
     case "agent":
-    case "diffAll":
     case "history":
       return true;
+    case "diffAll":
+      return worktreeOk;
     case "shell":
       return typeof d.ptyId === "string";
     case "diff":
-      return typeof d.path === "string";
+      return typeof d.path === "string" && worktreeOk;
     case "file":
       return (
         typeof d.path === "string" &&
+        worktreeOk &&
         (d.line === undefined || typeof d.line === "number") &&
         (d.anchor === undefined || typeof d.anchor === "string") &&
         (d.anchorAt === undefined || typeof d.anchorAt === "number")

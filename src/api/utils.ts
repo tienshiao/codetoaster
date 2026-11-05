@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Server } from "bun";
 import { taskManager } from "../lib/tasks/manager";
 import { expandTilde } from "../lib/tilde";
+import { decodeWorktreeToken } from "../lib/worktree-token";
 
 export interface TaskRoot {
   /** The repository the task's work lives in — where every git route runs. */
@@ -128,11 +129,141 @@ export async function resolveProjectRoot(projectId: string): Promise<TaskRoot | 
   }
 }
 
-/** Which kind of id a repository-reading route was addressed by. */
-export type RootScope = "tasks" | "projects";
+/** The scopes a root is named by directly: a task, or a project. */
+export type BaseRootScope = "tasks" | "projects";
+
+/** Which kind of id a repository-reading route was addressed by. `worktrees`
+ * is one of the others' repository's worktrees, named by a token that carries
+ * the base root as well as the path (TASK-138.2). */
+export type RootScope = BaseRootScope | "worktrees";
 
 export function resolveRoot(scope: RootScope, id: string): Promise<TaskRoot | { error: Response }> {
+  if (scope === "worktrees") return resolveWorktreeRoot(id);
   return scope === "tasks" ? resolveTaskRoot(id) : resolveProjectRoot(id);
+}
+
+// ── worktrees (TASK-138.2) ──────────────────────────────────────────────────
+
+/** One record of `git worktree list --porcelain`. */
+export interface WorktreeRecord {
+  path: string;
+  /** The checked-out commit; empty for a bare entry, which has none. */
+  head: string;
+  /** The short branch name, or null for a detached HEAD (and a bare entry). */
+  branch: string | null;
+  bare: boolean;
+  /** git's own verdict that the worktree's directory is gone. */
+  prunable: boolean;
+}
+
+/**
+ * `git worktree list --porcelain`, as records.
+ *
+ * Line-based rather than `-z`: `-z` is git 2.36's, and a path git had to quote
+ * (one with a newline in it) arrives quoted and simply fails to match a
+ * realpath later, so such a worktree cannot be browsed rather than browsing
+ * the wrong thing.
+ */
+export function parseWorktreeList(porcelain: string): WorktreeRecord[] {
+  const records: WorktreeRecord[] = [];
+  let current: WorktreeRecord | null = null;
+  for (const line of porcelain.split("\n")) {
+    // `worktree` always opens a record; the blank line that closes one needs
+    // no handling of its own.
+    if (line.startsWith("worktree ")) {
+      if (current) records.push(current);
+      current = { path: line.slice("worktree ".length), head: "", branch: null, bare: false, prunable: false };
+      continue;
+    }
+    if (!current) continue;
+    if (line.startsWith("HEAD ")) current.head = line.slice("HEAD ".length);
+    else if (line.startsWith("branch ")) current.branch = line.slice("branch ".length).replace(/^refs\/heads\//, "");
+    else if (line === "bare") current.bare = true;
+    else if (line === "prunable" || line.startsWith("prunable ")) current.prunable = true;
+  }
+  if (current) records.push(current);
+  return records;
+}
+
+/** How long one repository's worktree listing stands in for the next: the
+ * Explorer opens a worktree with five or six routes at once, each resolving
+ * the token through this. */
+const WORKTREE_LIST_TTL_MS = 3000;
+const worktreeListCache = new Map<string, CachedPromise<WorktreeRecord[]>>();
+
+function cachedWorktreeList(repoRoot: string): Promise<WorktreeRecord[]> {
+  return cachedPromise(worktreeListCache, repoRoot, WORKTREE_LIST_TTL_MS, () =>
+    gitSpawn(repoRoot, ["worktree", "list", "--porcelain"]).then(({ stdout, exitCode }) => {
+      if (exitCode !== 0) throw new Error(`Could not list worktrees of ${repoRoot}`);
+      return parseWorktreeList(stdout);
+    }),
+  );
+}
+
+async function realpathOrNull(p: string): Promise<string | null> {
+  try {
+    return await fsp.realpath(p);
+  } catch {
+    return null;
+  }
+}
+
+/** A worktree that can be browsed: listed, neither bare nor prunable, and on
+ * disk now. `realPath` is what it is compared and served by. */
+export interface LiveWorktree extends WorktreeRecord {
+  realPath: string;
+}
+
+/**
+ * The worktrees of the repository at `repoRoot` that are there to browse.
+ *
+ * The listing is cached for a few seconds, so the directory is checked on
+ * every call rather than trusted to the cache: a `git worktree remove` or an
+ * `rm -rf` has to stop serving the path at once, not three seconds later.
+ * Compared by realpath, because git and the client need not spell a path the
+ * same way (`/tmp` and `/private/tmp` on macOS).
+ */
+export async function liveWorktrees(repoRoot: string): Promise<LiveWorktree[]> {
+  const records = await cachedWorktreeList(repoRoot);
+  const live = await Promise.all(
+    records.map(async (record) => {
+      if (record.bare || record.prunable) return null;
+      const realPath = await realpathOrNull(record.path);
+      return realPath ? { ...record, realPath } : null;
+    }),
+  );
+  return live.filter((w): w is LiveWorktree => w !== null);
+}
+
+const worktreeNotFound = () => ({
+  error: Response.json({ error: "Worktree not found" }, { status: 404 }),
+});
+
+/**
+ * A worktree token as a `TaskRoot`: the base root it names, resolved as its own
+ * scope would be (its 404s and 400s pass through), and then the path — served
+ * only when it is one of that repository's live worktrees. Anything else is a
+ * 404, so a token cannot reach a directory by claiming a repository it is not
+ * a worktree of.
+ */
+export async function resolveWorktreeRoot(token: string): Promise<TaskRoot | { error: Response }> {
+  const decoded = decodeWorktreeToken(token);
+  if (!decoded) {
+    return { error: Response.json({ error: "Invalid worktree token" }, { status: 400 }) };
+  }
+  const base = await resolveRoot(decoded.scope, decoded.id);
+  if ("error" in base) return base;
+  const target = await realpathOrNull(decoded.path);
+  if (!target) return worktreeNotFound();
+  let worktrees: LiveWorktree[];
+  try {
+    worktrees = await liveWorktrees(base.repoRoot);
+  } catch {
+    return worktreeNotFound();
+  }
+  const match = worktrees.find((w) => w.realPath === target);
+  if (!match) return worktreeNotFound();
+  return { repoRoot: match.realPath, cwd: match.realPath };
 }
 
 /** A route handler over a resolved root. `scope` is there for the rare route
@@ -155,8 +286,8 @@ export interface RootRouteOptions {
 }
 
 /**
- * One handler, served under both `/api/tasks/:id/<subpath>` and
- * `/api/projects/:id/<subpath>`.
+ * One handler, served under `/api/tasks/:id/<subpath>`,
+ * `/api/projects/:id/<subpath>` and `/api/worktrees/:token/<subpath>`.
  *
  * Every repository-reading route used to be task-scoped, because a task was
  * the only thing with a directory. The composer needs the same Explorer —
@@ -188,6 +319,9 @@ export function rootRoutes(
   return {
     [`/api/tasks/:id/${subpath}`]: scoped("tasks"),
     [`/api/projects/:id/${subpath}`]: scoped("projects"),
+    // Any worktree of either's repository, by token (TASK-138.2). The same
+    // handler: a worktree is a checkout like any other once it is resolved.
+    [`/api/worktrees/:id/${subpath}`]: scoped("worktrees"),
   };
 }
 

@@ -3,6 +3,7 @@ import {
   Cpu,
   FileDiff,
   Files,
+  FolderGit2,
   GitBranch,
   GitCommitHorizontal,
   ListTodo,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 import { PointMenu } from "@/frontend/components/v2/DropdownMenu";
 import type { ExplorerRailItem } from "@/frontend/components/v2/ExplorerRail";
+import { Select } from "@/frontend/components/v2/Select";
 import { BacklogSection } from "@/frontend/components/BacklogSection";
 import { ProcessesSection } from "@/frontend/components/ProcessesSection";
 import {
@@ -27,14 +29,19 @@ import { useRevealMenu } from "@/frontend/hooks/use-reveal";
 import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
 import { useIgnoredTree, useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useViewState } from "@/frontend/hooks/use-view-state";
+import {
+  useExplorerWorktree,
+  worktreeLabel,
+  type ExplorerWorktree,
+} from "@/frontend/hooks/use-worktrees";
 import { useChangePulses } from "@/frontend/change-pulse-store";
 import {
   EXPLORER_SECTIONS,
   type BacklogTab,
   type ExplorerSection,
 } from "@/frontend/explorer-store";
-import type { OpenOptions, TabDescriptor } from "@/frontend/layout-store";
-import { rootId, type RepoRoot } from "@/frontend/repo-root";
+import { withWorktree, type OpenOptions, type TabDescriptor } from "@/frontend/layout-store";
+import { baseRoot, rootId, type RepoRoot } from "@/frontend/repo-root";
 import { getViewState, setViewField, viewRef } from "@/frontend/view-state-store";
 
 /**
@@ -97,12 +104,17 @@ export function useExplorerRail(
   const { data } = useTaskDiff(root, { tokens: false });
   const count = data?.length;
   const backlog = useBacklog(root).data?.detected ?? section === "Backlog";
+  // By the base root: a project's worktree is browsed from the composer too.
   const changes =
-    root?.kind !== "project" || (count === undefined ? section === "Changes" : count > 0);
+    root == null ||
+    baseRoot(root).kind !== "project" ||
+    (count === undefined ? section === "Changes" : count > 0);
   // Processes are a task's: a project browsed from the composer has no
   // terminal for anything to run under (TASK-138.1). Kept while it is the
-  // section showing, for the reason `section` is consulted at all.
-  const processes = root?.kind === "task" || section === "Processes";
+  // section showing, for the reason `section` is consulted at all. A worktree
+  // being browsed is still the task's, and its processes are the task's
+  // (TASK-138.2).
+  const processes = (root != null && baseRoot(root).kind === "task") || section === "Processes";
   return useMemo(
     () =>
       EXPLORER_SECTIONS.filter(
@@ -120,8 +132,9 @@ export function useExplorerRail(
 }
 
 export interface ExplorerProps {
-  /** What the sections read. Null when there is nothing to browse: no task
-   * selected and no project with a directory. */
+  /** The task or project being browsed. Null when there is nothing to browse:
+   * no task selected and no project with a directory. The sections read the
+   * worktree chosen in the picker instead, when one is (TASK-138.2). */
   root: RepoRoot | null;
   /** Shown in place of the sections while `root` is null. */
   placeholder: string;
@@ -142,7 +155,17 @@ export function Explorer({
   onBacklogTabChange,
   onOpenTab,
 }: ExplorerProps): ReactNode {
-  const preview = usePreviewOpen(onOpenTab);
+  // Which of the repository's worktrees the sections read (TASK-138.2). Every
+  // tab opened from them while one is chosen is rooted at it, stamped here
+  // rather than in each section so no `open` call can forget.
+  const worktree = useExplorerWorktree(root);
+  const chosen = worktree.chosen;
+  const openTab = useCallback(
+    (descriptor: TabDescriptor, options?: OpenOptions) =>
+      onOpenTab(withWorktree(descriptor, chosen), options),
+    [onOpenTab, chosen],
+  );
+  const preview = usePreviewOpen(openTab);
 
   if (root == null) {
     return (
@@ -152,6 +175,45 @@ export function Explorer({
     );
   }
 
+  // Processes are the task's whatever is being browsed, so they neither read
+  // the chosen worktree nor show the picker.
+  if (section === "Processes") return <ProcessesSection root={root} />;
+
+  // One tree whether or not the picker shows: the list arrives after the
+  // first render and a subagent can add a worktree at any poll, and wrapping
+  // the section only then would remount it, dropping its local state.
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {worktree.worktrees.length > 0 && <WorktreePicker root={root} worktree={worktree} />}
+      <div className="min-h-0 flex-1">
+        <SectionBody
+          section={section}
+          root={worktree.browseRoot ?? root}
+          preview={preview}
+          onOpenTab={openTab}
+          backlogTab={backlogTab}
+          onBacklogTabChange={onBacklogTabChange}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SectionBody({
+  section,
+  root,
+  preview,
+  onOpenTab,
+  backlogTab,
+  onBacklogTabChange,
+}: {
+  section: Exclude<ExplorerSection, "Processes">;
+  root: RepoRoot;
+  preview: PreviewOpen;
+  onOpenTab: (descriptor: TabDescriptor, options?: OpenOptions) => void;
+  backlogTab: BacklogTab;
+  onBacklogTabChange: (tab: BacklogTab) => void;
+}): ReactNode {
   // One section at a time: the others are unmounted, not hidden. That is what
   // lets each hold its own queries without four sections' worth of git running
   // for a panel showing one of them.
@@ -173,9 +235,43 @@ export function Explorer({
           {...preview}
         />
       );
-    case "Processes":
-      return <ProcessesSection root={root} />;
   }
+}
+
+// ── worktree picker (TASK-138.2) ────────────────────────────────────────────
+
+/**
+ * Which of the repository's worktrees the sections read, shown only when
+ * there is more than one. Each is named by its branch (a short SHA when
+ * detached) and its directory, the root's own checkout marked, since a
+ * subagent's worktree is usually on a branch named after the task.
+ */
+function WorktreePicker({ root, worktree }: { root: RepoRoot; worktree: ExplorerWorktree }) {
+  const own = root.kind === "task" ? "this task" : "this checkout";
+  const options = useMemo(
+    () =>
+      worktree.worktrees.map((w) => ({
+        value: w.path,
+        label: w.current ? `${worktreeLabel(w)} (${own})` : worktreeLabel(w),
+      })),
+    [worktree.worktrees, own],
+  );
+  const current = worktree.worktrees.find((w) => w.current)?.path ?? "";
+  const value = worktree.chosen ?? current;
+  return (
+    <div className="flex flex-none items-center border-b border-border px-2 py-1.5">
+      <Select
+        aria-label="Worktree"
+        icon={FolderGit2}
+        size="sm"
+        className="w-full min-w-0"
+        options={options}
+        value={value}
+        onValueChange={(path) => worktree.choose(path || null)}
+        title={worktree.chosen ?? undefined}
+      />
+    </div>
+  );
 }
 
 // ── preview / pin ───────────────────────────────────────────────────────────

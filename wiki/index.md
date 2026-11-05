@@ -14,6 +14,7 @@ okf_version: "0.2"
 * [Task naming](modules/task-naming.md) - A task's stored name is a stable "<dir> · <branch>" label used for slugs and CLI matching, while the displayed label is projected at render time from a rename, the live terminal title, or the stored name.
 * [Terminal links](modules/terminal-links.md) - Task ids, file paths, bare file names and commit hashes in a task's terminals are xterm links that open a task file, a file tab or a commit, each matched by a DOM-free provider.
 * [Terminal size negotiation](modules/terminal-size-negotiation.md) - When several browsers attach to one PTY, the terminal takes the smallest measured cols and rows across clients, ignoring clients that have not measured or reported garbage.
+* [Worktree browsing](modules/worktree-browsing.md) - The Explorer lists the worktrees of a task's repository and can point Changes, Files, History, Refs and Backlog at any of them; the routes serve a worktree through a token naming its base root and path, and refuse a path that is not one of that repository's live worktrees.
 
 # Conventions
 

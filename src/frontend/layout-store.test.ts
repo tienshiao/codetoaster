@@ -42,6 +42,8 @@ import {
   clearLayout,
   retainLayouts,
   moveLayout,
+  withWorktree,
+  descriptorWorktree,
 } from "./layout-store";
 import type { TabDescriptor, TabGroup, TaskLayout } from "./layout-store";
 import { SHELL_COMMANDS } from "./keymap";
@@ -1868,4 +1870,77 @@ test("differsOnlyInFocus: a focus change is one, and nothing else is", () => {
   expect(differsOnlyInFocus(preview, pinTab(preview, activeTab(preview)!.id))).toBe(false);
   // Same keys, different group shape: a split is not a focus.
   expect(differsOnlyInFocus(layout, mergeGroups(layout))).toBe(false);
+});
+
+// ── worktree tabs (TASK-138.2) ──────────────────────────────────────────────
+
+const WT = "/repo/.claude/worktrees/agent:a";
+
+test("the same path on another worktree is another tab key", () => {
+  const own = tabKey(file("src/a.ts"));
+  const there = tabKey({ kind: "file", path: "src/a.ts", worktree: WT });
+  const elsewhere = tabKey({ kind: "file", path: "src/a.ts", worktree: "/repo/wt-b" });
+  expect(new Set([own, there, elsewhere]).size).toBe(3);
+  expect(tabKey({ kind: "diff", path: "src/a.ts", worktree: WT })).not.toBe(tabKey(diff("src/a.ts")));
+  expect(tabKey({ kind: "diffAll", worktree: WT })).not.toBe(tabKey(diffAll));
+  // A line is still a position, not part of the key.
+  expect(tabKey({ kind: "file", path: "src/a.ts", line: 9, worktree: WT })).toBe(there);
+});
+
+test("a worktree tab's key round-trips, colons in the worktree and the path alike", () => {
+  for (const descriptor of [
+    { kind: "file", path: "src/a:b.ts", worktree: WT },
+    { kind: "diff", path: "src/a.ts", worktree: WT },
+    { kind: "diffAll", worktree: WT },
+  ] as TabDescriptor[]) {
+    expect(descriptorFromKey(tabKey(descriptor))).toEqual(descriptor);
+  }
+  // Only the working-tree kinds can be on a worktree, a relative one is no
+  // worktree, and a worktree does not nest.
+  expect(descriptorFromKey(`worktree:${encodeURIComponent(WT)}:commit:abc`)).toBeNull();
+  expect(descriptorFromKey("worktree:relative:file:a.ts")).toBeNull();
+  expect(descriptorFromKey(`worktree:${encodeURIComponent(WT)}:worktree:%2Fx:file:a.ts`)).toBeNull();
+  expect(descriptorFromKey("worktree::file:a.ts")).toBeNull();
+});
+
+test("opening the same file on two worktrees opens two tabs, and again focuses each", () => {
+  let layout = createLayout();
+  layout = openTab(layout, file("a.ts"));
+  layout = openTab(layout, { kind: "file", path: "a.ts", worktree: WT });
+  layout = openTab(layout, file("a.ts"));
+  expect(allTabs(layout)).toHaveLength(3);
+});
+
+test("a worktree tab survives a save and a load", () => {
+  installStorage();
+  const descriptor: TabDescriptor = { kind: "diff", path: "a.ts", worktree: WT };
+  saveLayout("task-wt", openTab(createLayout(), descriptor));
+  const loaded = loadLayout("task-wt");
+  expect(allTabs(loaded).map((t) => t.descriptor)).toEqual([agent, descriptor]);
+});
+
+test("a stored worktree that is not an absolute path is refused, as any malformed tab is", () => {
+  const stored = {
+    activeGroupId: "g",
+    groups: [
+      {
+        id: "g",
+        activeTabId: "t1",
+        tabs: [
+          { id: "t1", descriptor: agent, preview: false },
+          { id: "t2", descriptor: { kind: "file", path: "a.ts", worktree: 7 }, preview: false },
+        ],
+      },
+    ],
+  };
+  expect(reviveLayout(stored)).toBeNull();
+});
+
+test("withWorktree stamps only the working-tree kinds", () => {
+  expect(withWorktree(file("a.ts"), WT)).toEqual({ kind: "file", path: "a.ts", worktree: WT });
+  expect(withWorktree(diffAll, WT)).toEqual({ kind: "diffAll", worktree: WT });
+  expect(withWorktree(commit("abc"), WT)).toEqual(commit("abc"));
+  expect(withWorktree(file("a.ts"), null)).toEqual(file("a.ts"));
+  expect(descriptorWorktree({ kind: "diff", path: "a.ts", worktree: WT })).toBe(WT);
+  expect(descriptorWorktree(agent)).toBeUndefined();
 });

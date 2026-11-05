@@ -24,6 +24,7 @@
 // filtered on the way out, so it cannot be added back by accident.
 
 import { createKeyedListeners } from "./keyed-listeners";
+import { baseRootId } from "./repo-root";
 import { isUnder } from "./utils/ignored-files";
 import type { LineComment, HunkExpansionState } from "./types/diff";
 import type { FileInfo } from "./types/file";
@@ -168,6 +169,11 @@ export interface ExplorerViewState {
    * `resolveBacklogSort` in `backlog-list.ts` is what validates it. */
   backlogOpenSort: string | null;
   backlogClosedSort: string | null;
+  /** The worktree of the repository the Explorer is browsing instead of the
+   * root's own checkout (TASK-138.2), by absolute path; null for the root's
+   * own. Held in the *base* root's slot — a worktree root's own `explorer`
+   * slot keeps its trees' state, not a choice of worktree. */
+  worktree: string | null;
 }
 
 /** `prefs`: task-wide toggles that are a preference rather than a view's own
@@ -240,6 +246,7 @@ const DEFAULTS: { [K in ViewSlotKind]: () => ViewStateShapes[K] } = {
     backlogFilter: "",
     backlogOpenSort: null,
     backlogClosedSort: null,
+    worktree: null,
   }),
   prefs: () => ({ treeLineWrap: false, treePreview: true }),
 };
@@ -292,6 +299,7 @@ const PERSISTED: { [K in ViewSlotKind]: ReadonlyArray<keyof ViewStateShapes[K] &
     "backlogFilter",
     "backlogOpenSort",
     "backlogClosedSort",
+    "worktree",
   ],
   prefs: ["treeLineWrap", "treePreview"],
 };
@@ -472,7 +480,11 @@ export function dropTaskViewStates(taskId: string): void {
  *
  * The valid set holds root ids, not only task ids: the caller adds every live
  * project's `project:<id>` (TASK-106), so a project's Explorer state is kept
- * for as long as the project is and dropped with it. */
+ * for as long as the project is and dropped with it.
+ *
+ * A worktree root's entries (`worktree:<base>:<path>`, TASK-138.2) belong to
+ * their base, and go when it does: the caller cannot list worktrees, and
+ * should not have to. */
 export function retainTaskViewStates(validTaskIds: ReadonlySet<string>): void {
   const seen = new Set<string>();
   for (const id of store.keys()) seen.add(taskIdOf(id));
@@ -482,7 +494,7 @@ export function retainTaskViewStates(validTaskIds: ReadonlySet<string>): void {
   // function exists to prevent, for tasks that died while the page was closed.
   for (const taskId of storedTaskIds()) seen.add(taskId);
   for (const taskId of seen) {
-    if (!validTaskIds.has(taskId)) dropTaskViewStates(taskId);
+    if (!validTaskIds.has(baseRootId(taskId))) dropTaskViewStates(taskId);
   }
 }
 

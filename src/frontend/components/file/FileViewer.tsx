@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Eye, FileDiff, FolderSearch, WrapText } from "lucide-react";
 import { toast } from "sonner";
-import { rootGitImageUrl, rootId, rootImageUrl, type RepoRoot } from "@/frontend/repo-root";
+import { isWatchedRoot, rootGitImageUrl, rootId, rootImageUrl, type RepoRoot } from "@/frontend/repo-root";
 import { IconButton } from "@/frontend/components/v2";
 import { SymbolPopover, type SymbolTarget } from "@/frontend/components/SymbolPopover";
 import { getLanguageFromPath } from "@/frontend/utils/languageDetection";
@@ -226,7 +226,9 @@ export function FileViewer({
         // The file itself, when it is an image: the blob at the commit rather
         // than whatever the working tree holds under that name now.
         imageUrl={sha ? imageUrl(path) : undefined}
-        highlightChanges={sha === undefined}
+        // Off for a worktree root (TASK-138.2): nothing watches one, so there
+        // is no change to flash.
+        highlightChanges={sha === undefined && isWatchedRoot(root)}
       />
       <SymbolPopover
         root={root}

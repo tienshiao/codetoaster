@@ -46,6 +46,7 @@ import {
   withAll,
   withoutAll,
 } from "./view-state-store";
+import { projectRoot, rootId, taskRoot, worktreeRoot } from "./repo-root";
 import type { LineComment } from "./types/diff";
 import type { FileInfo } from "./types/file";
 
@@ -303,6 +304,26 @@ test("retainTaskViewStates keeps a project root in the valid set and drops one t
   expect(getViewState("prefs", viewRef("project:gone", "prefs")).treeLineWrap).toBe(false);
   resetViewStates("project:web");
   resetViewStates("project:gone");
+});
+
+test("retainTaskViewStates keeps a worktree root's state while its base is valid (TASK-138.2)", () => {
+  const live = rootId(worktreeRoot(taskRoot("task-alive"), "/repo/.worktrees/a"));
+  const orphan = rootId(worktreeRoot(projectRoot("gone"), "/repo/.worktrees/b"));
+  setViewField("prefs", viewRef(live, "prefs"), "treeLineWrap", true);
+  setViewField("prefs", viewRef(orphan, "prefs"), "treeLineWrap", true);
+  retainTaskViewStates(new Set(["task-alive", "project:web"]));
+  expect(getViewState("prefs", viewRef(live, "prefs")).treeLineWrap).toBe(true);
+  expect(getViewState("prefs", viewRef(orphan, "prefs")).treeLineWrap).toBe(false);
+  resetViewStates(live);
+  resetViewStates(orphan);
+});
+
+test("the Explorer's worktree choice is persisted with the root's explorer slot", () => {
+  const task = "persist-worktree";
+  setViewField("explorer", viewRef(task, "explorer"), "worktree", "/repo/.worktrees/a");
+  reload(task);
+  expect(getViewState("explorer", viewRef(task, "explorer")).worktree).toBe("/repo/.worktrees/a");
+  resetViewStates(task);
 });
 
 // ── persistence ─────────────────────────────────────────────────────────────

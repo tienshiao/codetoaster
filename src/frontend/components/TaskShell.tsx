@@ -12,6 +12,7 @@ import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { CommandPaletteHost } from "@/frontend/components/CommandPalette";
 import { useComposerProject } from "@/frontend/hooks/use-composer-project";
 import { useRootBranch } from "@/frontend/hooks/use-root-branch";
+import { useExplorerWorktree } from "@/frontend/hooks/use-worktrees";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { useProfiles } from "@/frontend/hooks/use-profiles";
@@ -28,6 +29,7 @@ import {
   descriptorFromKey,
   openTab,
   reconcileShellTabs,
+  withWorktree,
   type LayoutEnv,
   type OpenOptions,
   type TabDescriptor,
@@ -137,7 +139,13 @@ export function TaskShell({ taskId, pendingTab = null, pendingPosition, onTabEns
     !taskId && composerProject && !browsableProject
       ? `${composerProject.name} has no directory to browse.`
       : "Pick a task to see its files.";
-  const explorerSections = useExplorerRail(root, explorerPanel.section);
+  // The worktree the Explorer is browsing, when it is not the root's own
+  // checkout (TASK-138.2): the rail's Changes count and Backlog item are that
+  // worktree's, and "Review all" opens its diff. The Explorer asks the same
+  // hook for its picker and sections; the choice lives in the view-state store
+  // and the list in the query cache, so the two cannot disagree.
+  const explorerWorktree = useExplorerWorktree(root);
+  const explorerSections = useExplorerRail(explorerWorktree.browseRoot, explorerPanel.section);
   // The Explorer's section is per device and the Backlog one only exists for a
   // Backlog.md repository (TASK-85), so a user who left the panel on Backlog
   // and moved to a task without one would open onto a section whose rail item
@@ -767,7 +775,9 @@ export function TaskShell({ taskId, pendingTab = null, pendingPosition, onTabEns
             <Button
               variant="outline"
               className="flex-1"
-              onClick={() => handleOpenTab({ kind: "diffAll" })}
+              onClick={() =>
+                handleOpenTab(withWorktree({ kind: "diffAll" }, explorerWorktree.chosen))
+              }
             >
               Review all
             </Button>

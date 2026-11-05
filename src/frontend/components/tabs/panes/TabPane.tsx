@@ -6,9 +6,11 @@ import { useFocusRequest } from "@/frontend/hooks/use-focus-request";
 import { usePathLinkProvider } from "@/frontend/hooks/use-path-links";
 import { PointMenu } from "@/frontend/components/v2/DropdownMenu";
 import { viewRef } from "@/frontend/view-state-store";
-import { rootId, type RepoRoot } from "@/frontend/repo-root";
+import { rootId, worktreeRoot, type RepoRoot } from "@/frontend/repo-root";
 import {
+  descriptorWorktree,
   isTerminalTab,
+  withWorktree,
   type OpenOptions,
   type TabDescriptor,
   type TabState,
@@ -19,6 +21,7 @@ import { DiffFilePane } from "./DiffFilePane";
 import { FilePane } from "./FilePane";
 import { HistoryPane } from "./HistoryPane";
 import { ShellPane } from "./ShellPane";
+import { WorktreeFrame } from "./WorktreeFrame";
 
 export interface TabPaneProps {
   /** What the pane reads: a task's checkout, or — at the composer (TASK-106) —
@@ -86,7 +89,20 @@ export function TabPane({
   // link providers below are a terminal's.
   const taskId = root.kind === "task" ? root.id : null;
   const id = rootId(root);
+  // The slot stays the task's: the tab key carries the worktree, and keeping
+  // the task's root id is what lets closing the tab prune its state.
   const view = useMemo(() => viewRef(id, tab.key), [id, tab.key]);
+
+  // A working-tree tab on another worktree reads that worktree (TASK-138.2),
+  // and whatever it opens — View file, Show changes, a markdown link — opens
+  // on the same worktree.
+  const worktree = descriptorWorktree(tab.descriptor);
+  const paneRoot = useMemo(() => (worktree ? worktreeRoot(root, worktree) : root), [root, worktree]);
+  const open = useCallback(
+    (descriptor: TabDescriptor, options?: OpenOptions) =>
+      onOpenTab(withWorktree(descriptor, worktree), options),
+    [onOpenTab, worktree],
+  );
 
   // A preview open: clicking through a commit graph or a file tree replaces the
   // italic tab in place rather than leaving thirty behind. A double-click on the
@@ -95,7 +111,7 @@ export function TabPane({
     (sha: string) => onOpenTab({ kind: "commit", sha }, { preview: true }),
     [onOpenTab],
   );
-  const openChanges = useCallback(() => onOpenTab({ kind: "diffAll" }), [onOpenTab]);
+  const openChanges = useCallback(() => open({ kind: "diffAll" }), [open]);
 
   // Go-to-definition. Permanent rather than preview: the user asked for this
   // file by name, and the next preview open would otherwise take its place.
@@ -105,15 +121,15 @@ export function TabPane({
   // following the same link again is a new request the tab will act on.
   const openFile = useCallback(
     (path: string, line?: number, anchor?: string) =>
-      onOpenTab(
+      open(
         anchor ? { kind: "file", path, line, anchor, anchorAt: Date.now() } : { kind: "file", path, line },
       ),
-    [onOpenTab],
+    [open],
   );
   // A file tab's Show changes (TASK-121), the way back from a diff's View file.
   // Permanent for the same reason: asked for by name, and `tabKey` dedupes, so
   // going back and forth switches between two tabs rather than making more.
-  const openDiff = useCallback((path: string) => onOpenTab({ kind: "diff", path }), [onOpenTab]);
+  const openDiff = useCallback((path: string) => open({ kind: "diff", path }), [open]);
 
   // Task ids (TASK-86), file paths (TASK-108) and commit hashes (TASK-110) in
   // the task's terminals, as links that open a tab. Called unconditionally,
@@ -209,37 +225,44 @@ export function TabPane({
       // two props.
       return (
         <Frame ref={frame}>
-          <DiffView
-            root={root}
-            onSubmit={onSubmitReview}
-            onOpenFile={openFile}
-            // At the composer a review is appended to the prompt, not sent.
-            destination={taskId ? "terminal" : "prompt"}
-          />
+          <OnWorktree root={root} worktree={worktree}>
+            <DiffView
+              root={paneRoot}
+              onSubmit={onSubmitReview}
+              onOpenFile={openFile}
+              // At the composer a review is appended to the prompt, not sent.
+              destination={taskId ? "terminal" : "prompt"}
+            />
+          </OnWorktree>
         </Frame>
       );
 
     case "diff":
       return (
         <Frame ref={frame}>
-          <DiffFilePane root={root} view={view} path={descriptor.path} onOpenFile={openFile} />
+          <OnWorktree root={root} worktree={worktree}>
+            <DiffFilePane root={paneRoot} view={view} path={descriptor.path} onOpenFile={openFile} />
+          </OnWorktree>
         </Frame>
       );
 
     case "file":
       return (
         <Frame ref={frame}>
-          <FilePane
-            root={root}
-            view={view}
-            path={descriptor.path}
-            line={descriptor.line}
-            anchor={descriptor.anchor}
-            anchorAt={descriptor.anchorAt}
-            taskHref={taskHref}
-            onOpenFile={openFile}
-            onOpenDiff={openDiff}
-          />
+          <OnWorktree root={root} worktree={worktree}>
+            <FilePane
+              root={paneRoot}
+              view={view}
+              path={descriptor.path}
+              line={descriptor.line}
+              anchor={descriptor.anchor}
+              anchorAt={descriptor.anchorAt}
+              taskHref={taskHref}
+              worktree={worktree}
+              onOpenFile={openFile}
+              onOpenDiff={openDiff}
+            />
+          </OnWorktree>
         </Frame>
       );
 
@@ -262,6 +285,17 @@ export function TabPane({
         </Frame>
       );
   }
+}
+
+/** A working-tree pane under its worktree's line when it is on one, and as it
+ * always was when it is not. */
+function OnWorktree({ root, worktree, children }: { root: RepoRoot; worktree?: string; children: ReactNode }) {
+  if (!worktree) return <>{children}</>;
+  return (
+    <WorktreeFrame root={root} worktree={worktree}>
+      {children}
+    </WorktreeFrame>
+  );
 }
 
 /** The focusable box around a non-terminal pane — see `frame` above. Full

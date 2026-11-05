@@ -1,4 +1,5 @@
 import { defaultStringifySearch } from "@tanstack/react-router";
+import { tabKey } from "@/frontend/layout-store";
 
 /**
  * A URL for a file tab (TASK-126), and the route's reading of one.
@@ -18,12 +19,19 @@ export interface FileTabTarget {
   path: string;
   line?: number;
   anchor?: string;
+  /** The worktree the file tab reads, when it is not the task's own checkout
+   * (TASK-138.2): part of the tab key, so the link opens the same tab. */
+  worktree?: string;
 }
 
 /** `base` is the task's route, `/t/<slug>`. */
 export function fileTabHref(base: string, target: FileTabTarget): string {
   return `${base}${defaultStringifySearch({
-    tab: `file:${target.path}`,
+    tab: tabKey({
+      kind: "file",
+      path: target.path,
+      ...(target.worktree ? { worktree: target.worktree } : {}),
+    }),
     ...(target.line ? { line: target.line } : {}),
     ...(target.anchor ? { anchor: target.anchor } : {}),
   })}`;
