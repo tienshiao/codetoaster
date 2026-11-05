@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type UseQueryOptions } from "@tanstack/react-query";
 import { gitKeys } from "../query-keys";
 import { rootApi, rootId, type RepoRoot } from "../repo-root";
 import type { GitRefsResponse } from "../types/git";
@@ -13,8 +13,14 @@ async function fetchGitRefs(root: RepoRoot): Promise<GitRefsResponse> {
 }
 
 /** A null root leaves the query disabled — the palette at `/` with nothing to
- * read. */
-export function useGitRefs(root: RepoRoot | null, enabled = true) {
+ * read. `refetchInterval` is this observer's poll, for a reader that has no
+ * watcher behind it (the composer's status bar, TASK-137); the others on the
+ * same key are unaffected when it unmounts. */
+export function useGitRefs(
+  root: RepoRoot | null,
+  enabled = true,
+  { refetchInterval }: Pick<UseQueryOptions<GitRefsResponse>, "refetchInterval"> = {},
+) {
   return useQuery({
     queryKey: gitKeys.refs(root && rootId(root)),
     queryFn: () => fetchGitRefs(root!),
@@ -23,5 +29,6 @@ export function useGitRefs(root: RepoRoot | null, enabled = true) {
     // focus so returning to the tab reflects the current branch/tag state; the
     // global default is false.
     refetchOnWindowFocus: true,
+    refetchInterval,
   });
 }

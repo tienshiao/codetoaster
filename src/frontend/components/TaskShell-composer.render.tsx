@@ -26,6 +26,8 @@ import { resetComposerDraft, setComposerDraftProject } from "../composer-draft-s
 const stubs = vi.hoisted(() => ({
   projects: [] as ProjectInfo[],
   onOpenTab: null as ((d: TabDescriptor, o?: OpenOptions) => void) | null,
+  /** The branch each project root's checkout is on, by project id. */
+  branches: {} as Record<string, string>,
 }));
 
 vi.mock("@/frontend/TaskContext", () => ({
@@ -47,6 +49,12 @@ vi.mock("@/frontend/hooks/use-task-nav", () => ({
   COMPOSER_PROMPT_ID: "composer-prompt",
   useOpenTask: () => vi.fn(),
   useOpenComposer: () => vi.fn(),
+}));
+// The composer bar's branch reads refs over HTTP, which its own test covers;
+// here only which root it is asked about and where the answer lands.
+vi.mock("@/frontend/hooks/use-root-branch", () => ({
+  useRootBranch: (root: { kind: string; id: string } | null) =>
+    root?.kind === "project" ? (stubs.branches[root.id] ?? null) : null,
 }));
 vi.mock("@/frontend/hooks/use-explorer-panel", () => ({
   useExplorerPanel: () => ({
@@ -72,14 +80,19 @@ vi.mock("@/frontend/components/v2/AppShell", () => ({
     tabArea,
     explorer,
     children,
+    status,
   }: {
     tabArea?: (chrome: { leading: ReactNode }) => ReactNode;
     explorer?: ReactNode;
     children?: ReactNode;
+    status?: { items?: ReactNode[] };
   }) => (
     <div>
       {tabArea ? tabArea({ leading: null }) : children}
       {explorer}
+      <ul data-testid="status">
+        {status?.items?.map((item, i) => <li key={i}>{item}</li>)}
+      </ul>
     </div>
   ),
 }));
@@ -144,6 +157,7 @@ beforeEach(() => {
   for (const id of IDS) clearLayout(id);
   stubs.projects = [project("web", "/repo/web"), project("api", "/repo/api")];
   stubs.onOpenTab = null;
+  stubs.branches = {};
   setComposerDraftProject("web");
   // The status bar's profile list; nothing here asks about it.
   vi.stubGlobal(
@@ -202,4 +216,20 @@ test("a project with no directory has no layout, and the composer stands alone",
   expect(screen.queryByTestId("agent-pane")).toBeNull();
   expect(screen.queryByRole("tab")).toBeNull();
   expect(localStorage.getItem("codetoaster:layout:project:general")).toBeNull();
+});
+
+test("the status bar says the chosen project's branch, and the next one's when the draft moves (TASK-137)", () => {
+  stubs.branches = { web: "main", api: "feature/x" };
+  renderComposer();
+  expect(screen.getByTestId("status").textContent).toBe("main");
+
+  act(() => {
+    setComposerDraftProject("api");
+  });
+  expect(screen.getByTestId("status").textContent).toBe("feature/x");
+});
+
+test("the status bar says no task when the project has no branch to say", () => {
+  renderComposer();
+  expect(screen.getByTestId("status").textContent).toBe("no task");
 });

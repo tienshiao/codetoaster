@@ -54,6 +54,8 @@ vi.mock("@/frontend/hooks/use-task-nav", () => ({
   useOpenTask: () => vi.fn(),
   useOpenComposer: () => vi.fn(),
 }));
+// The composer bar's branch reads refs over HTTP; covered in its own test.
+vi.mock("@/frontend/hooks/use-root-branch", () => ({ useRootBranch: () => null }));
 vi.mock("@/frontend/hooks/use-explorer-panel", () => ({
   useExplorerPanel: () => ({
     section: "Changes",

@@ -11,6 +11,7 @@ import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
 import { CommandPaletteHost } from "@/frontend/components/CommandPalette";
 import { useComposerProject } from "@/frontend/hooks/use-composer-project";
+import { useRootBranch } from "@/frontend/hooks/use-root-branch";
 import { useExplorerPanel } from "@/frontend/hooks/use-explorer-panel";
 import { useIsMobile } from "@/frontend/hooks/use-mobile";
 import { useProfiles } from "@/frontend/hooks/use-profiles";
@@ -127,6 +128,11 @@ export function TaskShell({ taskId, pendingTab = null, pendingPosition, onTabEns
       taskId ? taskRoot(taskId) : browsableProjectId ? projectRoot(browsableProjectId) : null,
     [taskId, browsableProjectId],
   );
+  // At the composer, the branch the chosen project's checkout is on (TASK-137):
+  // what a task without a worktree runs on, and what one with a worktree
+  // branches off unless the composer names a base ref. A task's own bar reads
+  // its branch off the row instead, so this is not asked for one.
+  const composerBranch = useRootBranch(taskId ? null : root);
   const explorerPlaceholder =
     !taskId && composerProject && !browsableProject
       ? `${composerProject.name} has no directory to browse.`
@@ -729,7 +735,13 @@ export function TaskShell({ taskId, pendingTab = null, pendingPosition, onTabEns
                 `${selected.size.cols}×${selected.size.rows}`,
                 `${selected.clientCount} viewing`,
               ]
-            : ["no task"],
+            : // The composer: the project checkout's branch, so a task about
+              // to start from the wrong one is caught before it is sent. A
+              // detached head says its short SHA here (a task's bar omits it).
+              // "no task" only when there is nothing to say.
+              composerBranch
+              ? [composerBranch]
+              : ["no task"],
         }}
         explorerSections={explorerSections}
         explorerTab={explorerSection}
