@@ -133,6 +133,50 @@ test("a project with no tasks gets a group, after the ones that have some", () =
   ]);
 });
 
+// TASK-141: a project's place is the newer of the server's per-project rank
+// (archived tasks included) and its visible tasks' own ranks.
+function ranked(id: string, projectId: string, rankAt: number) {
+  return { ...task(id, { projectId }), rankAt };
+}
+
+test("archiving a project's top task leaves the project where it was", () => {
+  // `a-top` (rank 30) was archived: it is gone from the list, and `a`'s only
+  // visible task is older than `b`'s. The server still ranks `a` at 30.
+  const visible = [ranked("b1", "b", 20), ranked("a-old", "a", 10)];
+  const groups = groupByProject(visible, NO_NAMES, [], new Map([["a", 30], ["b", 20]]));
+  expect(groups.map((g) => g.id)).toEqual(["a", "b"]);
+  // Without the server's rank it falls, which is the bug.
+  expect(groupByProject(visible, NO_NAMES).map((g) => g.id)).toEqual(["b", "a"]);
+});
+
+test("a project whose every task is archived keeps its place above older ones", () => {
+  const visible = [ranked("b1", "b", 20)];
+  const groups = groupByProject(
+    visible,
+    NO_NAMES,
+    ["a", "b", "fresh"],
+    new Map<string, number | null>([["a", 30], ["b", 20], ["fresh", null]]),
+  );
+  // `a` stays first with no rows; `fresh` has never had a task and trails.
+  expect(groups.map((g) => [g.id, g.tasks.length])).toEqual([["a", 0], ["b", 1], ["fresh", 0]]);
+});
+
+test("a task waking after an archive still brings its project to the top", () => {
+  // The server's ranks are from the last snapshot; `b1` has since woken
+  // (rank 40 by an activity frame) and must lift `b` there and then.
+  const visible = [ranked("b1", "b", 40), ranked("a-old", "a", 10)];
+  const groups = groupByProject(visible, NO_NAMES, [], new Map([["a", 30], ["b", 20]]));
+  expect(groups.map((g) => g.id)).toEqual(["b", "a"]);
+});
+
+test("the order between snapshots matches the order a fresh snapshot gives", () => {
+  const visible = [ranked("b1", "b", 40), ranked("a-old", "a", 10)];
+  const between = groupByProject(visible, NO_NAMES, ["a", "b"], new Map([["a", 30], ["b", 20]]));
+  // The next snapshot carries `b`'s new rank in the project ranks too.
+  const fresh = groupByProject(visible, NO_NAMES, ["a", "b"], new Map([["a", 30], ["b", 40]]));
+  expect(between.map((g) => g.id)).toEqual(fresh.map((g) => g.id));
+});
+
 test("grouping preserves recency order inside a group", () => {
   const tasks = [task("newest"), task("older"), task("oldest")];
   const [group] = groupByProject(tasks, NO_NAMES);

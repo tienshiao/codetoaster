@@ -113,6 +113,23 @@ describe("get", () => {
   });
 });
 
+describe("projectRanks", () => {
+  // TASK-141: what keeps a project in place when its top task is archived.
+  test("each project's highest rank, archived tasks included", () => {
+    store.create(seed({ id: "a1", project_id: "a", rank_at: 30 }));
+    store.update("a1", { lifecycle: "archived" });
+    store.create(seed({ id: "a2", project_id: "a", rank_at: 10 }));
+    store.create(seed({ id: "b1", project_id: "b", rank_at: 20 }));
+
+    expect(store.projectRanks()).toEqual(new Map([["a", 30], ["b", 20]]));
+  });
+
+  test("a project with no task at all is absent", () => {
+    store.create(seed({ id: "b1", project_id: "b", rank_at: 20 }));
+    expect(store.projectRanks().has("never-used")).toBe(false);
+  });
+});
+
 describe("list", () => {
   beforeEach(() => {
     store.create(seed({ id: "old", last_active_at: 100, lifecycle: "live" }));

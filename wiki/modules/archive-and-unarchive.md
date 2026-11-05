@@ -5,7 +5,7 @@ description: Archive suspends a task, snapshots its worktree to a WIP ref kept 3
 tags: [module, tasks, worktrees, archive, lifecycle]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-05T05:00:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-05T10:30:00Z }
 sources:
   - id: manager
     resource: ../../src/lib/tasks/manager.ts
@@ -45,6 +45,8 @@ Archive is the explicit, confirmed way a task leaves the list (§6).[^architectu
 6. Remove `~/.codetoaster/tasks/<id>/`.
 
 The row stays, with `lifecycle = archived`, `worktree_state = evicted` (or `none` for a task that ran in the project directory), and `worktree_path`, `branch`, `base_ref` and `wip_at` remembered. `wip_at` is restamped at archive time, because retention runs from the archive.
+
+Archiving does not move the task's project in the sidebar (TASK-141). The `rank_at` stays on the archived row, and every `tasks` snapshot carries each project's `rankAt`: `TaskStore.projectRanks`, the highest `rank_at` among all its tasks, archived ones included. `groupByProject` orders the groups by the newer of that and the project's live tasks' own ranks, which `activity` frames and `task` deltas move between snapshots. So archiving the top task leaves its project where it was, a project whose tasks are all archived keeps its place instead of falling to the never-used projects at the bottom, and a wake still lifts its project at once.[^manager]
 
 # Retention
 

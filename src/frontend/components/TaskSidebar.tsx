@@ -752,6 +752,21 @@ export function useTaskSidebar({
     handleUnarchive,
   ]);
 
+  // Each project's rank for the group order (TASK-141): the server's, which
+  // counts archived tasks so an archive does not move the project, folded with
+  // every live task's own. Every live task, not just the rows the filter kept:
+  // the server's rank is only as fresh as the last snapshot, and a hidden task
+  // that woke since would otherwise move its project only when the next
+  // snapshot happened to land, mid-filter.
+  const projectRanks = useMemo(() => {
+    const ranks = new Map<string, number | null>(projects.map((p) => [p.id, p.rankAt ?? null]));
+    for (const t of tasks) {
+      const rank = ranks.get(t.projectId);
+      if (rank == null || t.rankAt > rank) ranks.set(t.projectId, t.rankAt);
+    }
+    return ranks;
+  }, [projects, tasks]);
+
   const groups = useMemo(() => {
     const rowById = new Map(rows.map((row) => [row.id, row]));
     // A project with nothing in it is still worth a header — until it has a
@@ -759,7 +774,7 @@ export function useTaskSidebar({
     // running: it can never match one, so it would only be a row of noise
     // between the rows that did.
     const empties = filter.trim() ? [] : projects.map((p) => p.id);
-    return groupByProject(visible, projectNames, empties).map((group) => ({
+    return groupByProject(visible, projectNames, empties, projectRanks).map((group) => ({
       id: group.id,
       name: group.name,
       open: !closedGroups[group.id],
@@ -782,7 +797,7 @@ export function useTaskSidebar({
         />
       ) : undefined,
     }));
-  }, [rows, visible, projects, projectNames, closedGroups, filter, projectById, handleSaveProject, handleDeleteProject, onNewTask]);
+  }, [rows, visible, projects, projectRanks, projectNames, closedGroups, filter, projectById, handleSaveProject, handleDeleteProject, onNewTask]);
 
   const headerActions: ReactNode = <NewProjectButton onCreate={createProject} />;
 

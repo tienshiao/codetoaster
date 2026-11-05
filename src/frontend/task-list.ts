@@ -14,11 +14,13 @@ import type { TaskInfo } from "@/lib/xtmux/types";
  * snapshot already sorted `rank_at DESC` (§7.5's recency list, with the
  * hysteresis of TASK-116: `last_active_at` moves on every burst of output, so
  * sorting by it had busy tasks racing each other for the top), and
- * `selectTasks`/`groupByProject` preserve whatever order they are given rather
- * than imposing one. `byRecency` is the single exception, and it does not
- * invent an order either: it re-applies the server's between snapshots, for
- * the two frames that move one row's recency without re-sending the list — a
- * `task` delta and an `activity` stamp.
+ * `selectTasks` preserves whatever order it is given rather than imposing one,
+ * and so do the rows inside each of `groupByProject`'s groups. Neither of the
+ * two places that sort invents an order: `byRecency` re-applies the server's
+ * between snapshots, for the two frames that move one row's recency without
+ * re-sending the list — a `task` delta and an `activity` stamp — and
+ * `groupByProject` orders the groups themselves by the same `rank_at`, taken
+ * per project (TASK-141).
  */
 
 /** The fields the list logic reads. Narrow so a test can state a row in four
@@ -128,20 +130,23 @@ export function selectTasks<T extends ListableTask>(
  * suspended by a previous daemon is missing from it entirely. The project id
  * travels on the task for exactly this reason.
  *
- * Groups come out in order of first appearance, which — given a recency-sorted
- * input — puts the project you touched last at the top. A task whose project
- * is gone still gets a group, headed by its raw id: dropping the row would be
- * worse than an ugly header.
+ * Groups come out by rank, newest first: the newer of `projectRanks` (the
+ * server's, archived tasks included) and the group's own rows' `rankAt`, so the
+ * project you touched last is at the top and archiving a task does not move
+ * its project. A task whose project is gone still gets a group, headed by its
+ * raw id: dropping the row would be worse than an ugly header.
  *
- * `alsoEmpty` is what keeps a project that has no tasks yet on screen — a
- * project the user just created has none by definition, and one that cannot be
- * seen cannot be deleted or filled either. They trail the groups that have
- * rows, because a group of nothing is not what the list is for.
+ * `alsoEmpty` is what keeps a project with no rows on screen — a project the
+ * user just created has none by definition, and one that cannot be seen cannot
+ * be deleted or filled either. One whose tasks are all archived keeps its rank
+ * and its place; one that has never had a task has no rank and trails the
+ * groups that do, because a group of nothing is not what the list is for.
  */
-export function groupByProject<T extends ListableTask>(
+export function groupByProject<T extends ListableTask & { rankAt?: number }>(
   tasks: readonly T[],
   projectNames: ReadonlyMap<string, string>,
   alsoEmpty: readonly string[] = [],
+  projectRanks: ReadonlyMap<string, number | null | undefined> = new Map(),
 ): TaskGroup<T>[] {
   const groups = new Map<string, TaskGroup<T>>();
   const group = (id: string) => {
@@ -155,5 +160,30 @@ export function groupByProject<T extends ListableTask>(
 
   for (const task of tasks) group(task.projectId).tasks.push(task);
   for (const id of alsoEmpty) group(id);
-  return [...groups.values()];
+
+  // A project's place is the newer of two ranks (TASK-141). The server's is
+  // the highest rank among *all* its tasks, archived included, so archiving
+  // the task that held the project up leaves the project where it was — and a
+  // project whose every task is archived keeps its place rather than falling
+  // to the empty ones at the bottom. Its visible tasks' own ranks are the
+  // other, because the server's is only as fresh as the last snapshot: a task
+  // waking after a quiet gap moves its rank by an `activity` frame, and its
+  // project has to come up with it there and then.
+  //
+  // Stable, so groups that tie keep first-appearance order, which is what the
+  // list did before. A group with no rank either way — a project that has
+  // never had a task — trails, in the order it was handed.
+  const rankOf = (g: TaskGroup<T>): number | null => {
+    let rank = projectRanks.get(g.id) ?? null;
+    for (const task of g.tasks) {
+      if (typeof task.rankAt === "number" && (rank === null || task.rankAt > rank)) rank = task.rankAt;
+    }
+    return rank;
+  };
+  const ranked = [...groups.values()].map((g) => ({ g, rank: rankOf(g) }));
+  ranked.sort((a, b) => {
+    if (a.rank === null || b.rank === null) return a.rank === null ? (b.rank === null ? 0 : 1) : -1;
+    return b.rank - a.rank;
+  });
+  return ranked.map(({ g }) => g);
 }

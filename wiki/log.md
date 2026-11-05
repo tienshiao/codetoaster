@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-11-05
+* **Update**: [Archive and unarchive](/modules/archive-and-unarchive.md) says archiving no longer moves a task's project in the sidebar (TASK-141): the per-project `rankAt` on the snapshot, archived tasks included, and how `groupByProject` folds it with the live tasks' ranks.
 * **Creation**: [Archive and unarchive](/modules/archive-and-unarchive.md) for TASK-139: what archive keeps, the retention sweep now keeping `wip_at`, the unarchive preview's checkout and snapshot states, the branch-recreate-then-resume sequence and what a late failure leaves, and the serialization against archive.
 * **Creation**: [Worktree browsing](/modules/worktree-browsing.md) for TASK-138.2: the `/api/worktrees/<token>` scope and what it refuses, the worktree root kind, the Explorer's picker and its fallback, and tabs keyed and rooted per worktree.
 * **Creation**: [Task processes and ports](/modules/task-processes.md) for TASK-138.1: where the tree's roots come from, the one ps and the pid-restricted lsof, how a failed ps and a failed lsof are kept apart, and the polled Processes section.

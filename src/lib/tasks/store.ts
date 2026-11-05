@@ -138,6 +138,20 @@ export class TaskStore {
       .all(...(lifecycles ?? [])) as TaskRow[];
   }
 
+  /** Each project's place in the sidebar (TASK-141): the highest `rank_at` of
+   * any of its tasks, archived ones included. Archiving a task leaves its rank
+   * where it was, so it can no longer drop its project down the list, and a
+   * project whose every task is archived keeps the place it had. Projects with
+   * no task at all are absent. */
+  projectRanks(): Map<string, number> {
+    const rows = this.db
+      .query("SELECT project_id, MAX(rank_at) AS rank FROM tasks GROUP BY project_id")
+      .all() as { project_id: string; rank: number }[];
+    // `rank_at` is NOT NULL and a group exists only for a project with a row,
+    // so every MAX is a number.
+    return new Map(rows.map(({ project_id, rank }) => [project_id, rank]));
+  }
+
   /** Every task's opening prompt, at every lifecycle and in no order.
    *
    * One column, because the one reader — the harvester's uploads tier (§5.5,

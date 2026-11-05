@@ -890,7 +890,7 @@ export class TaskManager {
     return {
       type: "tasks",
       list: this.listTasks(),
-      projects: this.getProjects(),
+      projects: this.rankedProjects(),
       home: os.homedir(),
       // Rides the snapshot because it changes for the snapshot's reasons: the
       // boot sweep finishes, or the user deletes one. Both of those already
@@ -4182,6 +4182,15 @@ export class TaskManager {
 
   getProjects(): ProjectInfo[] {
     return this.projects.map((p) => ({ ...p, taskIds: [...p.taskIds] }));
+  }
+
+  /** `getProjects` with each project's sidebar rank (TASK-141), for the
+   * snapshot alone. Kept off `getProjects`, which the project-rooted routes
+   * call per request only to find one project: the rank is a grouped scan of
+   * the whole tasks table, archived rows included, that only the list needs. */
+  private rankedProjects(): ProjectInfo[] {
+    const ranks = this.store.projectRanks();
+    return this.getProjects().map((p) => ({ ...p, rankAt: ranks.get(p.id) ?? null }));
   }
 
   private resolveProjectId(options: CreateTaskOptions): string {

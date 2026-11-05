@@ -49,6 +49,12 @@ export interface ProjectInfo extends ProjectSettings {
   /** Ordered by hand, not by recency: this is the v1 sidebar's grouping, which
    * TASK-25 replaces with the recency list §7.5 describes. */
   taskIds: string[];
+  /** Where the project sits in the sidebar (TASK-141): the highest `rankAt`
+   * of any of its tasks, archived ones included, so archiving cannot move it.
+   * Null for a project that has never had a task. Carried by the `tasks`
+   * snapshot only, and absent from an older daemon: the client reads absent
+   * as null. */
+  rankAt?: number | null;
 }
 
 // Client -> Server messages
