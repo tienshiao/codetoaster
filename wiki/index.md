@@ -4,6 +4,7 @@ okf_version: "0.2"
 
 # Modules
 
+* [Archive and unarchive](modules/archive-and-unarchive.md) - Archive snapshots a task's worktree to a WIP ref kept 30 days and deletes the branch only when merged or pushed; unarchive recreates a deleted branch from the snapshot's parent, the remote or the base, flips the row to suspended, and resumes it through the ordinary restore.
 * [Change watcher and shared watch streams](modules/change-watcher.md) - Each live task's TaskWatcher folds file and ref events into changed batches for the browser, over fs.watch streams shared per directory through a refcounted WatchPool, and only while a browser is connected; the browser refetches what they stale and flashes the rows and lines that changed.
 * [Commit graph and log pagination](modules/commit-graph.md) - Graph lanes come from a pure, resumable GraphState so paging stays deterministic, /git/log detects history drift with after= (409) and seeks with until=, and a commit's Changes diff can be taken relative to any ref.
 * [File listing and ignored files](modules/file-listing.md) - One git listing feeds the Files tree, terminal links and file search; ignored entries are in it collapsed to the directory, and an ignored directory's children load one level at a time when it is opened.

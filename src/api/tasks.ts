@@ -1,4 +1,4 @@
-import { taskManager } from "../lib/tasks/manager";
+import { NotArchivedError, taskManager } from "../lib/tasks/manager";
 import type { CreateTaskOptions } from "../lib/tasks/manager";
 import { UnknownProfileError } from "../lib/agent/profiles";
 import { readSnapshot } from "../lib/tasks/snapshot";
@@ -398,6 +398,92 @@ export const taskRoutes = {
           { status: 500 },
         );
       }
+    },
+  },
+
+  "/api/tasks/:id/unarchive": {
+    // What unarchiving would restore, so the confirmation can say what comes
+    // back and what does not before anything is done (TASK-139). A separate
+    // request for the reason the archive preview is one: it runs git.
+    async GET(req: Request & { params: { id: string } }) {
+      const task = taskManager.getTask(req.params.id);
+      if (!task) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      if (task.lifecycle !== "archived") {
+        return Response.json({ error: "Task is not archived" }, { status: 409 });
+      }
+      try {
+        const preview = await taskManager.unarchivePreview(req.params.id);
+        // Unarchived between the check above and the git: the same 409.
+        if (!preview) {
+          return Response.json({ error: "Task is not archived" }, { status: 409 });
+        }
+        return Response.json(preview);
+      } catch (e: any) {
+        // A repository nobody can name, or a deleted branch with nothing to
+        // recreate it from: a state of the task the user can read about, not a
+        // fault of the server's.
+        if (e instanceof WorktreeError) {
+          return Response.json({ error: e.message, kind: e.kind }, { status: 409 });
+        }
+        return Response.json(
+          { error: e?.message ?? "Could not check what unarchiving would restore" },
+          { status: 500 },
+        );
+      }
+    },
+
+    // Archive's way back: the checkout restored, the agent resumed, the task
+    // back in the list. The size travels for the reason it does on `/resume` —
+    // the agent is spawned at the end of this request, and the client knows the
+    // grid it is about to attach with.
+    async POST(req: Request & { params: { id: string } }) {
+      const body = (await readJsonBody(req)) ?? {};
+      const cols = optionalSize(body.cols);
+      const rows = optionalSize(body.rows);
+      if (cols === null || rows === null) return badRequest(`"cols" and "rows" must be numbers`);
+
+      if (!taskManager.getTask(req.params.id)) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      try {
+        const result = await taskManager.unarchiveTask(req.params.id, {
+          cols: cols ?? undefined,
+          rows: rows ?? undefined,
+        });
+        if (result === null) {
+          return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+        }
+      } catch (e: any) {
+        // Not archived — two browsers confirming one dialog, the second after
+        // the first has finished. 409, not 200: unlike a second archive, the
+        // caller asked for a restore and this request restored nothing.
+        if (e instanceof NotArchivedError) {
+          return Response.json({ error: e.message }, { status: 409 });
+        }
+        // A branch git would not recreate (nothing changed: still archived),
+        // or a checkout the resume could not rebuild (the task is suspended and
+        // evicted, its branch and snapshot intact, and can be opened again).
+        if (e instanceof WorktreeError) {
+          return Response.json({ error: e.message, kind: e.kind }, { status: 409 });
+        }
+        return Response.json(
+          { error: e?.message ?? "Could not unarchive the task" },
+          { status: 500 },
+        );
+      }
+
+      taskManager.broadcastTasks();
+      // The same guard resume carries: the ladder awaits spawns, and the task
+      // can be deleted under it.
+      const info = taskManager.taskInfo(req.params.id);
+      if (!info) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      // 200 including a could-not-resume landing, as `/resume` answers: the
+      // task is back in the list either way, and its agent_state says the rest.
+      return Response.json({ task: info });
     },
   },
 

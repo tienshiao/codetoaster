@@ -12,6 +12,13 @@ function preview(over: Partial<ArchivePreview> = {}): ArchivePreview {
   };
 }
 
+/** A fixed clock and a calendar that prints the date it was handed, so the
+ * expected sentence is stated here rather than derived from the machine's
+ * locale and zone. */
+const NOW = Date.UTC(2026, 10, 5);
+const CLOCK = { now: NOW, formatDate: (t: number) => new Date(t).toISOString().slice(0, 10) };
+const UNTIL = "It can be unarchived at any time, and its uncommitted work comes back with it until 2026-12-05.";
+
 function status(over: Partial<NonNullable<ArchivePreview["status"]>> = {}) {
   return { exists: true, dirty: 0, unpushed: 0, merged: false, pushed: false, atBase: false, ...over };
 }
@@ -19,6 +26,7 @@ function status(over: Partial<NonNullable<ArchivePreview["status"]>> = {}) {
 test("a task with no checkout of its own says exactly that", () => {
   expect(archiveSummary(preview({ status: null, branch: null }))).toEqual([
     "This task has no checkout of its own, so nothing on disk is removed.",
+    "It can be unarchived from the archived list at any time.",
   ]);
 });
 
@@ -35,8 +43,9 @@ test("a checkout whose repository could not be read is not called an absent one"
 });
 
 test("a clean checkout draws no zeros — only what happens to the branch", () => {
-  expect(archiveSummary(preview())).toEqual([
+  expect(archiveSummary(preview(), CLOCK)).toEqual([
     "The branch task/parser will be kept, since deleting it would take that work with it.",
+    UNTIL,
   ]);
 });
 
@@ -64,8 +73,8 @@ test("a checkout that could not be counted says so, without claiming it is gone"
 // the ordinary "kept" sentence would read it as "there is work here deleting it
 // would lose", which is a claim about a ref nobody found.
 test("a branch that is not there is not reported as one being kept", () => {
-  const lines = archiveSummary(preview({ status: status({ exists: false }) }));
-  expect(lines).toEqual(["The branch task/parser was not found, so nothing here deletes it."]);
+  const lines = archiveSummary(preview({ status: status({ exists: false }) }), CLOCK);
+  expect(lines).toEqual(["The branch task/parser was not found, so nothing here deletes it.", UNTIL]);
 });
 
 test("a branch that would be deleted says why, and distinguishes merged from pushed", () => {
@@ -85,4 +94,21 @@ test("unpushed commits are counted, and the sentence agrees with itself at one",
   expect(archiveSummary(preview({ status: status({ unpushed: 4 }) }))[0]).toBe(
     "The branch has 4 unpushed commits.",
   );
+});
+
+// TASK-139: archive is undoable, and the dialog says so — with the date the
+// snapshot is kept until, measured from now by the retention the server sent.
+test("the last line says the task can be unarchived, and until when", () => {
+  const lines = archiveSummary(preview({ status: status({ dirty: 2 }) }), CLOCK);
+  expect(lines.at(-1)).toBe(UNTIL);
+
+  const shorter = archiveSummary(preview({ wipRetentionDays: 7 }), CLOCK);
+  expect(shorter.at(-1)).toBe("It can be unarchived at any time, and its uncommitted work comes back with it until 2026-11-12.");
+});
+
+// A repository nobody could read gives no grounds for a date: whether there
+// will be a snapshot to bring back depends on what could not be established.
+test("an unreadable repository still offers the way back, without promising a date", () => {
+  const lines = archiveSummary(preview({ status: null }), CLOCK);
+  expect(lines.at(-1)).toBe("It can be unarchived from the archived list.");
 });

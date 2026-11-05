@@ -1,4 +1,5 @@
 import { gitSpawn } from "../../api/utils";
+import { WorktreeError } from "./errors";
 
 /** Every branch we create lives under this one prefix, so a user can tell ours
  * from theirs at a glance, delete the lot with one refspec, and never have a
@@ -119,4 +120,44 @@ export async function deleteBranch(repoRoot: string, branch: string): Promise<bo
     "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`,
   ]);
   return still.exitCode !== 0;
+}
+
+/** The commit a ref names, or null when it names none.
+ *
+ * Pass a fully qualified ref (`refs/heads/x`, `refs/remotes/origin/x`) when the
+ * question is about one particular ref, because a short name is resolved through
+ * git's whole search order and a tag spelled like the branch would answer for
+ * it. A user-supplied base ref is the exception: it is resolved as git resolved
+ * it when the task was created, short name and all.
+ * `^{commit}` so an annotated tag used as a base ref resolves to the commit it
+ * tags rather than to the tag object, which `git branch` would refuse. */
+export async function resolveCommit(repoRoot: string, ref: string): Promise<string | null> {
+  const { stdout, exitCode } = await gitSpawn(repoRoot, [
+    "rev-parse", "--verify", "--quiet", `${ref}^{commit}`,
+  ]);
+  if (exitCode !== 0) return null;
+  return stdout.trim() || null;
+}
+
+/** Put a deleted branch back at a commit, for an unarchive (TASK-139).
+ *
+ * `git branch` and not `update-ref`: the reflog entry it writes is what lets a
+ * user see afterwards where the branch came from, and it refuses a name that
+ * already exists rather than moving it — which is the safe direction for a
+ * branch the user may have recreated by hand in the meantime.
+ *
+ * Under the repository's lock at the call site, for the reason `allocateBranch`
+ * is: a create choosing branch names reads the set and then makes one, and a
+ * branch appearing between those two steps fails its `worktree add -b`.
+ *
+ * A branch that is already there is the state this asks for, so it is not an
+ * error — the restore then checks it out wherever it now points, and the
+ * snapshot's own parent check decides whether its work can be applied. */
+export async function recreateBranch(repoRoot: string, branch: string, commit: string): Promise<void> {
+  const { exitCode, stderr } = await gitSpawn(repoRoot, ["branch", branch, commit], {
+    captureStderr: true,
+  });
+  if (exitCode === 0) return;
+  if (await resolveCommit(repoRoot, `refs/heads/${branch}`)) return;
+  throw new WorktreeError("branch-recreate-failed", `could not recreate branch ${branch}`, stderr);
 }

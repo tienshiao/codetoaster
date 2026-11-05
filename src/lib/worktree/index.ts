@@ -5,7 +5,14 @@ export type { WorktreeProject } from "./copy";
 export { WorktreeError } from "./errors";
 export { discardCheckout, evictWorktree } from "./evict";
 export type { WorktreeErrorKind } from "./errors";
-export { allocateBranch, branchSlug, deleteBranch, BRANCH_PREFIX } from "./branch";
+export {
+  allocateBranch,
+  branchSlug,
+  deleteBranch,
+  recreateBranch,
+  resolveCommit,
+  BRANCH_PREFIX,
+} from "./branch";
 export { withRepoLock } from "./lock";
 export { lockKeyFor, repoRootOf } from "./repo";
 export { restoreWorktree } from "./restore";

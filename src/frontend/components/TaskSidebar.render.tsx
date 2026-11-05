@@ -8,7 +8,7 @@ import {
   TaskRowActions,
   UnclaimedActions,
 } from "./TaskSidebar";
-import type { ArchivePreview } from "@/lib/xtmux/types";
+import type { ArchivePreview, UnarchivePreview } from "@/lib/xtmux/types";
 
 /** The project dialog's path field asks the server for directories, so it needs
  * a client even here, where nothing types enough to make it fetch. What the
@@ -170,14 +170,110 @@ test("cancelling the archive leaves the task alone", async () => {
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
-test("an archived row offers only delete, and it confirms first", () => {
-  const onDelete = vi.fn();
-  render(<ArchivedRowActions taskId="t1" label="Fix the parser" onDelete={onDelete} />);
+// AC #5 (TASK-139): the confirmation says archiving can be undone, and until
+// when — the sentence is `archiveSummary`'s, tested there with a fixed clock.
+test("the archive confirmation says the task can be unarchived, and until when", async () => {
+  mountActions(false);
+  fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
+  await screen.findByText(/^It can be unarchived at any time, and its uncommitted work comes back with it until .+\.$/);
+});
 
-  // No rename, no close, and above all no unarchive: nothing on the server can
-  // reopen one, so a control that could only fail must not be offered.
-  expect(screen.getAllByRole("button")).toHaveLength(1);
+function unarchivePreviewOf(over: Partial<UnarchivePreview> = {}): UnarchivePreview {
+  return {
+    checkout: "restore",
+    snapshot: { state: "kept", expiresAt: null, stale: false },
+    branch: "codetoaster/fix-the-parser",
+    baseRef: "main",
+    ...over,
+  };
+}
+
+function mountArchived(
+  preview: () => Promise<UnarchivePreview | string | null> = async () => unarchivePreviewOf(),
+) {
+  const onDelete = vi.fn();
+  const onUnarchive = vi.fn();
+  const onUnarchivePreview = vi.fn(preview);
+  render(
+    <ArchivedRowActions
+      taskId="t1"
+      label="Fix the parser"
+      onDelete={onDelete}
+      onUnarchivePreview={onUnarchivePreview}
+      onUnarchive={onUnarchive}
+    />,
+  );
+  return { onDelete, onUnarchive, onUnarchivePreview };
+}
+
+// AC #1 and #4: the way back asks first, and what it says comes from the
+// preview — including what cannot be restored.
+test("unarchive waits for the preview, says what comes back, and confirms", async () => {
+  let answer: (preview: UnarchivePreview) => void = () => {};
+  const { onUnarchive, onUnarchivePreview } = mountArchived(
+    () => new Promise<UnarchivePreview | null>((resolve) => (answer = resolve)),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Unarchive Fix the parser" }));
+  expect(onUnarchivePreview).toHaveBeenCalledWith("t1");
+
+  screen.getByRole("dialog", { name: "Unarchive this task?" });
+  screen.getByText("Checking what can be restored…");
+  const confirm = screen.getByRole("button", { name: "Unarchive" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+
+  answer(
+    unarchivePreviewOf({
+      checkout: "from-base",
+      snapshot: { state: "expired", expiredAt: null },
+    }),
+  );
+  await screen.findByText(
+    "codetoaster/fix-the-parser is gone and nothing else holds it, so it is recreated from main. Its own commits cannot be restored.",
+  );
+  screen.getByText("Its uncommitted work cannot be restored: the snapshot is gone.");
+
+  fireEvent.click(screen.getByRole("button", { name: "Unarchive" }));
+  expect(onUnarchive).toHaveBeenCalledWith("t1");
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("a failed unarchive preview says so and still lets the unarchive through", async () => {
+  const { onUnarchive } = mountArchived(async () => null);
+  fireEvent.click(screen.getByRole("button", { name: "Unarchive Fix the parser" }));
+  await screen.findByText(/could not be established/);
+  fireEvent.click(screen.getByRole("button", { name: "Unarchive" }));
+  expect(onUnarchive).toHaveBeenCalledWith("t1");
+});
+
+test("a refused unarchive preview quotes the server's reason, not a promise", async () => {
+  const reason = "The branch codetoaster/fix-the-parser is gone, and its base main no longer names a commit to recreate it from";
+  mountArchived(async () => reason);
+  fireEvent.click(screen.getByRole("button", { name: "Unarchive Fix the parser" }));
+  await screen.findByText(reason);
+  screen.getByText("Unarchiving will be refused until that changes.");
+  expect(screen.queryByText(/still brings back what it can/)).toBeNull();
+});
+
+test("cancelling the unarchive leaves the task archived", async () => {
+  const { onUnarchive } = mountArchived();
+  fireEvent.click(screen.getByRole("button", { name: "Unarchive Fix the parser" }));
+  await screen.findByText("Its checkout is rebuilt on codetoaster/fix-the-parser.");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onUnarchive).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("an archived row offers unarchive and delete, and delete confirms first", () => {
+  const { onDelete, onUnarchive } = mountArchived();
+
+  // No rename and no close: there is nothing running and nothing the label is
+  // used for once the row is out of the list.
+  expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+    "Unarchive Fix the parser",
+    "Delete Fix the parser",
+  ]);
   fireEvent.click(screen.getByRole("button", { name: "Delete Fix the parser" }));
+  expect(onUnarchive).not.toHaveBeenCalled();
   expect(onDelete).not.toHaveBeenCalled();
 
   screen.getByRole("dialog", { name: "Delete this task for good?" });

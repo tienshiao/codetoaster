@@ -1,4 +1,14 @@
 import type { ArchivePreview } from "@/lib/xtmux/types";
+import { calendarDate } from "@/frontend/utils/taskTimes";
+
+/** The clock and the calendar the sentences are written against. Injected so a
+ * test can state the date it expects; the dialog takes the defaults. */
+export interface SummaryClock {
+  now?: number;
+  formatDate?: (timestamp: number) => string;
+}
+
+const DAY_MS = 86_400_000;
 
 /**
  * What archiving a task would cost, in sentences (§5.6).
@@ -23,8 +33,17 @@ import type { ArchivePreview } from "@/lib/xtmux/types";
  * **The branch is always spoken to when there is one.** It is the part of the
  * archive a user does not expect to have an opinion about, and the part they
  * will find later on their disk if it is kept.
+ *
+ * **The last line is the way back** (TASK-139): archiving is undoable, and a
+ * user who is told so — and until when — is a user who can archive the moment
+ * they think they are done, rather than leaving the task in the list in case.
+ * The date is today plus the retention the server sent, since retention is
+ * measured from the archive.
  */
-export function archiveSummary(preview: ArchivePreview): string[] {
+export function archiveSummary(
+  preview: ArchivePreview,
+  { now = Date.now(), formatDate = calendarDate }: SummaryClock = {},
+): string[] {
   const lines: string[] = [];
   const { status, branch, branchWouldBeDeleted, wipRetentionDays } = preview;
 
@@ -42,15 +61,22 @@ export function archiveSummary(preview: ArchivePreview): string[] {
     // both `evictWorktree` and the branch deletion, so a branch named here
     // really is left standing.
     if (branch) {
+      // No date: whether there will be a snapshot to bring back depends on the
+      // repository this could not read.
       return [
         `Its repository could not be read, so what archiving removes could not be established.`,
         `The branch ${branch} is not deleted.`,
+        "It can be unarchived from the archived list.",
       ];
     }
     // No branch at all: the task ran in the project's own directory. There is
     // no checkout of ours to remove and no branch of ours to weigh, so the
-    // archive is only the row and the files.
-    return ["This task has no checkout of its own, so nothing on disk is removed."];
+    // archive is only the row and the files — and nothing of it expires, so
+    // the way back has no date on it either.
+    return [
+      "This task has no checkout of its own, so nothing on disk is removed.",
+      "It can be unarchived from the archived list at any time.",
+    ];
   }
 
   if (status.dirty === null) {
@@ -89,6 +115,17 @@ export function archiveSummary(preview: ArchivePreview): string[] {
         : `The branch ${branch} will be kept, since deleting it would take that work with it.`,
     );
   }
+
+  // Always written, clean tree or not, because archive snapshots
+  // unconditionally — so "with its uncommitted work" is true whether or not
+  // there is any.
+  //
+  // The date belongs to the snapshot, not to unarchiving: after it the task
+  // still unarchives, onto its branch without the uncommitted work. A sentence
+  // putting the date on "unarchived" read as a deadline for coming back at all.
+  lines.push(
+    `It can be unarchived at any time, and its uncommitted work comes back with it until ${formatDate(now + wipRetentionDays * DAY_MS)}.`,
+  );
 
   return lines;
 }

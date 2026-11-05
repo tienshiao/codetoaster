@@ -95,6 +95,8 @@ vi.mock("@/frontend/TaskContext", () => ({
     archivePreview: vi.fn(),
     archiveTask: vi.fn(),
     deleteTaskForGood: vi.fn(),
+    unarchivePreview: vi.fn(),
+    unarchiveTask: vi.fn(),
     deleteUnclaimedWorktree: vi.fn(),
     createProject: vi.fn(),
     updateProject: vi.fn(),

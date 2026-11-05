@@ -56,3 +56,12 @@ export function absoluteTime(timestamp: number): string {
   formatter ??= new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
   return formatter.format(new Date(timestamp));
 }
+
+let dateFormatter: Intl.DateTimeFormat | null = null;
+
+/** The day alone, for a deadline weeks away — "until Dec 5, 2026" — where a
+ * time of day would be precision nobody can use. */
+export function calendarDate(timestamp: number): string {
+  dateFormatter ??= new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+  return dateFormatter.format(new Date(timestamp));
+}

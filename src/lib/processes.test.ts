@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ProcessLookupError,
   buildProcessTree,
+  captureCommand,
   parseListeningPorts,
   parsePsTable,
   snapshotProcesses,
@@ -114,6 +115,18 @@ describe("snapshotProcesses", () => {
     const { run } = capture({ ps: null, lsof: "" });
     expect(snapshotProcesses([{ pid: 110, terminal: "agent" }], run)).rejects.toBeInstanceOf(ProcessLookupError);
   });
+
+  test("a helper killed on the timeout answers null, or what it printed when asked to keep it", async () => {
+    // Prints its answer and then hangs: the slow-lsof shape. Both run at once,
+    // so the bound is paid once.
+    const command = ["sh", "-c", "echo answer; exec sleep 30"];
+    const [dropped, kept] = await Promise.all([
+      captureCommand(command),
+      captureCommand(command, { keepKilledOutput: true }),
+    ]);
+    expect(dropped).toBeNull();
+    expect(kept).toBe("answer\n");
+  }, 10_000);
 
   test("against the real tools: this test process is found under its own pid", async () => {
     const result = await snapshotProcesses([{ pid: process.pid, terminal: "agent" }]);

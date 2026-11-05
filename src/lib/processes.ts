@@ -102,28 +102,45 @@ export function buildProcessTree(rows: readonly PsRow[], roots: readonly Process
 }
 
 /** Runs a command and resolves to what it printed, or null when it could not
- * be run or did not finish: the same contract as `Pty`'s own lookups. */
-export type Capture = (command: string[]) => Promise<string | null>;
+ * be run or did not finish. */
+export type Capture = (command: string[], options?: CaptureOptions) => Promise<string | null>;
+
+export interface CaptureOptions {
+  /** Hand back what a helper printed before it was killed on the timeout,
+   * rather than null. Right for `Pty`'s one-line lookups, where whatever came
+   * out before the kill is the answer or nothing; wrong for a table, where a
+   * cut-off `ps` would silently drop processes from the tree. */
+  keepKilledOutput?: boolean;
+}
 
 // Long enough for a healthy machine; what stops a wedged mount under `lsof`
 // from holding a request open (the reason `Pty`'s lookups are bounded too).
 const CAPTURE_TIMEOUT_MS = 2000;
+// How long a killed helper gets to exit and hand over what it printed. A slow
+// `lsof` that has already written its answer dies on SIGTERM at once, and its
+// output is still the answer; only one stuck in an uninterruptible wait
+// outlives this, and that one is given up on.
+const KILL_GRACE_MS = 250;
 
 /** `Bun.spawn`, never `spawnSync` (which would block the daemon's one event
  * loop for the tool's whole run) and never `Bun.$` (CLAUDE.md), with a kill
  * on the timeout. A non-zero exit still hands back its output: `lsof` exits 1
  * when nothing matched, which is an answer, not a failure. */
-export const captureCommand: Capture = async (command) => {
+export const captureCommand: Capture = async (command, { keepKilledOutput = false } = {}) => {
   let timer: Timer | null = null;
+  let killed = false;
   try {
     const proc = Bun.spawn(command, { stdout: "pipe", stderr: "ignore" });
     // Raced rather than awaited after the kill: a helper stuck in an
     // uninterruptible wait (the wedged mount this bound exists for) does not
     // die on SIGTERM, and awaiting its exit would hold the request open anyway.
+    // The race is lost only after the grace, so a helper that does die on the
+    // kill still answers with what it printed, as the lookups always had it.
     const timedOut = new Promise<null>((resolve) => {
       timer = setTimeout(() => {
+        killed = true;
         proc.kill();
-        resolve(null);
+        timer = setTimeout(() => resolve(null), KILL_GRACE_MS);
       }, CAPTURE_TIMEOUT_MS);
     });
     // Caught here and not only by the try: when the timer wins the race this
@@ -132,7 +149,8 @@ export const captureCommand: Capture = async (command) => {
     const finished = Promise.all([new Response(proc.stdout).text(), proc.exited])
       .then(([output]) => output)
       .catch(() => null);
-    return await Promise.race([finished, timedOut]);
+    const output = await Promise.race([finished, timedOut]);
+    return killed && !keepKilledOutput ? null : output;
   } catch {
     // Not installed: Bun.spawn throws before there is a process.
     return null;

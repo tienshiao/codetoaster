@@ -31,6 +31,8 @@ import type {
   ProjectInfo,
   ProjectSettings,
   TaskInfo,
+  UnarchivePreview,
+  UnarchiveResponse,
   UnclaimedInfo,
 } from "../lib/xtmux/types";
 
@@ -169,6 +171,14 @@ export interface TaskContextValue {
    * front of it is not the same thing as the request saying it knows what it
    * is asking for. */
   deleteTaskForGood: (id: string) => Promise<TaskResult<DeleteResponse>>;
+  /** What unarchiving would restore, for the confirmation to state (TASK-139).
+   * Always `inline`, as `archivePreview` is. */
+  unarchivePreview: (id: string) => Promise<TaskResult<UnarchivePreview>>;
+  /** Archive's way back: the checkout rebuilt, the agent resumed. On success
+   * the row moves from `archivedTasks` into `tasks` here, before any broadcast,
+   * so a caller that navigates to it does not land on a slug the route then
+   * bounces for naming nothing. */
+  unarchiveTask: (id: string) => Promise<TaskResult<UnarchiveResponse>>;
   /** Open a plain shell inside a task, as a sibling of its agent (§3). Answers
    * with the new PTY's id and the task it now belongs to — the task because it
    * carries `shellPtyIds`, so the caller has the tab and the proof that its PTY
@@ -808,6 +818,43 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     return result;
   }, []);
 
+  const unarchivePreview = useCallback(
+    (id: string) =>
+      request<UnarchivePreview>(
+        `/api/tasks/${id}/unarchive`,
+        { method: "GET" },
+        "Could not check what unarchiving would restore",
+        { inline: true },
+      ),
+    [],
+  );
+
+  const unarchiveTask = useCallback(async (id: string) => {
+    const result = await request<UnarchiveResponse>(
+      `/api/tasks/${id}/unarchive`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+      "Could not unarchive the task",
+    );
+    if (result.ok) {
+      const restored = result.value.task;
+      // Seeded the way `createTask` seeds a row, and for its reason: the caller
+      // navigates to this task next, and the route's missing-task guard reads
+      // `tasks`. The broadcast that follows overwrites it either way.
+      setTasks((prev) =>
+        prev.some((t) => t.id === restored.id) ? prev : byRecency([...prev, restored]),
+      );
+      // No broadcast covers this list, so the row leaves it here.
+      setArchivedTasks((prev) => prev.filter((t) => t.id !== id));
+    } else if (archivedAskedRef.current) {
+      // A failure is not proof the row is still archived: a restore git refused
+      // fails after the server has flipped it to suspended, and the broadcast
+      // has already put it in `tasks`. Refetched rather than guessed, so the
+      // row is not left in both lists offering an Unarchive that can only 409.
+      void loadArchivedTasks();
+    }
+    return result;
+  }, [loadArchivedTasks]);
+
   const openShell = useCallback(
     (id: string) =>
       request<{ ptyId: string; task: TaskInfo }>(
@@ -880,6 +927,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       archivePreview,
       archiveTask,
       deleteTaskForGood,
+      unarchivePreview,
+      unarchiveTask,
       openShell,
       closeShell,
       setViewedTask,
@@ -907,6 +956,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       archivePreview,
       archiveTask,
       deleteTaskForGood,
+      unarchivePreview,
+      unarchiveTask,
       openShell,
       closeShell,
       setViewedTask,

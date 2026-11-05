@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Archive, FolderPlus, Pencil, Plus, SlidersHorizontal, Trash2, X } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  FolderPlus,
+  Pencil,
+  Plus,
+  SlidersHorizontal,
+  Trash2,
+  X,
+} from "lucide-react";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { archiveSummary } from "@/frontend/archive-summary";
 import { groupByProject, selectTasks } from "@/frontend/task-list";
@@ -13,12 +22,23 @@ import {
 import { meaningfulTitle, sessionDisplayNames } from "@/lib/xtmux/naming";
 import { ago } from "@/frontend/utils/taskTimes";
 import { detailsOf } from "@/frontend/task-details";
-import type { ArchivePreview, ProjectInfo, ProjectSettings, TaskInfo } from "@/lib/xtmux/types";
+import type {
+  ArchivePreview,
+  ProjectInfo,
+  ProjectSettings,
+  TaskInfo,
+} from "@/lib/xtmux/types";
 import type { AppShellProps, ShellTask } from "@/frontend/components/v2/AppShell";
 import { Dialog } from "@/frontend/components/v2/Dialog";
 import { IconButton } from "@/frontend/components/v2/IconButton";
 import { TextInput } from "@/frontend/components/v2/TextInput";
 import { ProjectSettingsDialog } from "@/frontend/components/ProjectSettingsDialog";
+import {
+  UnarchiveTaskDialog,
+  unarchivePreviewAnswer,
+  type UnarchiveTaskDialogProps,
+} from "@/frontend/components/UnarchiveTaskDialog";
+import { usePreviewOnOpen } from "@/frontend/hooks/use-preview-on-open";
 import { BLANK_PROJECT, ProjectDialog } from "@/frontend/components/ProjectDialog";
 
 /**
@@ -117,37 +137,9 @@ export function ArchiveTaskDialog({
   onArchive,
   onClose,
 }: ArchiveTaskDialogProps) {
-  const [preview, setPreview] = useState<ArchivePreview | null>(null);
-  const [previewFailed, setPreviewFailed] = useState(false);
-
-  // Asked on open, and asked again on every open: the counts are what the user
-  // is being shown, and a dialog reopened an hour later must not quote what
-  // git said the first time.
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    setPreview(null);
-    setPreviewFailed(false);
-    // Rejection is the same answer as `null`, and it has to be handled or the
-    // "failed" state is unreachable by the one route that reaches it without a
-    // resolved value: `request` swallows fetch and HTTP failures, so what is
-    // left to throw is a 200 whose body would not parse. Unhandled, that leaves
-    // the dialog sitting on "Checking what this would remove…" for good, with
-    // the confirm disabled and nothing saying why.
-    void onArchivePreview(taskId)
-      .catch(() => null)
-      .then((answer) => {
-        if (!live) return;
-        setPreview(answer);
-        setPreviewFailed(answer === null);
-      });
-    // Not a cancellation of the request — there is nothing to cancel — but of
-    // its effect: a dialog closed and reopened has two in flight, and the
-    // slower one would otherwise land on top of the newer answer.
-    return () => {
-      live = false;
-    };
-  }, [open, taskId, onArchivePreview]);
+  // The counts are what the user is being shown, so they are asked on every
+  // open; `usePreviewOnOpen` holds the rules.
+  const { preview, failed: previewFailed } = usePreviewOnOpen(open, taskId, onArchivePreview);
 
   return (
     <Dialog
@@ -294,30 +286,48 @@ export function TaskRowActions({
 }
 
 /**
- * The one control an archived row carries: delete, for good.
+ * The two controls an archived row carries: unarchive, and delete for good.
  *
  * Not rename, and not close — there is nothing running and nothing the label
- * is used for once the row is out of the list — and deliberately no unarchive,
- * because there is no server path back: `resumeTask` and `openTask` both refuse
- * an archived row, and offering a button that could only fail would be worse
- * than offering none.
+ * is used for once the row is out of the list. Unarchive is the way back
+ * (TASK-139) and asks first, because what it can restore depends on what has
+ * happened to the branch and the snapshot since, and the dialog says which.
  *
- * The confirmation is unconditional and the wording is blunt. Archiving is the
- * recoverable half of §5.6 — the snapshot is still there, and this is what
- * throws it away.
+ * The delete confirmation is unconditional and the wording is blunt. Archiving
+ * is the recoverable half of §5.6 — the snapshot is still there, and this is
+ * what throws it away.
  */
 export function ArchivedRowActions({
   taskId,
   label,
   onDelete,
+  onUnarchivePreview,
+  onUnarchive,
 }: {
   taskId: string;
   label: string;
   onDelete: (id: string) => void;
+  onUnarchivePreview: UnarchiveTaskDialogProps["onUnarchivePreview"];
+  onUnarchive: (id: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [unarchiving, setUnarchiving] = useState(false);
   return (
     <>
+      <IconButton
+        icon={ArchiveRestore}
+        label={`Unarchive ${label}`}
+        size="sm"
+        onClick={() => setUnarchiving(true)}
+      />
+      <UnarchiveTaskDialog
+        open={unarchiving}
+        taskId={taskId}
+        label={label}
+        onUnarchivePreview={onUnarchivePreview}
+        onUnarchive={onUnarchive}
+        onClose={() => setUnarchiving(false)}
+      />
       <IconButton
         icon={Trash2}
         label={`Delete ${label}`}
@@ -521,6 +531,8 @@ export function useTaskSidebar({
     archivePreview,
     archiveTask,
     deleteTaskForGood,
+    unarchivePreview,
+    unarchiveTask,
     deleteUnclaimedWorktree,
     createProject,
     updateProject,
@@ -568,6 +580,22 @@ export function useTaskSidebar({
       return result.ok ? result.value : null;
     },
     [archivePreview],
+  );
+
+  const handleUnarchivePreview = useCallback(
+    async (id: string) => unarchivePreviewAnswer(await unarchivePreview(id)),
+    [unarchivePreview],
+  );
+  /** Unarchive, then open the task: the user asked for it back, and the row
+   * they clicked has just left the list they were looking at. A failure is
+   * the request's toast and leaves them where they are. */
+  const handleUnarchive = useCallback(
+    (id: string) => {
+      void unarchiveTask(id).then((result) => {
+        if (result.ok) onSelectTask(id);
+      });
+    },
+    [unarchiveTask, onSelectTask],
   );
 
   // On every turn-on, not once: these rows are fetched rather than pushed, so
@@ -673,7 +701,8 @@ export function useTaskSidebar({
         // No `onClick`, and that is the sidebar agreeing with the server rather
         // than being cautious: `resumeTask` and `openTask` both refuse an
         // archived row, so a row that navigated would land on a slug the route
-        // then bounced straight back off.
+        // then bounced straight back off. Unarchive is the door, and it opens
+        // the task once it is back.
         return {
           id: task.id,
           title: label,
@@ -686,7 +715,13 @@ export function useTaskSidebar({
           // looking at it at all is usually "which one was that".
           details: detailsOf(task, label, state, projectNames),
           actions: (
-            <ArchivedRowActions taskId={task.id} label={label} onDelete={handleDeleteForGood} />
+            <ArchivedRowActions
+              taskId={task.id}
+              label={label}
+              onDelete={handleDeleteForGood}
+              onUnarchivePreview={handleUnarchivePreview}
+              onUnarchive={handleUnarchive}
+            />
           ),
         };
       }
@@ -738,6 +773,8 @@ export function useTaskSidebar({
     handleArchivePreview,
     handleArchive,
     handleDeleteForGood,
+    handleUnarchivePreview,
+    handleUnarchive,
   ]);
 
   const groups = useMemo(() => {

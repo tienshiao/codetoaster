@@ -465,7 +465,9 @@ export class Pty {
   // The spawn, the bound and the kill are `captureCommand`'s (lib/processes),
   // shared with the Processes section; this only folds its null into "".
   private async runCapture(command: string[]): Promise<string> {
-    return (await captureCommand(command)) ?? "";
+    // What a helper printed before the timeout killed it still counts: the
+    // answer here is one line, and these lookups have always read it that way.
+    return (await captureCommand(command, { keepKilledOutput: true })) ?? "";
   }
 
   // The terminal's foreground process group id (== its leader's pid). When no

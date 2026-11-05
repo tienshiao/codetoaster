@@ -581,12 +581,21 @@ harvester tick. A merged task is done; that is the natural set to suggest archiv
                           ▼
                        (live)
 
-    archive (explicit, destructive): row kept or deleted, worktree removed,
-    scrollback deleted. The only way a task truly leaves.
+    archive (explicit, confirmed): row kept, WIP snapshot taken, worktree
+    removed, scrollback deleted; the branch goes only if merged or pushed.
+
+    unarchive (TASK-139): archived → suspended with the checkout evicted, then
+    resumed — the restore rebuilds the worktree from its branch (recreated from
+    the snapshot, origin or the base ref if the archive deleted it) and applies
+    the snapshot while its retention lasts.
+
+    delete (explicit, irreversible): the only way a task truly leaves.
 ```
 
 Chat products have no "close", and neither should this: closing a task suspends it.
-Archive is the deliberate, confirmed, worktree-cleaning operation. Eviction (§5.6) is
+Archive is the deliberate, confirmed, worktree-cleaning operation, and since TASK-139 a
+reversible one: unarchive is its way back, so archiving is safe when the user only
+thinks the work is done. Eviction (§5.6) is
 not a lifecycle state of its own — it is `worktree_state` on a suspended task, and
 opening the task restores the checkout before resuming the agent.
 

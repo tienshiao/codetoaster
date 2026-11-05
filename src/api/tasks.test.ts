@@ -1,12 +1,14 @@
-import { test, expect, describe, beforeAll, afterAll, afterEach } from "bun:test";
+import { test, expect, describe, beforeAll, afterAll, afterEach, beforeEach } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { initDatabase } from "../lib/db";
-import { taskManager } from "../lib/tasks/manager";
+import { taskManager, WIP_RETENTION_MS } from "../lib/tasks/manager";
 import { taskRoutes } from "./tasks";
 import { taskDir, taskScrollbackPath, taskSettingsPath } from "../lib/agent/spawn";
 import { writeSnapshot } from "../lib/tasks/snapshot";
+import { readWip } from "../lib/worktree";
+import { cleanupRepos, git, tempDir, tempProject, tempRepo } from "../../test/git-repo";
 
 // Driven through a real Bun.serve, so the params, status codes and JSON bodies
 // under test are the ones a client actually gets.
@@ -500,6 +502,287 @@ describe("/api/tasks/:id/archive", () => {
   test("404s for a task that isn't there, either way round", async () => {
     expect((await fetch(`${base}/api/tasks/nope/archive`)).status).toBe(404);
     expect((await post({}, "/api/tasks/nope/archive")).status).toBe(404);
+  });
+});
+
+describe("/api/tasks/:id/unarchive", () => {
+  // Real repositories, because every interesting case is a fact about git: a
+  // branch the archive deleted, a snapshot the sweep dropped, a remote that
+  // still holds what the local branch did. The worktrees land under the real
+  // `~/.codetoaster/worktrees/<projectId>`, which `cleanupRepos` takes away.
+  const projectIds: string[] = [];
+
+  beforeEach(() => {
+    // The resume ladder waits this long for an agent that sends no hooks —
+    // the fake one never does — before calling it up. Four seconds per
+    // unarchive is the production cap and nothing here is asking about it.
+    taskManager.setStartTimeout(200);
+  });
+
+  afterEach(async () => {
+    // Before the outer hook, and before the repositories go: `deleteTask`'s
+    // purge runs git in them.
+    for (const task of [...taskManager.listTasks(), ...taskManager.listArchivedTasks()]) {
+      await taskManager.deleteTask(task.id);
+    }
+    for (const id of projectIds.splice(0)) taskManager.deleteProject(id);
+    cleanupRepos();
+    taskManager.setStartTimeout(4_000);
+  });
+
+  async function repoProject(): Promise<{ root: string; projectId: string }> {
+    const { root } = await tempRepo();
+    const { id } = tempProject(root);
+    projectIds.push(id);
+    taskManager.createProject(id, "Unarchive repo", root);
+    return { root, projectId: id };
+  }
+
+  /** A task with a checkout of its own, branched from `main`. */
+  async function worktreeTask(projectId: string) {
+    const res = await post({ projectId, prompt: "unarchive me", worktree: true, baseRef: "main" });
+    expect(res.status).toBe(201);
+    const task = await res.json();
+    const row = taskManager.getTask(task.id)!;
+    return { id: task.id as string, branch: row.branch!, worktree: row.worktree_path! };
+  }
+
+  /** One commit on the task's branch, so the archive keeps it: an unmerged,
+   * unpushed branch is the one archive never deletes. */
+  async function commitOnBranch(worktree: string) {
+    fs.writeFileSync(path.join(worktree, "feature.txt"), "committed\n");
+    await git(worktree, "add", "-A");
+    await git(worktree, "commit", "-qm", "the task's commit");
+  }
+
+  async function archive(id: string) {
+    const res = await post({}, `/api/tasks/${id}/archive`);
+    expect(res.status).toBe(200);
+    expect(taskManager.getTask(id)!.lifecycle).toBe("archived");
+  }
+
+  /** The retention sweep, run the way boot runs it, against a snapshot dated
+   * past its window. */
+  async function expireSnapshot(id: string) {
+    const row = taskManager.getTask(id)!;
+    // Through the store's own update, the way `archive.test.ts` dates one.
+    (taskManager as any).store.update(id, { wip_at: row.wip_at! - WIP_RETENTION_MS - 1 });
+    expect(await taskManager.expireArchivedWip()).toBe(1);
+  }
+
+  function preview(id: string) {
+    return fetch(`${base}/api/tasks/${id}/unarchive`);
+  }
+
+  // AC #2: the whole round trip, for the ordinary case — a branch with work on
+  // it, which archive keeps, and uncommitted files, which only the snapshot has.
+  test("brings the checkout back on its branch with the uncommitted work, and resumes", async () => {
+    const { root, projectId } = await repoProject();
+    const { id, branch, worktree } = await worktreeTask(projectId);
+    await commitOnBranch(worktree);
+    fs.writeFileSync(path.join(worktree, "README.md"), "modified, not committed\n");
+    fs.writeFileSync(path.join(worktree, "scratch.txt"), "untracked\n");
+    await archive(id);
+    expect(fs.existsSync(worktree)).toBe(false);
+
+    const shown = await preview(id);
+    expect(shown.status).toBe(200);
+    const body = await shown.json();
+    expect(body.checkout).toBe("restore");
+    expect(body.branch).toBe(branch);
+    expect(body.baseRef).toBe("main");
+    expect(body.snapshot.state).toBe("kept");
+    expect(body.snapshot.stale).toBe(false);
+    expect(body.snapshot.expiresAt).toBe(taskManager.getTask(id)!.wip_at! + WIP_RETENTION_MS);
+    // Reading what unarchiving restores must not do it.
+    expect(taskManager.getTask(id)!.lifecycle).toBe("archived");
+
+    const res = await post({ cols: 100, rows: 30 }, `/api/tasks/${id}/unarchive`);
+    expect(res.status).toBe(200);
+    const { task } = await res.json();
+    expect(task.id).toBe(id);
+    expect(task.lifecycle).toBe("live");
+    expect(task.worktreeState).toBe("present");
+    expect(task.ptyId).toBeString();
+    expect(taskManager.listTasks().map((t) => t.id)).toContain(id);
+    expect(taskManager.listArchivedTasks().map((t) => t.id)).not.toContain(id);
+
+    // The work, as it was left: committed, modified, untracked.
+    expect(fs.readFileSync(path.join(worktree, "feature.txt"), "utf8")).toBe("committed\n");
+    expect(fs.readFileSync(path.join(worktree, "README.md"), "utf8")).toBe("modified, not committed\n");
+    expect(fs.readFileSync(path.join(worktree, "scratch.txt"), "utf8")).toBe("untracked\n");
+    const status = await git(worktree, "status", "--porcelain");
+    // Modified in the tree and not staged: the snapshot comes back as dirt.
+    expect(status.split("\n")).toContain("M README.md");
+    expect(status).toContain("?? scratch.txt");
+    expect(await git(worktree, "rev-parse", "--abbrev-ref", "HEAD")).toBe(branch);
+    // Consumed: the ref is gone and the row no longer names it.
+    expect(await readWip(root, id)).toBeNull();
+    expect(taskManager.getTask(id)!.wip_ref).toBeNull();
+    // What archive removed comes back with the spawn.
+    expect(fs.existsSync(taskSettingsPath(id))).toBe(true);
+  }, 30000);
+
+  // Archive deletes a merged branch — and a branch with no commits of its own
+  // is merged by definition — so this is the commonest way back, not an edge.
+  test("a branch the archive deleted is recreated where the snapshot was taken", async () => {
+    const { root, projectId } = await repoProject();
+    const { id, branch, worktree } = await worktreeTask(projectId);
+    fs.writeFileSync(path.join(worktree, "scratch.txt"), "only in the snapshot\n");
+    await archive(id);
+    expect(await git(root, "branch", "--list", branch)).toBe("");
+    const parent = (await readWip(root, id))!.parent;
+
+    const body = await (await preview(id)).json();
+    expect(body.checkout).toBe("from-snapshot");
+    expect(body.snapshot.state).toBe("kept");
+
+    const res = await post({}, `/api/tasks/${id}/unarchive`);
+    expect(res.status).toBe(200);
+    expect((await res.json()).task.lifecycle).toBe("live");
+    expect(await git(root, "rev-parse", `refs/heads/${branch}`)).toBe(parent);
+    expect(fs.readFileSync(path.join(worktree, "scratch.txt"), "utf8")).toBe("only in the snapshot\n");
+  }, 30000);
+
+  // AC #4 and #6: the snapshot is gone, and the dialog has to be able to say so
+  // before anything happens — then the unarchive restores what is left.
+  test("an expired snapshot is reported, and the unarchive still restores the branch", async () => {
+    const { root, projectId } = await repoProject();
+    const { id, branch, worktree } = await worktreeTask(projectId);
+    await commitOnBranch(worktree);
+    fs.writeFileSync(path.join(worktree, "scratch.txt"), "lost with the snapshot\n");
+    await archive(id);
+    await expireSnapshot(id);
+    expect(await readWip(root, id)).toBeNull();
+
+    const body = await (await preview(id)).json();
+    // The branch survived — it held an unpushed commit — so the checkout comes
+    // back; the dirt does not.
+    expect(body.checkout).toBe("restore");
+    expect(body.snapshot.state).toBe("expired");
+    expect(typeof body.snapshot.expiredAt).toBe("number");
+
+    const res = await post({}, `/api/tasks/${id}/unarchive`);
+    expect(res.status).toBe(200);
+    expect((await res.json()).task.lifecycle).toBe("live");
+    expect(await git(worktree, "rev-parse", "--abbrev-ref", "HEAD")).toBe(branch);
+    expect(fs.existsSync(path.join(worktree, "feature.txt"))).toBe(true);
+    expect(fs.existsSync(path.join(worktree, "scratch.txt"))).toBe(false);
+  }, 30000);
+
+  test("with the snapshot expired and the branch gone, it says the work is lost and branches from base", async () => {
+    const { root, projectId } = await repoProject();
+    const mainSha = await git(root, "rev-parse", "main");
+    const { id, branch, worktree } = await worktreeTask(projectId);
+    fs.writeFileSync(path.join(worktree, "scratch.txt"), "lost\n");
+    await archive(id);
+    await expireSnapshot(id);
+    expect(await git(root, "branch", "--list", branch)).toBe("");
+
+    const body = await (await preview(id)).json();
+    expect(body.checkout).toBe("from-base");
+    expect(body.snapshot.state).toBe("expired");
+
+    const res = await post({}, `/api/tasks/${id}/unarchive`);
+    expect(res.status).toBe(200);
+    expect((await res.json()).task.lifecycle).toBe("live");
+    expect(await git(root, "rev-parse", `refs/heads/${branch}`)).toBe(mainSha);
+    expect(fs.existsSync(worktree)).toBe(true);
+    expect(fs.existsSync(path.join(worktree, "scratch.txt"))).toBe(false);
+  }, 30000);
+
+  test("with the snapshot expired and the branch pushed, it comes back from the remote", async () => {
+    const { root, projectId } = await repoProject();
+    const remote = tempDir("codetoaster-unarchive-remote-");
+    await git(remote, "init", "--bare", "-q", "-b", "main");
+    await git(root, "remote", "add", "origin", remote);
+    const { id, branch, worktree } = await worktreeTask(projectId);
+    await commitOnBranch(worktree);
+    await git(worktree, "push", "-q", "origin", branch);
+    await git(root, "fetch", "-q", "origin");
+    const pushed = await git(root, "rev-parse", `refs/remotes/origin/${branch}`);
+    // Pushed is expendable, so the archive deletes the local branch.
+    await archive(id);
+    expect(await git(root, "branch", "--list", branch)).toBe("");
+    await expireSnapshot(id);
+
+    const body = await (await preview(id)).json();
+    expect(body.checkout).toBe("from-remote");
+    expect(body.snapshot.state).toBe("expired");
+
+    const res = await post({}, `/api/tasks/${id}/unarchive`);
+    expect(res.status).toBe(200);
+    expect(await git(root, "rev-parse", `refs/heads/${branch}`)).toBe(pushed);
+    expect(fs.readFileSync(path.join(worktree, "feature.txt"), "utf8")).toBe("committed\n");
+  }, 30000);
+
+  // AC #3: nothing of ours on disk to rebuild, so unarchiving is a resume.
+  test("a task that ran in the project's directory unarchives by resuming", async () => {
+    // The `shell` profile, because its ladder is a restart and always has a
+    // rung. A `claude` task in a shared directory with no transcript — which is
+    // every one the fake agent makes — has no rung it may safely take there
+    // (TASK-43), and lands `could_not_resume` from `/resume` just the same.
+    const task = await (await post({ profile: "shell" })).json();
+    await archive(task.id);
+
+    const shown = await preview(task.id);
+    expect(shown.status).toBe(200);
+    expect(await shown.json()).toEqual({
+      checkout: "none",
+      snapshot: { state: "none" },
+      branch: null,
+      baseRef: null,
+    });
+
+    const res = await post({}, `/api/tasks/${task.id}/unarchive`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.task.lifecycle).toBe("live");
+    expect(body.task.worktreeState).toBe("none");
+    expect(body.task.cwd).toBe(process.cwd());
+    expect(taskManager.listTasks().map((t) => t.id)).toContain(task.id);
+  }, 30000);
+
+  test("404s for a task that isn't there, either way round", async () => {
+    const shown = await preview("nope");
+    expect(shown.status).toBe(404);
+    expect((await shown.json()).error).toContain("nope");
+    const res = await post({}, "/api/tasks/nope/unarchive");
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toContain("nope");
+  });
+
+  test("409s for a task that is not archived, and leaves it alone", async () => {
+    const task = await (await post({})).json();
+
+    const shown = await preview(task.id);
+    expect(shown.status).toBe(409);
+    expect((await shown.json()).error).toBe("Task is not archived");
+
+    const res = await post({}, `/api/tasks/${task.id}/unarchive`);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("not archived");
+    expect(taskManager.getTask(task.id)!.lifecycle).toBe("live");
+    expect(taskManager.primaryPty(task.id)!.id).toBe(task.ptyId);
+  });
+
+  test("a size that is not a number is a 400", async () => {
+    const task = await (await post({})).json();
+    await archive(task.id);
+
+    const res = await post({ cols: "wide" }, `/api/tasks/${task.id}/unarchive`);
+    expect(res.status).toBe(400);
+    expect(taskManager.getTask(task.id)!.lifecycle).toBe("archived");
+  });
+
+  // Resume keeps refusing an archived row: unarchive is the only door.
+  test("resume still refuses an archived task", async () => {
+    const task = await (await post({})).json();
+    await archive(task.id);
+
+    const res = await post({}, `/api/tasks/${task.id}/resume`);
+    expect(res.status).toBe(409);
+    expect(taskManager.getTask(task.id)!.lifecycle).toBe("archived");
   });
 });
 

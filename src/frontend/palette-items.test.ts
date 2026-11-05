@@ -1,6 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import {
   actionEntries,
+  archivedTaskEntries,
   changeEntries,
   commitEntries,
   fileEntries,
@@ -64,6 +65,27 @@ describe("tasks", () => {
 
     expect(entries[0]!.label).toBe("Fix the parser");
     expect(entries[0]!.keywords).toEqual(["renamed the parser"]);
+  });
+
+  // TASK-139: the way back. A row per archived task, because an archived task
+  // is never the one on screen and so cannot be what a lone action means.
+  test("each archived task is offered as an Unarchive of that task, and only those", () => {
+    const entries = archivedTaskEntries(
+      [
+        task({ id: "a" }),
+        task({ id: "b", title: "Fix the parser", lifecycle: "archived", lastMessage: "done" }),
+        task({ id: "c", projectId: "gone", lifecycle: "archived" }),
+      ],
+      { projectNames },
+    );
+
+    expect(ids(entries)).toEqual(["archived:b", "archived:c"]);
+    expect(entries[0]!.label).toBe("Unarchive Fix the parser");
+    expect(entries[0]!.detail).toBe("codetoaster");
+    expect(entries[0]!.keywords).toEqual(["done"]);
+    expect(entries[0]!.action).toEqual({ type: "unarchive-task", taskId: "b" });
+    // A project that has gone is named by its id rather than left blank.
+    expect(entries[1]!.detail).toBe("gone");
   });
 });
 

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { taskDisplayNames, taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { ArchiveTaskDialog, CloseTaskDialog } from "@/frontend/components/TaskSidebar";
+import {
+  UnarchiveTaskDialog,
+  unarchivePreviewAnswer,
+} from "@/frontend/components/UnarchiveTaskDialog";
 import { CommandPalette, type PaletteGroup } from "@/frontend/components/v2/CommandPalette";
 import { useFileSearch, type FileSearchResult } from "@/frontend/hooks/use-file-search";
 import { useGitLog } from "@/frontend/hooks/use-git-log";
@@ -20,6 +24,7 @@ import {
 } from "@/frontend/layout-store";
 import {
   actionEntries,
+  archivedTaskEntries,
   changeEntries,
   commitEntries,
   fileEntries,
@@ -86,14 +91,33 @@ export interface CommandPaletteHostProps {
 
 export function CommandPaletteHost(props: CommandPaletteHostProps) {
   const { open, onOpenChange, taskId } = props;
-  const { tasks, closeTask, resumeTask, archivePreview, archiveTask } = useTasks();
+  const {
+    tasks,
+    archivedTasks,
+    closeTask,
+    resumeTask,
+    archivePreview,
+    archiveTask,
+    unarchivePreview,
+    unarchiveTask,
+  } = useTasks();
   const selected = tasks.find((t) => t.id === taskId) ?? null;
+  const navigateToTask = useOpenTask();
+  const openTask = props.onSelectTask ?? navigateToTask;
 
-  // The two confirmations outlive the palette: selecting Close or Archive shuts
-  // it and opens the dialog, so their state cannot live inside the part that
-  // unmounts when the palette closes.
+  // The confirmations outlive the palette: selecting Close, Archive or an
+  // Unarchive shuts it and opens the dialog, so their state cannot live inside
+  // the part that unmounts when the palette closes.
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  // The archived task being asked about, by id: unlike the other two it is
+  // never the task on screen. Kept after the dialog closes, so the closing
+  // render still has a task to draw the dialog for.
+  const [unarchivingId, setUnarchivingId] = useState<string | null>(null);
+  const [unarchiveOpen, setUnarchiveOpen] = useState(false);
+  const unarchiving = unarchivingId
+    ? (archivedTasks.find((t) => t.id === unarchivingId) ?? null)
+    : null;
 
   // Projected only while one of the two dialogs is on screen, since nothing
   // else reads it: `taskDisplayNames` walks the whole list, and as a memo over
@@ -109,6 +133,20 @@ export function CommandPaletteHost(props: CommandPaletteHostProps) {
       return result.ok ? result.value : null;
     },
     [archivePreview],
+  );
+  const handleUnarchivePreview = useCallback(
+    async (id: string) => unarchivePreviewAnswer(await unarchivePreview(id)),
+    [unarchivePreview],
+  );
+  // Then into the task, through the same door a task row in the palette uses:
+  // the user asked for it back. A failure is the request's toast.
+  const handleUnarchive = useCallback(
+    (id: string) => {
+      void unarchiveTask(id).then((result) => {
+        if (result.ok) openTask(id);
+      });
+    },
+    [unarchiveTask, openTask],
   );
 
   return (
@@ -130,6 +168,20 @@ export function CommandPaletteHost(props: CommandPaletteHostProps) {
           onResumeTask={() => {
             if (selected) void resumeTask(selected.id);
           }}
+          onUnarchiveTask={(id) => {
+            setUnarchivingId(id);
+            setUnarchiveOpen(true);
+          }}
+        />
+      )}
+      {unarchiving && (
+        <UnarchiveTaskDialog
+          open={unarchiveOpen}
+          taskId={unarchiving.id}
+          label={unarchiving.title}
+          onUnarchivePreview={handleUnarchivePreview}
+          onUnarchive={handleUnarchive}
+          onClose={() => setUnarchiveOpen(false)}
         />
       )}
       {selected && (
@@ -161,6 +213,7 @@ type OpenPaletteProps = CommandPaletteHostProps & {
   onCloseTask: () => void;
   onArchiveTask: () => void;
   onResumeTask: () => void;
+  onUnarchiveTask: (taskId: string) => void;
 };
 
 /** How many commits the palette offers. The log is paged at 200 and the
@@ -187,8 +240,9 @@ function OpenPalette({
   onCloseTask,
   onArchiveTask,
   onResumeTask,
+  onUnarchiveTask,
 }: OpenPaletteProps) {
-  const { tasks, projects } = useTasks();
+  const { tasks, projects, archivedTasks, loadArchivedTasks } = useTasks();
   const navigateToTask = useOpenTask();
   const navigateToComposer = useOpenComposer();
   const openTask = onSelectTask ?? navigateToTask;
@@ -241,6 +295,16 @@ function OpenPalette({
   }, [query]);
   const files = useFileSearch(root, debounced);
 
+  // The archived rows are fetched, never pushed, and only searched for: an
+  // empty box lists none of them, so the list is asked for on the first
+  // keystroke of each opening rather than on every open of the palette.
+  const askedArchived = useRef(false);
+  useEffect(() => {
+    if (!searching || askedArchived.current) return;
+    askedArchived.current = true;
+    void loadArchivedTasks();
+  }, [searching, loadArchivedTasks]);
+
   const selectedTask = tasks.find((t) => t.id === taskId) ?? null;
 
   const groups = useMemo((): PaletteGroup<PaletteEntry>[] => {
@@ -281,6 +345,13 @@ function OpenPalette({
         label: "Actions",
         items: actionEntries({ task: selectedTask, layout, env }),
       },
+      {
+        // Typed for only. An account with a year of archived tasks would
+        // otherwise bury every action under them at an empty box.
+        id: "archived",
+        label: "Archived tasks",
+        items: searching ? archivedTaskEntries(archivedTasks, { projectNames }) : [],
+      },
       { id: "changes", label: "Changes", items: changeEntries(changes ?? []) },
       { id: "history", label: "History", items: commitEntries(commits, COMMIT_LIMIT) },
       { id: "refs", label: "Refs", items: searching ? refEntries(refs.data) : [] },
@@ -296,6 +367,7 @@ function OpenPalette({
   }, [
     tasks,
     projects,
+    archivedTasks,
     layout,
     presentTab,
     env,
@@ -329,6 +401,8 @@ function OpenPalette({
         return onResumeTask();
       case "archive-task":
         return onArchiveTask();
+      case "unarchive-task":
+        return onUnarchiveTask(action.taskId);
       case "toggle-sidebar":
         return onToggleSidebar();
       case "toggle-explorer":

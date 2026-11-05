@@ -1,5 +1,5 @@
 import { test, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createLayout, openTab } from "../layout-store";
 import { projectRoot, taskRoot, type RepoRoot } from "../repo-root";
 import { presentComposerTab } from "./tabs/tab-labels";
@@ -22,6 +22,16 @@ const calls = vi.hoisted(() => ({
   files: [] as Array<RepoRoot | null>,
 }));
 
+// The archived list and the unarchive calls, which the TASK-139 test below
+// fills in; empty for the rest of the file.
+const unarchive = vi.hoisted(() => ({
+  archivedTasks: [] as unknown[],
+  loadArchivedTasks: vi.fn(async () => ({ ok: true, value: [] })),
+  unarchivePreview: vi.fn(),
+  unarchiveTask: vi.fn(),
+  openTask: vi.fn(),
+}));
+
 vi.mock("@/frontend/TaskContext", () => ({
   useTasks: () => ({
     tasks: [],
@@ -30,12 +40,16 @@ vi.mock("@/frontend/TaskContext", () => ({
     resumeTask: vi.fn(),
     archivePreview: vi.fn(),
     archiveTask: vi.fn(),
+    archivedTasks: unarchive.archivedTasks,
+    loadArchivedTasks: unarchive.loadArchivedTasks,
+    unarchivePreview: unarchive.unarchivePreview,
+    unarchiveTask: unarchive.unarchiveTask,
   }),
   taskStateOf: () => "idle",
   taskDisplayNames: () => new Map(),
 }));
 vi.mock("@/frontend/hooks/use-task-nav", () => ({
-  useOpenTask: () => vi.fn(),
+  useOpenTask: () => unarchive.openTask,
   useOpenComposer: () => vi.fn(),
 }));
 vi.mock("@/frontend/components/TaskSidebar", () => ({
@@ -74,6 +88,11 @@ beforeEach(() => {
   calls.log = [];
   calls.refs = [];
   calls.files = [];
+  unarchive.archivedTasks.length = 0;
+  unarchive.loadArchivedTasks.mockClear();
+  unarchive.unarchivePreview.mockReset();
+  unarchive.unarchiveTask.mockReset();
+  unarchive.openTask.mockReset();
 });
 
 function mount(props: Partial<Parameters<typeof CommandPaletteHost>[0]>) {
@@ -130,4 +149,49 @@ test("a task's palette searches the task and keeps the agent's labels", () => {
   mount({ taskId: "t1", root, layout: createLayout() });
   expect(calls.files.at(-1)).toBe(root);
   expect(screen.getByText("Agent")).toBeTruthy();
+});
+
+// TASK-139 AC #1: an archived task is offered as an Unarchive when searched
+// for, behind the same confirmation as the sidebar's, and a confirmed one is
+// opened once it is back.
+test("searching offers Unarchive for an archived task, and confirming it opens the task", async () => {
+  unarchive.archivedTasks.push({
+    id: "t-archived",
+    projectId: "web",
+    title: "Fix the parser",
+    lifecycle: "archived",
+    lastMessage: null,
+    agentState: "idle",
+  });
+  unarchive.unarchivePreview.mockResolvedValue({
+    ok: true,
+    value: {
+      checkout: "from-snapshot",
+      snapshot: { state: "kept", expiresAt: null, stale: false },
+      branch: "codetoaster/fix-the-parser",
+      baseRef: "main",
+    },
+  });
+  unarchive.unarchiveTask.mockResolvedValue({ ok: true, value: { task: {} } });
+  mount({});
+
+  // Not at an empty box: a year of archived tasks would bury the actions.
+  expect(screen.queryByText("Unarchive Fix the parser")).toBeNull();
+  expect(unarchive.loadArchivedTasks).not.toHaveBeenCalled();
+
+  fireEvent.change(screen.getByRole("combobox"), { target: { value: "unarchive" } });
+  expect(unarchive.loadArchivedTasks).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("option", { name: /Unarchive Fix the parser/ }));
+
+  screen.getByRole("dialog", { name: "Unarchive this task?" });
+  await screen.findByText(
+    "codetoaster/fix-the-parser was deleted when it was archived, and is recreated at the commit the snapshot was taken on.",
+  );
+  expect(unarchive.unarchivePreview).toHaveBeenCalledWith("t-archived");
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Unarchive" }));
+  });
+  expect(unarchive.unarchiveTask).toHaveBeenCalledWith("t-archived");
+  expect(unarchive.openTask).toHaveBeenCalledWith("t-archived");
 });

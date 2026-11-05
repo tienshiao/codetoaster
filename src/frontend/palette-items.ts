@@ -1,5 +1,6 @@
 import {
   Archive,
+  ArchiveRestore,
   ArrowLeft,
   ArrowRight,
   ChevronLeft,
@@ -77,6 +78,10 @@ export type PaletteAction =
   | { type: "close-task" }
   | { type: "resume-task" }
   | { type: "archive-task" }
+  /** Opens the unarchive confirmation for an archived task (TASK-139). It
+   * names its task, unlike the rows above: an archived task is never the one
+   * on screen, so "the current task" cannot be what it means. */
+  | { type: "unarchive-task"; taskId: string }
   | { type: "toggle-sidebar" }
   | { type: "toggle-explorer" }
   /** Opens the search bar in the active tab's terminal (TASK-58). */
@@ -112,8 +117,8 @@ export interface TaskEntryOptions {
  * The order is the caller's: `TaskInfo` arrives from the server sorted by
  * recency, and the most recently touched task being the first row is the whole
  * reason the palette is faster than the sidebar. Archived tasks are left out —
- * opening one is a restore, not a navigation, and the archived list is where
- * that decision belongs.
+ * opening one is a restore, not a navigation, so they are `archivedTaskEntries`'
+ * rows, each behind a confirmation.
  */
 export function taskEntries(
   tasks: readonly PaletteTask[],
@@ -134,6 +139,35 @@ export function taskEntries(
         action: { type: "open-task", taskId: task.id },
       };
     });
+}
+
+/**
+ * The archived tasks, each offered as an Unarchive (TASK-139).
+ *
+ * A row per task rather than one "Unarchive task" action, because an archived
+ * task is never the one on screen — the shell bounces a slug that names one —
+ * so there is no current task for a lone action to mean. "Unarchive" leads the
+ * label, which is what makes typing the word list every archived task: the
+ * palette's filter matches the words on the row.
+ *
+ * Only the archived ones, whatever the caller passes: the live rows are
+ * `taskEntries`', and a task in both lists for a moment — the two are
+ * corrected by different transports — must not be offered as both.
+ */
+export function archivedTaskEntries(
+  tasks: readonly PaletteTask[],
+  { projectNames }: Pick<TaskEntryOptions, "projectNames">,
+): PaletteEntry[] {
+  return tasks
+    .filter((task) => task.lifecycle === "archived")
+    .map((task) => ({
+      id: `archived:${task.id}`,
+      label: `Unarchive ${task.title}`,
+      icon: ArchiveRestore,
+      detail: projectNames.get(task.projectId) ?? task.projectId,
+      keywords: task.lastMessage ? [task.lastMessage] : undefined,
+      action: { type: "unarchive-task", taskId: task.id },
+    }));
 }
 
 // ── tabs ────────────────────────────────────────────────────────────────────

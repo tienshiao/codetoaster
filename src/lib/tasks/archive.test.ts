@@ -468,11 +468,14 @@ describe("the retention window", () => {
     expect(await manager.expireArchivedWip()).toBe(1);
 
     // The ref is the only thing keeping the snapshot's objects reachable, so
-    // dropping it is the whole of the expiry — and the columns go with it, or
+    // dropping it is the whole of the expiry — and `wip_ref` goes with it, or
     // the row would keep naming a ref that is not there.
     expect(await readWip(root, id)).toBeNull();
     expect(store.get(id)!.wip_ref).toBeNull();
-    expect(store.get(id)!.wip_at).toBeNull();
+    // `wip_at` stays, as the record that there was a snapshot to lose: it is
+    // how the unarchive preview tells "expired" from "never had one" (TASK-139).
+    expect(store.get(id)!.wip_at).not.toBeNull();
+    expect(await manager.expireArchivedWip()).toBe(0);
   }, 20000);
 
   test("leaves one still inside it", async () => {

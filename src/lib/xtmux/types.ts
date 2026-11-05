@@ -391,6 +391,55 @@ export interface ArchivePreview {
   wipRetentionDays: number;
 }
 
+/** How an unarchive gets the task's checkout back (TASK-139).
+ *
+ * - `none`          — the task ran in the project's own directory and never had
+ *                     a checkout of its own; unarchiving only resumes the agent.
+ * - `restore`       — the branch is still there, and the checkout is rebuilt on
+ *                     it exactly as an evicted task's is.
+ * - `from-snapshot` — the branch was deleted (archive does that to a merged or
+ *                     pushed one) and is recreated at the commit the snapshot
+ *                     was taken on, so the snapshot applies cleanly on top.
+ * - `from-remote`   — deleted, no snapshot, and `origin/<branch>` still holds
+ *                     it: recreated from there.
+ * - `from-base`     — deleted and nothing else holds it: recreated at the task's
+ *                     base ref. The branch's own commits and the task's
+ *                     uncommitted work are gone, and the dialog has to say so. */
+export type UnarchiveCheckout = "none" | "restore" | "from-snapshot" | "from-remote" | "from-base";
+
+/** What became of the snapshot archiving took (§5.6).
+ *
+ * `kept` is a claim about git, not about the clock: the ref is there, so the
+ * restore will apply it. `expiresAt` is when the retention sweep becomes free to
+ * drop it, and can already be in the past on a daemon that has not restarted
+ * since — the sweep runs at boot. `stale` is the restore's own guard read ahead
+ * of time: the branch has moved off the commit the snapshot was taken on, so the
+ * snapshot will be held back and offered rather than applied over newer work.
+ *
+ * `expired` is a snapshot the row says was taken and git no longer has — the
+ * sweep dropped it, or someone deleted the ref. `none` is a task that never had
+ * one: no checkout of its own, or one already gone from disk when it was
+ * archived. */
+export type UnarchiveSnapshot =
+  | { state: "kept"; expiresAt: number | null; stale: boolean }
+  | { state: "expired"; expiredAt: number | null }
+  | { state: "none" };
+
+/** What unarchiving a task would restore, asked before it is done.
+ * `GET /api/tasks/:id/unarchive`; computed by the same code the `POST` acts on,
+ * for the reason `ArchivePreview` is. */
+export interface UnarchivePreview {
+  checkout: UnarchiveCheckout;
+  snapshot: UnarchiveSnapshot;
+  branch: string | null;
+  baseRef: string | null;
+}
+
+/** `POST /api/tasks/:id/unarchive`'s answer: the task, resumed. */
+export interface UnarchiveResponse {
+  task: TaskInfo;
+}
+
 /** What an archive found, and what it did about it (§5.6).
  *
  * Read *before* anything was destroyed, which is the point: the confirmation

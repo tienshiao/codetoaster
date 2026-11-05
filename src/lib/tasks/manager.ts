@@ -15,6 +15,9 @@ import type {
   ServerMessage,
   TaskInfo,
   TaskWorktreeInfo,
+  UnarchiveCheckout,
+  UnarchivePreview,
+  UnarchiveSnapshot,
   WebSocketData,
 } from "../xtmux/types";
 import { uniqueName } from "../xtmux/naming";
@@ -55,11 +58,16 @@ import {
   dropWip,
   evictWorktree,
   isWithinWorktreesRoot,
+  lockKeyFor,
   readSetupOutcome,
+  readWip,
   reconcileWorktrees,
+  recreateBranch,
   removeWorktree,
   repoRootOf,
+  resolveCommit,
   restoreWorktree,
+  withRepoLock,
   setupStampPath,
   snapshotWip,
   worktreeCwd,
@@ -225,7 +233,30 @@ export const RERANK_QUIET_MS = 60_000;
 // read by the sidebar's confirmations, which makes them wire shapes — so they
 // live in `xtmux/types` with the rest of the contract, and are re-exported
 // here because this is where they are produced.
-export type { ArchiveOutcome, ArchivePreview, DeleteOutcome };
+export type { ArchiveOutcome, ArchivePreview, DeleteOutcome, UnarchivePreview };
+
+/** An unarchive asked of a task that is not archived (TASK-139).
+ *
+ * A throw rather than a null, because null already means "no such task" and the
+ * route answers the two differently: a 404 for a task that is not there, a 409
+ * for one that is there and simply is not in the state the request assumed — a
+ * second browser confirming a dialog the first already acted on. */
+export class NotArchivedError extends Error {
+  constructor(taskId: string) {
+    super(`Task "${taskId}" is not archived`);
+    this.name = "NotArchivedError";
+  }
+}
+
+/** What `planUnarchive` decided: the preview the user is shown, and the two
+ * facts the act needs that the preview does not carry. */
+interface UnarchivePlan {
+  preview: UnarchivePreview;
+  repoRoot: string | null;
+  /** The commit to recreate the deleted branch at, or null to leave the
+   * branch alone (it exists, or the task never had one). */
+  recreateAt: string | null;
+}
 
 export interface CreateTaskOptions {
   id: string;
@@ -438,6 +469,14 @@ export class TaskManager {
   // each other, and archive waits on an eviction in flight before registering,
   // so the two can never be waiting on one another.
   private archiving: Map<string, Promise<ArchiveOutcome | null>> = new Map();
+  // The fifth, and archive's way back (TASK-139). It recreates a branch and
+  // then hands over to the resume ladder, and both halves need fencing: two
+  // unarchives would both see the branch missing and race to recreate it, and
+  // an archive landing between the lifecycle flip and the ladder would remove a
+  // checkout the ladder is about to rebuild. A second unarchive joins this one;
+  // an archive waits for it before registering, and this waits for an archive
+  // before registering, so the two can never be waiting on each other.
+  private unarchiving: Map<string, Promise<TaskRow | undefined | null>> = new Map();
   // What `codetoaster hook` has to POST back to (§4.2), handed over by
   // startServer. Undefined until then: a manager with no server in front of it
   // — a test — has no port to name, and an agent spawned from one simply
@@ -1915,8 +1954,9 @@ export class TaskManager {
     // sidebar's archived toggle exactly these ids, so a client *can* name one,
     // and the row is still in the database with a `branch` and a
     // `worktree_path` on it that `restoreTaskWorktree` would happily rebuild a
-    // checkout from — off a branch the archive may have deleted. The one
-    // operation with no way back needs the guard that makes it stay that way.
+    // checkout from — off a branch the archive may have deleted. `unarchiveTask`
+    // is the only door back: it puts the branch back first, flips the row to
+    // `suspended`, and only then calls this.
     if (row.lifecycle === "archived") return undefined;
     // An archive already in flight settles first, and then this starts over
     // against the row it left — which will be archived, and refused above. It
@@ -3001,6 +3041,11 @@ export class TaskManager {
     // moments ago, and about to decide whether a branch is deleted — describing
     // a repository that has changed underneath it.
     if (this.archiving.has(taskId)) return Promise.resolve(false);
+    // Nor against an unarchive, which is about to rebuild this checkout. The
+    // row reads `suspended` + `evicted` from its lifecycle flip until the
+    // ladder's restore, so `doEvict` would refuse anyway — this says so at the
+    // door, rather than relying on which await the unarchive happens to be in.
+    if (this.unarchiving.has(taskId)) return Promise.resolve(false);
     // A second caller joins the first rather than snapshotting and removing the
     // same checkout twice — the manual route and the evict tier can easily
     // arrive together.
@@ -3187,6 +3232,18 @@ export class TaskManager {
       await evictInFlight.catch(() => undefined);
       return this.archiveTask(taskId);
     }
+    // An unarchive in flight settles first, and then this archives what it
+    // produced — the live task, with its checkout rebuilt. Without the wait an
+    // archive landing between the unarchive's lifecycle flip and its resume
+    // would remove the checkout the ladder is about to restore, and the ladder
+    // would then write `live` over this `archived`. Waited on before
+    // registering, as `unarchiveTask` waits on this map before registering in
+    // its own, so neither can be waiting on the other.
+    const unarchiveInFlight = this.unarchiving.get(taskId);
+    if (unarchiveInFlight) {
+      await unarchiveInFlight.catch(() => undefined);
+      return this.archiveTask(taskId);
+    }
     const already = this.archiving.get(taskId);
     if (already) return already;
     const attempt = this.doArchive(taskId).finally(() => {
@@ -3340,9 +3397,19 @@ export class TaskManager {
         // keeps saying what it says, which is the honest state: the snapshot
         // may well still exist somewhere nothing can name.
         if (!repoRoot) continue;
+        // Checked after the await above, which is where an unarchive could have
+        // started: it has already read this ref and planned the branch around
+        // it, and dropping it now would have it recreate the branch at the
+        // snapshot's parent and then restore none of the work it was for.
+        if (this.unarchiving.has(row.id)) continue;
         await dropWip(repoRoot, row.id);
         if (this.store.get(row.id)) {
-          this.store.update(row.id, { wip_ref: null, wip_at: null });
+          // `wip_at` is kept, and it is the only record that there was ever a
+          // snapshot to lose. The unarchive preview reads "the row says one was
+          // taken and git has none" as expired — the difference between telling
+          // the user their uncommitted work is gone and telling them there was
+          // never any. Nothing else reads `wip_at` without `wip_ref`.
+          this.store.update(row.id, { wip_ref: null });
         }
         expired++;
       } catch (e) {
@@ -3350,6 +3417,207 @@ export class TaskManager {
       }
     }
     return expired;
+  }
+
+  /** What unarchiving this task would restore, before it is confirmed
+   * (TASK-139).
+   *
+   * Null unless the row is archived — the route has already answered 404 for a
+   * task that is not there, so null here is the 409. The same `planUnarchive`
+   * the act runs, so the dialog cannot promise one thing and the button do
+   * another for any reason except time passing between them.
+   *
+   * Throws `WorktreeError` when the plan cannot be made at all: a repository
+   * nobody can name any more (`repo-unknown`), or a deleted branch with nothing
+   * to recreate it from (`bad-base-ref`). */
+  async unarchivePreview(taskId: string): Promise<UnarchivePreview | null> {
+    const row = this.store.get(taskId);
+    if (!row || row.lifecycle !== "archived") return null;
+    return (await this.planUnarchive(row)).preview;
+  }
+
+  /** How an archived task's checkout comes back, read from git rather than from
+   * the row: the archive may have deleted the branch, the sweep may have
+   * dropped the snapshot, and the user may have done either by hand since.
+   *
+   * The ladder is ordered by how much of the task's work each rung keeps. A
+   * branch that is still there keeps all of it. A snapshot's parent is the
+   * exact commit the work was sitting on — recreating the branch there makes
+   * HEAD equal `wip.parent`, so the restore's own guard passes and the snapshot
+   * applies, which is the whole of what a snapshot is for. A remote copy keeps
+   * the commits but not the dirt; the base ref keeps neither, and is offered
+   * only so that the task can be opened at all. */
+  private async planUnarchive(row: TaskRow): Promise<UnarchivePlan> {
+    const named = { branch: row.branch, baseRef: row.base_ref };
+    if (row.worktree_state === "none" || !row.branch) {
+      return {
+        preview: { checkout: "none", snapshot: { state: "none" }, ...named },
+        repoRoot: null,
+        recreateAt: null,
+      };
+    }
+    const repoRoot = await this.repoRootFor(row);
+    if (!repoRoot) {
+      // The restore would throw exactly this a moment later — after the row had
+      // been flipped out of `archived` — so the plan throws it first, while
+      // refusing still changes nothing.
+      throw new WorktreeError(
+        "repo-unknown",
+        `Task "${row.title}" was branched from a repository this task can no longer name — `
+          + `its project was removed.`,
+      );
+    }
+    const [wip, tip] = await Promise.all([
+      readWip(repoRoot, row.id),
+      resolveCommit(repoRoot, `refs/heads/${row.branch}`),
+    ]);
+
+    let snapshot: UnarchiveSnapshot;
+    if (wip) {
+      snapshot = {
+        state: "kept",
+        expiresAt: row.wip_at === null ? null : row.wip_at + WIP_RETENTION_MS,
+        // The restore's guard, asked ahead of it. Only meaningful for a branch
+        // that is still there: a recreated one is put at `wip.parent` below.
+        stale: tip !== null && tip !== wip.parent,
+      };
+    } else if (row.wip_ref !== null || row.wip_at !== null) {
+      snapshot = {
+        state: "expired",
+        expiredAt: row.wip_at === null ? null : row.wip_at + WIP_RETENTION_MS,
+      };
+    } else {
+      snapshot = { state: "none" };
+    }
+
+    const plan = (checkout: UnarchiveCheckout, recreateAt: string | null): UnarchivePlan => ({
+      preview: { checkout, snapshot, ...named },
+      repoRoot,
+      recreateAt,
+    });
+    if (tip) return plan("restore", null);
+    if (wip) return plan("from-snapshot", wip.parent);
+    const remote = await resolveCommit(repoRoot, `refs/remotes/origin/${row.branch}`);
+    if (remote) return plan("from-remote", remote);
+    // `HEAD` when the row has no base ref, which is what a create with none
+    // branched from.
+    const base = await resolveCommit(repoRoot, row.base_ref ?? "HEAD");
+    if (!base) {
+      throw new WorktreeError(
+        "bad-base-ref",
+        `The branch ${row.branch} is gone, and its base ${row.base_ref ?? "HEAD"} `
+          + `no longer names a commit to recreate it from`,
+      );
+    }
+    return plan("from-base", base);
+  }
+
+  /** Bring an archived task back: its checkout on its branch, the snapshot's
+   * uncommitted work applied, and its agent resumed (TASK-139).
+   *
+   * Null for a task that is not there; `NotArchivedError` for one that is not
+   * archived. Otherwise the resumed row — or undefined, as `resumeTask` answers
+   * for a task deleted under the ladder.
+   *
+   * Three steps, and only the first is new:
+   *
+   * 1. **Put a deleted branch back**, at the commit `planUnarchive` chose. A
+   *    failure here throws with the row still archived and nothing changed.
+   * 2. **Flip the row to `suspended`**, keeping `worktree_state = evicted` — an
+   *    archived task with a checkout is exactly an evicted one whose checkout
+   *    has not been rebuilt yet, which is the state the resume ladder already
+   *    knows how to open.
+   * 3. **Resume through the ordinary door.** `runResumeLadder` restores the
+   *    checkout via `restoreTaskWorktree` (applying the snapshot when the
+   *    branch is where it was taken), regenerates `~/.codetoaster/tasks/<id>/`
+   *    — `spawnAgent` writes the settings file on every spawn and the setup
+   *    stamp's wrapper makes its own directory — and walks the agent's ladder.
+   *
+   * A failure after step 2 — a restore git refused, an agent that would not
+   * come back — leaves the task suspended and evicted, with the branch and the
+   * snapshot both intact. That is deliberate, and it is safe: it is the
+   * ordinary state of an evicted task, the user can open it again from the
+   * live list, and nothing has been lost. Flipping it back to `archived` would
+   * be worse — the retention sweep only expires archived tasks' snapshots, so
+   * putting the row back there is what would put the work on a timer again. */
+  async unarchiveTask(
+    taskId: string,
+    size: { cols?: number; rows?: number } = {},
+  ): Promise<TaskRow | undefined | null> {
+    // An archive in flight settles first, and then this starts over against
+    // the row it left — archived, which is what this is for. `archiveTask`
+    // waits on this map before registering in its own, and this waits on its
+    // map before registering here, so the two can never wait on each other.
+    const archiveInFlight = this.archiving.get(taskId);
+    if (archiveInFlight) {
+      await archiveInFlight.catch(() => undefined);
+      return this.unarchiveTask(taskId, size);
+    }
+    // Two browsers confirming the same dialog: the second joins the first
+    // rather than racing it to recreate the branch. Before the resume wait
+    // below, because the first unarchive's own resume is in `resuming` — a
+    // second caller waiting on that would then find the row live and answer 409
+    // to a request the first one is in the middle of granting.
+    const already = this.unarchiving.get(taskId);
+    if (already) return already;
+    // An eviction or a resume cannot be running on an archived row — evict
+    // refuses anything not suspended, resume refuses archived — so either one
+    // in flight means the row is not archived, and the answer will be
+    // `NotArchivedError`. Waited on all the same, so that answer is given
+    // about the row they leave rather than the one they are changing.
+    const evictInFlight = this.evicting.get(taskId);
+    if (evictInFlight) {
+      await evictInFlight.catch(() => undefined);
+      return this.unarchiveTask(taskId, size);
+    }
+    const resumeInFlight = this.resuming.get(taskId);
+    if (resumeInFlight) {
+      await resumeInFlight.catch(() => undefined);
+      return this.unarchiveTask(taskId, size);
+    }
+    // Registered before the first await, so an archive or a second unarchive
+    // that checks this map cannot slip past between the guards and the work.
+    const attempt = this.doUnarchive(taskId, size).finally(() => {
+      this.unarchiving.delete(taskId);
+    });
+    this.unarchiving.set(taskId, attempt);
+    return attempt;
+  }
+
+  private async doUnarchive(
+    taskId: string,
+    size: { cols?: number; rows?: number },
+  ): Promise<TaskRow | undefined | null> {
+    const row = this.store.get(taskId);
+    if (!row) return null;
+    if (row.lifecycle !== "archived") throw new NotArchivedError(taskId);
+
+    const plan = await this.planUnarchive(row);
+    if (plan.recreateAt && plan.repoRoot && row.branch) {
+      const repoRoot = plan.repoRoot;
+      const branch = row.branch;
+      const commit = plan.recreateAt;
+      await withRepoLock(await lockKeyFor(repoRoot), () => recreateBranch(repoRoot, branch, commit));
+    }
+
+    // Deleted while git was working: nothing to bring back. The recreated
+    // branch stays, which is the harmless half — `deleteTask` had already run
+    // its own branch decision against a repository without it.
+    if (!this.store.get(taskId)) return null;
+    // Ranked as it flips: the user just asked for this task, and a resume that
+    // lands on could-not-resume (or a restore that throws) never reaches the
+    // ladder's own `stampRank`, which would leave the task at its pre-archive
+    // rank — weeks down the list it was supposed to return to the top of.
+    this.stampRank(taskId, Date.now(), { lifecycle: "suspended" });
+    this.ensureInProject(taskId);
+    // The whole list, as archive does in the other direction: the task joins
+    // `listTasks`, and every attached client has to learn it is there before
+    // the ladder's own deltas about it start arriving.
+    this.broadcastTasks();
+    // No await between the flip and this call's registration in `resuming`:
+    // `resumeTask` runs synchronously until it has registered, so nothing can
+    // see the row suspended-and-evicted without also seeing the resume.
+    return this.resumeTask(taskId, size);
   }
 
   /** The rows the evict tier walks (§5.6). Suspended rather than live, which is

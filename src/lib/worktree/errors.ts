@@ -37,7 +37,10 @@
  *                      things: that one means "this directory is not a
  *                      repository", which pointing at one fixes, while this
  *                      means "we have lost track of yours" — and the work is
- *                      still on its branch either way (TASK-64). */
+ *                      still on its branch either way (TASK-64).
+ * `branch-recreate-failed` — an unarchive could not put a deleted branch back
+ *                      (TASK-139). Nothing has changed when this is thrown: the
+ *                      task is still archived and its snapshot is still kept. */
 export type WorktreeErrorKind =
   | "bad-base-ref"
   | "path-occupied"
@@ -48,7 +51,8 @@ export type WorktreeErrorKind =
   | "branch-missing"
   | "snapshot-failed"
   | "wip-apply-failed"
-  | "repo-unknown";
+  | "repo-unknown"
+  | "branch-recreate-failed";
 
 /** A worktree operation that failed, carrying git's own account of it.
  *
