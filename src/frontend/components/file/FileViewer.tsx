@@ -226,6 +226,7 @@ export function FileViewer({
         // The file itself, when it is an image: the blob at the commit rather
         // than whatever the working tree holds under that name now.
         imageUrl={sha ? imageUrl(path) : undefined}
+        highlightChanges={sha === undefined}
       />
       <SymbolPopover
         root={root}

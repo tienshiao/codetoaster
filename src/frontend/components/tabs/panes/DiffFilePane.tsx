@@ -111,6 +111,7 @@ export function DiffFilePane({ root, view, path, onOpenFile }: DiffFilePaneProps
       <DiffLayout
         files={files}
         root={root}
+        highlightChanges
         showFileTree={false}
         showViewModeToggle={false}
         // Not a mode the user can leave: there is one file, and "all" of it is

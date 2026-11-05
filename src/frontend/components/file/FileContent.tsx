@@ -13,6 +13,8 @@ import { symbolAtPoint } from "../../utils/symbolClick";
 import { useModifierHeld } from "../../hooks/use-modifier-held";
 import { useSymbolHighlight } from "../../hooks/use-symbol-highlight";
 import { maybeShowSymbolTip } from "../../utils/tips";
+import { useChangedLines } from "../../hooks/use-changed-lines";
+import { cn } from "@/frontend/lib/utils";
 
 interface FileContentProps {
   filePath: string;
@@ -39,6 +41,10 @@ interface FileContentProps {
   // Overrides the default working-tree image endpoint (git view reads a blob at
   // a specific sha via /image/git). When omitted, the working-tree URL is used.
   imageUrl?: string;
+  /** Flash the lines a rewrite of the file brought in (TASK-136). The working
+   * tree's file only: a commit's file is fixed, and moving between commits
+   * is not an edit. Source view only — a rendered preview has no lines. */
+  highlightChanges?: boolean;
 }
 
 export function FileContent({
@@ -58,6 +64,7 @@ export function FileContent({
   anchorJump,
   onAnchorJumped,
   imageUrl: imageUrlProp,
+  highlightChanges = false,
 }: FileContentProps) {
   const langConfig = useMemo(() => getLanguageFromPath(filePath), [filePath]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -92,6 +99,15 @@ export function FileContent({
         ?? [{ text: line.content, type: null }],
     );
   }, [content, langConfig, showPreview]);
+
+  // What the change flash compares (TASK-136): the source lines, only while
+  // the source is what is drawn. Off for a preview, so switching to it and
+  // back is a fresh baseline rather than an edit.
+  const sourceLines = useMemo(
+    () => (showPreview || !content || content.isBinary ? null : content.lines.map((line) => line.content)),
+    [content, showPreview],
+  );
+  const lineFlash = useChangedLines(highlightChanges && !showPreview ? filePath : null, sourceLines);
 
   // The parsed frontmatter, only when the preview is the branch that renders:
   // the source view shows the raw block, unchanged (TASK-87).
@@ -284,7 +300,11 @@ export function FileContent({
           const tokens = lineTokens[idx] ?? [];
 
           return (
-            <div key={line.lineNum} data-line={line.lineNum} className="flex group">
+            <div
+              key={line.lineNum}
+              data-line={line.lineNum}
+              className={cn("flex group", lineFlash?.lines.has(idx) && lineFlash.className)}
+            >
               <div className="w-12 shrink-0 text-right pr-4 text-xs text-muted-foreground/50 select-none border-r border-border">
                 {line.lineNum.toString().padStart(maxLineNum, " ")}
               </div>

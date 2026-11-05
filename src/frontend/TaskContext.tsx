@@ -21,6 +21,7 @@ import { byRecency } from "./task-list";
 import { retainTaskViewStates } from "./view-state-store";
 import { ignoredEntriesOf } from "./utils/ignored-files";
 import { generateUUID } from "./utils/uuid";
+import { changePulses } from "./change-pulse-store";
 import type { FilesResponse } from "./types/file";
 import type { TaskState } from "./components/v2/StatusDot";
 import type {
@@ -537,9 +538,16 @@ export function TaskProvider({ children }: { children: ReactNode }) {
             // has nothing to tell the listing.
             const listedIgnored = (id: string) =>
               ignoredEntriesOf(queryClient.getQueryData<FilesResponse>(taskKeys.files(id)));
-            const keys = invalidationsFor(message, [message.taskId, ...extra], listedIgnored);
+            const roots = [message.taskId, ...extra];
+            const keys = invalidationsFor(message, roots, listedIgnored);
             for (const queryKey of keys) {
               void queryClient.invalidateQueries({ queryKey });
+            }
+            // And the rows showing those paths flash (TASK-136). An overflow
+            // (`files: null`) names nothing: a checkout or an install moved
+            // everything, and lighting every row says nothing about where.
+            for (const id of roots) {
+              changePulses.record(id, message.files ?? [], message.ignored ?? []);
             }
             return;
           }
@@ -613,6 +621,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     for (const p of projects) ids.add(rootId(projectRoot(p.id)));
     retainTaskViewStates(ids);
     retainLayouts(ids);
+    changePulses.retain(ids);
   }, [tasks, projects, loaded]);
 
   const createTask = useCallback(async (options: CreateTaskOptions = {}, reporting?: RequestOptions) => {

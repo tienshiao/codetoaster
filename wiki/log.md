@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-11-04
+* **Update**: [Change watcher and shared watch streams](/modules/change-watcher.md) gains a Change highlighting section for TASK-136: frame-driven row pulses and content-compared line flashes, what stays quiet and why, collapsed directories, and the per-path parity that restarts a fade.
+
 ## 2026-10-29
 * **Update**: [Two test runners](/conventions/testing.md) drops the test-first preference, following CLAUDE.md; its Test first section becomes Test requirements, keeping route-level tests and determinism.
 * **Creation**: [Change watcher and shared watch streams](/modules/change-watcher.md) for TASK-135: the streams a task watches, the refcounted WatchPool that shares them per directory, error fan-out and retry, and why there is no watch without a browser.

@@ -7,6 +7,7 @@ import { useTaskDiff } from "./hooks/use-task-diff";
 import { useViewState } from "./hooks/use-view-state";
 import { useHunkExpansions } from "./hooks/use-hunk-expansions";
 import { getViewState, setViewField, viewRef } from "./view-state-store";
+import { useChangeBaseline } from "./change-pulse-store";
 import { DiffLayout, type DiffLayoutScroll } from "./components/diff/DiffLayout";
 import { Button } from "./components/ui/button";
 import {
@@ -60,6 +61,9 @@ export function DiffView({ root, onSubmit, onOpenFile, destination = "terminal" 
   const submitCopy = SUBMIT_COPY[destination];
   const { data, isLoading: loading, error: queryError, refetch } = useTaskDiff(root);
   const files = useMemo(() => data ?? [], [data]);
+  // Held here, not in the layout: the layout is swapped for "No changes
+  // detected" and back, and the first file to appear is the change (TASK-136).
+  const changeSince = useChangeBaseline(rootId(root));
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
 
   // The whole-working-tree diff's slot. The review it feeds is a separate,
@@ -187,6 +191,8 @@ export function DiffView({ root, onSubmit, onOpenFile, destination = "terminal" 
       <DiffLayout
         files={files}
         root={root}
+        highlightChanges
+        changeSince={changeSince}
         viewModeOverride={viewModeOverride}
         onViewModeOverride={setViewModeOverride}
         selectedFile={selectedFile}

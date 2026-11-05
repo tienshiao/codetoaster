@@ -409,6 +409,40 @@
   --duration-fast: 140ms;
   --duration-slow: 220ms;
   --duration-pulse: 1600ms;
+  /* A row or line the agent just changed (TASK-136). Long on purpose: it is
+     read out of the corner of an eye while looking at something else. Must
+     match PULSE_MS in change-pulse-store.ts, which is how long a pulse counts. */
+  --duration-change-flash: 3000ms;
+}
+
+/* The change flash. An inset shadow rather than a background, so it sits over
+   whatever the row already has — a diff line's green, a selected row's blue —
+   and hands it back untouched. Held for the first fifth so a glance catches
+   it, then faded. Two names for one animation: `flashClass` alternates them,
+   because a change of `animation-name` is what restarts a fade on a row that
+   changes again while it is still fading. A table row cannot draw a shadow of
+   its own under `border-collapse`, so on a `tr` it is the cells that run it. */
+@keyframes ct-change-flash-a {
+  0%, 20% { box-shadow: inset 0 0 0 100vmax var(--changed); }
+  100%    { box-shadow: inset 0 0 0 100vmax transparent; }
+}
+@keyframes ct-change-flash-b {
+  0%, 20% { box-shadow: inset 0 0 0 100vmax var(--changed); }
+  100%    { box-shadow: inset 0 0 0 100vmax transparent; }
+}
+.change-flash-a:not(tr), tr.change-flash-a > td {
+  animation: ct-change-flash-a var(--duration-change-flash) var(--ease-out);
+}
+.change-flash-b:not(tr), tr.change-flash-b > td {
+  animation: ct-change-flash-b var(--duration-change-flash) var(--ease-out);
+}
+/* Without motion the cue is still worth having: the tint holds for the whole
+   window and then goes, in one step, with nothing in between. */
+@media (prefers-reduced-motion: reduce) {
+  .change-flash-a:not(tr), tr.change-flash-a > td,
+  .change-flash-b:not(tr), tr.change-flash-b > td {
+    animation-timing-function: steps(1, end);
+  }
 }
 
 @keyframes ct-busy-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
@@ -454,6 +488,9 @@
   --selected: oklch(var(--ct-blue-500-ch) / 0.11);
   --selected-border: oklch(var(--ct-blue-500-ch) / 0.35);
   --selected-foreground: var(--ct-slate-900);
+  /* What the agent just changed: busy's blue, since it is the agent's work,
+     and stronger than a selection so it reads on a selected row too. */
+  --changed: oklch(var(--ct-blue-500-ch) / 0.24);
 
   --primary: var(--ct-blue-600);
   --primary-hover: var(--ct-blue-700);
@@ -536,6 +573,7 @@
   --selected: oklch(var(--ct-blue-500-ch) / 0.17);
   --selected-border: oklch(var(--ct-blue-500-ch) / 0.35);
   --selected-foreground: oklch(0.975 0.003 258);
+  --changed: oklch(var(--ct-blue-500-ch) / 0.32);
 
   --primary: var(--ct-blue-500);
   --primary-hover: var(--ct-blue-400);

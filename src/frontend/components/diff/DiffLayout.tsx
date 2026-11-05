@@ -7,10 +7,12 @@ import {
   type Dispatch,
   type SetStateAction,
   type ReactNode,
+  type ComponentProps,
   type DOMAttributes,
 } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { RepoRoot } from "@/frontend/repo-root";
+import { rootId, type RepoRoot } from "@/frontend/repo-root";
+import { changePulses, useChangePulses } from "@/frontend/change-pulse-store";
 import { ResizeHandle } from "../v2/ResizeHandle";
 import { usePaneWidth } from "../../hooks/use-pane-width";
 import { FileTree } from "./FileTree";
@@ -113,6 +115,27 @@ interface DiffLayoutProps {
   showViewModeToggle?: boolean;
 
   symbol?: DiffLayoutSymbol;
+
+  /** Flash the tree rows and diff lines the agent just changed (TASK-136).
+   * The working-tree consumers turn it on; a commit's diff cannot change, and
+   * a commit view whose base is switched would otherwise flash as if edited. */
+  highlightChanges?: boolean;
+  /** When changes start counting for the tree (`useChangeBaseline`). Defaults
+   * to the tree's own mount; a consumer that swaps the layout out for an empty
+   * diff passes its own, so the first file to appear still flashes. */
+  changeSince?: number;
+}
+
+/** The tree with its change flash. Its own component so a `changed` frame
+ * re-renders the tree rather than every diff in the layout, and so a layout
+ * with no tree subscribes to nothing. */
+function FlashingFileTree({
+  flashRoot,
+  flashSince,
+  ...props
+}: ComponentProps<typeof FileTree> & { flashRoot: string | null; flashSince?: number }) {
+  const changeFlash = useChangePulses(flashRoot, changePulses, flashSince);
+  return <FileTree {...props} changeFlash={changeFlash} />;
 }
 
 // The comment-free presentation + navigation core shared by the working-tree
@@ -142,6 +165,8 @@ export function DiffLayout({
   showFileTree = true,
   showViewModeToggle = true,
   symbol,
+  highlightChanges = false,
+  changeSince,
 }: DiffLayoutProps) {
   const diffContainerRef = useRef<HTMLDivElement>(null);
   const fileRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -345,6 +370,7 @@ export function DiffLayout({
             imageRefs={imageRefs}
             onViewFile={onViewFile}
             onRevealFile={onRevealFile}
+            highlightChanges={highlightChanges}
           />
         </div>
       );
@@ -369,6 +395,7 @@ export function DiffLayout({
           imageRefs={imageRefs}
           onViewFile={onViewFile}
           onRevealFile={onRevealFile}
+          highlightChanges={highlightChanges}
         />
       </div>
     ));
@@ -394,7 +421,9 @@ export function DiffLayout({
       {showFileTree && (
         <>
           <div {...treeWidth.paneProps} className="overflow-hidden">
-            <FileTree
+            <FlashingFileTree
+              flashRoot={highlightChanges && root ? rootId(root) : null}
+              flashSince={changeSince}
               files={files}
               selectedFile={selectedFile}
               onSelectFile={handleSelectFile}

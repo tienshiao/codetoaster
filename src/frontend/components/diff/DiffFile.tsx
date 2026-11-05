@@ -9,6 +9,8 @@ import { DiffStat } from "./DiffStat";
 import { formatSize } from "../../utils/formatSize";
 import type { FileDiff, DiffHunk, HunkExpansionState, DiffLine, LineComment } from "../../types/diff";
 import type { UseCommentsReturn } from "../../hooks/use-comments";
+import { useChangedLines } from "../../hooks/use-changed-lines";
+import { cn } from "@/frontend/lib/utils";
 
 // Read-only consumers (the git commit view) omit commentState / onExpandContext:
 // no per-line comment affordances and no working-tree context expansion.
@@ -39,6 +41,15 @@ interface DiffFileProps {
   /** Shows the file in Finder (TASK-131). The working-tree diff's, for the
    * same reason as `onViewFile`, and absent where Finder cannot be shown. */
   onRevealFile?: (path: string) => void;
+  /** Flash the lines an update to this file's diff brought in (TASK-136):
+   * the working-tree diff's, never a commit's. */
+  highlightChanges?: boolean;
+}
+
+/** One diff line as the change flash compares it: its kind and its text, and
+ * not its line numbers, which every insertion above it shifts. */
+function lineIdentity(line: DiffLine): string {
+  return `${line.type}\u0000${line.content}`;
 }
 
 const EMPTY_EXPANSIONS = new Map<string, HunkExpansionState>();
@@ -177,8 +188,44 @@ export function DiffFile({
   imageRefs,
   onViewFile,
   onRevealFile,
+  highlightChanges = false,
 }: DiffFileProps) {
   const hunkExpansions = hunkExpansionsProp ?? EMPTY_EXPANSIONS;
+
+  // The hunks' lines in order, headers left out: a header's numbers move with
+  // every edit above it, and it is not a line anyone wrote. `flatIndex` takes a
+  // rendered row (`[hunkIdx][lineIdx]`) back to its place in this list. Not
+  // built at all for a diff that cannot change (a commit's).
+  const flat = useMemo(() => {
+    if (!highlightChanges) return null;
+    const identities: string[] = [];
+    const contextAt: boolean[] = [];
+    const flatIndex = file.hunks.map((hunk) =>
+      hunk.lines.map((line) => {
+        if (line.type === "hunk-header") return -1;
+        contextAt.push(line.type === "context");
+        return identities.push(lineIdentity(line)) - 1;
+      }),
+    );
+    return { identities, contextAt, flatIndex };
+  }, [file.hunks, highlightChanges]);
+  const lineFlash = useChangedLines(flat ? file.newPath : null, flat?.identities ?? null);
+  // A new hunk brings its context lines into the diff with it, and they are
+  // new to the comparison without anyone having written them. They light only
+  // when nothing else did: a reverted edit leaves no line of its own, and the
+  // one now standing there is the only cue.
+  const litLines = useMemo(() => {
+    if (!lineFlash || !flat) return null;
+    const written = [...lineFlash.lines].filter((index) => !flat.contextAt[index]);
+    return written.length > 0 ? new Set(written) : lineFlash.lines;
+    // On `lines`, not `lineFlash`: the hook hands back a new wrapper each
+    // render, and `lines` is the part that only changes with a flash.
+  }, [lineFlash?.lines, flat]);
+  const flashFor = (hunkIdx: number, lineIdx: number): string | undefined => {
+    if (!lineFlash || !litLines || !flat) return undefined;
+    const index = flat.flatIndex[hunkIdx]?.[lineIdx] ?? -1;
+    return index !== -1 && litLines.has(index) ? lineFlash.className : undefined;
+  };
   const comments = commentState?.comments;
   const activeCommentLines = commentState?.activeCommentLines;
   const editingCommentId = commentState?.editingCommentId ?? null;
@@ -469,7 +516,7 @@ export function DiffFile({
 
                         return (
                           <React.Fragment key={`${hunkIdx}-${lineIdx}`}>
-                            <tr className={`diff-line group leading-5 ${lineBgClass}`}>
+                            <tr className={cn("diff-line group leading-5", lineBgClass, flashFor(hunkIdx, lineIdx))}>
                               <td className="w-[1px] whitespace-nowrap px-2 text-right text-xs text-muted-foreground/50 select-none border-r border-border">
                                 {line.oldLineNum ?? ""}
                               </td>

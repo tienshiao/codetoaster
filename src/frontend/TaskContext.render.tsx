@@ -404,6 +404,21 @@ test("a changed frame invalidates the task's file, diff and search queries", asy
   ]);
 });
 
+// TASK-136. The same frame lights the rows showing those paths: the wiring is
+// that it reaches the shared pulse store the lists read, and that an overflow,
+// which names nothing, lights nothing.
+test("a changed frame records its paths for the change flash", async () => {
+  const { changePulses } = await import("./change-pulse-store");
+  render(<TaskProvider>{null}</TaskProvider>);
+
+  deliver({ type: "changed", taskId: "t7", files: ["src/a.ts"], history: false, ignored: ["dist/a.js"] });
+  expect(changePulses.pulses("t7").get("src/a.ts")?.ignored).toBe(false);
+  expect(changePulses.pulses("t7").get("dist/a.js")?.ignored).toBe(true);
+
+  deliver({ type: "changed", taskId: "t8", files: null, history: false });
+  expect(changePulses.pulses("t8").size).toBe(0);
+});
+
 // TASK-130. The mapping takes the listed ignored directories as an argument;
 // what is pinned here is that the argument is the shared cache's listing, under
 // the key the Files tree fetches it by. A build writing into a `dist` the

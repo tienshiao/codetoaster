@@ -25,6 +25,7 @@ import { useRevealMenu } from "@/frontend/hooks/use-reveal";
 import { useTaskDiff } from "@/frontend/hooks/use-task-diff";
 import { useIgnoredTree, useTaskFiles } from "@/frontend/hooks/use-task-files";
 import { useViewState } from "@/frontend/hooks/use-view-state";
+import { useChangePulses } from "@/frontend/change-pulse-store";
 import {
   EXPLORER_SECTIONS,
   type BacklogTab,
@@ -238,6 +239,9 @@ function ChangesSection({ root, open, handlers }: SectionProps) {
     };
   }, [data]);
   const revealMenu = useRevealMenu(root);
+  // Here and not in the tree, so the baseline is the section's mount: the tree
+  // is replaced by "No changes." and back as the diff empties and fills.
+  const changeFlash = useChangePulses(rootId(root));
 
   if (isLoading) return <ExplorerLoading>Loading changes…</ExplorerLoading>;
 
@@ -267,6 +271,7 @@ function ChangesSection({ root, open, handlers }: SectionProps) {
           collapsedPaths={collapsedPaths}
           onCollapsedPathsChange={setCollapsedPaths}
           onRowContextMenu={revealMenu.onContextMenu}
+          changeFlash={changeFlash}
         />
       </div>
       {/* Beside the tree rather than inside it: React events cross a portal,
@@ -289,6 +294,7 @@ function FilesSection({ root, open, handlers }: SectionProps) {
   // it is expanded (TASK-130).
   const tree = useIgnoredTree(root, data?.files, expandedPaths);
   const revealMenu = useRevealMenu(root);
+  const changeFlash = useChangePulses(rootId(root));
 
   if (isLoading) return <ExplorerLoading>Loading files…</ExplorerLoading>;
 
@@ -318,6 +324,7 @@ function FilesSection({ root, open, handlers }: SectionProps) {
           unloadedDirs={tree.unloaded}
           notes={tree.notes}
           onRowContextMenu={revealMenu.onContextMenu}
+          changeFlash={changeFlash}
         />
       </div>
       <PointMenu {...revealMenu.menu} />

@@ -8,6 +8,7 @@ import { collectPathPrefixes, pruneSet, toggleInSet } from "../../view-state-sto
 import { cn } from "@/frontend/lib/utils";
 import type { FileTreeNode } from "../../utils/sortFiles";
 import type { FileDiff } from "../../types/diff";
+import type { ChangeFlash } from "../../change-pulse-store";
 
 interface FileTreeProps {
   files: FileDiff[];
@@ -30,9 +31,13 @@ interface FileTreeProps {
    * changed paths and may itself be gone. The tree only reports it; whether a
    * menu opens, and the default with it, is the caller's. */
   onRowContextMenu?: (event: MouseEvent, path: string) => void;
+  /** Rows the agent just changed flash (TASK-136), a collapsed directory for
+   * anything under it. Passed for the working-tree diff only: a commit's
+   * files cannot change. */
+  changeFlash?: ChangeFlash;
 }
 
-export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts, collapsedPaths, onCollapsedPathsChange: setCollapsedPaths, className, onRowContextMenu }: FileTreeProps) {
+export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, totalDeletions, commentCounts, collapsedPaths, onCollapsedPathsChange: setCollapsedPaths, className, onRowContextMenu, changeFlash }: FileTreeProps) {
   const [filter, setFilter] = useState("");
 
   const filteredFiles = filter
@@ -74,13 +79,22 @@ export function FileTree({ files, selectedFile, onSelectFile, totalAdditions, to
       const isFile = value[FILE_KEY];
       const file = value[FILE_KEY];
       const isExpanded = !collapsedPaths.has(fullPath);
+      const flash =
+        changeFlash &&
+        (file
+          ? changeFlash.row(file.newPath)
+          : isExpanded
+            ? undefined
+            : changeFlash.under(fullPath));
 
       return (
         <div key={fullPath}>
           <div
-            className={`flex items-center gap-1 py-0.5 px-2 text-xs cursor-pointer hover:bg-accent/50 ${
-              selectedFile === file?.newPath ? "bg-accent text-accent-foreground" : "text-foreground/80"
-            }`}
+            className={cn(
+              "flex items-center gap-1 py-0.5 px-2 text-xs cursor-pointer hover:bg-accent/50",
+              selectedFile === file?.newPath ? "bg-accent text-accent-foreground" : "text-foreground/80",
+              flash,
+            )}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
             title={fullPath}
             onClick={() => isFile ? onSelectFile(file!.newPath) : toggleDirectory(fullPath)}

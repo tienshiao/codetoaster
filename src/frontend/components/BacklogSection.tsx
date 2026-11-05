@@ -19,6 +19,7 @@ import { useBacklog } from "@/frontend/hooks/use-backlog";
 import { useHoverPointer } from "@/frontend/hooks/use-hover-pointer";
 import { useRevealMenu } from "@/frontend/hooks/use-reveal";
 import { useViewState } from "@/frontend/hooks/use-view-state";
+import { useChangePulses } from "@/frontend/change-pulse-store";
 import { viewRef } from "@/frontend/view-state-store";
 import {
   BACKLOG_SORTS,
@@ -88,6 +89,9 @@ export function BacklogSection({
     [data, filter, openSort, closedSort],
   );
   const revealMenu = useRevealMenu(root);
+  // A card is its task file, so a write to that file — the agent ticking a
+  // criterion, a status change — is what flashes it (TASK-136).
+  const changeFlash = useChangePulses(rootId(root));
 
   // "Nothing has answered yet", rather than `isLoading`: React Query's
   // `isLoading` is `isPending && isFetching`, so a first load the browser has
@@ -195,6 +199,7 @@ export function BacklogSection({
                     task={task}
                     onOpen={() => open({ kind: "file", path: task.path })}
                     onContextMenu={onContextMenu && ((event) => onContextMenu(event, task.path))}
+                    flash={changeFlash?.row(task.path)}
                   />
                 ))}
               </div>
@@ -224,10 +229,13 @@ function BacklogCard({
   task,
   onOpen,
   onContextMenu,
+  flash,
 }: {
   task: BacklogTask;
   onOpen: () => void;
   onContextMenu?: (event: MouseEvent) => void;
+  /** The change-flash class, while the card's file has just been written. */
+  flash?: string;
 }) {
   const chips = task.priority || task.labels.length > 0;
   const hoverable = useHoverPointer();
@@ -256,6 +264,7 @@ function BacklogCard({
           "flex w-full cursor-pointer flex-col items-stretch gap-0.5 rounded-md px-2 py-1 text-left",
           "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
           "text-foreground hover:bg-hover",
+          flash,
         )}
       >
         <span className="flex min-h-5 items-center gap-2">

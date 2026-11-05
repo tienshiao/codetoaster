@@ -7,6 +7,7 @@ import { collectDirectoryPaths, collectPathPrefixes, pruneSet, toggleInSet, with
 import { compareTreeSiblings } from "../../utils/sortFiles";
 import { cn } from "@/frontend/lib/utils";
 import type { FileInfo } from "../../types/file";
+import type { ChangeFlash } from "../../change-pulse-store";
 
 interface FileTreeProps {
   files: FileInfo[];
@@ -30,6 +31,10 @@ interface FileTreeProps {
   /** A right-click on a row, file or directory (TASK-131). The tree only
    * reports it; whether a menu opens, and the default with it, is the caller's. */
   onRowContextMenu?: (event: MouseEvent, path: string) => void;
+  /** Rows the agent just changed flash (TASK-136). A collapsed directory
+   * flashes for anything under it, since its rows are not there to. Absent
+   * for a tree that cannot change — a commit's. */
+  changeFlash?: ChangeFlash;
 }
 
 interface TreeNode {
@@ -88,7 +93,7 @@ function sortTree(nodes: TreeNode[]): TreeNode[] {
     .sort((a, b) => compareTreeSiblings(a.isDirectory, b.isDirectory, a.name, b.name));
 }
 
-export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onExpandedPathsChange: setExpandedPaths, className, unloadedDirs, notes, onRowContextMenu }: FileTreeProps) {
+export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onExpandedPathsChange: setExpandedPaths, className, unloadedDirs, notes, onRowContextMenu, changeFlash }: FileTreeProps) {
   const [filter, setFilter] = useState("");
 
   const filteredFiles = useMemo(() => {
@@ -142,13 +147,19 @@ export function FileTree({ files, selectedFile, onSelectFile, expandedPaths, onE
       const isExpanded = expandedPaths.has(node.path);
       const isSelected = selectedFile === node.path;
       const note = node.isDirectory && isExpanded ? notes?.get(node.path) : undefined;
+      const flash =
+        changeFlash &&
+        (changeFlash.row(node.path) ??
+          (node.isDirectory && !isExpanded ? changeFlash.under(node.path) : undefined));
 
       return (
         <div key={node.path}>
           <div
-            className={`flex items-center gap-1 py-0.5 px-2 text-xs cursor-pointer hover:bg-accent/50 ${
-              isSelected ? "bg-accent text-accent-foreground" : "text-foreground/80"
-            }`}
+            className={cn(
+              "flex items-center gap-1 py-0.5 px-2 text-xs cursor-pointer hover:bg-accent/50",
+              isSelected ? "bg-accent text-accent-foreground" : "text-foreground/80",
+              flash,
+            )}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
             title={node.ignored ? `${node.path} (ignored)` : node.path}
             data-ignored={node.ignored || undefined}
