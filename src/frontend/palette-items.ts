@@ -16,6 +16,7 @@ import {
   Tag,
   Terminal,
   X,
+  Pause,
   GitBranch,
   type LucideIcon,
 } from "lucide-react";
@@ -284,11 +285,18 @@ export function actionEntries({
     entries.push(commandEntry(newShell, mac));
   }
 
+  // Suspend, by its name (TASK-140). It was "Close task" on the palette and an
+  // X on every sidebar row, which read as something final; what it does is
+  // what the harvester does after 30 idle minutes anyway, so its only use is
+  // getting the memory back now or stopping a runaway agent, and this is the
+  // one door left to it. "close" stays findable for anyone typing the old name.
   if (task?.lifecycle === "live") {
     entries.push({
       id: "action:close-task",
-      label: "Close task",
-      icon: X,
+      label: "Suspend now",
+      icon: Pause,
+      detail: "resumes when opened",
+      keywords: ["close", "stop"],
       action: { type: "close-task" },
     });
   }

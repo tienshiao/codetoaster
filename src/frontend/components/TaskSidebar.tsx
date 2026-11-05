@@ -7,7 +7,6 @@ import {
   Plus,
   SlidersHorizontal,
   Trash2,
-  X,
 } from "lucide-react";
 import { taskStateOf, useTasks } from "@/frontend/TaskContext";
 import { archiveSummary } from "@/frontend/archive-summary";
@@ -159,13 +158,13 @@ export function ArchiveTaskDialog({
 }
 
 /**
- * The close confirmation, for a task whose agent is still working.
+ * The suspend confirmation, for a task whose agent is still working.
  *
- * Its own component for the same reason `ArchiveTaskDialog` is one: two
- * surfaces ask the same question — the row's X and the command palette's Close
- * task — and the wording of what closing costs must not drift between them.
+ * The command palette's Suspend now is the only surface that asks it since the
+ * row's X went (TASK-140); it stays here beside `ArchiveTaskDialog`, which the
+ * palette imports from the same place.
  */
-export function CloseTaskDialog({
+export function SuspendTaskDialog({
   open,
   label,
   onConfirm,
@@ -179,9 +178,9 @@ export function CloseTaskDialog({
   return (
     <Dialog
       open={open}
-      title="Close this task?"
-      description={`${label} is still working. Closing stops the agent; the task keeps its row and can be resumed.`}
-      confirmLabel="Close task"
+      title="Suspend this task?"
+      description={`${label} is still working. Suspending stops the agent and its shells; the task keeps its row and resumes when it is opened.`}
+      confirmLabel="Suspend"
       confirmVariant="destructive"
       onConfirm={onConfirm}
       onClose={onClose}
@@ -192,10 +191,7 @@ export function CloseTaskDialog({
 interface TaskRowActionsProps {
   taskId: string;
   label: string;
-  /** Closing a working agent interrupts it, so that one asks first. */
-  busy: boolean;
   onRename: (id: string, title: string) => void;
-  onClose: (id: string) => void;
   /** What archiving would cost, fetched when the dialog opens. Resolving to
    * null is a failure the dialog says out loud rather than a blank. */
   onArchivePreview: (id: string) => Promise<ArchivePreview | null>;
@@ -203,27 +199,24 @@ interface TaskRowActionsProps {
 }
 
 /**
- * Rename, archive and close, as siblings of the row rather than children of it
- * — see `ShellTask.actions`. Plain buttons and not a menu behind an ellipsis:
- * a menu would need a popover the v2 system does not have yet, and would put
- * every action two keystrokes away instead of one.
+ * Rename and archive, as siblings of the row rather than children of it — see
+ * `ShellTask.actions`. Plain buttons and not a menu behind an ellipsis: a menu
+ * would need a popover the v2 system does not have yet, and would put every
+ * action two keystrokes away instead of one.
  *
- * Close and archive sit next to each other and mean very different things, so
- * only one of them is destructive: closing suspends a task and keeps its row,
- * which is the resting state of a finished conversation (§5.5), while
- * archiving is how one leaves (§6). The archive is the one that always asks.
+ * No close (TASK-140). It sat beside archive as an X, read as something final,
+ * and did what the harvester does by itself after 30 idle minutes: suspend.
+ * Its remaining uses — the memory back now, a runaway agent stopped — are the
+ * command palette's Suspend now, which says what it does.
  */
 export function TaskRowActions({
   taskId,
   label,
-  busy,
   onRename,
-  onClose,
   onArchivePreview,
   onArchive,
 }: TaskRowActionsProps) {
   const [renaming, setRenaming] = useState<string | null>(null);
-  const [confirmingClose, setConfirmingClose] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
   return (
@@ -241,12 +234,6 @@ export function TaskRowActions({
         label={`Archive ${label}`}
         size="sm"
         onClick={() => setArchiving(true)}
-      />
-      <IconButton
-        icon={X}
-        label={`Close ${label}`}
-        size="sm"
-        onClick={() => (busy ? setConfirmingClose(true) : onClose(taskId))}
       />
 
       <ArchiveTaskDialog
@@ -274,13 +261,6 @@ export function TaskRowActions({
           data-1p-ignore
         />
       </Dialog>
-
-      <CloseTaskDialog
-        open={confirmingClose}
-        label={label}
-        onConfirm={() => onClose(taskId)}
-        onClose={() => setConfirmingClose(false)}
-      />
     </>
   );
 }
@@ -526,7 +506,6 @@ export function useTaskSidebar({
     projects,
     unclaimed,
     renameTask,
-    closeTask,
     loadArchivedTasks,
     archivePreview,
     archiveTask,
@@ -564,7 +543,6 @@ export function useTaskSidebar({
     (id: string, title: string) => void renameTask(id, title),
     [renameTask],
   );
-  const handleClose = useCallback((id: string) => void closeTask(id), [closeTask]);
   const handleArchive = useCallback((id: string) => void archiveTask(id), [archiveTask]);
   const handleDeleteForGood = useCallback(
     (id: string) => void deleteTaskForGood(id),
@@ -753,9 +731,7 @@ export function useTaskSidebar({
           <TaskRowActions
             taskId={task.id}
             label={label}
-            busy={state === "busy"}
             onRename={handleRename}
-            onClose={handleClose}
             onArchivePreview={handleArchivePreview}
             onArchive={handleArchive}
           />
@@ -769,7 +745,6 @@ export function useTaskSidebar({
     selectedTaskId,
     onSelectTask,
     handleRename,
-    handleClose,
     handleArchivePreview,
     handleArchive,
     handleDeleteForGood,

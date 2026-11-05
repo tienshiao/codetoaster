@@ -571,9 +571,9 @@ harvester tick. A merged task is done; that is the natural set to suggest archiv
                      Stop ─────────────────► idle ────┤
                      Notification ──► needs_attention ┤
                                                       │
-                    idle + no views + timeout         │  manual "close"
-                    or daemon restart                 │  (chat has no explicit close;
-                          ▼                           │   this is the escape hatch)
+                    idle + no views + timeout         │  manual "Suspend now"
+                    or daemon restart                 │  (command palette; chat has no
+                          ▼                           │   close, this is the escape hatch)
                     ┌───────────┐                     │
                     │ suspended │◄────────────────────┘
                     └─────┬─────┘
@@ -618,8 +618,9 @@ opening the task restores the checkout before resuming the agent.
 ```
 
 The trees move right; the content moves into tabs. The agent terminal is tab one and
-cannot be closed — closing it would mean "kill the task", which is what the task list's
-close action is for.
+cannot be closed — closing it would mean "kill the task", which is what the command
+palette's Suspend now is for (the task list's own close action was removed in TASK-140:
+the harvester already suspends an idle task, and an X on every row read as an ending).
 
 This layout is built, as `frontend/components/v2/AppShell.tsx`, together with the v2
 design system it is drawn from — the token layer in `frontend/index.css` and the shell

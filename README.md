@@ -44,12 +44,15 @@ states:
 - **live** — a PTY is running `claude`, and the agent reports `busy`, `idle`, or
   `needs_attention` back through hooks (see [Agent integration](#agent-integration)).
 - **suspended** — no processes. A task suspends when it has been idle with
-  nobody watching for `harvest_after`, when you close it, or when the daemon
-  restarts (a restart suspends *everything*, rather than losing it). Its
-  scrollback is snapshotted to disk first.
+  nobody watching for `harvest_after`, when you choose Suspend now in the command
+  palette (⌘P), or when the daemon restarts (a restart suspends *everything*,
+  rather than losing it). Its scrollback is snapshotted to disk first.
 - **archived** — the deliberate, confirmed operation. The confirmation tells you
   what it will cost before you agree: the worktree is removed, a WIP snapshot is
   written unconditionally, and the branch is kept unless it is merged or pushed.
+  Unarchive, on the archived row or in the palette, brings it back: the checkout
+  is rebuilt on its branch, its uncommitted work restored while the snapshot is
+  kept (30 days), and the agent resumed.
 
 Suspended tasks are ordinary, clickable rows in the sidebar, not tombstones.
 Opening one restores its checkout if it was evicted, replays the stored
@@ -146,7 +149,7 @@ the panel. Selections open tabs rather than filling a pane below the tree.
 
 ### Command palette
 ⌘P (Ctrl+Shift+P) opens one palette over everything: open tabs, tasks, actions
-(new/close/resume/archive a task, new shell, every leader chord that would
+(new/suspend/resume/archive/unarchive a task, new shell, every leader chord that would
 actually do something here, find in terminal, toggle either sidebar), changed
 files, commits, refs, and a file search.
 
@@ -370,7 +373,8 @@ resumed or its agent next stops.
 The values are **per daemon, not per project**: both guards are about this
 machine's memory and disk, and a laptop and a build server want different
 numbers for the same set of repositories. There is no settings-UI control for
-either yet; manual close and manual archive remain the escape hatches.
+either yet; the palette's Suspend now and a manual archive remain the escape
+hatches.
 
 ### Never start the daemon from inside a Claude Code session
 

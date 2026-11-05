@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { taskDisplayNames, taskStateOf, useTasks } from "@/frontend/TaskContext";
-import { ArchiveTaskDialog, CloseTaskDialog } from "@/frontend/components/TaskSidebar";
+import { ArchiveTaskDialog, SuspendTaskDialog } from "@/frontend/components/TaskSidebar";
 import {
   UnarchiveTaskDialog,
   unarchivePreviewAnswer,
@@ -105,7 +105,7 @@ export function CommandPaletteHost(props: CommandPaletteHostProps) {
   const navigateToTask = useOpenTask();
   const openTask = props.onSelectTask ?? navigateToTask;
 
-  // The confirmations outlive the palette: selecting Close, Archive or an
+  // The confirmations outlive the palette: selecting Suspend now, Archive or an
   // Unarchive shuts it and opens the dialog, so their state cannot live inside
   // the part that unmounts when the palette closes.
   const [confirmingClose, setConfirmingClose] = useState(false);
@@ -159,8 +159,7 @@ export function CommandPaletteHost(props: CommandPaletteHostProps) {
           {...props}
           onCloseTask={() => {
             if (!selected) return;
-            // Closing a working agent interrupts it, so that one asks first —
-            // the same rule as the sidebar row's X.
+            // Suspending a working agent interrupts it, so that one asks first.
             if (taskStateOf(selected) === "busy") setConfirmingClose(true);
             else void closeTask(selected.id);
           }}
@@ -195,7 +194,7 @@ export function CommandPaletteHost(props: CommandPaletteHostProps) {
         />
       )}
       {selected && (
-        <CloseTaskDialog
+        <SuspendTaskDialog
           open={confirmingClose}
           label={label}
           onConfirm={() => void closeTask(selected.id)}

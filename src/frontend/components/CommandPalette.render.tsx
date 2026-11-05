@@ -32,11 +32,19 @@ const unarchive = vi.hoisted(() => ({
   openTask: vi.fn(),
 }));
 
+// The live tasks, their state and the suspend call, which the TASK-140 tests
+// below fill in; empty for the rest of the file.
+const suspend = vi.hoisted(() => ({
+  tasks: [] as unknown[],
+  state: "idle",
+  closeTask: vi.fn(),
+}));
+
 vi.mock("@/frontend/TaskContext", () => ({
   useTasks: () => ({
-    tasks: [],
+    tasks: suspend.tasks,
     projects: [],
-    closeTask: vi.fn(),
+    closeTask: suspend.closeTask,
     resumeTask: vi.fn(),
     archivePreview: vi.fn(),
     archiveTask: vi.fn(),
@@ -45,7 +53,7 @@ vi.mock("@/frontend/TaskContext", () => ({
     unarchivePreview: unarchive.unarchivePreview,
     unarchiveTask: unarchive.unarchiveTask,
   }),
-  taskStateOf: () => "idle",
+  taskStateOf: () => suspend.state,
   taskDisplayNames: () => new Map(),
 }));
 vi.mock("@/frontend/hooks/use-task-nav", () => ({
@@ -54,7 +62,14 @@ vi.mock("@/frontend/hooks/use-task-nav", () => ({
 }));
 vi.mock("@/frontend/components/TaskSidebar", () => ({
   ArchiveTaskDialog: () => null,
-  CloseTaskDialog: () => null,
+  SuspendTaskDialog: ({ open, onConfirm }: { open: boolean; onConfirm: () => void }) =>
+    open ? (
+      <div role="dialog" aria-label="Suspend this task?">
+        <button type="button" onClick={onConfirm}>
+          Suspend
+        </button>
+      </div>
+    ) : null,
 }));
 vi.mock("@/frontend/hooks/use-task-diff", () => ({
   useTaskDiff: (root: RepoRoot | null, options: unknown) => {
@@ -93,6 +108,9 @@ beforeEach(() => {
   unarchive.unarchivePreview.mockReset();
   unarchive.unarchiveTask.mockReset();
   unarchive.openTask.mockReset();
+  suspend.tasks.length = 0;
+  suspend.state = "idle";
+  suspend.closeTask.mockReset();
 });
 
 function mount(props: Partial<Parameters<typeof CommandPaletteHost>[0]>) {
@@ -194,4 +212,37 @@ test("searching offers Unarchive for an archived task, and confirming it opens t
   });
   expect(unarchive.unarchiveTask).toHaveBeenCalledWith("t-archived");
   expect(unarchive.openTask).toHaveBeenCalledWith("t-archived");
+});
+
+// TASK-140 AC #3: with the row's X gone, Suspend now is the only door to a
+// suspend, so the rule that a working agent is asked about first lives here.
+function liveTask() {
+  suspend.tasks.push({
+    id: "t1",
+    projectId: "web",
+    title: "Fix the parser",
+    lifecycle: "live",
+    lastMessage: null,
+    agentState: "idle",
+  });
+}
+
+test("Suspend now suspends an idle task without asking", () => {
+  liveTask();
+  mount({ taskId: "t1" });
+  fireEvent.click(screen.getByRole("option", { name: /Suspend now/ }));
+  expect(suspend.closeTask).toHaveBeenCalledWith("t1");
+  expect(screen.queryByRole("dialog", { name: "Suspend this task?" })).toBeNull();
+});
+
+test("Suspend now asks first for a busy task, and suspends once confirmed", () => {
+  liveTask();
+  suspend.state = "busy";
+  mount({ taskId: "t1" });
+  fireEvent.click(screen.getByRole("option", { name: /Suspend now/ }));
+  expect(suspend.closeTask).not.toHaveBeenCalled();
+
+  screen.getByRole("dialog", { name: "Suspend this task?" });
+  fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
+  expect(suspend.closeTask).toHaveBeenCalledWith("t1");
 });

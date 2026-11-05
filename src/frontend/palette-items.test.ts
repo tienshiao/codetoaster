@@ -144,6 +144,16 @@ describe("actions", () => {
     expect(entries).toContain("action:new-shell");
   });
 
+  // TASK-140: the one door left to suspending says what it does, and is still
+  // found by anyone typing the old name.
+  test("a live task's suspend row is named for what it does and says it resumes", () => {
+    const entries = actionEntries({ task: task({ id: "a" }), layout: null, mac: true });
+    const suspend = entries.find((e) => e.id === "action:close-task")!;
+    expect(suspend.label).toBe("Suspend now");
+    expect(suspend.detail).toBe("resumes when opened");
+    expect(suspend.keywords).toContain("close");
+  });
+
   test("a suspended task can be resumed but not closed", () => {
     const suspended = task({ id: "a", lifecycle: "suspended" });
     const entries = ids(actionEntries({ task: suspended, layout: null, mac: true }));

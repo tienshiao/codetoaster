@@ -5,6 +5,7 @@ import { AppShell } from "./v2/AppShell";
 import {
   ArchivedRowActions,
   NewProjectButton,
+  SuspendTaskDialog,
   TaskRowActions,
   UnclaimedActions,
 } from "./TaskSidebar";
@@ -23,8 +24,8 @@ function renderNewProject(onCreate: (name: string, path: string) => void) {
 }
 
 /**
- * The sidebar's behaviours that only exist once something is mounted: whether
- * closing asks first, whether a row's controls can be reached without a
+ * The sidebar's behaviours that only exist once something is mounted: what
+ * the suspend confirmation says, whether a row's controls can be reached without a
  * pointer, and whether the dialogs actually commit. A rendering test, so
  * Vitest's, not `bun test`'s — see CLAUDE.md, "Testing".
  *
@@ -45,11 +46,7 @@ function previewOf(over: Partial<ArchivePreview> = {}): ArchivePreview {
   };
 }
 
-function mountActions(
-  busy: boolean,
-  preview: () => Promise<ArchivePreview | null> = async () => previewOf(),
-) {
-  const onClose = vi.fn();
+function mountActions(preview: () => Promise<ArchivePreview | null> = async () => previewOf()) {
   const onRename = vi.fn();
   const onArchive = vi.fn();
   const onArchivePreview = vi.fn(preview);
@@ -57,43 +54,36 @@ function mountActions(
     <TaskRowActions
       taskId="t1"
       label="Fix the parser"
-      busy={busy}
       onRename={onRename}
-      onClose={onClose}
       onArchivePreview={onArchivePreview}
       onArchive={onArchive}
     />,
   );
-  return { onClose, onRename, onArchive, onArchivePreview };
+  return { onRename, onArchive, onArchivePreview };
 }
 
-test("closing an idle task does not ask", () => {
-  const { onClose } = mountActions(false);
-  fireEvent.click(screen.getByRole("button", { name: "Close Fix the parser" }));
-  expect(onClose).toHaveBeenCalledWith("t1");
-  expect(screen.queryByRole("dialog")).toBeNull();
+// TASK-140: suspending lives in the command palette as Suspend now; the row
+// keeps rename and archive and nothing that reads like an ending.
+test("a task row offers rename and archive, and no close", () => {
+  mountActions();
+  screen.getByRole("button", { name: "Rename Fix the parser" });
+  screen.getByRole("button", { name: "Archive Fix the parser" });
+  expect(screen.queryByRole("button", { name: /^Close / })).toBeNull();
 });
 
-test("closing a busy task confirms first, and cancelling leaves it alone", () => {
-  const { onClose } = mountActions(true);
-  fireEvent.click(screen.getByRole("button", { name: "Close Fix the parser" }));
-  expect(onClose).not.toHaveBeenCalled();
-
-  screen.getByRole("dialog", { name: "Close this task?" });
-  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(onClose).not.toHaveBeenCalled();
-  expect(screen.queryByRole("dialog")).toBeNull();
-});
-
-test("confirming the close of a busy task closes it", () => {
-  const { onClose } = mountActions(true);
-  fireEvent.click(screen.getByRole("button", { name: "Close Fix the parser" }));
-  fireEvent.click(screen.getByRole("button", { name: "Close task" }));
-  expect(onClose).toHaveBeenCalledWith("t1");
+// The palette's Suspend now asks this for a busy task; which one asks is the
+// palette's test, what it says is this one.
+test("the suspend confirmation names what it does and says the task resumes", () => {
+  const onConfirm = vi.fn();
+  render(<SuspendTaskDialog open label="Fix the parser" onConfirm={onConfirm} onClose={vi.fn()} />);
+  screen.getByRole("dialog", { name: "Suspend this task?" });
+  screen.getByText(/^Fix the parser is still working\. .*resumes when it is opened\.$/);
+  fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
+  expect(onConfirm).toHaveBeenCalled();
 });
 
 test("rename is seeded with the label on screen and trims what it sends", () => {
-  const { onRename } = mountActions(false);
+  const { onRename } = mountActions();
   fireEvent.click(screen.getByRole("button", { name: "Rename Fix the parser" }));
 
   const field = screen.getByLabelText("Title") as HTMLInputElement;
@@ -105,7 +95,7 @@ test("rename is seeded with the label on screen and trims what it sends", () => 
 });
 
 test("a rename to nothing is refused", () => {
-  const { onRename } = mountActions(false);
+  const { onRename } = mountActions();
   fireEvent.click(screen.getByRole("button", { name: "Rename Fix the parser" }));
   fireEvent.change(screen.getByLabelText("Title"), { target: { value: "   " } });
   fireEvent.click(screen.getByRole("button", { name: "Rename" }));
@@ -113,7 +103,7 @@ test("a rename to nothing is refused", () => {
 });
 
 test("Escape dismisses a dialog without doing what it asked", () => {
-  const { onRename } = mountActions(false);
+  const { onRename } = mountActions();
   fireEvent.click(screen.getByRole("button", { name: "Rename Fix the parser" }));
   fireEvent.keyDown(document, { key: "Escape" });
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -128,7 +118,6 @@ test("Escape dismisses a dialog without doing what it asked", () => {
 test("archive waits for the preview before it will let anything be confirmed", async () => {
   let answer: (preview: ArchivePreview) => void = () => {};
   const { onArchive } = mountActions(
-    false,
     () => new Promise<ArchivePreview | null>((resolve) => (answer = resolve)),
   );
   fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
@@ -151,7 +140,7 @@ test("archive waits for the preview before it will let anything be confirmed", a
 });
 
 test("a preview that fails says so and still lets the archive through", async () => {
-  const { onArchive } = mountActions(false, async () => null);
+  const { onArchive } = mountActions(async () => null);
   fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
 
   // Fail closed on the *claim*, not on the action: refusing to archive because
@@ -162,7 +151,7 @@ test("a preview that fails says so and still lets the archive through", async ()
 });
 
 test("cancelling the archive leaves the task alone", async () => {
-  const { onArchive } = mountActions(false);
+  const { onArchive } = mountActions();
   fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
   await screen.findByRole("dialog", { name: "Archive this task?" });
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -173,7 +162,7 @@ test("cancelling the archive leaves the task alone", async () => {
 // AC #5 (TASK-139): the confirmation says archiving can be undone, and until
 // when — the sentence is `archiveSummary`'s, tested there with a fixed clock.
 test("the archive confirmation says the task can be unarchived, and until when", async () => {
-  mountActions(false);
+  mountActions();
   fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
   await screen.findByText(/^It can be unarchived at any time, and its uncommitted work comes back with it until .+\.$/);
 });
@@ -288,7 +277,7 @@ test("a row's actions are focusable, so they are not hover-only", () => {
         {
           id: "t1",
           title: "Fix the parser",
-          actions: <button type="button">Close Fix the parser</button>,
+          actions: <button type="button">Archive Fix the parser</button>,
         },
       ]}
     />,
@@ -296,7 +285,7 @@ test("a row's actions are focusable, so they are not hover-only", () => {
   // A `display: none` control cannot take focus, which is why the shell hides
   // the cluster with opacity: this is the assertion that would fail if it went
   // back to `hidden`.
-  const action = screen.getByRole("button", { name: "Close Fix the parser" });
+  const action = screen.getByRole("button", { name: "Archive Fix the parser" });
   action.focus();
   expect(document.activeElement).toBe(action);
 });
@@ -323,9 +312,7 @@ test("a row's dialog is not inside the cluster that fades with the hover", () =>
             <TaskRowActions
               taskId="t1"
               label="Fix the parser"
-              busy
               onRename={vi.fn()}
-              onClose={vi.fn()}
               onArchivePreview={async () => previewOf()}
               onArchive={vi.fn()}
             />
@@ -334,12 +321,12 @@ test("a row's dialog is not inside the cluster that fades with the hover", () =>
       ]}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Close Fix the parser" }));
+  fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
 
   // Left in the cluster, the dialog and its scrim drop to `opacity: 0` the
   // moment focus leaves the row — clicking the dialog's own title is enough —
   // and the invisible scrim then eats every click in the app.
-  const dialog = screen.getByRole("dialog", { name: "Close this task?" });
+  const dialog = screen.getByRole("dialog", { name: "Archive this task?" });
   expect(ancestorsWith(dialog, "opacity-0")).toHaveLength(0);
   // The same trap on the hit-target axis: `pointer-events` reaches the whole
   // subtree too, so the portal must keep the dialog outside that as well — or
@@ -372,7 +359,7 @@ test("a hidden strip has no hit target, and the reveal hands it back", () => {
             {
               id: "t1",
               title: "Fix the parser",
-              actions: <button type="button">Close Fix the parser</button>,
+              actions: <button type="button">Archive Fix the parser</button>,
             },
           ],
         },
@@ -383,7 +370,7 @@ test("a hidden strip has no hit target, and the reveal hands it back", () => {
 
   const strips: [string, string, string][] = [
     [
-      "Close Fix the parser",
+      "Archive Fix the parser",
       "group-hover/row:pointer-events-auto",
       "group-focus-within/row:pointer-events-auto",
     ],
