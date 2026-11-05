@@ -45,6 +45,7 @@ import {
 import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
 import { startTaskWatcher, type WatcherHandle } from "./watcher";
+import type { ProcessRoot } from "../processes";
 import {
   applyWip,
   branchIsExpendable,
@@ -2413,6 +2414,19 @@ export class TaskManager {
   primaryPty(taskId: string): Pty | undefined {
     const ptyId = this.agentPtys.get(taskId);
     return ptyId === undefined ? undefined : this.ptys.get(ptyId);
+  }
+
+  /** Where a task's process tree hangs from (TASK-138.1): the pid of each of
+   * its terminals still running, the agent's first. Empty for a task with
+   * none — suspended, evicted, or one whose every program has exited. */
+  processRoots(taskId: string): ProcessRoot[] {
+    const roots: ProcessRoot[] = [];
+    const agentPid = this.primaryPty(taskId)?.pid;
+    if (agentPid != null) roots.push({ pid: agentPid, terminal: "agent" });
+    for (const shell of this.shellPtys(taskId)) {
+      if (shell.pid != null) roots.push({ pid: shell.pid, terminal: "shell" });
+    }
+    return roots;
   }
 
   /** The task's shell terminals, in the order they were opened. What

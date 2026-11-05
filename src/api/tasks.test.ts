@@ -375,6 +375,42 @@ describe("GET /api/tasks/:id/scrollback", () => {
   });
 });
 
+describe("GET /api/tasks/:id/processes", () => {
+  function processes(id: string) {
+    return fetch(`${base}/api/tasks/${id}/processes`);
+  }
+
+  test("a live task answers its agent's tree with the agent at the root", async () => {
+    const created = await (await post({})).json();
+    const res = await processes(created.id);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.live).toBe(true);
+    expect(body.processes[0]).toMatchObject({
+      pid: taskManager.primaryPty(created.id)!.pid,
+      depth: 0,
+      terminal: "agent",
+    });
+    expect(Array.isArray(body.processes[0].ports)).toBe(true);
+  });
+
+  test("a suspended task answers live: false rather than an empty tree or an error", async () => {
+    const created = await (await post({})).json();
+    await fetch(`${base}/api/tasks/${created.id}/close`, { method: "POST" });
+
+    const res = await processes(created.id);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ live: false, processes: [], portsKnown: true });
+  });
+
+  test("404s for a task that isn't there", async () => {
+    const res = await processes("no-such-task");
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Unknown task "no-such-task"');
+  });
+});
+
 describe("DELETE /api/tasks/:id", () => {
   test("deletes the task and its terminal outright", async () => {
     const created = await (await post({})).json();

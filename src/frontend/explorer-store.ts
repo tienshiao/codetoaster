@@ -12,7 +12,7 @@
 // stored section has to be validated against them, and a list that can drift
 // from the one doing the validating is the bug this file exists to prevent.
 
-export const EXPLORER_SECTIONS = ["Changes", "Files", "History", "Refs", "Backlog"] as const;
+export const EXPLORER_SECTIONS = ["Changes", "Files", "History", "Refs", "Backlog", "Processes"] as const;
 
 export type ExplorerSection = (typeof EXPLORER_SECTIONS)[number];
 

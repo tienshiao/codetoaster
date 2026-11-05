@@ -233,5 +233,7 @@ test("a task always offers Changes, clean tree or not", async () => {
   await waitFor(() => expect(requests).toContain("/api/tasks/t1/diff"));
   // Settled on the empty diff and still there.
   await waitFor(() => expect(screen.getByTestId("rail").textContent).toContain("Changes"));
-  expect(screen.getByTestId("rail").textContent).toBe("Changes,Files,History,Refs");
+  // And Processes, which only a task has (TASK-138.1): the project rails above
+  // go without it.
+  expect(screen.getByTestId("rail").textContent).toBe("Changes,Files,History,Refs,Processes");
 });

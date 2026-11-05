@@ -55,6 +55,8 @@ export const taskKeys = {
   symbolSearchPrefix: (id: string | null) => ["tasks", id, "symbol-search"] as const,
   /** use-backlog.ts — the repository's Backlog.md state. */
   backlog: (id: string | null) => ["tasks", id, "backlog"] as const,
+  /** use-task-processes.ts — the process tree under the task's terminals. */
+  processes: (id: string | null) => ["tasks", id, "processes"] as const,
 };
 
 /** The git views. Keyed by task rather than by repository because that is what

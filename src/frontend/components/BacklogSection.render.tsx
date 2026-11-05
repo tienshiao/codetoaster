@@ -359,8 +359,9 @@ function Rail({
 test("the rail offers Backlog only where the route reports one", async () => {
   body = { detected: false };
   const undetected = mount(<Rail />);
+  // A task's rail, so Processes trails it (TASK-138.1).
   await waitFor(() =>
-    expect(screen.getByTestId("rail").textContent).toBe("Changes,Files,History,Refs"),
+    expect(screen.getByTestId("rail").textContent).toBe("Changes,Files,History,Refs,Processes"),
   );
   // Absent, not disabled: a permanently greyed item is a promise about a
   // feature this repository will never have.
@@ -399,7 +400,7 @@ test("a detected repository outranks the section showing", async () => {
   body = { detected: false };
   mount(<Rail section="Backlog" />);
   await waitFor(() =>
-    expect(screen.getByTestId("rail").textContent).toBe("Changes,Files,History,Refs"),
+    expect(screen.getByTestId("rail").textContent).toBe("Changes,Files,History,Refs,Processes"),
   );
 });
 

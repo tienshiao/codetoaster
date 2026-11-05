@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-11-05
+* **Creation**: [Task processes and ports](/modules/task-processes.md) for TASK-138.1: where the tree's roots come from, the one ps and the pid-restricted lsof, how a failed ps and a failed lsof are kept apart, and the polled Processes section.
+
 ## 2026-11-04
 * **Update**: [Change watcher and shared watch streams](/modules/change-watcher.md) gains a Change highlighting section for TASK-136: frame-driven row pulses and content-compared line flashes, what stays quiet and why, collapsed directories, and the per-path parity that restarts a fade.
 

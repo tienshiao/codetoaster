@@ -2,6 +2,7 @@ import type { Subprocess } from "bun";
 import { readlink } from "node:fs/promises";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { captureCommand } from "../processes";
 import { InlineImages } from "./inline-images";
 import { isOnlyChatter } from "./query-output";
 import type { ClientInfo, ServerMessage } from "./types";
@@ -20,12 +21,6 @@ export function sanitizeSize(cols: unknown, rows: unknown): { cols: number; rows
   }
   return { cols, rows };
 }
-
-// How long `ps` / `lsof` get to answer where a process is before the answer is
-// written off as unknowable. Generous for a healthy machine, and the only
-// thing standing between a stalled network mount and a request that never
-// returns.
-const LOOKUP_TIMEOUT_MS = 2000;
 
 export interface PtyOptions {
   cwd?: string;
@@ -400,6 +395,12 @@ export class Pty {
     }
   }
 
+  /** The terminal's own program's pid, or null once it has exited: the root a
+   * task's process tree is read down from (TASK-138.1). */
+  get pid(): number | null {
+    return this.exited ? null : this.proc.pid;
+  }
+
   async getCwd(): Promise<string | undefined> {
     if (this.exited) return undefined;
     const shellPid = this.proc.pid;
@@ -460,20 +461,11 @@ export class Pty {
   // starting for a few seconds, so the stalled processes pile up rather than
   // being replaced. Giving up reads as "could not tell", which every caller
   // already handles.
+  //
+  // The spawn, the bound and the kill are `captureCommand`'s (lib/processes),
+  // shared with the Processes section; this only folds its null into "".
   private async runCapture(command: string[]): Promise<string> {
-    let timer: Timer | null = null;
-    try {
-      const proc = Bun.spawn(command, { stdout: "pipe", stderr: "ignore" });
-      timer = setTimeout(() => proc.kill(), LOOKUP_TIMEOUT_MS);
-      // The kill ends both awaits: stdout hits EOF and exited resolves, so this
-      // never outlives the child.
-      const [output] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-      return output;
-    } catch {
-      return "";
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+    return (await captureCommand(command)) ?? "";
   }
 
   // The terminal's foreground process group id (== its leader's pid). When no

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, type ReactNode } from "react";
 import {
+  Cpu,
   FileDiff,
   Files,
   GitBranch,
@@ -10,6 +11,7 @@ import {
 import { PointMenu } from "@/frontend/components/v2/DropdownMenu";
 import type { ExplorerRailItem } from "@/frontend/components/v2/ExplorerRail";
 import { BacklogSection } from "@/frontend/components/BacklogSection";
+import { ProcessesSection } from "@/frontend/components/ProcessesSection";
 import {
   ExplorerError,
   ExplorerLoading,
@@ -60,6 +62,7 @@ const SECTION_ICONS: Record<ExplorerSection, LucideIcon> = {
   History: GitCommitHorizontal,
   Refs: GitBranch,
   Backlog: ListTodo,
+  Processes: Cpu,
 };
 
 /**
@@ -96,16 +99,23 @@ export function useExplorerRail(
   const backlog = useBacklog(root).data?.detected ?? section === "Backlog";
   const changes =
     root?.kind !== "project" || (count === undefined ? section === "Changes" : count > 0);
+  // Processes are a task's: a project browsed from the composer has no
+  // terminal for anything to run under (TASK-138.1). Kept while it is the
+  // section showing, for the reason `section` is consulted at all.
+  const processes = root?.kind === "task" || section === "Processes";
   return useMemo(
     () =>
       EXPLORER_SECTIONS.filter(
-        (label) => (label !== "Backlog" || backlog) && (label !== "Changes" || changes),
+        (label) =>
+          (label !== "Backlog" || backlog) &&
+          (label !== "Changes" || changes) &&
+          (label !== "Processes" || processes),
       ).map((label) => ({
         label,
         icon: SECTION_ICONS[label],
         count: label === "Changes" ? count : undefined,
       })),
-    [count, backlog, changes],
+    [count, backlog, changes, processes],
   );
 }
 
@@ -163,6 +173,8 @@ export function Explorer({
           {...preview}
         />
       );
+    case "Processes":
+      return <ProcessesSection root={root} />;
   }
 }
 

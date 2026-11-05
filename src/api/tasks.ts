@@ -2,6 +2,7 @@ import { taskManager } from "../lib/tasks/manager";
 import type { CreateTaskOptions } from "../lib/tasks/manager";
 import { UnknownProfileError } from "../lib/agent/profiles";
 import { readSnapshot } from "../lib/tasks/snapshot";
+import { ProcessLookupError, snapshotProcesses } from "../lib/processes";
 import { WorktreeError } from "../lib/worktree";
 
 function badRequest(message: string): Response {
@@ -270,6 +271,27 @@ export const taskRoutes = {
       // there, and its agent_state says what happened. A failed resume is a
       // state the user can act on, not an HTTP error.
       return Response.json(info);
+    },
+  },
+
+  "/api/tasks/:id/processes": {
+    // What is running under the task's terminals and the ports it holds
+    // (TASK-138.1). Read fresh per request: the Explorer polls it while the
+    // section is open, and a cached tree would show a dev server that has
+    // already stopped. A task with no running terminal is a 200 with
+    // `live: false`, not an error — suspended is a state to show.
+    async GET(req: Request & { params: { id: string } }) {
+      if (!taskManager.getTask(req.params.id)) {
+        return Response.json({ error: `Unknown task "${req.params.id}"` }, { status: 404 });
+      }
+      try {
+        return Response.json(await snapshotProcesses(taskManager.processRoots(req.params.id)));
+      } catch (error) {
+        if (error instanceof ProcessLookupError) {
+          return Response.json({ error: error.message }, { status: 503 });
+        }
+        throw error;
+      }
     },
   },
 
