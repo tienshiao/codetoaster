@@ -5,7 +5,7 @@ description: The Explorer lists the worktrees of a task's repository and can poi
 tags: [module, worktrees, explorer, tabs, git]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-05T03:00:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-06T00:00:00Z }
 sources:
   - id: utils
     resource: ../../src/api/utils.ts
@@ -60,7 +60,7 @@ Every repository-reading route is written once against a resolved root and regis
 
 # The picker
 
-The Explorer draws a v2 `Select` above the section when the list holds more than one worktree. Each option is the branch, or a short SHA when detached, and the directory name; the root's own checkout is marked.[^explorer]
+The Explorer draws a v2 `Select` above the section when the list holds more than one worktree. Each option is the branch, or a short SHA when detached, and the directory name, except that the directory is dropped when the branch already names it as whole words (Claude Code puts `.claude/worktrees/<name>` on `worktree-<name>`); the root's own checkout is marked. A label longer than the chip ends in an ellipsis rather than wrapping (TASK-144).[^explorer]
 
 - The choice is stored in the base root's `explorer` view-state slot, so it survives a remount and a reload. A stored choice is honoured while the list is loading, so a reload does not first draw the task's checkout.[^hook]
 - A choice the loaded list no longer holds falls back to the root's own checkout and is cleared. A list that failed to load also falls back, but keeps the choice, because a failure proves nothing.

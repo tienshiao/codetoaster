@@ -73,6 +73,19 @@ describe("the empty choice", () => {
   });
 });
 
+// Radix's `Value` swallows `className`, so the classes that keep a long label
+// on one line, ending in an ellipsis, have to reach the DOM some other way.
+// Without them a worktree's branch and directory wrapped onto a second,
+// centred line in the Explorer's picker. Happy DOM cannot measure, so this
+// asserts the classes landed rather than the ellipsis drawn.
+test("the trigger's label is laid out to truncate, not wrap", () => {
+  render(<Controlled />);
+  const value = screen.getByRole("combobox", { name: "model" }).querySelector('[data-slot="value"]')!;
+  expect(value.className).toContain("truncate");
+  expect(value.className).toContain("min-w-0");
+  expect(value.className).toContain("text-left");
+});
+
 describe("filtering", () => {
   test("typing narrows the list instead of jumping to a match", () => {
     render(<Controlled filterPlaceholder="Type to filter" />);

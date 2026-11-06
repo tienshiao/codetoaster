@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-11-06
+* **Update**: [Worktree browsing](/modules/worktree-browsing.md) says the picker drops a directory the branch already names as whole words, and truncates a long label (TASK-144).
+
 ## 2026-11-05
 * **Update**: [Archive and unarchive](/modules/archive-and-unarchive.md) says archiving no longer moves a task's project in the sidebar (TASK-141): the per-project `rankAt` on the snapshot, archived tasks included, and how `groupByProject` folds it with the live tasks' ranks.
 * **Creation**: [Archive and unarchive](/modules/archive-and-unarchive.md) for TASK-139: what archive keeps, the retention sweep now keeping `wip_at`, the unarchive preview's checkout and snapshot states, the branch-recreate-then-resume sequence and what a late failure leaves, and the serialization against archive.

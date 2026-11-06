@@ -243,8 +243,9 @@ function SectionBody({
 /**
  * Which of the repository's worktrees the sections read, shown only when
  * there is more than one. Each is named by its branch (a short SHA when
- * detached) and its directory, the root's own checkout marked, since a
- * subagent's worktree is usually on a branch named after the task.
+ * detached) and its directory, unless the branch already names the directory
+ * (`worktreeLabel`), the root's own checkout marked, since a subagent's
+ * worktree is usually on a branch named after the task.
  */
 function WorktreePicker({ root, worktree }: { root: RepoRoot; worktree: ExplorerWorktree }) {
   const own = root.kind === "task" ? "this task" : "this checkout";

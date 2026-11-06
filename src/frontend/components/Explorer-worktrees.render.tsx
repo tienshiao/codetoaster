@@ -115,7 +115,7 @@ test("choosing a worktree points the section at it, and the tabs it opens carry 
   mount(<FilesOf task="wt-choose" onOpenTab={onOpenTab} />);
   await screen.findByRole("combobox", { name: "Worktree" });
 
-  chooseOption("Worktree", "agent-a · agent-a");
+  chooseOption("Worktree", "agent-a");
   expect(await screen.findByText("side-only.ts")).toBeTruthy();
   expect(requests).toContain(`${sideApi("wt-choose")}/files`);
   expect(getViewState("explorer", viewRef("wt-choose", "explorer")).worktree).toBe(SIDE);
@@ -133,14 +133,14 @@ test("choosing a worktree points the section at it, and the tabs it opens carry 
 test("the choice survives the Explorer being remounted", async () => {
   const first = mount(<FilesOf task="wt-remount" />);
   await screen.findByRole("combobox", { name: "Worktree" });
-  chooseOption("Worktree", "agent-a · agent-a");
+  chooseOption("Worktree", "agent-a");
   await screen.findByText("side-only.ts");
   first.unmount();
 
   requests = [];
   mount(<FilesOf task="wt-remount" />, first.client);
   expect(await screen.findByText("side-only.ts")).toBeTruthy();
-  expect(selectValue("Worktree")).toBe("agent-a · agent-a");
+  expect(selectValue("Worktree")).toBe("agent-a");
   expect(requests.some((r) => r.startsWith("/api/tasks/wt-remount/files"))).toBe(false);
   resetViewStates("wt-remount");
 });
@@ -159,7 +159,7 @@ test("a chosen worktree that has gone falls back to the task's checkout, and the
 test("a worktree removed while chosen drops out of the list, and the sections go back", async () => {
   const { client } = mount(<FilesOf task="wt-drop" />);
   await screen.findByRole("combobox", { name: "Worktree" });
-  chooseOption("Worktree", "agent-a · agent-a");
+  chooseOption("Worktree", "agent-a");
   await screen.findByText("side-only.ts");
 
   worktrees = [OWN_ENTRY];

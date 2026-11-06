@@ -175,10 +175,15 @@ export function Select({
         {label ? <span className="flex-none text-muted-foreground">{label}</span> : null}
         {/* `flex-auto` takes the spare width of a chip that has some (a
             settings row) while keeping the basis at content size, so a chip
-            that sizes to itself (the composer's) is unchanged. */}
-        <RadixSelect.Value data-slot="value" className="min-w-0 flex-auto truncate text-left">
-          {selected?.label ?? ""}
-        </RadixSelect.Value>
+            that sizes to itself (the composer's) is unchanged.
+
+            The classes sit on a wrapper because Radix's `Value` drops its
+            `className`: on the `Value` itself they never reached the DOM, and a
+            label longer than the chip wrapped onto a second, centred line
+            instead of ending in an ellipsis. */}
+        <span data-slot="value" className="min-w-0 flex-auto truncate text-left">
+          <RadixSelect.Value>{selected?.label ?? ""}</RadixSelect.Value>
+        </span>
         <RadixSelect.Icon asChild>
           <ChevronDown size={13} className="ml-auto flex-none text-subtle-foreground" />
         </RadixSelect.Icon>

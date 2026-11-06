@@ -55,9 +55,25 @@ export function useRootWorktrees(root: RepoRoot | null, { refetchOnMount = true 
 }
 
 /** What the picker says for a worktree: its branch, or a short SHA when it is
- * detached, and the directory it is in. */
+ * detached, and the directory it is in — unless the branch already names the
+ * directory. Worktree tools tend to name one after the other (Claude Code's
+ * `.claude/worktrees/<name>` sits on `worktree-<name>`), and repeating it only
+ * doubles a label that has a narrow chip to fit in.
+ *
+ * "Names" means whole words: the directory has to appear in the branch
+ * between separators (`-`, `_`, `/`, `.`) or its ends, so `web` is not taken
+ * as named by `feature/webhooks`. */
 export function worktreeLabel(worktree: Pick<WorktreeInfo, "path" | "branch" | "head">): string {
-  return `${worktreeName(worktree)} · ${dirName(worktree.path)}`;
+  const name = worktreeName(worktree);
+  const dir = dirName(worktree.path);
+  if (worktree.branch && wordsOf(worktree.branch).includes(wordsOf(dir))) return name;
+  return `${name} · ${dir}`;
+}
+
+/** `s` lowercased with every separator one `-`, and fenced by one each side,
+ * so a substring test on two of these only matches whole words. */
+function wordsOf(s: string): string {
+  return `-${s.toLowerCase().replace(/[-_/.]/g, "-")}-`;
 }
 
 /** A worktree's branch, or its short SHA when detached. */
