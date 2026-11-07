@@ -1,3 +1,4 @@
+import { stat as statPath } from "node:fs/promises";
 import { listGitFiles, safePath } from "../../api/utils";
 import { symbolGrammarForPath } from "./assets";
 import { indexFileContent } from "./indexer";
@@ -7,6 +8,12 @@ import type { SymbolEntry, SymbolLookupResult, SymbolNameMatch, SymbolSearchResu
 // In-memory, per-git-root symbol index. Built lazily on first lookup and
 // revalidated by mtime on a throttle. Never persisted — a full rebuild of even a
 // large repo is a few seconds (see benchmark), so there is no on-disk index.
+//
+// Held three ways (TASK-142): a count cap per cache, least recently used out
+// first; an idle period, after which a sweep drops it; and its directory, which
+// the sweep checks is still there. The cap alone kept a removed worktree's
+// index until four other directories had been browsed, which on a machine with
+// a project or two open was for the life of the daemon.
 
 const MAX_PROJECTS = 4;
 // Commit indexes are counted apart from the working trees': paging through a
@@ -23,6 +30,12 @@ const SEARCH_LIMIT = 50;
 /** Abstracts the filesystem so the store can be tested without real files. */
 export interface ProjectSource {
   listFiles(): Promise<string[]>;
+  /** Whether what the index was built from is still there: the directory, for
+   * a working tree and for a commit's repository. Asked by the sweep only, and
+   * held by the index, so it is called unbound and should capture no more than
+   * it needs (`directoryProbe`). A source without it is never dropped for
+   * being gone, only for being idle. */
+  exists?(): Promise<boolean>;
   stat(path: string): Promise<{ mtimeMs: number; size: number } | null>;
   read(path: string): Promise<string>;
   now(): number;
@@ -45,14 +58,35 @@ interface ProjectIndex {
   building: Promise<void> | null;
   revalidating: Promise<void> | null;
   partial: boolean;
+  /** When a lookup last asked for it, on its source's clock. */
+  lastUsed: number;
+  exists?: () => Promise<boolean>;
 }
 
 const projects = new Map<string, ProjectIndex>();
 const commits = new Map<string, ProjectIndex>();
 
+/** Whether `dir` is still a directory. Only "not there" answers no: any other
+ * failure (EACCES, EIO) rejects, which the sweep reads as proving nothing. */
+export async function directoryExists(dir: string): Promise<boolean> {
+  try {
+    return (await statPath(dir)).isDirectory();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
+/** A source's `exists`, built outside the source's own scope. A closure written
+ * inside `commitSource` would share that scope, and with it the last batch of
+ * blob text, for as long as the index holds the probe. */
+export const directoryProbe = (dir: string) => () => directoryExists(dir);
+
 function gitProjectSource(dir: string): ProjectSource {
   return {
     listFiles: () => listGitFiles(dir),
+    exists: directoryProbe(dir),
     async stat(path) {
       const full = safePath(dir, path);
       if (!full) return null;
@@ -218,6 +252,10 @@ async function ensureIndex(key: string, source: ProjectSource): Promise<ProjectI
       building: null,
       revalidating: null,
       partial: false,
+      lastUsed: source.now(),
+      // Unbound on purpose: binding would keep the whole source, and whatever
+      // its closures hold, alive with the index.
+      exists: source.exists,
     };
     index = created;
     cache.set(key, created);
@@ -235,6 +273,7 @@ async function ensureIndex(key: string, source: ProjectSource): Promise<ProjectI
       },
     );
   }
+  index.lastUsed = source.now();
   touchLru(cache, source.immutable ? MAX_COMMITS : MAX_PROJECTS, key, index);
   if (index.building) {
     await index.building;
@@ -327,6 +366,87 @@ export async function searchSymbolNames(
   );
 
   return { matches: scored.map((s) => s.match), partial: index.partial };
+}
+
+/** How long an index may go unasked before the sweep drops it, unless the
+ * daemon is told otherwise (`--symbols-after`). Long enough that stepping away
+ * from a repository for a meeting does not cost a rebuild on return. */
+export const DEFAULT_SYMBOLS_IDLE_MS = 30 * 60_000;
+
+const isBusy = (index: ProjectIndex) => index.building !== null || index.revalidating !== null;
+
+/**
+ * Drops every index that has gone unused for `idleMs` (`0` turns that off) or
+ * whose directory no longer exists. One that is building or revalidating is
+ * left alone, as the cap leaves it: dropping it would discard the work a lookup
+ * is waiting on. The next lookup of a dropped directory builds it again.
+ *
+ * Returns the keys it dropped, for the tests and for the log.
+ */
+export async function sweepSymbolIndexes({
+  now,
+  idleMs = DEFAULT_SYMBOLS_IDLE_MS,
+}: {
+  now: number;
+  idleMs?: number;
+}): Promise<string[]> {
+  const dropped: string[] = [];
+  for (const cache of [projects, commits]) {
+    for (const [key, index] of [...cache]) {
+      // An earlier probe yielded: this entry may since have been evicted, or
+      // replaced by a fresh build that must not be deleted in its place.
+      if (cache.get(key) !== index || isBusy(index)) continue;
+      if (!(idleMs > 0 && now - index.lastUsed > idleMs)) {
+        // A probe that throws proves nothing, so the index stays.
+        if (!index.exists || (await index.exists().catch(() => true))) continue;
+        // The probe yielded: a lookup may have replaced the index or started
+        // work on it in the meantime.
+        if (cache.get(key) !== index || isBusy(index)) continue;
+      }
+      cache.delete(key);
+      dropped.push(key);
+    }
+  }
+  return dropped;
+}
+
+/**
+ * The daemon's sweep: once a minute, for its life. Cheap — a `stat` for
+ * each held index, seven unless busy ones have pushed a cache past its cap —
+ * and what frees an index nobody will ask for
+ * again, since a removed worktree's routes refuse before they reach the store.
+ * Returns the stop.
+ */
+export function startSymbolSweep({
+  idleMs = DEFAULT_SYMBOLS_IDLE_MS,
+  intervalMs = 60_000,
+  now = Date.now,
+}: { idleMs?: number; intervalMs?: number; now?: () => number } = {}): () => void {
+  let running = false;
+  const timer = setInterval(() => {
+    if (running) return;
+    running = true;
+    void sweepSymbolIndexes({ now: now(), idleMs })
+      .catch((error) => console.error("Symbol index sweep failed:", error))
+      .finally(() => {
+        running = false;
+      });
+  }, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
+/** What the store holds, for `/api/diagnostics`. */
+export function symbolStoreStats(): { indexes: number; commitIndexes: number; files: number; entries: number } {
+  let files = 0;
+  let entries = 0;
+  for (const cache of [projects, commits]) {
+    for (const index of cache.values()) {
+      files += index.files.size;
+      entries += index.totalEntries;
+    }
+  }
+  return { indexes: projects.size, commitIndexes: commits.size, files, entries };
 }
 
 /** Test-only: drop all cached project indexes. */

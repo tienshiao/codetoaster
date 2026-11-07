@@ -23,6 +23,7 @@ import { diagnosticsRoutes } from "./api/diagnostics";
 import { MemorySampler } from "./lib/diagnostics";
 import { watchPool } from "./lib/tasks/watch-pool";
 import { cacheStats as highlightCacheStats } from "./lib/highlight/cache";
+import { startSymbolSweep, symbolStoreStats } from "./lib/symbols/store";
 import { initDatabase } from "./lib/db";
 import { loadProfiles, profilesPath } from "./lib/agent/profiles";
 import {
@@ -93,6 +94,9 @@ export interface ServerOptions {
    * Per daemon for the same reason as the two above: it is a question about
    * this machine's disk. */
   uploadsAfterMs?: number;
+  /** How long a symbol index nobody asks for is kept in memory (TASK-142).
+   * `0` keeps it until the count cap or its directory going pushes it out. */
+  symbolsAfterMs?: number;
 }
 
 export function startServer(options?: ServerOptions) {
@@ -190,6 +194,11 @@ export function startServer(options?: ServerOptions) {
   const memorySampler = new MemorySampler();
   memorySampler.start(60_000);
 
+  const stopSymbolSweep = startSymbolSweep({ idleMs: options?.symbolsAfterMs });
+  if (options?.symbolsAfterMs !== undefined) {
+    console.log(`Drop unused symbol indexes after ${describeWindow(options.symbolsAfterMs)}`);
+  }
+
   // Read lazily, not computed here: `--port 0` means the real port does not
   // exist until `serve()` has returned.
   const selfOrigin = (): string => reachableOrigin(HOSTNAME, server.port ?? PORT);
@@ -274,12 +283,17 @@ export function startServer(options?: ServerOptions) {
           counts: () => {
             const watch = watchPool.stats();
             const highlight = highlightCacheStats();
+            const symbols = symbolStoreStats();
             return {
               ...taskManager.diagnosticCounts(),
               watchStreams: watch.streams,
               watchSubscriptions: watch.subscriptions,
               highlightCacheEntries: highlight.entries,
               highlightCacheChars: highlight.chars,
+              symbolIndexes: symbols.indexes,
+              symbolCommitIndexes: symbols.commitIndexes,
+              symbolIndexFiles: symbols.files,
+              symbolIndexEntries: symbols.entries,
             };
           },
         }),
@@ -320,6 +334,7 @@ export function startServer(options?: ServerOptions) {
           const drained = harvester.stop();
           taskManager.stopWatchers();
           memorySampler.stop();
+          stopSymbolSweep();
           setTimeout(() => {
             // `finally`, so a tick that somehow rejected still lets the daemon
             // go: the pid file has to come off whatever the sweep did.

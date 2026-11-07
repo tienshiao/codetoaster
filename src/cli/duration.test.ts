@@ -129,6 +129,7 @@ describe("daemonArgs", () => {
         harvestAfterMs: 2 * 60 * 60_000,
         evictAfterMs: 7 * 24 * 60 * 60_000,
         uploadsAfterMs: 30 * 24 * 60 * 60_000,
+        symbolsAfterMs: 45 * 60_000,
       }),
     ).toEqual([
       "--port", "4100",
@@ -139,6 +140,7 @@ describe("daemonArgs", () => {
       "--harvest-after", "2h",
       "--evict-after", "7d",
       "--uploads-after", "30d",
+      "--symbols-after", "45m",
     ]);
   });
 
@@ -146,12 +148,13 @@ describe("daemonArgs", () => {
     // The falsy-check bug: `0` dropped here would hand the child the default
     // the user had just turned off.
     expect(
-      daemonArgs({ port: 4000, harvestAfterMs: 0, evictAfterMs: 0, uploadsAfterMs: 0 }),
+      daemonArgs({ port: 4000, harvestAfterMs: 0, evictAfterMs: 0, uploadsAfterMs: 0, symbolsAfterMs: 0 }),
     ).toEqual([
       "--port", "4000",
       "--harvest-after", "0",
       "--evict-after", "0",
       "--uploads-after", "0",
+      "--symbols-after", "0",
     ]);
   });
 });

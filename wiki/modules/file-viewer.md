@@ -5,7 +5,7 @@ description: A file tab and a commit's File Tree draw a file with the same viewe
 tags: [files, commit, symbols, preview, frontend]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-13T01:17:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-06T00:00:00Z }
 sources:
   - id: viewer
     resource: ../../src/frontend/components/file/FileViewer.tsx
@@ -66,6 +66,7 @@ A link or a definition followed in the tree selects the target in that tree, at 
 - `ls-tree -r -l` lists the blobs with their sizes. Symlinks and submodules are left out.
 - Blobs are read with `cat-file --batch`, about 8 MB at a time. The store asks for one file after another in listing order, so each read fetches the files that follow it too. One spawn per file would be a `git show` for every source file in the repository.
 - The source is marked `immutable`. The store builds it once, never revalidates it, and keeps it in a cache of its own (three commits), so paging through history does not evict the working tree's index.[^store]
+- Either kind of index is also dropped by a once-a-minute sweep when nothing has asked for it in 30 minutes (`--symbols-after`, `0` off) or its directory is gone (TASK-142). The cap alone kept a removed worktree's index until four other directories had been browsed. One that is building or revalidating is never dropped, and the next lookup builds a dropped one again.
 - A build that fails is dropped rather than kept, and a blob that cannot be read fails the build. Nothing revalidates an immutable index, so a file skipped once would be missing for as long as the index stayed cached, and a symbol in it would read as "no such symbol". A working tree's unreadable file is still skipped: the next revalidation picks it up.
 - Both git calls are killed after a minute. An index that is still building is never evicted, so a git that hung would hold every later lookup at that commit.
 - The build yields a turn of the event loop every 25 files. A batch is parsed from memory, with no file I/O between files to let terminals and other requests through.

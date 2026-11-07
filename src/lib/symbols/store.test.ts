@@ -1,5 +1,16 @@
 import { test, expect, beforeEach } from "bun:test";
-import { lookupSymbol, searchSymbolNames, _resetStore, type ProjectSource } from "./store";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  directoryExists,
+  lookupSymbol,
+  searchSymbolNames,
+  sweepSymbolIndexes,
+  symbolStoreStats,
+  _resetStore,
+  type ProjectSource,
+} from "./store";
 
 beforeEach(() => _resetStore());
 
@@ -193,4 +204,170 @@ test("drops deleted files on revalidation", async () => {
   ctx.advance(6000);
   const res = await lookupSymbol(dir, "gamma", ctx.source);
   expect(res.definitions).toHaveLength(0);
+});
+
+// ── eviction (TASK-142) ─────────────────────────────────────────────────────
+
+/** A source whose directory can be taken away, counting its builds. */
+function sweptSource(files: Record<string, string>, extra: Partial<ProjectSource> = {}) {
+  const ctx = makeSource(files);
+  let present = true;
+  let listings = 0;
+  const source: ProjectSource = {
+    ...ctx.source,
+    exists: async () => present,
+    listFiles: () => {
+      listings++;
+      return ctx.source.listFiles();
+    },
+    ...extra,
+  };
+  return { ...ctx, source, remove: () => (present = false), listings: () => listings };
+}
+
+const HOUR = 60 * 60_000;
+
+test("an index whose directory has gone is dropped by the sweep, and only that one", async () => {
+  const gone = sweptSource({ "a.ts": "function alpha() {}" });
+  const kept = sweptSource({ "a.ts": "function alpha() {}" });
+  const goneDir = nextDir();
+  const keptDir = nextDir();
+  await lookupSymbol(goneDir, "alpha", gone.source);
+  await lookupSymbol(keptDir, "alpha", kept.source);
+
+  expect(await sweepSymbolIndexes({ now: 1000, idleMs: HOUR })).toEqual([]);
+  gone.remove();
+  expect(await sweepSymbolIndexes({ now: 1000, idleMs: HOUR })).toEqual([goneDir]);
+  expect(symbolStoreStats().indexes).toBe(1);
+});
+
+test("an index unused for the idle period is dropped, and a use resets the period", async () => {
+  const ctx = sweptSource({ "a.ts": "function alpha() {}" });
+  const dir = nextDir();
+  await lookupSymbol(dir, "alpha", ctx.source); // used at 1000
+
+  ctx.advance(HOUR - 1);
+  await lookupSymbol(dir, "alpha", ctx.source); // used again, at 1000 + HOUR - 1
+  expect(await sweepSymbolIndexes({ now: 1000 + HOUR + 1, idleMs: HOUR })).toEqual([]);
+  expect(await sweepSymbolIndexes({ now: 1000 + 2 * HOUR, idleMs: HOUR })).toEqual([dir]);
+});
+
+test("an idle period of 0 drops nothing for being idle", async () => {
+  const ctx = sweptSource({ "a.ts": "function alpha() {}" });
+  const dir = nextDir();
+  await lookupSymbol(dir, "alpha", ctx.source);
+  expect(await sweepSymbolIndexes({ now: 1000 + 365 * 24 * HOUR, idleMs: 0 })).toEqual([]);
+});
+
+test("a lookup after eviction rebuilds the index and answers as before", async () => {
+  const ctx = sweptSource({
+    "a.ts": "export function helper() { return 1; }",
+    "b.ts": "import { helper } from './a';\nconst x = helper();",
+  });
+  const dir = nextDir();
+  const before = await lookupSymbol(dir, "helper", ctx.source);
+  expect(await sweepSymbolIndexes({ now: 1000 + 2 * HOUR, idleMs: HOUR })).toEqual([dir]);
+
+  const after = await lookupSymbol(dir, "helper", ctx.source);
+  expect(after).toEqual(before);
+  expect(ctx.listings()).toBe(2);
+});
+
+test("an index still building is not swept, however idle it looks", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const ctx = sweptSource({ "a.ts": "function alpha() {}" });
+  const source: ProjectSource = {
+    ...ctx.source,
+    listFiles: async () => {
+      await gate;
+      return ctx.source.listFiles();
+    },
+  };
+  const dir = nextDir();
+  const pending = lookupSymbol(dir, "alpha", source);
+  ctx.remove();
+
+  expect(await sweepSymbolIndexes({ now: 1000 + 2 * HOUR, idleMs: HOUR })).toEqual([]);
+  release();
+  expect((await pending).definitions).toHaveLength(1);
+});
+
+test("a probe that fails proves nothing, and the index stays", async () => {
+  const ctx = sweptSource(
+    { "a.ts": "function alpha() {}" },
+    { exists: async () => Promise.reject(new Error("EACCES")) },
+  );
+  const dir = nextDir();
+  await lookupSymbol(dir, "alpha", ctx.source);
+  expect(await sweepSymbolIndexes({ now: 1000, idleMs: HOUR })).toEqual([]);
+});
+
+test("an entry replaced while an earlier probe was pending is not deleted in its place", async () => {
+  let releaseProbe!: () => void;
+  const probeGate = new Promise<void>((resolve) => (releaseProbe = resolve));
+  // The first index's probe holds the sweep open while the second is evicted
+  // and built again under the same key.
+  const slow = sweptSource({ "a.ts": "function alpha() {}" }, { exists: () => probeGate.then(() => true) });
+  const idle = sweptSource({ "a.ts": "function alpha() {}" });
+  const slowDir = nextDir();
+  const idleDir = nextDir();
+  await lookupSymbol(slowDir, "alpha", slow.source);
+  slow.advance(HOUR);
+  await lookupSymbol(slowDir, "alpha", slow.source); // not idle: the sweep probes it
+  await lookupSymbol(idleDir, "alpha", idle.source); // after it in the sweep's order
+
+  const sweep = sweepSymbolIndexes({ now: 1000 + 2 * HOUR + 1, idleMs: 2 * HOUR });
+  // Push both out by the cap, then look idleDir up again: a new index, used
+  // just now, under the key the sweep's snapshot still pairs with the old one.
+  for (let i = 0; i < 4; i++) await lookupSymbol(nextDir(), "alpha", sweptSource({ "a.ts": "" }).source);
+  idle.advance(2 * HOUR);
+  await lookupSymbol(idleDir, "alpha", idle.source);
+  releaseProbe();
+
+  expect(await sweep).not.toContain(idleDir);
+  await lookupSymbol(idleDir, "alpha", idle.source);
+  expect(idle.listings()).toBe(2);
+});
+
+test("directoryExists answers no only for what is not there", async () => {
+  const root = mkdtempSync(join(tmpdir(), "symbols-exists-"));
+  try {
+    writeFileSync(join(root, "file"), "");
+    expect(await directoryExists(root)).toBe(true);
+    expect(await directoryExists(join(root, "missing"))).toBe(false);
+    expect(await directoryExists(join(root, "file"))).toBe(false);
+    expect(await directoryExists(join(root, "file", "below"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commit indexes are bounded, the least recently used going first", async () => {
+  const dir = nextDir();
+  const commits = Array.from({ length: 4 }, () => {
+    const ctx = sweptSource({ "a.ts": "function alpha() {}" });
+    return { ...ctx, source: { ...ctx.source, immutable: true } as ProjectSource };
+  });
+  for (const [i, c] of commits.entries()) await lookupSymbol(`${dir}\0${i}`, "alpha", c.source);
+  expect(symbolStoreStats().commitIndexes).toBe(3);
+
+  // The first has gone and is built again, which pushes out the second; the
+  // two newest are still held.
+  await lookupSymbol(`${dir}\0${0}`, "alpha", commits[0]!.source);
+  expect(commits[0]!.listings()).toBe(2);
+  for (const i of [2, 3]) {
+    await lookupSymbol(`${dir}\0${i}`, "alpha", commits[i]!.source);
+    expect(commits[i]!.listings()).toBe(1);
+  }
+});
+
+test("the store's size is counted for diagnostics", async () => {
+  const ctx = sweptSource({ "a.ts": "function alpha() {}\nfunction beta() {}", "b.ts": "alpha();" });
+  await lookupSymbol(nextDir(), "alpha", ctx.source);
+  const stats = symbolStoreStats();
+  expect(stats.indexes).toBe(1);
+  expect(stats.commitIndexes).toBe(0);
+  expect(stats.files).toBe(2);
+  expect(stats.entries).toBeGreaterThanOrEqual(3);
 });

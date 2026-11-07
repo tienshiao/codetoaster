@@ -1,6 +1,6 @@
 import { gitSpawn, gitSpawnRaw } from "../../api/utils";
 import { symbolGrammarForPath } from "./assets";
-import { lookupSymbol, MAX_FILE_SIZE, type ProjectSource } from "./store";
+import { directoryProbe, lookupSymbol, MAX_FILE_SIZE, type ProjectSource } from "./store";
 import type { SymbolLookupResult } from "./types";
 
 // A commit's tree as a symbol source, so go-to-definition in a commit's File
@@ -113,6 +113,10 @@ export function commitSource(
   return {
     immutable: true,
     listFiles: async () => (await tree()).paths,
+    // The commit outlives nothing but its repository: a worktree's directory
+    // gone is its index's cue to go as well. Not an inline closure, which would
+    // keep `batch` and `listing` alive with the index (see `directoryProbe`).
+    exists: directoryProbe(dir),
     async stat(path) {
       const blob = (await tree()).blobs.get(path);
       // A blob has no mtime, and needs none: the index is never revalidated.

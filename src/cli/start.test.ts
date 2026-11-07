@@ -187,6 +187,13 @@ describe("configuring the harvester", () => {
     expect(out).toContain("Harvest after 2h");
   }, 30000);
 
+  test("the symbol index idle period reaches the server", async () => {
+    const out = await runForeground(["--symbols-after", "0"], /Drop unused symbol indexes after .*\n/, {
+      CODETOASTER_SYMBOLS_AFTER: "2h",
+    });
+    expect(out).toContain("Drop unused symbol indexes after disabled");
+  }, 30000);
+
   test("a bad flag is refused before any daemon is spawned", async () => {
     const run = await runStart(["--port", "0", "--harvest-after", "90s"]);
 

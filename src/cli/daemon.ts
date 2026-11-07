@@ -143,6 +143,10 @@ export function daemonArgs(options: DaemonOptions): string[] {
     args.push("--uploads-after", formatDuration(options.uploadsAfterMs));
   }
 
+  if (options.symbolsAfterMs !== undefined) {
+    args.push("--symbols-after", formatDuration(options.symbolsAfterMs));
+  }
+
   return args;
 }
 

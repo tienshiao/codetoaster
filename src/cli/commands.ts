@@ -67,7 +67,8 @@ export async function cmdStart(options: DaemonOptions): Promise<void> {
         options.allowedHosts?.length ||
         options.harvestAfterMs !== undefined ||
         options.evictAfterMs !== undefined ||
-        options.uploadsAfterMs !== undefined
+        options.uploadsAfterMs !== undefined ||
+        options.symbolsAfterMs !== undefined
       ) {
         console.log(
           "  Flags other than --port apply only to a new daemon; `codetoaster stop` first to restart with them.",
@@ -404,7 +405,8 @@ async function printDiagnostics(port: number): Promise<void> {
   const c = d.counts;
   console.log(
     `  Holding:  ${c.ptys ?? 0} PTYs, ${c.clients ?? 0} clients, ` +
-      `${c.watchStreams ?? 0} watch streams for ${c.watchedTasks ?? 0} tasks`,
+      `${c.watchStreams ?? 0} watch streams for ${c.watchedTasks ?? 0} tasks, ` +
+      `${(c.symbolIndexes ?? 0) + (c.symbolCommitIndexes ?? 0)} symbol indexes`,
   );
 }
 
@@ -456,6 +458,8 @@ Options:
                          (default: 7d; 0 disables; env CODETOASTER_EVICT_AFTER)
   --uploads-after <dur>  Keep an attachment no task's prompt names this long
                          (default: 7d; 0 disables; env CODETOASTER_UPLOADS_AFTER)
+  --symbols-after <dur>  Drop a symbol index nobody has used this long
+                         (default: 30m; 0 disables; env CODETOASTER_SYMBOLS_AFTER)
   --version       Show version
   --help          Show this help message`);
 }

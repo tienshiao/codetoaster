@@ -5,7 +5,7 @@ description: Read the daemon's real footprint, its peak and when it was reached,
 tags: [runbook, memory, diagnostics, daemon, macos]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-29T10:30:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-06T00:00:00Z }
 sources:
   - id: diagnostics
     resource: ../../src/lib/diagnostics.ts
@@ -24,8 +24,8 @@ On macOS the figure that matters is the **physical footprint**, what Activity Mo
 
 # Steps
 
-1. `codetoaster status` prints the Bun version, the footprint with the kernel's peak and the sampled peak with its time, resident size and JS heap, open descriptors by kind, and the PTYs, clients and watch streams held.
-2. For the full body, `curl -s http://localhost:4000/api/diagnostics`; beyond the summary it carries the highlight cache's size. Add `?heap=1` for the JS heap's most numerous object types: it walks the heap on the event loop, so it is opt-in and `status` does not ask for it.[^diagnostics-route]
+1. `codetoaster status` prints the Bun version, the footprint with the kernel's peak and the sampled peak with its time, resident size and JS heap, open descriptors by kind, and the PTYs, clients, watch streams and symbol indexes held.
+2. For the full body, `curl -s http://localhost:4000/api/diagnostics`; beyond the summary it carries the highlight cache's size and the symbol store's: `symbolIndexes` (working trees), `symbolCommitIndexes`, and the files and entries across both. An index unused for 30 minutes (`--symbols-after`) or whose directory has gone is dropped within a minute, so a count that only grows is worth a look. Add `?heap=1` for the JS heap's most numerous object types: it walks the heap on the event loop, so it is opt-in and `status` does not ask for it.[^diagnostics-route]
 3. Look for the threshold lines in `~/.codetoaster/codetoaster.log`: `Memory: footprint passed 4 GB at <ISO time> (...)`. The daemon samples once a minute and logs the first crossing of each doubling from 1 GB, so the time of a spike can be matched to what was happening then.[^diagnostics]
 4. Many directory descriptors (`lsof -p <pid>`, type `DIR`) on repositories with no live task are the [Bun 1.3.9 watch leak](/gotchas/bun-fs-watch-descriptor-leak.md); check the Bun version first.
 
