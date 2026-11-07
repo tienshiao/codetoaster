@@ -144,7 +144,11 @@ export function TaskShell({ taskId, pendingTab = null, pendingPosition, onTabEns
   // worktree's, and "Review all" opens its diff. The Explorer asks the same
   // hook for its picker and sections; the choice lives in the view-state store
   // and the list in the query cache, so the two cannot disagree.
-  const explorerWorktree = useExplorerWorktree(root);
+  //
+  // Not polling (TASK-143): this is mounted whatever is on screen, and the
+  // readers that show the list — the open Explorer, a worktree tab — poll for
+  // it. It still does while a worktree is chosen, which the rail reads.
+  const explorerWorktree = useExplorerWorktree(root, { poll: false });
   const explorerSections = useExplorerRail(explorerWorktree.browseRoot, explorerPanel.section);
   // The Explorer's section is per device and the Backlog one only exists for a
   // Backlog.md repository (TASK-85), so a user who left the panel on Backlog

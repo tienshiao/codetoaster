@@ -65,7 +65,7 @@ The Explorer draws a v2 `Select` above the section when the list holds more than
 - The choice is stored in the base root's `explorer` view-state slot, so it survives a remount and a reload. A stored choice is honoured while the list is loading, so a reload does not first draw the task's checkout.[^hook]
 - A choice the loaded list no longer holds falls back to the root's own checkout and is cleared. A list that failed to load also falls back, but keeps the choice, because a failure proves nothing.
 - Changes, Files, History, Refs and Backlog read the chosen worktree. Processes always reads the task, and shows no picker.
-- The list is polled every 15 seconds and on focus, because a subagent adds and removes worktrees with nothing to announce it.
+- The list is polled every 15 seconds and on focus, because a subagent adds and removes worktrees with nothing to announce it. Only while something shows it, though (TASK-143): the open Explorer and a worktree tab poll; the task shell, mounted whatever is on screen, reads the list once and polls only while a worktree is chosen, since the rail and Review all then read that worktree and a removal has to clear the choice.
 
 # Tabs on a worktree
 

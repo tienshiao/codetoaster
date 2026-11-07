@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-11-06
+* **Update**: [Worktree browsing](/modules/worktree-browsing.md) says who polls the worktree list (TASK-143): the open Explorer and worktree tabs, and the shell only while a worktree is chosen.
 * **Update**: [File viewer](/modules/file-viewer.md) and [Diagnose daemon memory](/runbooks/diagnose-daemon-memory.md) for TASK-142: the symbol store's idle and removed-directory sweep, `--symbols-after`, and its counts in `/api/diagnostics` and `status`.
 * **Update**: [Worktree browsing](/modules/worktree-browsing.md) says the picker drops a directory the branch already names as whole words, and truncates a long label (TASK-144).
 

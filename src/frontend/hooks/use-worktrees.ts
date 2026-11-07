@@ -39,8 +39,17 @@ async function fetchWorktrees(root: RepoRoot): Promise<WorktreesResponse> {
 export const WORKTREES_POLL_MS = 15_000;
 
 /** The worktrees of `root`'s repository, always asked of its base root: a
- * worktree's list is the same list. */
-export function useRootWorktrees(root: RepoRoot | null, { refetchOnMount = true } = {}) {
+ * worktree's list is the same list.
+ *
+ * `poll: false` reads the list once and then only takes what other readers
+ * fetch: no interval and no refetch on focus or reconnect (TASK-143). The
+ * readers that show the list's answer on screen — the Explorer's picker, a
+ * worktree tab — poll, and the poll stops when they unmount. React Query keeps one fetch per focus
+ * however many readers there are. */
+export function useRootWorktrees(
+  root: RepoRoot | null,
+  { refetchOnMount = true, poll = true }: { refetchOnMount?: boolean; poll?: boolean } = {},
+) {
   const base = root ? baseRoot(root) : null;
   const id = base ? rootId(base) : null;
   return useQuery({
@@ -48,8 +57,9 @@ export function useRootWorktrees(root: RepoRoot | null, { refetchOnMount = true 
     queryFn: () => fetchWorktrees(base!),
     enabled: base != null,
     staleTime: 5_000,
-    refetchInterval: WORKTREES_POLL_MS,
-    refetchOnWindowFocus: true,
+    refetchInterval: poll ? WORKTREES_POLL_MS : false,
+    refetchOnWindowFocus: poll,
+    refetchOnReconnect: poll,
     refetchOnMount: refetchOnMount ? "always" : true,
   });
 }
@@ -112,11 +122,18 @@ export interface ExplorerWorktree {
  * answered, a choice it no longer holds — the worktree was removed — falls
  * back to the root's own checkout and is cleared; a list that failed to load
  * falls back without clearing, since it proved nothing.
+ *
+ * `poll: false` is for a reader that is mounted whatever is on screen — the
+ * shell, which needs the choice for the rail and "Review all" (TASK-143). It
+ * still polls while a worktree is chosen: the rail is then reading that
+ * worktree, and only a fresh list notices it removed and clears the choice.
  */
-export function useExplorerWorktree(root: RepoRoot | null): ExplorerWorktree {
+export function useExplorerWorktree(
+  root: RepoRoot | null,
+  { poll = true }: { poll?: boolean } = {},
+): ExplorerWorktree {
   const base = root ? baseRoot(root) : null;
   const baseId = base ? rootId(base) : null;
-  const { data, isError } = useRootWorktrees(base, { refetchOnMount: false });
 
   const subscribe = useCallback(
     (listener: () => void) =>
@@ -126,6 +143,7 @@ export function useExplorerWorktree(root: RepoRoot | null): ExplorerWorktree {
   const stored = useSyncExternalStore(subscribe, () =>
     baseId ? getViewState("explorer", viewRef(baseId, "explorer")).worktree : null,
   );
+  const { data, isError } = useRootWorktrees(base, { refetchOnMount: false, poll: poll || stored != null });
 
   const all = data?.worktrees;
   const entry = stored && all ? all.find((w) => w.path === stored) : undefined;

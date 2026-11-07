@@ -1,12 +1,12 @@
-import { test, expect, vi, beforeEach, afterEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { test, expect, vi, beforeEach, afterEach, describe } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { focusManager, onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { ExplorerSection } from "@/frontend/explorer-store";
 import type { TabDescriptor } from "@/frontend/layout-store";
 import { rootApi, rootId, taskRoot, worktreeRoot, type RepoRoot } from "@/frontend/repo-root";
 import { getViewState, resetViewStates, setViewField, viewRef } from "@/frontend/view-state-store";
-import type { WorktreeInfo } from "@/frontend/hooks/use-worktrees";
+import { useExplorerWorktree, WORKTREES_POLL_MS, type WorktreeInfo } from "@/frontend/hooks/use-worktrees";
 import { chooseOption, selectValue } from "../../../test/v2-select";
 import { Explorer, useExplorerRail } from "./Explorer";
 
@@ -177,6 +177,107 @@ test("Processes reads the task whatever worktree is chosen, and shows no picker"
   expect(requests.some((r) => r.startsWith("/api/worktrees/"))).toBe(false);
   expect(screen.queryByRole("combobox", { name: "Worktree" })).toBeNull();
   resetViewStates("wt-proc");
+});
+
+// ── who polls (TASK-143) ────────────────────────────────────────────────────
+
+/** What `TaskShell` does: the shell's own reader, mounted whatever is on
+ * screen and not polling, and the Explorer, mounted only while it is open. */
+function ShellLike({ task, open }: { task: string; open: boolean }) {
+  useExplorerWorktree(taskRoot(task), { poll: false });
+  return open ? <FilesOf task={task} /> : null;
+}
+
+describe("polling the worktree list", () => {
+  // Advancing with real time as well, so testing-library's `waitFor` and the
+  // fetch stub's promises still run.
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  afterEach(() => {
+    vi.useRealTimers();
+    focusManager.setFocused(undefined);
+  });
+
+  const asked = (task: string) => requests.filter((r) => r === `/api/tasks/${task}/worktrees`).length;
+  const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+  const refocus = () =>
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+  const reconnect = () =>
+    act(() => {
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+    });
+
+  test("with the Explorer closed and nothing chosen, the list is asked once", async () => {
+    mount(<ShellLike task="poll-closed" open={false} />);
+    await waitFor(() => expect(asked("poll-closed")).toBe(1));
+
+    await advance(3 * WORKTREES_POLL_MS);
+    await refocus();
+    await reconnect();
+    await advance(1_000);
+    expect(asked("poll-closed")).toBe(1);
+  });
+
+  test("opening the Explorer resumes the poll, a focus refetches once, and closing it stops again", async () => {
+    const { rerender } = mount(<ShellLike task="poll-open" open={false} />);
+    await waitFor(() => expect(asked("poll-open")).toBe(1));
+    await advance(WORKTREES_POLL_MS);
+
+    rerender(<ShellLike task="poll-open" open />);
+    await screen.findByRole("combobox", { name: "Worktree" });
+    // Stale by now, so opening asks again, and then the interval does.
+    await waitFor(() => expect(asked("poll-open")).toBe(2));
+    await advance(WORKTREES_POLL_MS + 100);
+    await waitFor(() => expect(asked("poll-open")).toBe(3));
+
+    // The focus refetch, through the Explorer: the shell's reader takes none.
+    await advance(6_000);
+    await refocus();
+    await waitFor(() => expect(asked("poll-open")).toBe(4));
+    await advance(1_000);
+    expect(asked("poll-open")).toBe(4);
+
+    rerender(<ShellLike task="poll-open" open={false} />);
+    const closedAt = asked("poll-open");
+    await advance(3 * WORKTREES_POLL_MS);
+    expect(asked("poll-open")).toBe(closedAt);
+    resetViewStates("poll-open");
+  });
+
+  test("a chosen worktree keeps the shell polling with the Explorer closed", async () => {
+    // The rail reads the chosen worktree, so its removal still has to be seen.
+    setViewField("explorer", viewRef("poll-chosen", "explorer"), "worktree", SIDE);
+    mount(<ShellLike task="poll-chosen" open={false} />);
+    await waitFor(() => expect(asked("poll-chosen")).toBe(1));
+
+    worktrees = [OWN_ENTRY];
+    await advance(WORKTREES_POLL_MS + 100);
+    await waitFor(() => expect(asked("poll-chosen")).toBe(2));
+    // Gone from the list, so the choice is cleared — and with it the poll.
+    await waitFor(() => expect(getViewState("explorer", viewRef("poll-chosen", "explorer")).worktree).toBeNull());
+    await advance(3 * WORKTREES_POLL_MS);
+    expect(asked("poll-chosen")).toBe(2);
+    resetViewStates("poll-chosen");
+  });
+
+  test("with two readers that refetch on focus, a focus asks once", async () => {
+    // A chosen worktree and the Explorer open: the shell and the Explorer
+    // both take focus refetches, and React Query still makes one request.
+    setViewField("explorer", viewRef("poll-focus", "explorer"), "worktree", SIDE);
+    mount(<ShellLike task="poll-focus" open />);
+    await screen.findByRole("combobox", { name: "Worktree" });
+    await waitFor(() => expect(asked("poll-focus")).toBe(1));
+
+    await advance(6_000);
+    await refocus();
+    await waitFor(() => expect(asked("poll-focus")).toBe(2));
+    await advance(1_000);
+    expect(asked("poll-focus")).toBe(2);
+    resetViewStates("poll-focus");
+  });
 });
 
 // ── the rail ────────────────────────────────────────────────────────────────
