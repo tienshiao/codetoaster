@@ -1,6 +1,6 @@
 import { cn } from "@/frontend/lib/utils";
 import { Fact, HoverCardShell } from "./HoverCardParts";
-import { cpuLabel, isHighLoad, loadPaths, windowLabel, type LoadPoint } from "./load-chart";
+import { cpuLabel, inWindow, isHighLoad, loadPaths, windowLabel, type LoadPoint } from "./load-chart";
 
 /**
  * How hard the daemon's machine is working, at the foot of the right rail
@@ -72,7 +72,7 @@ function Sparkline({
         width={SPARK.width - 1}
         height={SPARK.height - 1}
         rx={1.5}
-        className="fill-none stroke-border"
+        className={tone === "warning" ? "fill-none stroke-warning" : "fill-none stroke-border"}
       />
       {areas.map((d) => (
         <path
@@ -97,6 +97,8 @@ function Sparkline({
   );
 }
 
+/** `samples` are already cut to the window, so the summary's low and peak
+ * describe what is drawn. */
 function Chart({
   samples,
   intervalMs,
@@ -201,8 +203,12 @@ function Card({
   intervalMs,
   capacity,
 }: Pick<SystemLoadIndicatorProps, "samples" | "intervalMs" | "capacity">) {
-  const latest = samples.at(-1);
-  const measured = samples.map((s) => s.cpu).filter((c): c is number => c !== null);
+  const windowMs = capacity * intervalMs;
+  // After a sleep the ring reaches back past the window; a peak from before
+  // it would describe something the chart does not show.
+  const shown = inWindow(samples, windowMs);
+  const latest = shown.at(-1);
+  const measured = shown.map((s) => s.cpu).filter((c): c is number => c !== null);
   const peak = measured.length ? Math.max(...measured) : null;
   const high = isHighLoad(latest?.cpu);
 
@@ -214,7 +220,7 @@ function Card({
           {cpuLabel(latest?.cpu)} CPU{high ? " · high" : ""}
         </span>
       </div>
-      <Chart samples={samples} intervalMs={intervalMs} windowMs={capacity * intervalMs} />
+      <Chart samples={shown} intervalMs={intervalMs} windowMs={windowMs} />
       <dl className="flex flex-col gap-1 text-micro">
         <Fact label="Peak">{cpuLabel(peak)}</Fact>
         <Fact label="Load">

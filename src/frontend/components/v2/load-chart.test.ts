@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { cpuLabel, isHighLoad, loadPaths, windowLabel, type PlotBox } from "./load-chart";
+import { cpuLabel, inWindow, isHighLoad, loadPaths, windowLabel, type PlotBox } from "./load-chart";
 
 const box: PlotBox = { width: 100, height: 50, start: 0, end: 100, maxGapMs: 25 };
 
@@ -80,10 +80,22 @@ describe("loadPaths", () => {
   });
 });
 
-test("high load starts at 80%", () => {
-  expect(isHighLoad(79.9)).toBe(false);
+test("high load starts at 80% as shown", () => {
+  expect(isHighLoad(79.4)).toBe(false);
+  // Printed as "80%", so marked as high: one figure, one treatment.
+  expect(isHighLoad(79.6)).toBe(true);
   expect(isHighLoad(80)).toBe(true);
   expect(isHighLoad(null)).toBe(false);
+});
+
+test("inWindow keeps what the window ending at the newest sample covers", () => {
+  const points = [
+    { at: 0, cpu: 98 },
+    { at: 500, cpu: 5 },
+    { at: 600, cpu: 6 },
+  ];
+  expect(inWindow(points, 200).map((p) => p.at)).toEqual([500, 600]);
+  expect(inWindow([], 200)).toEqual([]);
 });
 
 test("labels", () => {

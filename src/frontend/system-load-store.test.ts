@@ -32,6 +32,16 @@ test("a tick the history already carried is dropped", () => {
   expect(store.get().samples).toHaveLength(2);
 });
 
+test("a tick stamped earlier than the last is the daemon's clock stepping back, and restarts the series", () => {
+  const store = new SystemLoadStore();
+  store.replace({ type: "loadHistory", intervalMs: 1000, capacity: 3, samples: [sample(100), sample(200)] });
+  store.append({ type: "load", sample: sample(50, 95) });
+  // Not dropped: dropping it froze the meter until the clock caught up.
+  expect(store.get().samples).toEqual([sample(50, 95)]);
+  store.append({ type: "load", sample: sample(51) });
+  expect(store.get().samples.map((s) => s.at)).toEqual([50, 51]);
+});
+
 test("a disconnect empties it, and tells subscribers", () => {
   const store = new SystemLoadStore();
   store.replace({ type: "loadHistory", intervalMs: 1000, capacity: 3, samples: [sample(1)] });

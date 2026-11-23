@@ -24,7 +24,7 @@ import { highlightRoutes } from "./api/highlight";
 import { symbolRoutes } from "./api/symbols";
 import { diagnosticsRoutes } from "./api/diagnostics";
 import { MemorySampler } from "./lib/diagnostics";
-import { LoadSampler, sendLoadHistory, streamLoad } from "./lib/system-load";
+import { LoadSampler, wireLoadSampler } from "./lib/system-load";
 import { watchPool } from "./lib/tasks/watch-pool";
 import { cacheStats as highlightCacheStats } from "./lib/highlight/cache";
 import { startSymbolSweep, symbolStoreStats } from "./lib/symbols/store";
@@ -197,7 +197,7 @@ export function startServer(options?: ServerOptions) {
   // number of clients, from boot so a page load is handed history, and each
   // tick serialized once and pushed down the socket every client already has.
   const loadSampler = new LoadSampler();
-  streamLoad(loadSampler, (message) => taskManager.broadcastToAll(message));
+  const loadSocket = wireLoadSampler(loadSampler, taskManager);
   loadSampler.start();
 
   const stopSymbolSweep = startSymbolSweep({ idleMs: options?.symbolsAfterMs });
@@ -338,7 +338,7 @@ export function startServer(options?: ServerOptions) {
 
       open(ws) {
         taskManager.registerClient(ws.data.clientId, ws);
-        sendLoadHistory(loadSampler, ws);
+        loadSocket.onOpen(ws);
       },
 
       message(ws, message) {

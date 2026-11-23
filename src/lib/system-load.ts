@@ -187,3 +187,16 @@ export function streamLoad(
 ): () => void {
   return sampler.subscribe((sample) => broadcast({ type: "load", sample }));
 }
+
+/**
+ * The whole of the socket wiring, as `server.ts` uses it and the socket test
+ * mounts it: every tick to every client, and `onOpen` for each socket as it
+ * opens. One function for both, so the test is not of a copy.
+ */
+export function wireLoadSampler(
+  sampler: LoadSampler,
+  clients: { broadcastToAll(message: object): void },
+): { onOpen: (ws: FrameSink) => void; stop: () => void } {
+  const stop = streamLoad(sampler, (message) => clients.broadcastToAll(message));
+  return { onOpen: (ws) => sendLoadHistory(sampler, ws), stop };
+}

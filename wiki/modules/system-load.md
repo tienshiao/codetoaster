@@ -57,11 +57,13 @@ The indicator is on screen in every client all the time, so a polled route would
 - **On open**, each socket is sent `loadHistory { intervalMs, capacity, samples }`, the whole ring (`sendLoadHistory`).
 - **Each tick**, `streamLoad` hands `load { sample }` to `taskManager.broadcastToAll`, which serializes once and sends the same string to every socket. A client costs its frame and nothing else.
 
+`wireLoadSampler` does both and is what `server.ts` and the socket test each mount. The test still cannot see whether `server.ts` calls `onOpen`, because importing `server.ts` bundles the frontend.
+
 There is no HTTP route. The sampler reads the machine once per tick however many clients are connected, and a socket test pins that.
 
 # In the browser
 
-`TaskProvider`'s socket subscriber hands both frames to `systemLoad`, a module store read through `useSyncExternalStore`. It is not in context state, because a sample every 2 s would re-render everything under the provider. It is not component state either, because the history arrives once per connection and `TaskShell` remounts on every navigation. `loadHistory` replaces the store, `load` appends and trims to `capacity`, and a disconnect empties it, so a stale figure is never shown as live.[^store]
+`TaskProvider`'s socket subscriber hands both frames to `systemLoad`, a module store read through `useSyncExternalStore`. It is not in context state, because a sample every 2 s would re-render everything under the provider. It is not component state either, because the history arrives once per connection and `TaskShell` remounts on every navigation. `loadHistory` replaces the store, `load` appends and trims to `capacity`, and a disconnect empties it, so a stale figure is never shown as live. A `load` stamped the same as the newest held sample is a repeat and is dropped. One stamped earlier means the daemon's clock stepped back, and the series restarts from it rather than freezing the meter until the clock catches up.[^store]
 
 `components/SystemLoad.tsx` is the only reader. `TaskShell` passes it as `AppShell`'s `explorerRailFooter`, which `ExplorerRail` pins to its foot with `mt-auto`, so a tick re-renders the meter and not the shell.
 
@@ -69,9 +71,9 @@ There is no HTTP route. The sampler reads the machine once per tick however many
 
 The indicator is a `role="meter"` with `tabIndex={0}` and no button, since there is nothing to press. It shows a 24×12 sparkline of the last 24 ticks and the whole-percent figure, or a dash before the first sample.[^indicator]
 
-High load starts at 80% (`HIGH_LOAD`) and is signalled three ways, so colour is not the only one:
+High load starts at 80% (`HIGH_LOAD`), compared on the figure as shown, so 79.6 (printed "80%") counts. It is signalled three ways, so colour is not the only one:
 
-- the sparkline turns from `state-busy` to `warning`;
+- the sparkline and its frame turn from `state-busy` and `border` to `warning`;
 - the figure gets a 1px outline box and semibold weight;
 - `aria-valuetext` reads "CPU 91%, high".
 
@@ -82,7 +84,7 @@ The card is a `HoverCardShell` opening left and bottom-aligned, off the rail int
 - "10 min ago" and "now" under the chart;
 - Peak, Load (1/5/15) and Cores facts.
 
-The SVG's `aria-label` summarises low, peak and now. Two neighbouring samples more than 2.5 ticks apart are not joined, so a sleeping laptop shows as a gap. A `null` breaks the line the same way, and the end dot is drawn only when the newest reading is a number. The path arithmetic lives in `load-chart.ts`, apart from the components.[^chart]
+The SVG's `aria-label` summarises low, peak and now. The peak and low, like the plot, are taken over the samples inside the window ending at the newest one (`inWindow`), because after a sleep the 300-sample ring reaches back further than 10 minutes. Two neighbouring samples more than 2.5 ticks apart are not joined, so a sleeping laptop shows as a gap. A `null` breaks the line the same way, and the end dot is drawn only when the newest reading is a number. The path arithmetic lives in `load-chart.ts`, apart from the components.[^chart]
 
 The card opens on keyboard focus as well as hover. `HoverCardShell` gained `openOnFocus`, `side` and `align` props, with defaults that keep the task and commit cards as they were: a row's card still ignores focus (TASK-115).[^hovercard] There is no crosshair or tooltip inside the chart, because the shared panel is `pointer-events-none` and closes when the pointer leaves the trigger. Nothing animates, so there is nothing for reduced motion to stop.
 

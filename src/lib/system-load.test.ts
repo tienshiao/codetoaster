@@ -6,7 +6,7 @@ import { applyMigrations } from "./db";
 import { TaskManager } from "./tasks/manager";
 import { terminalSocketCompression } from "./xtmux/socket";
 import type { ServerMessage, WebSocketData } from "./xtmux/types";
-import { LoadSampler, sendLoadHistory, streamLoad, type CpuTimes } from "./system-load";
+import { LoadSampler, wireLoadSampler, type CpuTimes } from "./system-load";
 import { waitFor } from "../../test/wait";
 
 /** One core's counters, cumulative as the kernel reports them. */
@@ -155,9 +155,9 @@ describe("start and stop", () => {
 
     sampler.stop();
     expect(sampler.running).toBe(false);
-    const stopped = sampler.history().length;
-    await Bun.sleep(80);
-    expect(sampler.history().length).toBe(stopped);
+    const stopped = n;
+    // Asked as a condition that must stay false: four intervals with no read.
+    expect(await waitFor(() => n > stopped, 80)).toBe(false);
   });
 
   test("a listener hears each sample until it unsubscribes", () => {
@@ -176,17 +176,21 @@ describe("on this machine", () => {
   test("os.cpus() and os.loadavg() give a sane figure between two readings", async () => {
     const sampler = new LoadSampler();
     sampler.baseline();
-    await Bun.sleep(50);
-    const sample = sampler.sample()!;
-    expect(sample.cores).toBe(os.cpus().length);
-    expect(sample.cores).toBeGreaterThan(0);
-    // Null only if the kernel's counters did not move in 50ms, which on a
-    // machine running this test suite they do.
-    if (sample.cpu !== null) {
-      expect(sample.cpu).toBeGreaterThanOrEqual(0);
-      expect(sample.cpu).toBeLessThanOrEqual(100);
-    }
-    for (const avg of sample.load) expect(avg).toBeGreaterThanOrEqual(0);
+    // Until the kernel's counters have moved: each poll is measured against
+    // the one before it.
+    let sample: ReturnType<LoadSampler["sample"]> = null;
+    expect(
+      await waitFor(() => {
+        sample = sampler.sample();
+        return sample?.cpu != null;
+      }),
+    ).toBe(true);
+    const got = sample!;
+    expect(got.cores).toBe(os.cpus().length);
+    expect(got.cores).toBeGreaterThan(0);
+    expect(got.cpu!).toBeGreaterThanOrEqual(0);
+    expect(got.cpu!).toBeLessThanOrEqual(100);
+    for (const avg of got.load) expect(avg).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -207,7 +211,7 @@ describe("over the terminal socket", () => {
     const db = new Database(":memory:");
     applyMigrations(db);
     const manager = new TaskManager(db);
-    streamLoad(sampler, (message) => manager.broadcastToAll(message));
+    const loadSocket = wireLoadSampler(sampler, manager);
     let n = 0;
     server = Bun.serve<WebSocketData>({
       port: 0,
@@ -219,7 +223,7 @@ describe("over the terminal socket", () => {
         perMessageDeflate: terminalSocketCompression,
         open(ws) {
           manager.registerClient(ws.data.clientId, ws);
-          sendLoadHistory(sampler, ws);
+          loadSocket.onOpen(ws);
         },
         message() {},
         close(ws) {

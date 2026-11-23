@@ -16,8 +16,19 @@ export interface LoadPoint {
  * below it there is headroom and nothing to point at. */
 export const HIGH_LOAD = 80;
 
+/** On the figure as shown, so "80%" is never drawn both ways: 79.6 rounds to
+ * the threshold it is printed as. */
 export function isHighLoad(cpu: number | null | undefined): boolean {
-  return cpu != null && cpu >= HIGH_LOAD;
+  return cpu != null && Math.round(cpu) >= HIGH_LOAD;
+}
+
+/** The samples inside the window ending at the newest one: what the chart
+ * plots, and so the only ones a peak or a low may be taken over. The ring
+ * reaches further back than the window after a sleep. */
+export function inWindow<T extends LoadPoint>(points: readonly T[], windowMs: number): T[] {
+  const end = points.at(-1)?.at;
+  if (end === undefined) return [];
+  return points.filter((p) => p.at >= end - windowMs);
 }
 
 export interface PlotBox {

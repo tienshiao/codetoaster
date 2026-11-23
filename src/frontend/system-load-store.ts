@@ -43,12 +43,20 @@ export class SystemLoadStore {
     });
   }
 
-  /** One tick. A sample no newer than the last one held is dropped: it can
-   * only be one the history already carried. */
+  /** One tick. A sample stamped the same as the last one held is the history
+   * repeating itself and is dropped. One stamped *earlier* is the daemon's
+   * clock stepping back (an NTP correction on wake, a manual change): the held
+   * series is on the old clock and cannot share an axis with it, so it starts
+   * again from this sample rather than freezing the meter until the clock
+   * catches up. */
   append(message: LoadSampleMessage): void {
     const { samples, capacity } = this.state;
     const last = samples.at(-1);
-    if (last && message.sample.at <= last.at) return;
+    if (last && message.sample.at === last.at) return;
+    if (last && message.sample.at < last.at) {
+      this.set({ ...this.state, samples: [message.sample] });
+      return;
+    }
     const next = [...samples, message.sample];
     this.set({ ...this.state, samples: next.length > capacity ? next.slice(-capacity) : next });
   }

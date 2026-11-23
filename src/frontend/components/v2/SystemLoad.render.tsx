@@ -99,6 +99,25 @@ describe("the card", () => {
     screen.getByText("10");
   });
 
+  test("after a sleep, the peak is taken over the window drawn, not the whole ring", () => {
+    // A 98% build, an hour asleep, then a quiet machine.
+    const before: SystemLoadReading = { at: T0, cpu: 98, load: [1, 1, 1], cores: 10 };
+    const after = [5, 6, 7].map<SystemLoadReading>((cpu, i) => ({
+      at: T0 + 3_600_000 + i * 2_000,
+      cpu,
+      load: [1, 1, 1],
+      cores: 10,
+    }));
+    render(<SystemLoadIndicator open samples={[before, ...after]} intervalMs={2_000} capacity={300} />);
+
+    expect(screen.queryByText("98%")).toBeNull();
+    // The meter's figure and the card's Peak.
+    expect(screen.getAllByText("7%")).toHaveLength(2);
+    expect(screen.getByRole("img").getAttribute("aria-label")).toBe(
+      "CPU over the last 10 min: low 5%, peak 7%, now 7%",
+    );
+  });
+
   test("says high in its heading when it is", () => {
     open([12, 85]);
     screen.getByText("85% CPU · high");
