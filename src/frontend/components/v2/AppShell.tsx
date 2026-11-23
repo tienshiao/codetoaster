@@ -150,6 +150,10 @@ export interface AppShellProps {
   /** The rail's sections, in order. The rail is the Explorer's tab bar and its
    * only toggle, so this is also what can be opened. */
   explorerSections?: ExplorerRailItem[];
+  /** The rail's foot, under the sections and always on screen: the
+   * system-load meter (TASK-149). A node rather than data, so whatever ticks
+   * inside it re-renders itself and not the shell. */
+  explorerRailFooter?: ReactNode;
   explorerTab?: string;
   onExplorerTabChange?: (label: string) => void;
   explorer?: ReactNode;
@@ -385,6 +389,7 @@ export function AppShell({
   status,
   children,
   explorerSections = [],
+  explorerRailFooter,
   explorerTab,
   onExplorerTabChange,
   explorer,
@@ -680,6 +685,7 @@ export function AppShell({
         items={explorerSections}
         value={explorerOpen ? explorerTab : null}
         onSelect={selectSection}
+        footer={explorerRailFooter}
         className={overlay ? "z-20" : undefined}
       />
 

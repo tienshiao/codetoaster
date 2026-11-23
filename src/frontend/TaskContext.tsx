@@ -22,6 +22,7 @@ import { retainTaskViewStates } from "./view-state-store";
 import { ignoredEntriesOf } from "./utils/ignored-files";
 import { generateUUID } from "./utils/uuid";
 import { changePulses } from "./change-pulse-store";
+import { systemLoad } from "./system-load-store";
 import type { FilesResponse } from "./types/file";
 import type { TaskState } from "./components/v2/StatusDot";
 import type {
@@ -405,6 +406,18 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     () =>
       subscribe({
         onMessage: (message) => {
+          // Machine load (TASK-149), handed straight to its own store: it
+          // arrives every two seconds, and nothing in this provider's state
+          // should re-render for it.
+          if (message.type === "loadHistory") {
+            systemLoad.replace(message);
+            return;
+          }
+          if (message.type === "load") {
+            systemLoad.append(message);
+            return;
+          }
+
           if (message.type === "tasks") {
             setTasks(message.list);
             setProjects(message.projects ?? []);
@@ -590,6 +603,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
           // what stops the UI acting on it until the fresh snapshot lands.
           askedRef.current = false;
           setLoaded(false);
+          systemLoad.reset();
         },
       }),
     [subscribe, send],

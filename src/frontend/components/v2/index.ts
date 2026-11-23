@@ -71,6 +71,9 @@ export type { ExplorerTabItem, ExplorerTabsProps } from "./ExplorerTabs";
 export { ExplorerRail } from "./ExplorerRail";
 export type { ExplorerRailItem, ExplorerRailProps } from "./ExplorerRail";
 
+export { SystemLoadIndicator } from "./SystemLoad";
+export type { SystemLoadIndicatorProps, SystemLoadReading } from "./SystemLoad";
+
 export { StatusBar } from "./StatusBar";
 export type { StatusBarProps } from "./StatusBar";
 

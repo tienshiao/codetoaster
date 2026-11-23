@@ -47,6 +47,15 @@ export interface HoverCardShellProps {
    * `asChild`, so it must be an element with a ref to take — a component that
    * merely renders one is not enough. */
   children: ReactNode;
+  /** Which way the card opens. Right by default, off the left-hand lists; a
+   * trigger on the right-hand rail opens left, into the pane. */
+  side?: "left" | "right";
+  align?: "start" | "end";
+  /** Open on keyboard focus as well as the pointer. Off by default for the
+   * reason at the trigger below: a row's own controls sit inside it. On for a
+   * trigger that *is* the thing being described and has nothing inside it to
+   * hand focus back to — the system-load meter (TASK-149). */
+  openOnFocus?: boolean;
 }
 
 /**
@@ -58,7 +67,14 @@ export interface HoverCardShellProps {
  * own `overflow-y-auto` does not clip it. Every card gets all of that from
  * here, so none of them can drift from the others by being written out again.
  */
-export function HoverCardShell({ open, card, children }: HoverCardShellProps) {
+export function HoverCardShell({
+  open,
+  card,
+  children,
+  side = "right",
+  align = "start",
+  openOnFocus = false,
+}: HoverCardShellProps) {
   const hoverable = useHoverPointer();
   // The row, and nothing around it, on a device that cannot hover: Radix's
   // trigger calls `preventDefault()` on `touchstart`, which would eat the tap
@@ -79,8 +95,12 @@ export function HoverCardShell({ open, card, children }: HoverCardShellProps) {
           took focus. `preventDefault` here is what Radix checks before its own
           handler runs. A hover card is a pointer affordance — everything on it
           is reachable elsewhere, which is the standing rule — so keyboard focus
-          was never a way in that anyone was promised. Blur still closes it. */}
-      <HoverCard.Trigger asChild onFocus={(event) => event.preventDefault()}>
+          was never a way in that anyone was promised. Blur still closes it.
+          `openOnFocus` lifts this for a trigger with no controls inside it. */}
+      <HoverCard.Trigger
+        asChild
+        onFocus={openOnFocus ? undefined : (event) => event.preventDefault()}
+      >
         {children}
       </HoverCard.Trigger>
       <HoverCard.Portal>
@@ -88,8 +108,8 @@ export function HoverCardShell({ open, card, children }: HoverCardShellProps) {
           // Off the rail and into the pane: the lists these hang off are narrow,
           // and a card above or below one would cover its neighbours — the rows
           // you are reading this one against.
-          side="right"
-          align="start"
+          side={side}
+          align={align}
           sideOffset={6}
           collisionPadding={8}
           className={HOVER_CARD_CONTENT_CLASS}

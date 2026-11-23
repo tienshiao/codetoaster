@@ -24,6 +24,7 @@ import { highlightRoutes } from "./api/highlight";
 import { symbolRoutes } from "./api/symbols";
 import { diagnosticsRoutes } from "./api/diagnostics";
 import { MemorySampler } from "./lib/diagnostics";
+import { LoadSampler, sendLoadHistory, streamLoad } from "./lib/system-load";
 import { watchPool } from "./lib/tasks/watch-pool";
 import { cacheStats as highlightCacheStats } from "./lib/highlight/cache";
 import { startSymbolSweep, symbolStoreStats } from "./lib/symbols/store";
@@ -192,6 +193,13 @@ export function startServer(options?: ServerOptions) {
   const memorySampler = new MemorySampler();
   memorySampler.start(60_000);
 
+  // Machine-wide load for the side rail (TASK-149): one sampler whatever the
+  // number of clients, from boot so a page load is handed history, and each
+  // tick serialized once and pushed down the socket every client already has.
+  const loadSampler = new LoadSampler();
+  streamLoad(loadSampler, (message) => taskManager.broadcastToAll(message));
+  loadSampler.start();
+
   const stopSymbolSweep = startSymbolSweep({ idleMs: options?.symbolsAfterMs });
   if (options?.symbolsAfterMs !== undefined) {
     console.log(`Drop unused symbol indexes after ${describeWindow(options.symbolsAfterMs)}`);
@@ -303,6 +311,7 @@ export function startServer(options?: ServerOptions) {
           const drained = harvester.stop();
           taskManager.stopWatchers();
           memorySampler.stop();
+          loadSampler.stop();
           stopSymbolSweep();
           setTimeout(() => {
             // `finally`, so a tick that somehow rejected still lets the daemon
@@ -329,6 +338,7 @@ export function startServer(options?: ServerOptions) {
 
       open(ws) {
         taskManager.registerClient(ws.data.clientId, ws);
+        sendLoadHistory(loadSampler, ws);
       },
 
       message(ws, message) {

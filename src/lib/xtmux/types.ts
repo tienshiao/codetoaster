@@ -186,7 +186,42 @@ export type ServerMessage =
       history: boolean;
       ignored?: string[];
       gone?: string[];
-    };
+    }
+  // Machine-wide load (TASK-149). The history goes to a socket once, as it
+  // opens; every tick after that is one `load` to every client.
+  | LoadHistoryMessage
+  | LoadSampleMessage;
+
+/** One tick of the daemon's machine-wide load sampler (TASK-149). */
+export interface LoadSample {
+  /** When it was taken, on the daemon's clock. */
+  at: number;
+  /** Busy share of all cores since the previous tick, 0–100 to one decimal.
+   * Null when the interval could not be measured: the counters went
+   * backwards, or the number of cores changed under them. */
+  cpu: number | null;
+  /** 1, 5 and 15-minute load averages, to two decimals. */
+  load: [number, number, number];
+  /** Logical cores, the yardstick a load average is read against. */
+  cores: number;
+}
+
+/** The sampler's whole ring, oldest first: what a socket is sent on open, so a
+ * freshly loaded page charts the last few minutes rather than nothing. */
+export interface LoadHistoryMessage {
+  type: "loadHistory";
+  /** The tick, so a client can tell a gap (a sleeping laptop) from a sample
+   * that simply has not arrived yet. */
+  intervalMs: number;
+  /** How many samples the daemon keeps: the window, in ticks. */
+  capacity: number;
+  samples: LoadSample[];
+}
+
+export interface LoadSampleMessage {
+  type: "load";
+  sample: LoadSample;
+}
 
 /** A checkout on disk that no task accounts for (§5.6, TASK-32).
  *

@@ -1,9 +1,11 @@
 ---
 id: TASK-149
 title: System load indicator in the side rail with a load-over-time hover card
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-11-23T02:03:00Z'
+updated_date: '2026-11-23T03:58:00Z'
 labels:
   - frontend
   - backend
@@ -31,3 +33,15 @@ Working locally, the user keeps Activity Monitor open with its CPU load graph, s
 - [ ] #6 Colours come from v2 semantic tokens, the indicator and chart read in light and dark themes, and the indicator signals high load (e.g. a threshold colour) without relying on colour alone
 - [ ] #7 Any new or changed API route has route-level tests through a real Bun.serve on port 0; the sampler has unit tests with an injected clock; the indicator and card have rendering tests
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Sampler (src/lib/system-load.ts): LoadSampler reads os.cpus() and os.loadavg() (injectable, plus now) every 2s; CPU% = 1 - dIdle/dTotal over all cores between ticks (first tick is the baseline; a negative/zero delta or a core-count change records cpu null and rebaselines); bounded ring of 300 samples = 10 min; start/stop/subscribe; samples carry at, cpu (1 dp), load 1/5/15 (2 dp), cores. Runs from boot whatever the client count, so a page load gets history (AC3). 2. Delivery over the existing WebSocket, not a polled route: the indicator is always on screen in every client, so polling would be one HTTP request per client per tick through guard+compression, while the socket is already open; a push costs one JSON.stringify per tick (broadcastToAll) and a frame per client. Messages: loadHistory {intervalMs, capacity, samples} sent in open(ws), and load {sample} broadcast per tick. Helpers sendLoadHistory/streamLoad in system-load.ts so server.ts only wires them (4 small edits: construct+start, open, shutdown stop). 3. Frontend store (src/frontend/system-load-store.ts, useSyncExternalStore) fed from TaskProvider's existing subscriber; replace on history, append+trim on sample, reset on disconnect. A small host component reads it so only the indicator re-renders every 2s, passed to AppShell as a new explorerRailFooter slot -> ExplorerRail footer (mt-auto). 4. v2 components: SystemLoadIndicator (role=meter, tabIndex 0, sparkline of last ~24 samples + percent text; high load >=80% adds a bordered bold chip + aria-valuetext 'high' so it is not colour-only; tokens state-busy normal / warning high) and SystemLoadCard (SVG area+line chart of CPU over the window with hairline 0/50/100 grid, gaps broken where samples are missing, end dot; facts CPU now, peak, cores, load 1/5/15). HoverCardShell gains side/align/openOnFocus props (defaults unchanged) so this card opens on focus and to the left of the rail. Pure path math in a .ts with unit tests. 5. Tests: sampler unit (delta math, ring bound, start/stop, rebaseline), socket test via real Bun.serve (history on connect, one read per tick with 2 clients, broadcast), store unit, render tests (indicator values/high state, card opens on hover and focus with chart+numbers). 6. Smoke on port 4606, wiki page + index + log, /code-review high v2, notes.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Delivery: pushed over the terminal WebSocket, no HTTP route. The indicator is on screen in every client always, so polling would be one guarded+compressed request per client per tick; the socket is already open. loadHistory {intervalMs, capacity, samples} goes to each socket in open(); each tick streamLoad hands load {sample} to taskManager.broadcastToAll (one JSON.stringify per tick, one frame per client). Sampler (src/lib/system-load.ts): one instance from boot, 2s interval, 300-sample ring (10 min), baseline-first, cpu null on backwards counters / zero delta / core-count change; stopped in /api/shutdown beside memorySampler. Probe (Bun 1.4.4, macOS, M1 Max, 10 cores): os.cpus() ~2us/call, os.loadavg() ~1us; 1s deltas summed ~10000ms across 10 cores and busy% (42-50%) agreed with top's idle within a few points. Absolute idle counters on core 0 look odd under Bun (user 831M vs idle 50M ms) but deltas are sane, which is all the sampler uses. Linux not run: same APIs read /proc/stat; libuv omits iowait/softirq/steal from times, and in a container both figures are host-wide (unverified). Browser: TaskProvider's subscriber feeds a module store (useSyncExternalStore) so a tick re-renders only the meter; reset on disconnect. UI: ExplorerRail footer slot via AppShell explorerRailFooter; v2 SystemLoadIndicator is role=meter tabIndex 0 with a 24x12 sparkline + percent; high (>=80%) adds outline box + semibold + aria-valuetext ', high' + warning tone. Card: 260x72 SVG, fixed 0-100 scale, hairline grid, 2px state-busy line, 12% wash via fillOpacity (no color-mix), gaps >2.5 ticks and nulls break the line; Peak/Load 1,5,15/Cores facts. HoverCardShell gained openOnFocus/side/align (defaults unchanged, TASK-115 behaviour kept for rows). No in-chart crosshair: the shared panel is pointer-events-none. Known gap: touch devices get no card (HoverCardShell mounts no trigger without a hover pointer). No new tokens. Smoke on port 4606: loadHistory arrived at +1ms with 3 samples, then load frames at 2s spacing; /api/shutdown exited 0.
+<!-- SECTION:NOTES:END -->

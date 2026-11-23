@@ -9,6 +9,7 @@ import { Button } from "@/frontend/components/v2/Button";
 import { WipNotice } from "@/frontend/components/WipNotice";
 import { Explorer, useExplorerRail } from "@/frontend/components/Explorer";
 import { SettingsDialog } from "@/frontend/components/SettingsDialog";
+import { SystemLoad } from "@/frontend/components/SystemLoad";
 import { CommandPaletteHost } from "@/frontend/components/CommandPalette";
 import { useComposerProject } from "@/frontend/hooks/use-composer-project";
 import { useRootBranch } from "@/frontend/hooks/use-root-branch";
@@ -756,6 +757,7 @@ export function TaskShell({ taskId, pendingTab = null, pendingPosition, onTabEns
               : ["no task"],
         }}
         explorerSections={explorerSections}
+        explorerRailFooter={<SystemLoad />}
         explorerTab={explorerSection}
         onExplorerTabChange={explorerPanel.setSection}
         explorerOpen={explorerOpen}

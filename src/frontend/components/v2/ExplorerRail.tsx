@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/frontend/lib/utils";
 
@@ -17,6 +18,9 @@ export interface ExplorerRailProps {
   /** Fires for every click, including one on the active section; the shell
    * reads that as "close", the way a rail is expected to behave. */
   onSelect?: (label: string) => void;
+  /** Pinned to the rail's foot, under every section: the system-load meter
+   * (TASK-149), which is always on screen whichever section is open. */
+  footer?: ReactNode;
   className?: string;
 }
 
@@ -29,7 +33,7 @@ export interface ExplorerRailProps {
  * 14px glyphs so it keeps the chrome's density rather than VSCode's roomier
  * activity bar.
  */
-export function ExplorerRail({ items = [], value, onSelect, className }: ExplorerRailProps) {
+export function ExplorerRail({ items = [], value, onSelect, footer, className }: ExplorerRailProps) {
   return (
     <nav
       aria-label="Explorer"
@@ -73,6 +77,7 @@ export function ExplorerRail({ items = [], value, onSelect, className }: Explore
           </button>
         );
       })}
+      {footer ? <div className="mt-auto flex flex-col items-stretch">{footer}</div> : null}
     </nav>
   );
 }
