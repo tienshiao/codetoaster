@@ -203,8 +203,11 @@ export function Dialog({
                   the clamped-away lines still lay out below the second, and
                   `overflow: hidden` clips at the padding box, so a padded
                   clamp showed the top of the third line through its bottom
-                  padding. */}
-              <span className="line-clamp-2 break-words">{subject}</span>
+                  padding. `wrap-anywhere` rather than `break-words`: only
+                  `anywhere` lowers the min-content width, and the panel is a
+                  grid item that grows to it, so a path or URL in a prompt-
+                  length name pushed the panel past a phone's viewport. */}
+              <span className="line-clamp-2 wrap-anywhere">{subject}</span>
             </p>
           ) : null}
           {description ? (

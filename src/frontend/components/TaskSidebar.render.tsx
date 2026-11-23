@@ -136,7 +136,9 @@ test("a long task name is clamped in the dialog and kept whole on hover", () => 
   expect(subject.classList.contains("line-clamp-2")).toBe(false);
   const clamped = subject.querySelector<HTMLElement>(".line-clamp-2");
   expect(clamped).not.toBeNull();
-  expect(clamped!.classList.contains("break-words")).toBe(true);
+  // `anywhere`, not `break-word`: only it lowers the min-content width, so an
+  // unbreakable path in the name cannot widen the panel past the viewport.
+  expect(clamped!.classList.contains("wrap-anywhere")).toBe(true);
   expect(clamped!.textContent).toBe(long);
   expect([...clamped!.classList].some((c) => /^(p|py|pt|pb)-/.test(c))).toBe(false);
 });

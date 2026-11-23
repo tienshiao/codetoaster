@@ -5,7 +5,7 @@ description: New frontend work composes from components/v2 with semantic tokens 
 tags: [frontend, design-system, tailwind, tokens]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-22T12:00:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T02:07:21Z }
 sources:
   - id: claude-md
     resource: ../../CLAUDE.md
