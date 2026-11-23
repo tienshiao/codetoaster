@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-11-23
+* **Update**: [The v2 design system](/conventions/v2-design-system.md) for TASK-153: its Status no longer describes TASK-28 as pending or `routes/shell.tsx` as the preview, and the `components/ui/` rule no longer refers to live v1 code, matching the refreshed CLAUDE.md.
 * **Update**: [Response and socket compression](/modules/compression.md) after TASK-150's review: the bundle route answers a matching `If-None-Match` with a 304, the rewritten page's ETag gains a `-bundled` suffix, and the mermaid dynamic import is inlined, which a fixture test now guards.
 * **Update**: [Response and socket compression](/modules/compression.md) for TASK-150: its "stay uncompressed" section is replaced by Bundled JS and CSS. It covers why Bun's bundle routes cannot be shadowed, the page rewrite to `/_bundle/`, the fetch-once and encode-once-per-coding cache bounded by the page's names, lazy encoding and its timings, why fonts and nothing inside the bundles need rewriting, dev mode left alone, and the bundle sizes on the wire.
 * **Update**: [System load sampler and rail indicator](/modules/system-load.md) after review: a clock step-back restarts the browser's series rather than freezing it, peak and low are taken over the drawn window, high is judged on the figure as shown, the sparkline frame turns warning too, and `wireLoadSampler` is the one socket wiring `server.ts` and the test share.

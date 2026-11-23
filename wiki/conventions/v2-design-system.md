@@ -1,11 +1,11 @@
 ---
 type: Convention
 title: The v2 design system
-description: New frontend work composes from components/v2 with semantic tokens only; AppShell is layout-only and replaces App.tsx in TASK-28.
+description: Frontend work composes from components/v2 with semantic tokens only; AppShell is layout-only, every route renders inside it, and the v1 scaffolding is gone.
 tags: [frontend, design-system, tailwind, tokens]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T02:07:21Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T13:56:57Z }
 sources:
   - id: claude-md
     resource: ../../CLAUDE.md
@@ -24,11 +24,11 @@ sources:
 
 # Status
 
-`components/v2/` is not an experiment or a parallel track. It is the UI this branch is being rebuilt into: the task list, tab bar, Explorer and composer are all composed from it, and TASK-28 is where `AppShell` replaces `App.tsx` at `/` and the v1 scaffolding is deleted. Until then `routes/shell.tsx` renders it with fixture data and v1 keeps running.[^claude-md] [^task-28]
+`components/v2/` is the UI. The task list, tab bar, Explorer and composer are composed from it, every route renders inside `AppShell` (through `components/TaskShell.tsx` in `routes/__root.tsx`), and the v1 scaffolding it replaced, which TASK-28 set out to delete, is gone.[^claude-md] [^task-28]
 
 # Rules
 
-- Compose from `components/v2/`. Reach for `components/ui/` (shadcn) only when touching v1 code that is still live, and do not grow it.
+- Compose from `components/v2/`. What is left of `components/ui/` (shadcn) is a handful of primitives some v2 components and older views still wrap; do not grow it.[^claude-md]
 - `AppShell` is layout only. Every list, tab and status value arrives as a prop, so wiring tasks supply data rather than restructure markup.
 - Use the semantic tokens (`bg-pane`, `text-state-busy`, `h-row`, `text-micro`, `bg-selected`), never a colour literal. The raw `--ct-*` palette is not component vocabulary.[^claude-md]
 

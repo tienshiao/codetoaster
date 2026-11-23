@@ -1,7 +1,11 @@
 
 # CodeToaster
 
-Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocket, with multi-client support (multiple browsers can attach to the same session).
+Browser-based workspace for coding-agent tasks. A task runs an agent (Claude Code
+by default, or another profile) in a PTY, usually in a git worktree of its own,
+with shell terminals, a diff, files and history beside it. A daemon owns the
+PTYs and pushes them over one WebSocket, and several browsers can attach to the
+same task at once.
 
 ## Project Structure
 
@@ -9,31 +13,42 @@ Browser-based terminal multiplexer. Multiple shell sessions managed via WebSocke
 src/
   index.ts              # CLI entry point
   server.ts             # Bun.serve() setup (HTTP, WebSocket, HTML imports)
-  cli/                  # CLI commands, daemon management, output formatting
-  api/                  # HTTP API routes (diff, files, git, highlight, symbols)
-  api/utils.ts          # Shared route helpers (gitSpawn, SHA_RE, file listing)
-  lib/db.ts             # bun:sqlite (projects) with migrations
-  lib/xtmux/            # Session manager, PTY sessions, WebSocket message types
+  cli/                  # CLI commands, daemon management, agent hook relay
+  api/                  # HTTP routes: tasks, diff, files, git, worktrees, backlog, uploads, ...
+  api/utils.ts          # Shared route helpers (gitSpawn, root resolution, file listing)
+  api/compress.ts       # Response compression; bundles.ts serves the compressed JS/CSS
+  lib/db.ts             # bun:sqlite (projects, tasks) with migrations
+  lib/tasks/            # TaskManager: task lifecycle, suspend/resume, archive, harvester, watchers
+  lib/agent/            # Agent profiles, spawn command, hook state, transcripts
+  lib/worktree/         # Per-task git worktrees: create, WIP snapshots, restore, evict, reconcile
+  lib/xtmux/            # PTYs, terminal naming, WebSocket message types and send helpers
   lib/highlight/        # Server-side tree-sitter tokenizing, grammar registry, cache
   lib/symbols/          # Per-repo symbol index (tree-sitter tags) and store
+  lib/backlog/          # Reading Backlog.md tasks for the Explorer
+  lib/diff/             # Oversized-diff placeholder shared by server and client
+  lib/*.ts              # Daemon-wide services: diagnostics, processes, system load, uploads
   frontend/
     index.html          # HTML entry point (Bun HTML import)
-    App.tsx              # Main layout
-    SessionContext.tsx   # Global state (sessions, WebSocket, activity)
-    Terminal.tsx         # @xterm/xterm wrapper
-    DiffView.tsx         # Code review diff viewer (comments/symbols over DiffLayout)
-    FileView.tsx         # File browser
-    view-state-store.ts  # Per-session UI state that survives tab unmounts
-    components/          # UI components (sidebar, settings, command palette)
-    components/diff/     # Diff viewer; DiffLayout is the shared read-only core
-    components/file/     # File tree, content, markdown/mermaid preview
-    components/git/      # Commit list, graph, detail, ref sidebar
-    components/ui/       # shadcn/ui primitives (v1)
-    components/v2/       # The v2 design system: shell components + AppShell
-    hooks/               # React hooks (WebSocket, theme, git queries, etc.)
-    utils/               # Diff parsing, commit graph lanes, ref tree, slug generation
-    routes/              # TanStack Router file-based routes
-    types/               # TypeScript type definitions
+    frontend.tsx        # React root
+    TaskContext.tsx     # Global state: tasks, projects, WebSocket, activity
+    PtyContext.tsx      # Per-PTY routing over the one socket (pty-router.ts)
+    Terminal.tsx        # @xterm/xterm wrapper
+    DiffView.tsx        # Code review diff (comments/symbols over DiffLayout)
+    layout-store.ts     # Each task's tab layout: tabs, split groups, focus
+    view-state-store.ts # Per-task UI state that survives tab unmounts
+    components/         # Task sidebar, TaskShell, Explorer, Composer, dialogs, palette
+    components/tabs/    # TabArea and its panes (agent, shell, file, diff, history, commit)
+    components/diff/    # Diff viewer; DiffLayout is the shared read-only core
+    components/file/    # File tree, content, markdown/mermaid preview
+    components/git/     # Commit list, graph, detail, ref sidebar
+    components/ui/      # shadcn/ui primitives left from v1 (do not grow)
+    components/v2/      # The v2 design system: shell components + AppShell
+    hooks/              # React hooks (WebSocket, theme, git queries, etc.)
+    lib/                # cn() helper, attachment uploads, agent options
+    utils/              # Diff parsing, commit graph lanes, ref tree, slugs, link matching
+    routes/             # TanStack Router file-based routes
+    types/              # Frontend-only type definitions
+  types/                # Types shared by server and frontend
 ```
 
 ## Running
@@ -90,23 +105,48 @@ Exception: git invocations go through `gitSpawn`/`gitSpawnRaw` in `api/utils.ts`
 
 ## WebSocket Protocol
 
-Client sends: `create`, `attach`, `detach`, `input`, `resize`, `list`, `kill`
-Server sends: `attached`, `restore`, `data`, `resize`, `exit`, `error`, `sessions`, `activity`
+`ClientMessage` and `ServerMessage` in `src/lib/xtmux/types.ts` are the source
+of truth; read them rather than a list here. In outline:
+
+- The socket carries terminal I/O for every PTY a browser shows (`attach`,
+  `input`, `resize`, `data`, `restore`, `exit`), the task list and its changes
+  (`tasks`, `task`, `activity`, `notification`, `changed`), project edits and
+  sidebar order, and the system load feed (`loadHistory`, `load`).
+- Creating, resuming, suspending, archiving and deleting a task are HTTP routes
+  under `/api/tasks` (`src/api/tasks.ts`), not socket messages; the result
+  reaches every browser as a `task` or `tasks` frame.
+- Server frames go out through `sendFrame` in `src/lib/xtmux/socket.ts`, which
+  compresses them ([compression](wiki/modules/compression.md)).
 
 ## Key Patterns
 
-- Sessions use slug URLs: `{slugified-name}-{uuid}` (lookup keys off the uuid, so a name change only alters the slug cosmetically)
-- Session names are derived server-side in `lib/xtmux/naming.ts`: the stored `name` is a stable `{dir} · {branch}` label (the slug and the CLI's name matching build off it) and only a manual rename replaces it. The *displayed* label is projected at render time by `sessionDisplayNames`: an explicit rename, else the live terminal title (OSC 0/2) when it carries real content and is unique across sessions, else the stored name. Nothing is latched. `naming.ts` is import-free so the frontend can share the projection
+- Task URLs are `/t/{slugified-title}-{uuid}` (`routes/t.$slug.tsx`,
+  `utils/slug.ts`). Lookup keys off the last 36 characters, so a rename only
+  alters the slug cosmetically, and `?tab=<tabKey>` opens or focuses a tab.
+- A task's label is derived server-side in `lib/xtmux/naming.ts`: the stored
+  title is a stable `{dir} · {branch}` label (the slug and the CLI's name
+  matching build off it) and only a manual rename replaces it. The *displayed*
+  label is projected at render time by `sessionDisplayNames`: an explicit
+  rename, else the live terminal title (OSC 0/2) when it carries real content
+  and is unique across tasks, else the stored title. Nothing is latched.
+  `naming.ts` is import-free so the frontend can share the projection
+  ([task naming](wiki/modules/task-naming.md))
+- A task's tabs (agent, shells, files, diffs, history, commits) live in a
+  per-task layout in `layout-store.ts`, drawn by `components/tabs/TabArea.tsx`
+  with one pane component per kind in `components/tabs/panes/`
 - Terminal size negotiation: smallest-wins across all connected clients
+  ([terminal size negotiation](wiki/modules/terminal-size-negotiation.md))
 - Server maintains authoritative terminal state via `@xterm/headless` + serialization addon
-- Frontend queues WebSocket messages until terminal is mounted
-- Activity tracking with 300ms trailing debounce
+- The frontend routes socket frames per PTY (`pty-router.ts`) and queues a
+  PTY's frames until its terminal is mounted
+- A PTY counts as idle after 300ms of silence; that edge drives task activity,
+  and the sidebar order moves only on a wake after a quiet gap
+  ([task list order](wiki/modules/task-list-order.md))
 - Diff view: unified diff parser with word-level highlighting, inline comments, syntax tokenization
-- `DiffLayout` is the comment-free diff core (file tree, all/single toggle, keyboard nav); `DiffView` wraps it with comments/submit/symbols, the git view feeds it per-commit state. Read-only consumers pass no comment/expand props, so those affordances don't render.
-- Git view: commit graph lanes are assigned by a pure, resumable `GraphState` in `utils/commitGraph.ts` so contiguous pagination stays deterministic
+- `DiffLayout` is the comment-free diff core (file tree, all/single toggle, keyboard nav); `DiffView` wraps it with comments/submit/symbols, and the commit view (`components/git/CommitDetail.tsx`) feeds it per-commit state. Read-only consumers pass no comment/expand props, so those affordances don't render.
+- History: commit graph lanes are assigned by a pure, resumable `GraphState` in `utils/commitGraph.ts` so contiguous pagination stays deterministic
 - `/git/log` uses `after=` drift detection (409 → `StaleLogError`, reset once outside the retry cycle) and `until=` seek for fetch-until-SHA
-- UI state that must survive tab unmounts lives in `view-state-store.ts` keyed by session, not component state
-- Session routes use nested layout: `sessions.$slug.tsx` (tabs) → `index.tsx` (terminal) / `diff.tsx` (code review) / `file.tsx` (browser) / `git.tsx` (history)
+- UI state that must survive tab unmounts lives in `view-state-store.ts` keyed by task, not component state
 
 ## Testing
 
@@ -217,17 +257,16 @@ For Bun API docs: `node_modules/bun-types/docs/**.mdx`
 
 ## The v2 design system is the new UI
 
-`components/v2/` is not an experiment or a parallel track: it is the UI this
-branch is being rebuilt into. Everything Phase 4 builds — task list, tab bar,
-Explorer, composer — is composed from it, and TASK-28 is where `AppShell`
-replaces `App.tsx` at `/` and the v1 scaffolding is deleted. Until then
-`routes/shell.tsx` renders it with fixture data so it can be looked at, and v1
-keeps running.
+`components/v2/` is the UI. The task list, tab bar, Explorer and composer are
+composed from it, every route renders inside `AppShell` (through
+`components/TaskShell.tsx` in `routes/__root.tsx`), and the v1 scaffolding it
+replaced is gone.
 
 So when building new frontend work:
 
-- Compose from `components/v2/`. Reach for `components/ui/` (shadcn) only when
-  touching v1 code that is still live, and do not grow it.
+- Compose from `components/v2/`. What is left of `components/ui/` (shadcn) is
+  a handful of primitives some v2 components and older views still wrap; do not
+  grow it.
 - `AppShell` is layout only. Every list, tab and status value arrives as a
   prop, so the wiring tasks supply data rather than restructure markup.
 - Use the semantic tokens (`bg-pane`, `text-state-busy`, `h-row`, `text-micro`,

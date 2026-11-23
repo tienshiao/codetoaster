@@ -24,7 +24,7 @@ okf_version: "0.2"
 # Conventions
 
 * [Two test runners, split by filename](conventions/testing.md) - Non-rendering tests run under bun test as *.test.ts, rendering tests run under Vitest with happy-dom as *.render.tsx, and no test ever spawns the real agent.
-* [The v2 design system](conventions/v2-design-system.md) - New frontend work composes from components/v2 with semantic tokens only; AppShell is layout-only and replaces App.tsx in TASK-28.
+* [The v2 design system](conventions/v2-design-system.md) - Frontend work composes from components/v2 with semantic tokens only; AppShell is layout-only, every route renders inside it, and the v1 scaffolding is gone.
 * [Wiki maintenance](conventions/wiki-maintenance.md) - How this wiki is structured, written, reviewed and linted.
 
 # Decisions
