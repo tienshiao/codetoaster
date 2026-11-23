@@ -1,6 +1,6 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 import { taskDir } from "../agent/spawn";
 import { WorktreeError } from "./errors";
 

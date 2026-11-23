@@ -1,4 +1,4 @@
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 import { WorktreeError } from "./errors";
 
 /** Every branch we create lives under this one prefix, so a user can tell ours

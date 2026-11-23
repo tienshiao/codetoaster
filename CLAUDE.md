@@ -15,8 +15,12 @@ src/
   server.ts             # Bun.serve() setup (HTTP, WebSocket, HTML imports)
   cli/                  # CLI commands, daemon management, agent hook relay
   api/                  # HTTP routes: tasks, diff, files, git, worktrees, backlog, uploads, ...
-  api/utils.ts          # Shared route helpers (gitSpawn, root resolution, file listing)
+  api/roots.ts          # Task/project/worktree root resolution; rootRoutes registers a route under each
+  api/untracked-diff.ts # Untracked files' diff through a scratch intent-to-add index
+  api/utils.ts          # Generic helpers: cachedPromise, coalesce, mapWithConcurrency, parseNonNegInt
   api/compress.ts       # Response compression; bundles.ts serves the compressed JS/CSS
+  lib/git/spawn.ts      # gitSpawn/gitSpawnRaw: every git invocation goes through these
+  lib/file-listing.ts   # Repository file listing (tracked, untracked, ignored), safePath, image MIME types
   lib/db.ts             # bun:sqlite (projects, tasks) with migrations
   lib/tasks/            # TaskManager: task lifecycle, suspend/resume, archive, harvester, watchers
   lib/agent/            # Agent profiles, spawn command, hook state, transcripts
@@ -101,7 +105,7 @@ Default to Bun instead of Node.js.
 - `Bun.file()` - not `node:fs` readFile/writeFile
 - `Bun.$\`cmd\`` - not `execa`
 
-Exception: git invocations go through `gitSpawn`/`gitSpawnRaw` in `api/utils.ts`, which use `Bun.spawn`. `Bun.$` buffers output in a shell and deadlocks on large payloads (e.g. diffing many large untracked files).
+Exception: git invocations go through `gitSpawn`/`gitSpawnRaw` in `lib/git/spawn.ts`, which use `Bun.spawn`. `Bun.$` buffers output in a shell and deadlocks on large payloads (e.g. diffing many large untracked files).
 
 ## WebSocket Protocol
 

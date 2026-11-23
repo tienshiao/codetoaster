@@ -2,15 +2,10 @@ import { test, expect, describe, afterEach, beforeAll, afterAll } from "bun:test
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import {
-  coalesce,
-  diffUntrackedFiles,
-  gitSpawn,
-  listGitFiles,
-  mapWithConcurrency,
-  settledStages,
-  withoutGitlinks,
-} from "./utils";
+import { listGitFiles } from "../lib/file-listing";
+import { gitSpawn } from "../lib/git/spawn";
+import { diffUntrackedFiles, settledStages, withoutGitlinks } from "./untracked-diff";
+import { coalesce, mapWithConcurrency } from "./utils";
 import { diffRoutes } from "./diff";
 import { gitRoutes } from "./git";
 import { MAX_DIFF_LINE_CHARS } from "./diff-cap";
@@ -181,7 +176,7 @@ describe("diffUntrackedFiles", () => {
     fs.chmodSync(path.join(shimDir, "git"), 0o755);
     try {
       const script = `
-        import { diffUntrackedFiles } from ${JSON.stringify(path.join(import.meta.dir, "utils.ts"))};
+        import { diffUntrackedFiles } from ${JSON.stringify(path.join(import.meta.dir, "untracked-diff.ts"))};
         const diff = await diffUntrackedFiles(${JSON.stringify(root)});
         console.log(JSON.stringify({ lines: diff.split("\\n").length }));
       `;
@@ -372,7 +367,7 @@ describe("diffUntrackedFiles under a build", () => {
     fs.chmodSync(path.join(shimDir, "git"), 0o755);
     try {
       const script = `
-        import { diffUntrackedFiles } from ${JSON.stringify(path.join(import.meta.dir, "utils.ts"))};
+        import { diffUntrackedFiles } from ${JSON.stringify(path.join(import.meta.dir, "untracked-diff.ts"))};
         console.log(JSON.stringify(await diffUntrackedFiles(${JSON.stringify(root)})));
       `;
       const proc = Bun.spawnSync(["bun", "-e", script], {

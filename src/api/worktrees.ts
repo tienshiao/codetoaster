@@ -1,5 +1,5 @@
 import * as fsp from "node:fs/promises";
-import { liveWorktrees, rootRoutes } from "./utils";
+import { liveWorktrees, rootRoutes } from "./roots";
 
 /** One worktree as the Explorer's picker lists it (TASK-138.2). */
 export interface WorktreeListEntry {

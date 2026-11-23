@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { gitSpawn } from "../src/api/utils";
+import { gitSpawn } from "../src/lib/git/spawn";
 import { taskDir } from "../src/lib/agent/spawn";
 import { worktreesRoot } from "../src/lib/worktree/paths";
 

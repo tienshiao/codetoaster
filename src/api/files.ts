@@ -1,17 +1,15 @@
 import {
-  rootRoutes,
-  cachedPromise,
   getImageMimeType,
-  gitSpawn,
-  gitSpawnRaw,
   IMAGE_MIME_TYPES,
   listGitFiles,
   listIgnoredEntries,
   safePath,
   buildFileListing,
-  type CachedPromise,
   type FileInfo,
-} from "./utils";
+} from "../lib/file-listing";
+import { gitSpawn, gitSpawnRaw } from "../lib/git/spawn";
+import { rootRoutes } from "./roots";
+import { cachedPromise, type CachedPromise } from "./utils";
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { highlightFile } from "../lib/highlight/tokenize";

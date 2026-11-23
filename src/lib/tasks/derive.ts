@@ -1,6 +1,6 @@
 import * as os from "os";
 import * as path from "path";
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 import { formatDerivedName } from "../xtmux/naming";
 
 // Deriving a title must never be the reason a task fails to open. git may be

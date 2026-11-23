@@ -1,6 +1,9 @@
 # Wiki Update Log
 
 ## 2026-11-23
+* **Update**: [Bun.$ deadlocks on large git output](/gotchas/bun-shell-deadlock.md) for TASK-154: `gitSpawn` / `gitSpawnRaw` moved from `src/api/utils.ts` to `src/lib/git/spawn.ts`, where the rule and its source now point.
+* **Update**: [File listing and ignored files](/modules/file-listing.md) for TASK-154: `listGitFiles`, `listIgnoredEntries`, `buildFileListing` and `safePath` moved from `src/api/utils.ts` to `src/lib/file-listing.ts`.
+* **Update**: [Worktree browsing](/modules/worktree-browsing.md) for TASK-154: root resolution, the worktree listing and `rootRoutes` moved from `src/api/utils.ts` to `src/api/roots.ts`.
 * **Creation**: [Bun.spawn can run onExit before it returns](/gotchas/bun-spawn-sync-onexit.md) for TASK-151: Bun runs a spawn's `onExit` inside `Bun.spawn` when the child is already gone, which dropped the exit of an agent that died at once; `Pty` now holds an exit nobody heard for its first listener.
 * **Update**: [The v2 design system](/conventions/v2-design-system.md) for TASK-153: its Status no longer describes TASK-28 as pending or `routes/shell.tsx` as the preview, and the `components/ui/` rule no longer refers to live v1 code, matching the refreshed CLAUDE.md.
 * **Update**: [Response and socket compression](/modules/compression.md) after TASK-150's review: the bundle route answers a matching `If-None-Match` with a 304, the rewritten page's ETag gains a `-bundled` suffix, and the mermaid dynamic import is inlined, which a fixture test now guards.

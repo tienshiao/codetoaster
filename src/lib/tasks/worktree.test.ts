@@ -7,7 +7,7 @@ import { applyMigrations } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager } from "./manager";
 import { Harvester, SEVEN_DAYS_MS } from "./harvester";
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 import { foreignCheckouts } from "../../../test/git-repo";
 import { taskDir } from "../agent/spawn";
 import { WorktreeError, readWip, setupStampPath, worktreesRoot } from "../worktree";

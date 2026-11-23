@@ -5,11 +5,11 @@ description: The Explorer lists the worktrees of a task's repository and can poi
 tags: [module, worktrees, explorer, tabs, git]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-06T00:00:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T15:21:15Z }
 sources:
-  - id: utils
-    resource: ../../src/api/utils.ts
-    title: src/api/utils.ts
+  - id: roots
+    resource: ../../src/api/roots.ts
+    title: src/api/roots.ts
   - id: route
     resource: ../../src/api/worktrees.ts
     title: src/api/worktrees.ts
@@ -42,11 +42,11 @@ Subagents often work in their own git worktrees of the task's repository. Every 
 
 # The serving side
 
-Every repository-reading route is written once against a resolved root and registered by `rootRoutes` under three prefixes: `/api/tasks/:id/…`, `/api/projects/:id/…` and `/api/worktrees/:token/…`.[^utils]
+Every repository-reading route is written once against a resolved root and registered by `rootRoutes` (`src/api/roots.ts`) under three prefixes: `/api/tasks/:id/…`, `/api/projects/:id/…` and `/api/worktrees/:token/…`.[^roots]
 
 - **The token** is base64url, without padding, of the UTF-8 JSON `{scope, id, path}`: the base root's scope (`tasks` or `projects`), its id, and the worktree's absolute path. The codec is import-free, so the frontend and the server share it.[^token]
-- **Resolving one** decodes the token (a malformed one is a 400), resolves the base root through its own resolver (its 404s and 400s pass through), then lists the base repository's worktrees with `git worktree list --porcelain`. The path is served only when its realpath is one of the live entries; otherwise the answer is 404 `Worktree not found`.[^utils]
-- **Live** means listed, neither bare nor prunable, and on disk now. The listing is cached for three seconds per repository, but the directory is checked on every request, so a `git worktree remove` stops serving the path at once.[^utils]
+- **Resolving one** decodes the token (a malformed one is a 400), resolves the base root through its own resolver (its 404s and 400s pass through), then lists the base repository's worktrees with `git worktree list --porcelain`. The path is served only when its realpath is one of the live entries; otherwise the answer is 404 `Worktree not found`.[^roots]
+- **Live** means listed, neither bare nor prunable, and on disk now. The listing is cached for three seconds per repository, but the directory is checked on every request, so a `git worktree remove` stops serving the path at once.[^roots]
 - **Realpaths** are compared on both sides, because git and the client need not spell a path the same way (`/tmp` and `/private/tmp` on macOS).
 
 `GET <root>/worktrees` lists the live worktrees with their path, branch (null when detached), HEAD, and `current` for the root's own checkout.[^route]
@@ -76,7 +76,7 @@ The Explorer draws a v2 `Select` above the section when the list holds more than
 - **Which worktree** is named by a mono line above the pane, showing the branch and the directory, with the full path as its tooltip. The tab strip adds the directory to the tab's detail.[^frame]
 - **A gone worktree** is reported in place of the pane: once the list (asked again whenever the tab mounts) no longer holds the path, the pane says "This worktree no longer exists." instead of showing the route's 404.
 
-[^utils]: src/api/utils.ts
+[^roots]: src/api/roots.ts
 [^route]: src/api/worktrees.ts
 [^token]: src/lib/worktree-token.ts
 [^repo-root]: src/frontend/repo-root.ts

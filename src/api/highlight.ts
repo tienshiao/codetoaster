@@ -1,4 +1,6 @@
-import { rootRoutes, safePath, SHA_RE } from "./utils";
+import { safePath } from "../lib/file-listing";
+import { rootRoutes } from "./roots";
+import { SHA_RE } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
 import { readOldSide, gitShow } from "../lib/highlight/gitContent";
 import type { FileTokens } from "../types/highlight";

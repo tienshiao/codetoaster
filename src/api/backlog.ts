@@ -1,4 +1,4 @@
-import { rootRoutes } from "./utils";
+import { rootRoutes } from "./roots";
 import { readBacklog } from "../lib/backlog/read";
 
 export const backlogRoutes = {

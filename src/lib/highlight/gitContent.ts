@@ -2,7 +2,7 @@
 // index blob (`:0:path`) — the true old side of unstaged hunks, which dominate
 // this UI — and falls back to HEAD. Returns null if neither exists (e.g. an
 // added file).
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 
 export async function gitShow(dir: string, ref: string): Promise<string | null> {
   const { stdout, exitCode } = await gitSpawn(dir, ["show", ref]);

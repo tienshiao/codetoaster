@@ -5,7 +5,7 @@ import * as path from "path";
 import { initDatabase, getDatabase } from "../lib/db";
 import { TaskStore } from "../lib/tasks/store";
 import { taskManager } from "../lib/tasks/manager";
-import { resolveTaskRoot } from "./utils";
+import { resolveTaskRoot } from "./roots";
 import { TEST_SHELL } from "../../test/shell";
 
 let dbDir: string;

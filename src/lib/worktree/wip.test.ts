@@ -1,7 +1,7 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import * as fs from "fs";
 import * as path from "path";
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 import { cleanupRepos, git, tempProject, tempRepo, tempTask } from "../../../test/git-repo";
 import { taskDir } from "../agent/spawn";
 import { createWorktree } from "./create";

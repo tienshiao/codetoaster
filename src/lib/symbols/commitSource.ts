@@ -1,4 +1,4 @@
-import { gitSpawn, gitSpawnRaw } from "../../api/utils";
+import { gitSpawn, gitSpawnRaw } from "../git/spawn";
 import { symbolGrammarForPath } from "./assets";
 import { directoryProbe, lookupSymbol, MAX_FILE_SIZE, type ProjectSource } from "./store";
 import type { SymbolLookupResult } from "./types";

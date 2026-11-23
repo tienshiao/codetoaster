@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { gitRoutes } from "./git";
-import { gitSpawn } from "./utils";
+import { gitSpawn } from "../lib/git/spawn";
 import { highlightRoutes } from "./highlight";
 import { parseDiff } from "../frontend/utils/parseDiff";
 import { initDatabase } from "../lib/db";

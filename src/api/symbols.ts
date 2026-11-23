@@ -1,4 +1,6 @@
-import { gitSpawn, rootRoutes, SHA_RE } from "./utils";
+import { gitSpawn } from "../lib/git/spawn";
+import { rootRoutes } from "./roots";
+import { SHA_RE } from "./utils";
 import { lookupSymbol, searchSymbolNames } from "../lib/symbols/store";
 import { lookupCommitSymbol } from "../lib/symbols/commitSource";
 

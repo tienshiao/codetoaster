@@ -1,5 +1,5 @@
 import * as fsp from "fs/promises";
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 import { withRepoLock } from "./lock";
 import { lockKeyFor } from "./repo";
 

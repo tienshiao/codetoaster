@@ -5,11 +5,11 @@ description: One git listing feeds the Files tree, terminal links and file searc
 tags: [files, git, gitignore, explorer, watcher]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-10T09:10:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T15:21:15Z }
 sources:
-  - id: utils
-    resource: ../../src/api/utils.ts
-    title: src/api/utils.ts
+  - id: listing
+    resource: ../../src/lib/file-listing.ts
+    title: src/lib/file-listing.ts
   - id: routes
     resource: ../../src/api/files.ts
     title: src/api/files.ts
@@ -32,7 +32,7 @@ sources:
 
 # Two listings
 
-`GET …/files` is built from two git calls.[^utils][^routes]
+`GET …/files` is built from two git calls, both in `src/lib/file-listing.ts` beside `buildFileListing`, which shapes them into the listing, and `safePath`. They are under `lib/` because the symbol index and the worktree copy use them too (TASK-154).[^listing][^routes]
 
 | Call | Holds |
 | --- | --- |
@@ -41,7 +41,7 @@ sources:
 
 An ignored entry carries `ignored: true`. An ignored directory is one entry with nothing under it. This repository has about 730 listed files and 34,500 ignored ones, nearly all under `node_modules/`, `dist/` and other tasks' worktrees, so the listing never walks into an ignored directory.[^task-130]
 
-`--directory` has one shape that is taken back out. For a directory no rule names but which holds only ignored files, git lists the directory and the files (`out/` beside `out/a.log`, under `*.log`). That directory is an ordinary one, so an entry that is the parent of another is dropped. `--no-empty-directory` is not the fix: it also drops ignored directories that have files in them.[^utils]
+`--directory` has one shape that is taken back out. For a directory no rule names but which holds only ignored files, git lists the directory and the files (`out/` beside `out/a.log`, under `*.log`). That directory is an ordinary one, so an entry that is the parent of another is dropped. `--no-empty-directory` is not the fix: it also drops ignored directories that have files in them.[^listing]
 
 # Who reads what
 
@@ -86,7 +86,7 @@ Three limits:
 - `node_modules`, `.git` and `.claude/worktrees` never reach a batch at all, so `node_modules` open in the tree is as old as its last fetch.
 - A burst of more than 200 paths is reported as `files: null`, unfiltered, as before. Everything is refetched, open ignored directories included.
 
-[^utils]: src/api/utils.ts
+[^listing]: src/lib/file-listing.ts
 [^routes]: src/api/files.ts
 [^walk]: src/frontend/utils/ignored-files.ts
 [^hook]: src/frontend/hooks/use-task-files.ts

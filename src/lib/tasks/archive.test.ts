@@ -6,7 +6,7 @@ import * as path from "path";
 import { applyMigrations } from "../db";
 import { TaskStore } from "./store";
 import { TaskManager, WIP_RETENTION_MS } from "./manager";
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 import { taskDir } from "../agent/spawn";
 import { readWip, wipRefFor, worktreesRoot } from "../worktree";
 import { waitFor } from "../../../test/wait";

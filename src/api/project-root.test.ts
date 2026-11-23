@@ -6,7 +6,7 @@ import { initDatabase, getDatabase } from "../lib/db";
 import { TaskStore } from "../lib/tasks/store";
 import { taskManager } from "../lib/tasks/manager";
 import { cleanupRepos, git, tempDir, tempRepo } from "../../test/git-repo";
-import { resolveProjectRoot, type TaskRoot } from "./utils";
+import { resolveProjectRoot, type TaskRoot } from "./roots";
 import { fileRoutes } from "./files";
 import { diffRoutes } from "./diff";
 import { backlogRoutes } from "./backlog";

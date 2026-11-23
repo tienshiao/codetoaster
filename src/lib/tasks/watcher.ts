@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 import { watchPool, type WatchPool, type WatchSubscription } from "./watch-pool";
 
 /**

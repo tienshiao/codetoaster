@@ -1,4 +1,7 @@
-import { rootRoutes, gitSpawn, gitSpawnRaw, parseNonNegInt, safePath, buildFileListing, IMAGE_MIME_TYPES, SHA_RE } from "./utils";
+import { safePath, buildFileListing, IMAGE_MIME_TYPES } from "../lib/file-listing";
+import { gitSpawn, gitSpawnRaw } from "../lib/git/spawn";
+import { rootRoutes } from "./roots";
+import { parseNonNegInt, SHA_RE } from "./utils";
 import { serializeFileContent } from "./files";
 import { capDiff } from "./diff-cap";
 

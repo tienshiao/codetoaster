@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { gitSpawn } from "../../api/utils";
+import { gitSpawn } from "../git/spawn";
 
 // What archive has to know before it destroys anything
 // (docs/v2-architecture.md §5.6).

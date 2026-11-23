@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
-import { safePath } from "../../api/utils";
+import { safePath } from "../file-listing";
 import type { ProjectRow } from "../db";
 import { WorktreeError } from "./errors";
 

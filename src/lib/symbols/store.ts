@@ -1,5 +1,5 @@
 import { stat as statPath } from "node:fs/promises";
-import { listGitFiles, safePath } from "../../api/utils";
+import { listGitFiles, safePath } from "../file-listing";
 import { symbolGrammarForPath } from "./assets";
 import { indexFileContent } from "./indexer";
 import { scoreName } from "./nameMatch";

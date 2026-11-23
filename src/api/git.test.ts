@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { parseLogOutput, parseRefDecorations, applyAfterCheck, sliceUntil, parseBatchCheck, LOG_BODY_CAP } from "./git";
 import type { GitLogCommit } from "./git";
-import { buildFileListing } from "./utils";
+import { buildFileListing } from "../lib/file-listing";
 
 // --- parseRefDecorations -----------------------------------------------------
 

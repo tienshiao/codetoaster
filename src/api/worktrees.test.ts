@@ -7,7 +7,7 @@ import { TaskStore } from "../lib/tasks/store";
 import { taskManager } from "../lib/tasks/manager";
 import { encodeWorktreeToken } from "../lib/worktree-token";
 import { cleanupRepos, git, tempDir, tempRepo } from "../../test/git-repo";
-import { parseWorktreeList } from "./utils";
+import { parseWorktreeList } from "./roots";
 import { fileRoutes } from "./files";
 import { diffRoutes } from "./diff";
 import { worktreeRoutes } from "./worktrees";

@@ -1,4 +1,8 @@
-import { rootRoutes, safePath, diffUntrackedFiles, gitSpawn, coalesce } from "./utils";
+import { safePath } from "../lib/file-listing";
+import { gitSpawn } from "../lib/git/spawn";
+import { rootRoutes } from "./roots";
+import { diffUntrackedFiles } from "./untracked-diff";
+import { coalesce } from "./utils";
 import { highlightFile } from "../lib/highlight/tokenize";
 import { capDiff, MAX_DIFF_LINE_CHARS } from "./diff-cap";
 import type { LineTokens } from "../types/highlight";
