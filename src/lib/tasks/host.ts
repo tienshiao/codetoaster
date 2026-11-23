@@ -31,8 +31,10 @@ export interface TaskHost {
   readonly profiles: ProfileRegistry;
 
   // Projects (projects.ts)
+  readonly projects: ProjectInfo[];
   getProjects(): ProjectInfo[];
   rankedProjects(): ProjectInfo[];
+  ensureInProject(taskId: string): void;
 
   // Clients and broadcasting (clients.ts)
   broadcastToAll(message: object): void;
@@ -51,7 +53,7 @@ export interface TaskHost {
   refreshStaleWorktreeStatuses(): Promise<void>;
   worktreeStatusOf(taskId: string): TaskWorktreeInfo | undefined;
 
-  // Boot reconciliation
+  // Boot reconciliation (boot.ts)
   getUnclaimedWorktrees(): UnclaimedWorktree[];
 
   // Worktrees
