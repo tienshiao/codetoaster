@@ -35,7 +35,7 @@ export class TaskActivity {
    * entry is still true. */
   rankAt: Map<string, number> = new Map();
   // The timers waiting to find out whether a task's agent reports a hook
-  // (§9, risk 4). The other half of `hookSeen` (manager.ts), whose comment
+  // (§9, risk 4). The other half of `hookSeen` (hooks.ts), whose comment
   // says why both are in memory.
   private hookGraceTimers: Map<string, Timer> = new Map();
   private hookGraceMs = 10_000;

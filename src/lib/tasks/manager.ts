@@ -32,14 +32,7 @@ import {
   sessionIdFromTranscript,
 } from "../agent/transcripts";
 import { writeTaskSettings } from "../agent/settings";
-import {
-  compactTriggerOf,
-  endsCompaction,
-  startsCompaction,
-  transitionFor,
-  type CompactTrigger,
-  type HookPayload,
-} from "../agent/hook-state";
+import type { HookPayload } from "../agent/hook-state";
 import { deriveTitle, resolveRepoRoot, titleFromPrompt } from "./derive";
 import { removeSnapshot, writeSnapshot } from "./snapshot";
 import { CheckoutWatchers } from "./checkout-watchers";
@@ -51,6 +44,7 @@ import { ProjectRegistry } from "./projects";
 import { ClientRegistry } from "./clients";
 import { TaskTerminals } from "./terminals";
 import { TaskActivity } from "./activity";
+import { TaskHooks } from "./hooks";
 import type { ProcessRoot } from "../processes";
 import {
   applyWip,
@@ -184,16 +178,6 @@ export interface CreateTaskOptions {
 export class TaskManager implements TaskHost {
   private database?: Database;
 
-  // Set by a PreCompact, read and dropped by the SessionStart that ends the
-  // same compaction. In memory rather than on the row because it is only ever
-  // live for the seconds between the two, and a daemon that restarts across
-  // that gap has killed the agent that would have sent the second half.
-  private compactTriggers: Map<string, CompactTrigger> = new Map();
-  // Held across the same gap, for the same reason: a `/compact` typed while a
-  // background agent is still running (TASK-145). The compaction's far end
-  // says nothing about background work, so without this a manual compaction
-  // would come back `idle` and be harvested with the background agent mid-run.
-  private compactingFromBackground: Set<string> = new Set();
   private readonly projectRegistry = new ProjectRegistry(this);
   /** Which agents this daemon can run a task on (TASK-89). The built-ins until
    * the server replaces it at startup, so the module-level manager and every
@@ -209,14 +193,7 @@ export class TaskManager implements TaskHost {
   private readonly projection = new TaskInfoProjection(this);
   private readonly terminals = new TaskTerminals(this);
   private readonly activity = new TaskActivity(this);
-  // Which tasks have ever reported a hook, and the timers waiting to find out
-  // (§9, risk 4; the timers are `hookGraceTimers`, in activity.ts). Both in
-  // memory on purpose: what they guard is a running
-  // PTY's output activity, which is per-process by definition. A task with no
-  // live PTY has no heuristic to fall back to, so a flag that does not survive
-  // a restart is not missing anything — and a resumed task genuinely is
-  // unknown again until its agent reports in.
-  private hookSeen: Set<string> = new Set();
+  private readonly hooks = new TaskHooks(this);
   /** Which tasks are running a *restart* rather than a resume (TASK-89.4).
    *
    * A restart is what a profile that can neither `--resume` nor `--continue`
@@ -790,8 +767,10 @@ export class TaskManager implements TaskHost {
    * A task with no setup command records nothing, which is correct — there was
    * no cost to remember. So does one whose setup aborted before the stamp was
    * written, and so does a non-zero exit: the agent never started, so what was
-   * measured is the cost of failing, not the cost of a restore. */
-  private async recordSetupOutcome(taskId: string): Promise<void> {
+   * measured is the cost of failing, not the cost of a restore.
+   *
+   * @internal — for the src/lib/tasks modules (TaskHost). */
+  async recordSetupOutcome(taskId: string): Promise<void> {
     const spawnedAt = this.spawnedAt.get(taskId);
     // Spent on the first read, which is also what keeps a *resumed* task from
     // overwriting a real duration with a meaningless one. `spawnAgent` clears
@@ -856,12 +835,11 @@ export class TaskManager implements TaskHost {
     this.activity.forgetOutputEdge(ptyId);
   }
 
-  /** Whether the task's running agent has reported a hook.
-   *
-   * @internal — for the src/lib/tasks modules (TaskHost). */
+  /** @internal — for the src/lib/tasks modules (TaskHost). */
   hasSeenHook(taskId: string): boolean {
-    return this.hookSeen.has(taskId);
+    return this.hooks.hasSeenHook(taskId);
   }
+
   /** @internal — for the src/lib/tasks modules (TaskHost). */
   inferState(taskId: string, active: boolean): void {
     this.activity.inferState(taskId, active);
@@ -871,7 +849,8 @@ export class TaskManager implements TaskHost {
     this.activity.armHookGrace(taskId);
   }
 
-  private disarmHookGrace(taskId: string): void {
+  /** @internal — for the src/lib/tasks modules (TaskHost). */
+  disarmHookGrace(taskId: string): void {
     this.activity.disarmHookGrace(taskId);
   }
 
@@ -931,9 +910,7 @@ export class TaskManager implements TaskHost {
     const profile = this.profiles.require(row.agent_profile);
     const capabilities = profileCapabilities(profile);
     const settingsPath = capabilities.hooks ? await writeTaskSettings(row.id) : undefined;
-    this.hookSeen.delete(row.id);
-    this.compactTriggers.delete(row.id);
-    this.compactingFromBackground.delete(row.id);
+    this.hooks.forgetAgentProcess(row.id);
     const pty = this.terminals.ptys.spawn(
       wrapWithSetup(
         buildAgentCommand(row, {
@@ -979,7 +956,7 @@ export class TaskManager implements TaskHost {
    * we have for an agent that cannot speak for itself. */
   private awaitAgentStart(taskId: string, pty: Pty): Promise<boolean> {
     const capMs = this.startTimeoutMs;
-    if (this.hookSeen.has(taskId)) return Promise.resolve(true);
+    if (this.hasSeenHook(taskId)) return Promise.resolve(true);
     return new Promise((resolve) => {
       const finish = (started: boolean) => {
         clearInterval(poll);
@@ -987,7 +964,7 @@ export class TaskManager implements TaskHost {
         resolve(started);
       };
       const poll = setInterval(() => {
-        if (this.hookSeen.has(taskId)) finish(true);
+        if (this.hasSeenHook(taskId)) finish(true);
         else if (pty.exited) finish(false);
       }, 25);
       // `!pty.exited`, not a bare `true`: the cap means "quiet, but still up",
@@ -1012,9 +989,7 @@ export class TaskManager implements TaskHost {
     // clearing the slot unconditionally would be right today and wrong the
     // moment anything discards a shell through here.
     if (this.terminals.agentPtys.get(taskId) === pty.id) this.terminals.agentPtys.delete(taskId);
-    this.hookSeen.delete(taskId);
-    this.compactTriggers.delete(taskId);
-    this.compactingFromBackground.delete(taskId);
+    this.hooks.forgetAgentProcess(taskId);
     this.disarmHookGrace(taskId);
     // Same reason as the two above: the flag is about the process, and the
     // process is the one being taken back.
@@ -1449,91 +1424,8 @@ export class TaskManager implements TaskHost {
     return ladder;
   }
 
-  /** Apply one hook payload to a task (§4.2). False when there is no such
-   * task or the payload moves nothing — both of which the caller answers 2xx,
-   * since a hook that reports a problem reports it into the agent's own
-   * transcript. */
   applyHook(taskId: string, payload: HookPayload): boolean {
-    if (!this.store.get(taskId)) return false;
-    // Recorded before the mapping runs, and for any payload at all: what this
-    // says is "the hooks are wired up", which a payload we do not map answers
-    // just as well as one we do. From here the heuristic stays out of the way.
-    //
-    // The *first* one is also the moment the setup wrapper's stamp is known to
-    // be on disk, because the wrapper only execs the agent once setup has
-    // exited zero and only an agent that loaded our settings sends a hook. So
-    // the reading is hung here rather than on a timer, and only on the edge —
-    // a task reports hundreds of these.
-    if (!this.hookSeen.has(taskId)) {
-      this.hookSeen.add(taskId);
-      // Caught for the same reason every other fire-and-forget here is:
-      // `applyHook` is synchronous and answers a live HTTP request, so a
-      // rejection travelling out of this has no caller left to reach and
-      // becomes an unhandled one. Nothing downstream needs the reading — its
-      // only consumer is the eviction grace scale, days later.
-      void this.recordSetupOutcome(taskId).catch(() => {});
-    }
-    this.disarmHookGrace(taskId);
-    // A compaction is two hooks: PreCompact names the trigger, and the
-    // SessionStart that ends it is the one that has to decide what the agent
-    // comes back as. Nothing in the second payload says which kind it was, so
-    // the trigger is held here between them and spent on arrival.
-    // Held per compaction, not per task: every PreCompact replaces what was
-    // there, including one that names no trigger. A compaction whose first half
-    // said nothing is unknowable, and the previous compaction's answer — from
-    // one that was cancelled, or whose SessionStart never arrived — is a guess
-    // dressed as a fact, which is the one thing the `undefined` road exists to
-    // avoid.
-    const trigger = compactTriggerOf(payload);
-    if (startsCompaction(payload)) {
-      if (trigger) this.compactTriggers.set(taskId, trigger);
-      else this.compactTriggers.delete(taskId);
-      if (this.store.get(taskId)?.agent_state === "background") this.compactingFromBackground.add(taskId);
-      else this.compactingFromBackground.delete(taskId);
-    }
-    const ending = endsCompaction(payload);
-    const update = transitionFor(
-      payload,
-      Date.now(),
-      ending ? this.compactTriggers.get(taskId) : undefined,
-    );
-    // A manual compaction comes back `idle`, which is only true if nothing
-    // was left running behind the turn before it. The background work the
-    // last `Stop` reported is still going, so it comes back as that.
-    if (ending && update?.agent_state === "idle" && this.compactingFromBackground.has(taskId)) {
-      update.agent_state = "background";
-    }
-    if (ending) {
-      this.compactTriggers.delete(taskId);
-      this.compactingFromBackground.delete(taskId);
-    }
-    if (!update) return false;
-    // `SessionStart` claims the task is live, and for a task with a terminal it
-    // is. But `codetoaster hook` outlives the agent that spawned it — killing
-    // the PTY does not signal it — so one can land just after `suspendTask`
-    // killed everything, and taking its word would leave a row marked `live`
-    // with `ptyId: null`: a task the sidebar shows as running that nothing is
-    // behind, and whose freshly stamped `idle_since` keeps the harvester off it
-    // for a full `harvestAfterMs`. The rest of the transition still applies —
-    // it is only the claim about liveness that needs a process to back it.
-    if (update.lifecycle === "live" && !this.primaryPty(taskId)) {
-      delete update.lifecycle;
-    }
-    if (!this.store.update(taskId, update)) return false;
-    this.broadcastTask(taskId);
-    // A finished turn is the moment the working tree can have moved: the agent
-    // has stopped editing, and what it did is exactly what the card is
-    // reporting. This is the primary freshness mechanism and the reason the
-    // backstop's TTL can be minutes — measuring on a timer would be both later
-    // and more often than measuring here.
-    //
-    // Not awaited. The hook route answers a running agent, and five git
-    // processes must not sit on that reply; `refreshWorktreeStatus` broadcasts
-    // for itself when the answer differs from the last one.
-    if (update.agent_state === "idle" || update.agent_state === "background") {
-      void this.refreshWorktreeStatus(taskId, { force: true });
-    }
-    return true;
+    return this.hooks.applyHook(taskId, payload);
   }
 
   getTask(taskId: string): TaskRow | undefined {
@@ -1798,9 +1690,7 @@ export class TaskManager implements TaskHost {
     // was performed against a terminal that no longer exists, which would
     // otherwise suppress the first check after the task is resumed.
     this.disarmHookGrace(taskId);
-    this.hookSeen.delete(taskId);
-    this.compactTriggers.delete(taskId);
-    this.compactingFromBackground.delete(taskId);
+    this.hooks.forgetAgentProcess(taskId);
     this.terminals.cwdCheckedAt.delete(taskId);
     // And the claim that the process now gone was a restart, which is about
     // that process and not about the suspended task the next reopen judges.
@@ -2772,9 +2662,7 @@ export class TaskManager implements TaskHost {
     // Before the row goes: a timer that outlived its task would wake up to
     // relabel something that is no longer there.
     this.disarmHookGrace(taskId);
-    this.hookSeen.delete(taskId);
-    this.compactTriggers.delete(taskId);
-    this.compactingFromBackground.delete(taskId);
+    this.hooks.forgetAgentProcess(taskId);
     this.terminals.cwdCheckedAt.delete(taskId);
     this.restarted.delete(taskId);
     // Normally spent by the first hook. A task deleted before its agent ever

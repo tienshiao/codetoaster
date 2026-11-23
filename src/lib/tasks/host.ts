@@ -72,7 +72,7 @@ export interface TaskHost {
   refreshCwdIfStale(taskId: string, maxAgeMs?: number): Promise<string | undefined>;
   refreshCwd(taskId: string): Promise<string | undefined>;
 
-  // Activity, rank and degraded-mode inference
+  // Activity, rank and degraded-mode inference (activity.ts)
   stampActivity(
     taskId: string,
     ptyId: string,
@@ -84,9 +84,13 @@ export interface TaskHost {
   inferState(taskId: string, active: boolean): void;
   seedOutputEdge(ptyId: string, at: number): void;
   forgetOutputEdge(ptyId: string): void;
+  disarmHookGrace(taskId: string): void;
 
-  // Hooks
+  // Hooks (hooks.ts)
   hasSeenHook(taskId: string): boolean;
+
+  // Lifecycle state the hook path reads
+  recordSetupOutcome(taskId: string): Promise<void>;
 
   // The TaskInfo projection (task-info.ts)
   taskInfo(taskId: string): TaskInfo | undefined;
