@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-23T03:30:00Z'
-updated_date: '2026-11-23T15:32:00Z'
+updated_date: '2026-11-23T17:17:00Z'
 labels:
   - test
   - bug
@@ -43,6 +43,8 @@ Root cause (AC1): a product bug, not load or cross-file state. Bun 1.4.4 sometim
 Fix: Pty holds an exit that arrived with no listener (exitUnheard) and releases it to the current listener on a microtask at the first onExit registration. pty.test.ts gains a deterministic case (wait for exited, then register) that fails without the fix, and a registered-in-time case. Evidence: manager exit test 750 consecutive reruns, 0 fail (150 + 600, the 600 under load average ~100 from iOS simulators another session was running); before the fix about 1.3 percent failed. Probe of 3000 Pty spawns of true: 0 missed exits (was about 3 per 1000). Isolated server (SHELL=/usr/bin/true, shell profile): 400 of 400 tasks ended exited. A 2000-rerun started while the machine was at load average ~830 had 5 harness timeouts (6-10 s, event loop starved) and Bun's dangling-process killer reporting hundreds of processes: those were the checkout watcher's git children outliving a starved test, killed by bun test and left as zombies until reaped; gitSpawn waits on every child, including killed ones, so this is not a product leak. Review (/code-review high --fix): no important findings; held exit now goes to the current listener; comment and wiki wording fixed. Pre-existing, not fixed here: a signal-killed agent is recorded as exit_code 0 (exitCode ?? 0 drops signalCode).
 
 AC2: five consecutive full bun run test passes of commit 1bad7c0 in a separate checkout, each 2294 unit + 643 render, 0 fail, at 1-minute load averages 40 falling to 12 (15-minute 437 to 155, the machine recovering from iOS simulators), runs 1-2 concurrent with another session's full test runs. On its own: 750 consecutive reruns of the test, 0 fail.
+
+Correction to the zombie explanation above: it is a hypothesis, not confirmed. Which code spawned the git children was never pinned down, and a 600-rerun sample showed a transient spike of 124 zombies with no dangling lines at all. What is established: gitSpawn waits on every child, and with the daemon running there were 0 zombie processes system-wide after these runs, so there is no evidence of a product leak.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
