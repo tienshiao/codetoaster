@@ -84,6 +84,41 @@ describe("production: the page's bundles, compressed", () => {
     for (const bytes of originals.values()) expect(bytes.byteLength).toBeGreaterThan(1024);
   });
 
+  test("a dynamic import is inlined, so nothing is loaded relative to the bundle route", () => {
+    // The frontend's `import("mermaid")` depends on this: a split chunk loaded
+    // by relative path from /_bundle/ would be a name the page never listed.
+    const jsPath = [...originals.keys()].find((p) => p.endsWith(".js"))!;
+    const jsText = new TextDecoder().decode(originals.get(jsPath));
+    expect(jsText).toContain("lazy-fixture-marker");
+    expect(jsText).not.toMatch(/chunk-[a-z0-9]+\.js/);
+  });
+
+  test("a revalidation with the tag it was sent gets a 304", async () => {
+    const [path] = [...originals][0]!;
+    const { res: first } = await raw(base, path, "gzip");
+    const etag = first.headers.get("etag")!;
+    for (const [accept, ifNoneMatch] of [
+      ["gzip", etag],
+      ["identity", etag],
+      ["br", `"other", ${etag.replace(/^W\//, "")}`],
+    ]) {
+      const { res, bytes } = await raw(base, path, accept!, { headers: { "If-None-Match": ifNoneMatch! } });
+      expect(res.status).toBe(304);
+      expect(bytes.byteLength).toBe(0);
+      expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    }
+    const { res: miss } = await raw(base, path, "gzip", { headers: { "If-None-Match": '"other"' } });
+    expect(miss.status).toBe(200);
+  });
+
+  test("the rewritten page does not carry Bun's tag for the unrewritten one", async () => {
+    const page = await fetch(`${base}/`);
+    const hidden = await fetch(`${base}${spaPath}`);
+    const bunTag = hidden.headers.get("etag");
+    expect(bunTag).toBeTruthy();
+    expect(page.headers.get("etag")).not.toBe(bunTag);
+  });
+
   for (const encoding of ["gzip", "br", "zstd"] as const) {
     test(`${encoding}: each bundle decodes to Bun's own bytes`, async () => {
       for (const [path, original] of originals) {
@@ -384,6 +419,21 @@ describe("BundleCache", () => {
     healthy = true;
     expect((await cache.serve(get("chunk-js1.js"), "chunk-js1.js")).status).toBe(200);
     expect(calls.html).toBe(2);
+  });
+
+  test("a source that throws while reading the HTML is retried, not given up on", async () => {
+    let calls = 0;
+    const cache = new BundleCache({
+      fetchBundle: async () => bundleResponse(),
+      fetchHtml: () => {
+        calls++;
+        if (calls === 1) throw new Error("no listener yet");
+        return Promise.resolve(new Response(page, { headers: { "Content-Type": "text/html" } }));
+      },
+    });
+    expect((await cache.serve(get("chunk-js1.js"), "chunk-js1.js")).status).toBe(404);
+    expect((await cache.serve(get("chunk-js1.js"), "chunk-js1.js")).status).toBe(200);
+    expect(calls).toBe(2);
   });
 
   test("a new page replaces the names and drops what it no longer names", async () => {

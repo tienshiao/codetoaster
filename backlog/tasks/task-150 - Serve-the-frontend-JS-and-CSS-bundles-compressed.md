@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-23T03:30:00Z'
-updated_date: '2026-11-23T03:59:00Z'
+updated_date: '2026-11-23T04:06:00Z'
 labels:
   - backend
   - perf
@@ -47,4 +47,6 @@ Approach: rewrite, not shadow (probe 2 fails) and not ahead-of-time build. src/a
 Measured, isolated production server (NODE_ENV=production bun src/index.ts, port 4604), bytes on the wire. JS chunk-8tyy23w4.js: before 5,033,255 raw from Bun's route even with Accept-Encoding gzip, br; after br 1,238,107 (first request 88ms), gzip 1,431,890 (115ms), zstd 1,386,991 (26ms), repeat br 2ms from cache; none/identity 5,033,255. CSS chunk-1wjx46qn.css: before 168,188; after br 62,002, gzip 65,115, zstd 64,958. Every encoded body decoded byte-identical to the identity response and to Bun's original; headers Content-Encoding, Vary: Accept-Encoding, Content-Type kept, Cache-Control public, max-age=31536000, immutable, ETag W/ when encoded, Content-Length the encoded one; HEAD gives headers only. /chunk-deadbeef.js, /_bundle/chunk-deadbeef.js and /_bundle/..%2Fapi%2Fping all 404. Binary (bun run build:server, foreground --port 4605): JS 5,062,139 -> br 1,245,976 / gzip 1,438,233 / zstd 1,391,666, CSS 166,784 -> br 61,887; all decode equal; Cache-Control immutable now present (Bun's binary route sends none). Encoder timings on the 5 MB JS (standalone): br5 85ms 1,238,107; br9 278ms 1,195,482; br11 7.4s 1,079,542; gzip6 56ms; zstd3 16ms; zstd19 995ms. Kept compress.ts levels: lazy first-load cost stays under ~120ms.
 
 Probe findings recorded in the plan. Not covered: no 304 for If-None-Match on /_bundle (immutable caching makes revalidation rare; the HTML catch-all never answered 304 either). Bun's original /chunk-* paths still answer uncompressed for anything that asks for them directly. If Bun ever emits code-split chunks referenced relatively from inside a bundle, or relative CSS url()s, those would resolve under /_bundle/ and 404; today there are none.
+
+Review (/code-review high v2 on 54b7487): no blocking bugs; four nits, all fixed. (1) /_bundle answered 200 to a revalidation where Bun's route gave 304: now weak If-None-Match comparison returns 304 with ETag, Cache-Control, Vary. (2) knownNames could wedge if fetchHtml threw synchronously (finally ran before ??= assigned): now started a tick late and cleared from the stored promise; test added. (3) Wiki wrongly said no dynamic import(: the frontend's import("mermaid") exists and Bun inlines it; wiki corrected, and the fixture now has a dynamic import with a test that fails if Bun starts splitting it (a relatively loaded split chunk would 404 under /_bundle/). (4) The rewritten page kept Bun's strong ETag for the unrewritten bytes: now suffixed -bundled. Reviewer also confirmed the compiled binary defines NODE_ENV=production and HEAD keeps the set Content-Length. Tests: typecheck clean; test:unit 2258 pass, 1 fail = the known TASK-151 flake (manager.test.ts 'an exiting terminal marks the task exited and sends the row'); test:render 629/629.
 <!-- SECTION:NOTES:END -->

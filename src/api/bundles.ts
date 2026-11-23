@@ -83,6 +83,16 @@ function quotedEtag(etag: string | null): string | null {
   return `"${etag.replaceAll('"', "")}"`;
 }
 
+/** Whether `If-None-Match` names this tag, by the weak comparison RFC 9110
+ * prescribes for it: `W/` is ignored on both sides, since the tag sent with an
+ * encoded body is the weakened identity tag. */
+function etagMatches(ifNoneMatch: string | null, etag: string): boolean {
+  if (!ifNoneMatch) return false;
+  const opaque = (tag: string) => tag.trim().replace(/^W\//, "");
+  const target = opaque(etag);
+  return ifNoneMatch.split(",").some((tag) => tag.trim() === "*" || opaque(tag) === target);
+}
+
 /** The bundles the current page names, each fetched once and encoded once per
  * coding asked for.
  *
@@ -135,21 +145,26 @@ export class BundleCache {
    * restart. One read however many requests are waiting for it. */
   private async knownNames(): Promise<Set<string>> {
     if (this.known) return this.known;
-    this.learning ??= (async () => {
-      try {
-        const res = await this.source.fetchHtml();
-        // Only a page teaches the set. An error answer would teach it that no
-        // bundle exists, and every request after would 404 until a page was
-        // served.
-        if (res.ok && /^text\/html/i.test(res.headers.get("content-type") ?? "")) {
-          this.rewriteHtml(await res.text());
-        }
-      } catch (error) {
-        console.warn("Could not read the SPA's HTML for its bundle names:", error);
-      } finally {
-        this.learning = null;
-      }
-    })();
+    if (!this.learning) {
+      // Started a tick late, and cleared from the stored promise, so a source
+      // that throws synchronously cannot clear `learning` before it is set and
+      // leave a settled promise in place of a retry.
+      const learning: Promise<void> = Promise.resolve()
+        .then(() => this.source.fetchHtml())
+        .then(async (res) => {
+          // Only a page teaches the set. An error answer would teach it that
+          // no bundle exists, and every request after would 404 until a page
+          // was served.
+          if (res.ok && /^text\/html/i.test(res.headers.get("content-type") ?? "")) {
+            this.rewriteHtml(await res.text());
+          }
+        })
+        .catch((error) => console.warn("Could not read the SPA's HTML for its bundle names:", error))
+        .finally(() => {
+          if (this.learning === learning) this.learning = null;
+        });
+      this.learning = learning;
+    }
     await this.learning;
     return this.known ?? new Set();
   }
@@ -233,6 +248,11 @@ export class BundleCache {
       // promise something untrue.
       const weak = headers.has("content-encoding") && !identity.etag.startsWith("W/");
       headers.set("ETag", weak ? `W/${identity.etag}` : identity.etag);
+      // A revalidation the browser makes despite `immutable` gets what Bun's
+      // own route gave it, a 304, rather than the whole bundle again.
+      if (etagMatches(req.headers.get("if-none-match"), identity.etag)) {
+        return new Response(null, { status: 304, headers });
+      }
     }
     if (req.method === "HEAD") {
       headers.set("Content-Length", String(body.byteLength));

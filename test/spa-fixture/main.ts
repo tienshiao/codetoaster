@@ -28,3 +28,4 @@ export const fixtureRows = [
   "row 24: the quick brown fox jumps over the lazy dog while the commit graph draws",
 ];
 console.log(fixtureRows.join("\n"));
+void import("./lazy").then(({ lazyMarker }) => console.log(lazyMarker));

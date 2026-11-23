@@ -32,10 +32,15 @@ export async function serveSpa(req: Request, upstream: Response, bundles?: Bundl
 
   let body: BodyInit | null = upstream.body;
   // Only a page is rewritten, and only a page teaches the cache its names.
-  // The ETag is kept: the rewrite is a fixed function of the upstream bytes, so
-  // the tag still names exactly one body.
   if (bundles && upstream.ok && /^text\/html/i.test(headers.get("content-type") ?? "")) {
     body = bundles.rewriteHtml(await upstream.text());
+    // Bun's tag is for the unrewritten page, which a daemon without the
+    // rewrite serves under the same build. A distinct tag keeps a revalidation
+    // from ever matching one page against the other.
+    const etag = headers.get("etag");
+    const quoted = etag?.match(/^(W\/)?"(.*)"$/);
+    if (quoted) headers.set("ETag", `${quoted[1] ?? ""}"${quoted[2]}-bundled"`);
+    else headers.delete("etag");
   }
   // Under the API's rule (TASK-147). Read whole, which is safe here: the body
   // is our own index.html, not a stream of anyone's making.
