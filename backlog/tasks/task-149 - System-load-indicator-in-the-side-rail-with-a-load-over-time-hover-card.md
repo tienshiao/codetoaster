@@ -1,11 +1,11 @@
 ---
 id: TASK-149
 title: System load indicator in the side rail with a load-over-time hover card
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-23T02:03:00Z'
-updated_date: '2026-11-23T04:12:00Z'
+updated_date: '2026-11-23T04:18:00Z'
 labels:
   - frontend
   - backend
@@ -25,13 +25,13 @@ Working locally, the user keeps Activity Monitor open with its CPU load graph, s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The bottom of the right side rail shows a compact, always-visible indicator of current machine-wide CPU load that updates live without a reload
-- [ ] #2 Hovering (or focusing) the indicator opens a card with a chart of load over a recent window (on the order of minutes), plus the current values and core count, and the 1/5/15-minute load averages
-- [ ] #3 The chart already has history when the card first opens after a page load: the daemon keeps a bounded rolling history rather than the browser starting from empty
-- [ ] #4 Sampling is cheap and bounded (fixed interval, fixed-size history) and costs nothing extra per connected client beyond receiving the values
+- [x] #1 The bottom of the right side rail shows a compact, always-visible indicator of current machine-wide CPU load that updates live without a reload
+- [x] #2 Hovering (or focusing) the indicator opens a card with a chart of load over a recent window (on the order of minutes), plus the current values and core count, and the 1/5/15-minute load averages
+- [x] #3 The chart already has history when the card first opens after a page load: the daemon keeps a bounded rolling history rather than the browser starting from empty
+- [x] #4 Sampling is cheap and bounded (fixed interval, fixed-size history) and costs nothing extra per connected client beyond receiving the values
 - [ ] #5 Load is the whole machine the daemon runs on, not the daemon process, and works on macOS and Linux
-- [ ] #6 Colours come from v2 semantic tokens, the indicator and chart read in light and dark themes, and the indicator signals high load (e.g. a threshold colour) without relying on colour alone
-- [ ] #7 Any new or changed API route has route-level tests through a real Bun.serve on port 0; the sampler has unit tests with an injected clock; the indicator and card have rendering tests
+- [x] #6 Colours come from v2 semantic tokens, the indicator and chart read in light and dark themes, and the indicator signals high load (e.g. a threshold colour) without relying on colour alone
+- [x] #7 Any new or changed API route has route-level tests through a real Bun.serve on port 0; the sampler has unit tests with an injected clock; the indicator and card have rendering tests
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,3 +49,9 @@ Review (/code-review high v2): 6 findings, all fixed in the fix commit. (1) Stor
 
 Post-fix smoke on 4606 (HEAD 45d9818 wiring): loadHistory at +1ms (2 samples), load frames ~2s apart, /api/shutdown exited 0. Unit suite post-fix: 2262 pass, 1 fail twice, both the known TASK-151 manager.test.ts flake (an exiting terminal marks the task exited and sends the row); pre-fix run was 2261/0. Render suite 643/643. Not verified visually (left to main): 100% plus outline fitting the 36px rail, card placement at the bottom edge, wash and tones in dark mode.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The bottom of the right rail shows a live machine-wide CPU meter (role=meter, a 24x12 sparkline of the last ~48s above the whole-percent figure), and hovering or focusing it opens a card with a 10-minute chart on a fixed 0-100% scale, current CPU, peak over the plotted window, 1/5/15 load averages and core count. A single daemon-wide sampler (src/lib/system-load.ts) ticks every 2s into a 300-sample ring, deriving CPU % from os.cpus() time deltas and reading os.loadavg(); each socket gets a loadHistory frame on open and every tick is one load frame through broadcastToAll, so cost is independent of client count (pinned by a 3-client socket test); it stops on /api/shutdown. No HTTP route was added. High load (>= 80% on the shown figure) turns the sparkline and frame warning and adds an outline, bold weight and ', high' in aria-valuetext. Semantic tokens only (state-busy, warning). Verified in Chrome on an isolated server: the meter updates live, the card opens on hover and on keyboard focus, light and dark both read, and under a 12-process CPU saturation the meter showed an amber outlined 100% that fits the 35px rail and the card read '100% CPU - high'. Code review high: 6 findings, all fixed (clock step-back, peak over the plotted window only, rounding vs the high threshold, sparkline frame colour, bare sleeps, shared wireLoadSampler). AC 5 is left unchecked: macOS was verified against top, Linux was not run; expected caveats are that iowait/softirq/steal handling follows os.cpus() and that inside a container the figures describe the host. Also open: touch devices see the meter but cannot open the card; the card's chart line stays state-busy at high load. Typecheck clean, test:render 643/643, test:unit clean apart from the TASK-151 flake.
+<!-- SECTION:FINAL_SUMMARY:END -->
