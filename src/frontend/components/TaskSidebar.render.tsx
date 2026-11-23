@@ -76,10 +76,62 @@ test("a task row offers rename and archive, and no close", () => {
 test("the suspend confirmation names what it does and says the task resumes", () => {
   const onConfirm = vi.fn();
   render(<SuspendTaskDialog open label="Fix the parser" onConfirm={onConfirm} onClose={vi.fn()} />);
-  screen.getByRole("dialog", { name: "Suspend this task?" });
-  screen.getByText(/^Fix the parser is still working\. .*resumes when it is opened\.$/);
+  const dialog = screen.getByRole("dialog", { name: "Suspend this task?" });
+  expect(subjectOf(dialog).textContent).toBe("Fix the parser");
+  screen.getByText(/^It is still working\. .*resumes when it is opened\.$/);
   fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
   expect(onConfirm).toHaveBeenCalled();
+});
+
+/**
+ * TASK-148: every task-scoped confirmation names its task in the dialog's
+ * subject element, apart from the prose, so the target reads at a glance. The
+ * name is no longer in the sentence at all — said twice, the sentence would
+ * still be where the eye goes looking for it.
+ */
+function subjectOf(dialog: HTMLElement): HTMLElement {
+  const subject = dialog.querySelector<HTMLElement>("[data-dialog-subject]");
+  expect(subject).not.toBeNull();
+  return subject!;
+}
+
+test("the archive confirmation names the task apart from the sentence", async () => {
+  mountActions();
+  fireEvent.click(screen.getByRole("button", { name: "Archive Fix the parser" }));
+  const dialog = await screen.findByRole("dialog", { name: "Archive this task?" });
+  expect(subjectOf(dialog).textContent).toBe("Fix the parser");
+  screen.getByText(/^It leaves the list, /);
+});
+
+test("the delete-for-good confirmation names the task apart from the sentence", () => {
+  mountArchived();
+  fireEvent.click(screen.getByRole("button", { name: "Delete Fix the parser" }));
+  const dialog = screen.getByRole("dialog", { name: "Delete this task for good?" });
+  expect(subjectOf(dialog).textContent).toBe("Fix the parser");
+  screen.getByText(/^The task and the snapshot .* cannot be undone\.$/);
+});
+
+test("the unarchive confirmation names the task apart from the sentence", async () => {
+  mountArchived();
+  fireEvent.click(screen.getByRole("button", { name: "Unarchive Fix the parser" }));
+  const dialog = screen.getByRole("dialog", { name: "Unarchive this task?" });
+  expect(subjectOf(dialog).textContent).toBe("Fix the parser");
+  screen.getByText("It returns to the list. What comes back:");
+  await screen.findByText("Its checkout is rebuilt on codetoaster/fix-the-parser.");
+});
+
+// AC #3: a stored name can be a whole opening prompt. The element clamps it,
+// and the full text stays on hover. Whether the clamp *draws* is layout, which
+// Happy DOM has none of — that half is a browser check.
+test("a long task name is clamped in the dialog and kept whole on hover", () => {
+  const long =
+    "Rewrite the parser so that a quoted path with a rename and a binary marker on the same hunk header still round-trips through the diff view without losing the old name";
+  render(<SuspendTaskDialog open label={long} onConfirm={vi.fn()} onClose={vi.fn()} />);
+  const subject = subjectOf(screen.getByRole("dialog", { name: "Suspend this task?" }));
+  expect(subject.textContent).toBe(long);
+  expect(subject.getAttribute("title")).toBe(long);
+  expect(subject.classList.contains("line-clamp-2")).toBe(true);
+  expect(subject.classList.contains("break-words")).toBe(true);
 });
 
 test("rename is seeded with the label on screen and trims what it sends", () => {

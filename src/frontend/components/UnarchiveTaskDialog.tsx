@@ -90,7 +90,8 @@ export function UnarchiveTaskDialog({
     <Dialog
       open={open}
       title="Unarchive this task?"
-      description={`${label} returns to the list. What comes back:`}
+      subject={label}
+      description="It returns to the list. What comes back:"
       confirmLabel="Unarchive"
       confirmDisabled={!preview && !failed}
       onConfirm={() => onUnarchive(taskId)}

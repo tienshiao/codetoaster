@@ -38,6 +38,9 @@ const suspend = vi.hoisted(() => ({
   tasks: [] as unknown[],
   state: "idle",
   closeTask: vi.fn(),
+  // What the display-name projection answers. Empty, the palette falls back to
+  // each task's stored title; the TASK-148 test gives it a projected one.
+  displayNames: new Map<string, string>(),
 }));
 
 vi.mock("@/frontend/TaskContext", () => ({
@@ -54,7 +57,7 @@ vi.mock("@/frontend/TaskContext", () => ({
     unarchiveTask: unarchive.unarchiveTask,
   }),
   taskStateOf: () => suspend.state,
-  taskDisplayNames: () => new Map(),
+  taskDisplayNames: () => suspend.displayNames,
 }));
 vi.mock("@/frontend/hooks/use-task-nav", () => ({
   useOpenTask: () => unarchive.openTask,
@@ -62,9 +65,18 @@ vi.mock("@/frontend/hooks/use-task-nav", () => ({
 }));
 vi.mock("@/frontend/components/TaskSidebar", () => ({
   ArchiveTaskDialog: () => null,
-  SuspendTaskDialog: ({ open, onConfirm }: { open: boolean; onConfirm: () => void }) =>
+  SuspendTaskDialog: ({
+    open,
+    label,
+    onConfirm,
+  }: {
+    open: boolean;
+    label: string;
+    onConfirm: () => void;
+  }) =>
     open ? (
       <div role="dialog" aria-label="Suspend this task?">
+        <p data-testid="suspend-label">{label}</p>
         <button type="button" onClick={onConfirm}>
           Suspend
         </button>
@@ -111,6 +123,7 @@ beforeEach(() => {
   suspend.tasks.length = 0;
   suspend.state = "idle";
   suspend.closeTask.mockReset();
+  suspend.displayNames.clear();
 });
 
 function mount(props: Partial<Parameters<typeof CommandPaletteHost>[0]>) {
@@ -201,7 +214,9 @@ test("searching offers Unarchive for an archived task, and confirming it opens t
   expect(unarchive.loadArchivedTasks).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("option", { name: /Unarchive Fix the parser/ }));
 
-  screen.getByRole("dialog", { name: "Unarchive this task?" });
+  const dialog = screen.getByRole("dialog", { name: "Unarchive this task?" });
+  // The archived row's label is its stored title, in the sidebar and here.
+  expect(dialog.querySelector("[data-dialog-subject]")?.textContent).toBe("Fix the parser");
   await screen.findByText(
     "codetoaster/fix-the-parser was deleted when it was archived, and is recreated at the commit the snapshot was taken on.",
   );
@@ -256,4 +271,16 @@ test("Suspend now asks first for a task with background work running", () => {
   fireEvent.click(screen.getByRole("option", { name: /Suspend now/ }));
   expect(suspend.closeTask).not.toHaveBeenCalled();
   screen.getByRole("dialog", { name: "Suspend this task?" });
+});
+
+// TASK-148 AC #2: the confirmation names the task the way its sidebar row
+// does — through the display-name projection, not the stored title — or the
+// name the user is asked to check against is one they never saw.
+test("Suspend now's confirmation names the task by its display label", () => {
+  liveTask();
+  suspend.state = "busy";
+  suspend.displayNames.set("t1", "Rewrite the lexer");
+  mount({ taskId: "t1" });
+  fireEvent.click(screen.getByRole("option", { name: /Suspend now/ }));
+  expect(screen.getByTestId("suspend-label").textContent).toBe("Rewrite the lexer");
 });

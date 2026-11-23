@@ -5,7 +5,7 @@ description: New frontend work composes from components/v2 with semantic tokens 
 tags: [frontend, design-system, tailwind, tokens]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-03T00:50:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-22T12:00:00Z }
 sources:
   - id: claude-md
     resource: ../../CLAUDE.md
@@ -14,6 +14,12 @@ sources:
   - id: task-28
     resource: "../../backlog/tasks/task-28 - New-App.tsx-shell-and-TopBar-delete-v1-UI-scaffolding.md"
     title: "TASK-28 — New App.tsx shell and TopBar; delete v1 UI scaffolding"
+  - id: task-148
+    resource: "../../backlog/tasks/task-148 - Task-confirmation-dialogs-set-the-task-name-apart-from-the-prose.md"
+    title: "TASK-148 — Task confirmation dialogs set the task name apart from the prose"
+  - id: dialog
+    resource: ../../src/frontend/components/v2/Dialog.tsx
+    title: The v2 Dialog
 ---
 
 # Status
@@ -26,6 +32,10 @@ sources:
 - `AppShell` is layout only. Every list, tab and status value arrives as a prop, so wiring tasks supply data rather than restructure markup.
 - Use the semantic tokens (`bg-pane`, `text-state-busy`, `h-row`, `text-micro`, `bg-selected`), never a colour literal. The raw `--ct-*` palette is not component vocabulary.[^claude-md]
 
+# Confirmations name their target in `subject`
+
+A task-scoped confirmation passes the task's name as the v2 `Dialog`'s `subject` prop, not inside the `description` sentence. The dialog draws it on its own under the title, `font-medium text-foreground` on a bordered `bg-chrome` well, clamped to two lines with the full name in `title`. The sentence then refers to it as "it" or "the task". The archive, suspend, delete-for-good and unarchive confirmations all do this, and pass the same display label the sidebar row shows. Inside the prose the name had the weight of the words around it, and a wrong target was easy to confirm without noticing. The subject and the description are the dialog's `aria-describedby`. The unclaimed-worktree delete still names its path in the sentence; it is not task-scoped and was left as it was.[^task-148] [^dialog]
+
 # Source of truth
 
 The Claude Design project "CodeToaster v2 Design System" (`06f63995-570a-486c-af82-d70b8fa5976b`). It is distinct from the older `.design-sync/` pipeline, which pushes the *v1* component surface upward.[^claude-md]
@@ -36,3 +46,5 @@ Read the comment above the palette block in `src/frontend/index.css`. Transparen
 
 [^claude-md]: CodeToaster CLAUDE.md
 [^task-28]: TASK-28 — New App.tsx shell and TopBar; delete v1 UI scaffolding
+[^task-148]: TASK-148 — Task confirmation dialogs set the task name apart from the prose
+[^dialog]: The v2 Dialog

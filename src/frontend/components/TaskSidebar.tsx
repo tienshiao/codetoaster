@@ -144,7 +144,8 @@ export function ArchiveTaskDialog({
     <Dialog
       open={open}
       title="Archive this task?"
-      description={`${label} leaves the list, and the archived toggle is where it can be found again. What that costs:`}
+      subject={label}
+      description="It leaves the list, and the archived toggle is where it can be found again. What that costs:"
       confirmLabel="Archive"
       confirmVariant="destructive"
       // Nothing to confirm against until the dialog has said what it costs.
@@ -179,7 +180,8 @@ export function SuspendTaskDialog({
     <Dialog
       open={open}
       title="Suspend this task?"
-      description={`${label} is still working. Suspending stops the agent and its shells; the task keeps its row and resumes when it is opened.`}
+      subject={label}
+      description="It is still working. Suspending stops the agent and its shells; the task keeps its row and resumes when it is opened."
       confirmLabel="Suspend"
       confirmVariant="destructive"
       onConfirm={onConfirm}
@@ -317,7 +319,8 @@ export function ArchivedRowActions({
       <Dialog
         open={confirming}
         title="Delete this task for good?"
-        description={`${label} and the snapshot of the work archiving saved will be deleted. Nothing else has a copy, and this cannot be undone.`}
+        subject={label}
+        description="The task and the snapshot of the work archiving saved will be deleted. Nothing else has a copy, and this cannot be undone."
         confirmLabel="Delete for good"
         confirmVariant="destructive"
         onConfirm={() => onDelete(taskId)}

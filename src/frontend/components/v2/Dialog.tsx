@@ -1,4 +1,4 @@
-import { useEffect, useRef, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "./Button";
 import { cn } from "@/frontend/lib/utils";
@@ -6,6 +6,19 @@ import { cn } from "@/frontend/lib/utils";
 export interface DialogProps {
   open: boolean;
   title: string;
+  /**
+   * What the confirmation acts on — a task's name — drawn on its own under the
+   * title rather than inside the sentence (TASK-148). In the sentence it had the
+   * size, weight and colour of the words around it, so finding *which* task was
+   * about to go meant reading the prose, and a wrong target, such as a row that
+   * moved under the pointer, was easy to confirm without noticing.
+   *
+   * A string, not a node, so the dialog owns the element: the clamp and the
+   * full name in `title` cannot be forgotten by a caller. Clamped to two lines
+   * rather than cut to one, because a task's stored name can be its opening
+   * prompt and the first words are not always the distinguishing ones.
+   */
+  subject?: string;
   /** A line under the title. Confirmations put the consequence here. */
   description?: ReactNode;
   /** Fields, when there are any. A confirmation has none. */
@@ -82,6 +95,7 @@ function firstFocusTarget(form: HTMLFormElement): HTMLElement {
 export function Dialog({
   open,
   title,
+  subject,
   description,
   children,
   confirmLabel,
@@ -92,6 +106,13 @@ export function Dialog({
   className,
 }: DialogProps) {
   const panel = useRef<HTMLFormElement>(null);
+  // The subject and the sentence describe the dialog to assistive tech: the
+  // accessible name is only the title, which says what but not to which task.
+  const subjectId = useId();
+  const descriptionId = useId();
+  const describedBy =
+    [subject ? subjectId : null, description ? descriptionId : null].filter(Boolean).join(" ") ||
+    undefined;
 
   // Read through a ref rather than depending on it. Callers pass a closure
   // literal, so `onClose` has a new identity on every render — as a dependency
@@ -160,6 +181,7 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        aria-describedby={describedBy}
         className={cn(
           // `outline-none`: the form can now take focus as the last resort, and
           // a focus ring around the whole panel would say the panel is a control.
@@ -170,7 +192,21 @@ export function Dialog({
       >
         <div className="flex flex-col gap-1">
           <h2 className="font-medium">{title}</h2>
-          {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
+          {subject ? (
+            <p
+              id={subjectId}
+              data-dialog-subject
+              title={subject}
+              className="my-1 line-clamp-2 break-words rounded-md border border-border bg-chrome px-2 py-1.5 font-medium text-foreground"
+            >
+              {subject}
+            </p>
+          ) : null}
+          {description ? (
+            <p id={descriptionId} className="text-xs text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
         </div>
         {children}
         <div className="flex justify-end gap-2 pt-1">

@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-11-22
+* **Update**: [The v2 design system](/conventions/v2-design-system.md) gains a section on the `Dialog`'s `subject` slot (TASK-148): a confirmation names its target there, styled apart from the sentence, rather than inside it.
 * **Creation**: [Task suspension and the idle harvester](/modules/task-suspension.md) for TASK-145: the three ways a task is suspended, the harvester's guards, where `idle` comes from, and the `background` state a `Stop` reporting running background work maps to, with its 4-hour cap.
 
 ## 2026-11-06

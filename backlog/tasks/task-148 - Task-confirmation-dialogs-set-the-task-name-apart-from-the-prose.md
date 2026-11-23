@@ -1,9 +1,11 @@
 ---
 id: TASK-148
 title: Task confirmation dialogs set the task name apart from the prose
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-11-23T01:42:00Z'
+updated_date: '2026-11-23T01:54:00Z'
 labels:
   - frontend
 dependencies: []
@@ -27,3 +29,15 @@ The dialogs that confirm an action on a task (archive, suspend, delete for good,
 - [ ] #4 The styling is shared by all four dialogs, so a new task-scoped confirmation gets it without restyling
 - [ ] #5 Rendering tests check that each dialog renders the task name in its distinct element
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. v2 Dialog gains a 'subject' prop: the thing the confirmation acts on, rendered in its own element between title and description (data-dialog-subject, font-medium text-foreground on a bordered bg-chrome well, truncate with the full name in title=), and wired into aria-describedby. 2. Archive, Suspend, delete-for-good (TaskSidebar.tsx) and Unarchive (UnarchiveTaskDialog.tsx) pass label as subject and drop it from the description sentence; minimal diff in TaskSidebar.tsx. 3. Confirm label sources: sidebar rows and palette both project through sessionDisplayNames/taskDisplayNames; archived rows use the stored title in both. 4. Rendering tests: each of the four dialogs renders the name in the subject element, long name keeps full text in title; palette test pins that Suspend gets the projected display label. 5. Wiki: v2 design system page notes the subject slot; log entry. 6. bun run test + typecheck, notes, commit.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+v2 Dialog gained a subject?: string prop, drawn as its own element under the title (data-dialog-subject; font-medium text-foreground on a rounded-md border-border bg-chrome well; line-clamp-2 break-words; full name in title=) and wired with the description into aria-describedby via useId. Archive, Suspend, delete-for-good (TaskSidebar.tsx) and Unarchive (UnarchiveTaskDialog.tsx) pass label as subject; their sentences now say It / The task. Label sources checked: sidebar rows and the palette both project live tasks through sessionDisplayNames (taskDisplayNames), archived rows use the stored title in both; no change needed. Tests: TaskSidebar.render.tsx checks the subject in all four dialogs plus a long name keeping full text in title; Dialog.render.tsx covers the slot, its absence for empty, and aria-describedby; CommandPalette.render.tsx now drives taskDisplayNames from a hoisted map and pins that Suspend gets the projected label, and the palette Unarchive shows the stored title as subject. Wiki: conventions/v2-design-system.md section on the subject slot, log entry. /code-review medium --fix: two nits fixed (aria-describedby, wiki claim narrowed to task-scoped confirmations; the unclaimed-worktree delete still names its path in prose, a possible follow-up). bun run test: 2198 bun + 608 vitest pass; typecheck clean; isolated server on 4603 booted and served /. Browser check of the clamp and styling deferred to the main session.
+<!-- SECTION:NOTES:END -->
