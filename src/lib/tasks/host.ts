@@ -24,7 +24,13 @@ import type { TaskRow } from "../db";
 import type { RestoredWorktree, UnclaimedWorktree, WipSnapshot } from "../worktree";
 import type { Pty } from "../xtmux/pty";
 import type { SpawnOptions } from "../xtmux/pty-manager";
-import type { ProjectInfo, ServerMessage, TaskInfo, TaskWorktreeInfo } from "../xtmux/types";
+import type {
+  ArchiveOutcome,
+  ProjectInfo,
+  ServerMessage,
+  TaskInfo,
+  TaskWorktreeInfo,
+} from "../xtmux/types";
 import type { CreateTaskOptions } from "./manager";
 import type { TaskStore, TaskUpdate } from "./store";
 
@@ -94,6 +100,7 @@ export interface TaskHost {
   inferState(taskId: string, active: boolean): void;
   seedOutputEdge(ptyId: string, at: number): void;
   forgetOutputEdge(ptyId: string): void;
+  forgetRankAt(taskId: string): void;
   stampRank(taskId: string, at: number, extra?: TaskUpdate): TaskRow | undefined;
   armHookGrace(taskId: string): void;
   disarmHookGrace(taskId: string): void;
@@ -119,6 +126,13 @@ export interface TaskHost {
   snapshotTaskWip(taskId: string): Promise<WipSnapshot | null>;
   restoreTaskWorktree(taskId: string): Promise<RestoredWorktree | null>;
   repoRootFor(row: TaskRow): Promise<string | null>;
+
+  // Archive, unarchive and delete (archive.ts)
+  archiveTask(taskId: string): Promise<ArchiveOutcome | null>;
+  unarchiveTask(
+    taskId: string,
+    size?: { cols?: number; rows?: number },
+  ): Promise<TaskRow | undefined | null>;
 
   // The TaskInfo projection (task-info.ts)
   taskInfo(taskId: string): TaskInfo | undefined;

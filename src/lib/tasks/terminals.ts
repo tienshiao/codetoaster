@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import type { ProcessRoot } from "../processes";
 import { taskEnv } from "../agent/spawn";
 import type { Pty } from "../xtmux/pty";
-import { PtyManager } from "../xtmux/pty-manager";
+import { PtyManager, type SpawnOptions } from "../xtmux/pty-manager";
 import { sendFrame } from "../xtmux/socket";
 import type { WebSocketData } from "../xtmux/types";
 import { resolveRepoRoot } from "./derive";
@@ -18,7 +18,7 @@ export class TaskTerminals {
   // ptyToTask because everything a PTY reports — output, a title, a
   // notification — has to be readdressed to the task before it goes out.
   private ptyToTask: Map<string, string> = new Map();
-  taskPtys: Map<string, Set<string>> = new Map();
+  private taskPtys: Map<string, Set<string>> = new Map();
   // Which of a task's terminals is the agent's (§3). Held apart from the set
   // above rather than inferred from it, because the set is unordered in every
   // way that matters: `resumeTask` on a *live* task — an agent that exited, or
@@ -27,11 +27,11 @@ export class TaskTerminals {
   // answer with a shell. Everything that means *the agent* reads through here:
   // `taskInfo.ptyId` (what a client attaches its agent tab to), `snapshot`,
   // `refreshCwd`, and resume's own already-running test.
-  agentPtys: Map<string, string> = new Map();
+  private agentPtys: Map<string, string> = new Map();
   // When each task's directory was last checked against its live terminal.
   // The data routes ask on every request; this is what keeps that from being a
   // process spawn every time (TASK-41).
-  cwdCheckedAt: Map<string, number> = new Map();
+  private cwdCheckedAt: Map<string, number> = new Map();
   private cwdRefreshWindowMs = 3_000;
 
   constructor(private readonly host: TaskHost) {}
@@ -41,6 +41,11 @@ export class TaskTerminals {
    * else does. */
   setCwdRefreshWindow(ms: number): void {
     this.cwdRefreshWindowMs = ms;
+  }
+
+  /** Start a terminal. It belongs to no task until `adopt` wires it to one. */
+  spawnPty(command: string[], options: SpawnOptions): Pty {
+    return this.ptys.spawn(command, options);
   }
 
   /**

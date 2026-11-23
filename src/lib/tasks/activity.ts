@@ -33,7 +33,7 @@ export class TaskActivity {
    * burst, or the echo of the keystroke that woke the task, is turned away
    * without a row read. Cleared when the task is deleted; a suspended task's
    * entry is still true. */
-  rankAt: Map<string, number> = new Map();
+  private rankAt: Map<string, number> = new Map();
   // The timers waiting to find out whether a task's agent reports a hook
   // (§9, risk 4). The other half of `hookSeen` (hooks.ts), whose comment
   // says why both are in memory.
@@ -214,6 +214,11 @@ export class TaskActivity {
   /** Drop a PTY's output edge, when it is unmapped. */
   forgetOutputEdge(ptyId: string): void {
     this.outputEdgeAt.delete(ptyId);
+  }
+
+  /** Drop a task's remembered rank, when the task is deleted. */
+  forgetRankAt(taskId: string): void {
+    this.rankAt.delete(taskId);
   }
 
   /** The heuristic's answer, for a task that has no better one. Confined to
