@@ -5,7 +5,9 @@ import * as path from "path";
 import type { ServerWebSocket } from "bun";
 import { initDatabase } from "../lib/db";
 import { taskManager } from "../lib/tasks/manager";
+import { Harvester } from "../lib/tasks/harvester";
 import { hookRoutes } from "./hooks";
+import { waitFor } from "../../test/wait";
 import type { ServerMessage, WebSocketData } from "../lib/xtmux/types";
 import { TEST_SHELL } from "../../test/shell";
 
@@ -81,6 +83,53 @@ describe("POST /api/tasks/:id/hook", () => {
       expect(pushed).toHaveLength(1);
       expect(pushed[0].task.id).toBe(id);
       expect(pushed[0].task.agentState).toBe("idle");
+    } finally {
+      client.stop();
+    }
+  });
+
+  // TASK-145, end to end: the field has to survive the trip from the agent to
+  // the row, and the harvester has to read what arrived. `cat` rather than the
+  // shell, because it sits idle as its own foreground process and so passes
+  // the harvester's "nothing running" guard without depending on rc files.
+  test("a Stop reporting background work keeps the task off the harvester", async () => {
+    const id = "t-background";
+    await taskManager.createTask({ id, command: ["cat"] });
+    const harvester = new Harvester(taskManager, {
+      harvestAfterMs: 1,
+      backgroundAfterMs: 60 * 60_000,
+      evictAfterMs: 0,
+      uploadsAfterMs: 0,
+    });
+    const client = listen();
+    try {
+      const res = await hook(id, {
+        session_id: "dd74",
+        hook_event_name: "Stop",
+        last_assistant_message: "LAUNCHED",
+        background_tasks: [
+          { id: "a0eb", type: "subagent", status: "running", description: "review", agent_type: "general-purpose" },
+        ],
+        session_crons: [],
+      });
+      expect(res.status).toBe(200);
+      expect(taskManager.getTask(id)!.agent_state).toBe("background");
+      expect(client.tasks().at(-1).task.agentState).toBe("background");
+
+      const since = taskManager.getTask(id)!.idle_since!;
+      await waitFor(() => Date.now() > since + 1);
+      await harvester.tick();
+      expect(taskManager.getTask(id)!.lifecycle).toBe("live");
+
+      // The agent reports back as a new turn that ends with nothing left.
+      await hook(id, { hook_event_name: "UserPromptSubmit" });
+      await hook(id, { hook_event_name: "Stop", background_tasks: [] });
+      expect(taskManager.getTask(id)!.agent_state).toBe("idle");
+
+      const idleSince = taskManager.getTask(id)!.idle_since!;
+      await waitFor(() => Date.now() > idleSince + 1);
+      await harvester.tick();
+      expect(taskManager.getTask(id)!.lifecycle).toBe("suspended");
     } finally {
       client.stop();
     }

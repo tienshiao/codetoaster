@@ -159,8 +159,11 @@ export function CommandPaletteHost(props: CommandPaletteHostProps) {
           {...props}
           onCloseTask={() => {
             if (!selected) return;
-            // Suspending a working agent interrupts it, so that one asks first.
-            if (taskStateOf(selected) === "busy") setConfirmingClose(true);
+            // Suspending a working agent interrupts it, so that one asks first —
+            // and so does one whose turn ended with background work still
+            // running, which the suspend kills just the same (TASK-145).
+            const state = taskStateOf(selected);
+            if (state === "busy" || state === "background") setConfirmingClose(true);
             else void closeTask(selected.id);
           }}
           onArchiveTask={() => setArchiving(true)}

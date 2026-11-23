@@ -1,5 +1,11 @@
 import { test, expect, describe } from "bun:test";
-import { transitionFor, isHookPayload, compactTriggerOf, endsCompaction } from "./hook-state";
+import {
+  transitionFor,
+  isHookPayload,
+  compactTriggerOf,
+  endsCompaction,
+  hasBackgroundWork,
+} from "./hook-state";
 
 // The payloads captured live in the Phase 0 spike (docs/v2-architecture.md
 // §4.2), kept verbatim so a future Claude Code that changes their shape shows
@@ -17,6 +23,39 @@ const STOP = {
   last_assistant_message: "pong",
   permission_mode: "auto",
   effort: { level: "high" },
+};
+// Captured from Claude Code 2.1.330 (TASK-145): the `Stop` that ends a turn
+// which launched a background agent, and the one that ends the turn Claude Code
+// starts when that agent reports back. Trimmed of paths, otherwise verbatim.
+const STOP_WITH_BACKGROUND = {
+  session_id: "dd7433f6-1047-4bfe-a2f9-bb84e169508c",
+  prompt_id: "efdfbb03-5a4b-425d-bb07-8a976ccddecf",
+  permission_mode: "auto",
+  effort: { level: "medium" },
+  hook_event_name: "Stop",
+  stop_hook_active: false,
+  last_assistant_message: "LAUNCHED",
+  background_tasks: [
+    {
+      id: "a0eb27981c7ea1f6c",
+      type: "subagent",
+      status: "running",
+      description: "Run sleep 25 in background",
+      agent_type: "general-purpose",
+    },
+  ],
+  session_crons: [],
+};
+const STOP_AFTER_BACKGROUND = {
+  session_id: "dd7433f6-1047-4bfe-a2f9-bb84e169508c",
+  prompt_id: "94dea48f-1bbf-47b3-b0d2-1359cc03871e",
+  permission_mode: "auto",
+  effort: { level: "medium" },
+  hook_event_name: "Stop",
+  stop_hook_active: false,
+  last_assistant_message: "FINISHED",
+  background_tasks: [],
+  session_crons: [],
 };
 const SESSION_END = {
   session_id: "1fc1aaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -54,6 +93,25 @@ describe("transitionFor", () => {
       last_message: "pong",
       idle_since: 42,
       last_active_at: 42,
+    });
+  });
+
+  // `Stop` is the end of the turn, not of the work: a background agent the
+  // turn launched is still running in the same process (TASK-145).
+  test("Stop with background work still running is background, not idle", () => {
+    expect(transitionFor(STOP_WITH_BACKGROUND, 42)).toEqual({
+      agent_state: "background",
+      last_message: "LAUNCHED",
+      // Stamped all the same: it is what the harvester's cap counts from.
+      idle_since: 42,
+      last_active_at: 42,
+    });
+  });
+
+  test("the Stop after the background work reports back is idle again", () => {
+    expect(transitionFor(STOP_AFTER_BACKGROUND, 99)).toMatchObject({
+      agent_state: "idle",
+      idle_since: 99,
     });
   });
 
@@ -240,6 +298,34 @@ describe("transitionFor", () => {
     expect(
       transitionFor({ hook_event_name: "SessionEnd", reason: ["other"] } as never, 1),
     ).toBeUndefined();
+  });
+});
+
+describe("hasBackgroundWork", () => {
+  test("reads the captured payloads", () => {
+    expect(hasBackgroundWork(STOP_WITH_BACKGROUND)).toBe(true);
+    expect(hasBackgroundWork(STOP_AFTER_BACKGROUND)).toBe(false);
+    // A Claude Code that predates the field.
+    expect(hasBackgroundWork(STOP)).toBe(false);
+  });
+
+  test("a pending entry counts, a finished one does not", () => {
+    expect(hasBackgroundWork({ background_tasks: [{ status: "pending" }] })).toBe(true);
+    expect(hasBackgroundWork({ background_tasks: [{ status: "completed" }] })).toBe(false);
+    expect(hasBackgroundWork({ background_tasks: [{ status: "failed" }, { status: "killed" }] })).toBe(false);
+  });
+
+  // Holding a task a little longer costs a process; harvesting it wrongly costs
+  // the work. A status we do not recognise is still something running.
+  test("an entry with no status, or one we do not know, counts as outstanding", () => {
+    expect(hasBackgroundWork({ background_tasks: [{ id: "x" }] })).toBe(true);
+    expect(hasBackgroundWork({ background_tasks: [{ status: "stalled" }] })).toBe(true);
+  });
+
+  test("a malformed field is nothing outstanding, not a throw", () => {
+    expect(hasBackgroundWork({ background_tasks: "running" })).toBe(false);
+    expect(hasBackgroundWork({ background_tasks: { status: "running" } })).toBe(false);
+    expect(hasBackgroundWork({ background_tasks: [null, 3, "x"] })).toBe(false);
   });
 });
 

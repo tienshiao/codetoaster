@@ -141,6 +141,9 @@ test("lifecycle wins over a frozen agent state", async () => {
   // And does not win where there is no disagreement to settle.
   expect(taskStateOf({ lifecycle: "live", agentState: "busy" })).toBe("busy");
   expect(taskStateOf({ lifecycle: "live", agentState: "needs_attention" })).toBe("attention");
+  // A turn that ended with background work running is not done (TASK-145).
+  expect(taskStateOf({ lifecycle: "live", agentState: "background" })).toBe("background");
+  expect(taskStateOf({ lifecycle: "suspended", agentState: "background" })).toBe("suspended");
 });
 
 /**

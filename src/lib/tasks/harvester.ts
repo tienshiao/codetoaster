@@ -21,6 +21,15 @@ export const THIRTY_MINUTES_MS = 30 * 60_000;
 // off, for anyone who would rather pay for the processes.
 const DEFAULT_HARVEST_AFTER_MS = THIRTY_MINUTES_MS;
 
+/** How long a turn that ended with background work still running holds the
+ * task off the harvester (TASK-145). A cap rather than "forever" because what
+ * `background` rests on is one `Stop` payload: a background dev server or a
+ * monitor never finishes, and a completion Claude Code never reported would
+ * otherwise pin the task live for good. Four hours outlasts a long review or
+ * workflow and still reclaims a forgotten server the same day. */
+export const FOUR_HOURS_MS = 4 * 60 * 60_000;
+const DEFAULT_BACKGROUND_AFTER_MS = FOUR_HOURS_MS;
+
 /** §5.6's eviction grace, before it is scaled by what a restore costs. Long
  * because the thing being reclaimed is disk, which is cheap, while the thing
  * risked is a checkout somebody may still be thinking about. */
@@ -68,6 +77,13 @@ export function graceFor(baseMs: number, setupDurationMs: number | null): number
 export interface HarvesterOptions {
   /** §5.5's idle timeout; `undefined` is the default, `0` off. */
   harvestAfterMs?: number;
+  /** How long a `background` task is held before the idle rule takes it
+   * anyway; `undefined` is the default. Never shorter than `harvestAfterMs`
+   * in effect — background work is not a reason to harvest *sooner* — so,
+   * unlike the other windows, `0` is not "off": it means no extra hold, and a
+   * `background` task is harvested on the ordinary idle timeout. Turning the
+   * idle tier off (`harvestAfterMs: 0`) is what stops it. */
+  backgroundAfterMs?: number;
   /** §5.6's base eviction grace; `undefined` is the default, `0` off. */
   evictAfterMs?: number;
   /** How long an unreferenced attachment is kept; `undefined` is the default,
@@ -113,6 +129,7 @@ export interface HarvesterOptions {
 export class Harvester {
   private timer?: Timer;
   private harvestAfterMs: number;
+  private backgroundAfterMs: number;
   private evictAfterMs: number;
   private uploadsAfterMs: number;
   private uploadsRoot?: string;
@@ -134,6 +151,7 @@ export class Harvester {
     options: HarvesterOptions = {},
   ) {
     this.harvestAfterMs = options.harvestAfterMs ?? DEFAULT_HARVEST_AFTER_MS;
+    this.backgroundAfterMs = options.backgroundAfterMs ?? DEFAULT_BACKGROUND_AFTER_MS;
     this.evictAfterMs = options.evictAfterMs ?? DEFAULT_EVICT_AFTER_MS;
     this.uploadsAfterMs = options.uploadsAfterMs ?? DEFAULT_UPLOADS_AFTER_MS;
     this.uploadsRoot = options.uploadsRoot;
@@ -404,16 +422,24 @@ export class Harvester {
     const task = this.manager.getTask(taskId);
     // Gone entirely: closed while the tick was walking towards it.
     if (!task) return false;
-    return isLive(task) && isIdle(task) && this.idleLongEnough(task, now);
+    if (!isLive(task)) return false;
+    if (isIdle(task)) return this.idleLongerThan(task, now, this.harvestAfterMs);
+    // A turn that left background work running (TASK-145): held for the cap,
+    // counted from the same `Stop`, and only then treated as idle. Never
+    // sooner than the idle rule would have taken it.
+    if (task.agent_state === "background") {
+      return this.idleLongerThan(task, now, Math.max(this.backgroundAfterMs, this.harvestAfterMs));
+    }
+    return false;
   }
 
-  /** How long the task has been idle, against the configured timeout. A null
-   * `idle_since` is not "idle since forever": it is a task nobody ever saw
-   * stop working — an agent that reports no hooks, or one whose `Stop` we
-   * missed — and harvesting on the strength of a column that was never written
-   * would suspend it while it was still going. */
-  private idleLongEnough(task: TaskRow, now: number): boolean {
-    return task.idle_since !== null && now - task.idle_since > this.harvestAfterMs;
+  /** How long the task has been idle, against a window. A null `idle_since`
+   * is not "idle since forever": it is a task nobody ever saw stop working —
+   * an agent that reports no hooks, or one whose `Stop` we missed — and
+   * harvesting on the strength of a column that was never written would
+   * suspend it while it was still going. */
+  private idleLongerThan(task: TaskRow, now: number, windowMs: number): boolean {
+    return task.idle_since !== null && now - task.idle_since > windowMs;
   }
 
   /** Whether anybody is watching. Summed over every terminal the task holds and
@@ -449,8 +475,9 @@ function isLive(task: TaskRow): boolean {
 
 /** The agent said it stopped. Only `idle` passes — `busy` is mid-turn,
  * `needs_attention` is a question waiting for the user, `compacting` is a turn
- * that has not finished, and `starting`, `unknown` and `could_not_resume` are
- * all forms of not knowing. */
+ * that has not finished, `background` is a turn that finished with work still
+ * running behind it (held for its own cap in `rowAllows`), and `starting`,
+ * `unknown` and `could_not_resume` are all forms of not knowing. */
 function isIdle(task: TaskRow): boolean {
   return task.agent_state === "idle";
 }

@@ -18,6 +18,11 @@ export interface HookPayload {
    * mid-turn when compaction started, and so what it goes back to when the
    * compaction ends — see `compactTriggerOf`. */
   trigger?: string;
+  /** Stop: the agent's backgrounded work still running as its turn ends —
+   * subagents, background shells, monitors, workflows (TASK-145). Claude Code
+   * lists only `running` and `pending` entries; an agent that sends none, or
+   * a version that predates the field, reads as "nothing outstanding". */
+  background_tasks?: unknown;
 }
 
 /** Why compaction started. `auto` means the context filled up in the middle of
@@ -73,6 +78,26 @@ export function startsCompaction(payload: HookPayload): boolean {
  * point at which a held trigger is spent. */
 export function endsCompaction(payload: HookPayload): boolean {
   return text(payload.hook_event_name) === "SessionStart" && text(payload.source) === "compact";
+}
+
+/** Whether a `Stop` reports work the agent left running behind its turn.
+ *
+ * `Stop` fires when the main turn ends, not when the agent is done: a
+ * background subagent launched in that turn is still running inside the same
+ * process, and the foreground-process check cannot see it. Harvesting on the
+ * strength of that `Stop` killed a background code review mid-run (TASK-145).
+ *
+ * Read defensively — the field is unvalidated JSON — and counting an entry
+ * whose status is missing or unfamiliar as outstanding: holding a task live a
+ * little longer costs a process, harvesting it wrongly costs the work. */
+export function hasBackgroundWork(payload: HookPayload): boolean {
+  const tasks = payload.background_tasks;
+  if (!Array.isArray(tasks)) return false;
+  return tasks.some((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const status = (entry as { status?: unknown }).status;
+    return status !== "completed" && status !== "failed" && status !== "killed";
+  });
 }
 
 /** The row change one payload implies, or undefined for anything that does not
@@ -151,7 +176,12 @@ export function transitionFor(
 
     case "Stop":
       return {
-        ...state("idle"),
+        // `background` when the turn left work running. When that work
+        // finishes, Claude Code hands its result to the agent as a new turn —
+        // a `UserPromptSubmit`, then a `Stop` with an empty list — so the task
+        // reaches `idle` through the ordinary path, with `idle_since` counted
+        // from when it was really done (observed on 2.1.330).
+        ...state(hasBackgroundWork(payload) ? "background" : "idle"),
         // The card preview. Absent on a payload that carries no message,
         // rather than blanking what the task last said.
         ...(text(payload.last_assistant_message)

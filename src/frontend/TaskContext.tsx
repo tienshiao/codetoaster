@@ -242,6 +242,8 @@ export function taskStateOf(task: Pick<TaskInfo, "agentState" | "lifecycle">): T
     case "busy":
     case "compacting":
       return "busy";
+    case "background":
+      return "background";
     case "needs_attention":
       return "attention";
     case "exited":

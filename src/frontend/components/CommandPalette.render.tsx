@@ -246,3 +246,14 @@ test("Suspend now asks first for a busy task, and suspends once confirmed", () =
   fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
   expect(suspend.closeTask).toHaveBeenCalledWith("t1");
 });
+
+// TASK-145: the turn is over, but the background agent it launched dies with
+// the suspend all the same.
+test("Suspend now asks first for a task with background work running", () => {
+  liveTask();
+  suspend.state = "background";
+  mount({ taskId: "t1" });
+  fireEvent.click(screen.getByRole("option", { name: /Suspend now/ }));
+  expect(suspend.closeTask).not.toHaveBeenCalled();
+  screen.getByRole("dialog", { name: "Suspend this task?" });
+});

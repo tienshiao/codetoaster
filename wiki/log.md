@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-11-22
+* **Creation**: [Task suspension and the idle harvester](/modules/task-suspension.md) for TASK-145: the three ways a task is suspended, the harvester's guards, where `idle` comes from, and the `background` state a `Stop` reporting running background work maps to, with its 4-hour cap.
+
 ## 2026-11-06
 * **Update**: [Worktree browsing](/modules/worktree-browsing.md) says who polls the worktree list (TASK-143): the open Explorer and worktree tabs, and the shell only while a worktree is chosen.
 * **Update**: [File viewer](/modules/file-viewer.md) and [Diagnose daemon memory](/runbooks/diagnose-daemon-memory.md) for TASK-142: the symbol store's idle and removed-directory sweep, `--symbols-after`, and its counts in `/api/diagnostics` and `status`.

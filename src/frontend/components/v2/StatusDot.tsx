@@ -1,6 +1,6 @@
 import { cn } from "@/frontend/lib/utils";
 
-export type TaskState = "busy" | "idle" | "attention" | "suspended" | "exited" | "error";
+export type TaskState = "busy" | "background" | "idle" | "attention" | "suspended" | "exited" | "error";
 
 /** How a state that was guessed from output rather than reported by the agent
  * is qualified (TASK-89.4). Here because the row's dot tooltip and the hover
@@ -24,6 +24,7 @@ export interface StatusDotProps {
 
 const FILLS: Record<TaskState, string> = {
   busy: "bg-state-busy",
+  background: "bg-state-busy",
   idle: "bg-state-idle",
   attention: "bg-state-attention",
   suspended: "bg-state-suspended",
@@ -47,7 +48,9 @@ export function StatusDot({
         square ? "rounded-sm" : "rounded-full",
         FILLS[state],
         // Attention gets a halo so it survives a list of thirty dots; busy
-        // pulses instead, because "working" has to read as motion.
+        // pulses instead, because "working" has to read as motion. Background
+        // shares busy's colour without the pulse: work is still going, but
+        // the agent's own turn is over and it is waiting for you (TASK-145).
         state === "attention" &&
           "shadow-[0_0_0_3px_color-mix(in_oklab,var(--state-attention)_22%,transparent)]",
         state === "busy" && "animate-busy-pulse",

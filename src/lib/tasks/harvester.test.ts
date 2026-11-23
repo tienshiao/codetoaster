@@ -302,6 +302,112 @@ describe("the guards", () => {
     stillRunning(manager, store, id);
   });
 
+  // TASK-145: the turn ended, but a background agent it launched is still
+  // running inside the same process. Harvesting here killed a background code
+  // review mid-run.
+  test("a task whose turn left background work running is left alone", async () => {
+    const { manager, store, harvester } = newManager();
+    const id = await harvestableTask(manager, store);
+    manager.applyHook(id, {
+      hook_event_name: "Stop",
+      background_tasks: [{ id: "a1", type: "subagent", status: "running" }],
+    });
+    store.update(id, { idle_since: Date.now() - HOUR_MS });
+
+    await harvester.tick();
+
+    expect(store.get(id)!.agent_state).toBe("background");
+    stillRunning(manager, store, id);
+  });
+
+  // A `/compact` typed at the prompt comes back `idle`, and nothing in its
+  // SessionStart says a background agent is still running behind it.
+  test("a manual /compact does not turn background work back into idle", async () => {
+    const { manager, store, harvester } = newManager();
+    const id = await harvestableTask(manager, store);
+    manager.applyHook(id, {
+      hook_event_name: "Stop",
+      background_tasks: [{ id: "a1", type: "subagent", status: "running" }],
+    });
+    manager.applyHook(id, { hook_event_name: "PreCompact", trigger: "manual" });
+    manager.applyHook(id, { hook_event_name: "SessionStart", source: "compact" });
+    store.update(id, { idle_since: Date.now() - HOUR_MS });
+
+    await harvester.tick();
+
+    expect(store.get(id)!.agent_state).toBe("background");
+    stillRunning(manager, store, id);
+
+    // And an ordinary manual compaction still comes back idle.
+    manager.applyHook(id, { hook_event_name: "Stop", background_tasks: [] });
+    manager.applyHook(id, { hook_event_name: "PreCompact", trigger: "manual" });
+    manager.applyHook(id, { hook_event_name: "SessionStart", source: "compact" });
+    expect(store.get(id)!.agent_state).toBe("idle");
+  });
+
+  test("background work holds a task only up to its cap", async () => {
+    const { manager, store } = newManager();
+    const harvester = new Harvester(manager, {
+      harvestAfterMs: THIRTY_MINUTES_MS,
+      backgroundAfterMs: 2 * HOUR_MS,
+      uploadsAfterMs: 0,
+    });
+    const id = await harvestableTask(manager, store);
+    manager.applyHook(id, {
+      hook_event_name: "Stop",
+      background_tasks: [{ id: "a1", type: "subagent", status: "running" }],
+    });
+    store.update(id, { idle_since: Date.now() - 3 * HOUR_MS });
+
+    await harvester.tick();
+
+    expect(store.get(id)!.lifecycle).toBe("suspended");
+  });
+
+  // The cap is a reason to wait longer, never a reason to harvest sooner.
+  test("a cap shorter than the idle timeout does not harvest early", async () => {
+    const { manager, store } = newManager();
+    const harvester = new Harvester(manager, {
+      harvestAfterMs: 2 * HOUR_MS,
+      backgroundAfterMs: 60_000,
+      uploadsAfterMs: 0,
+    });
+    const id = await harvestableTask(manager, store);
+    manager.applyHook(id, {
+      hook_event_name: "Stop",
+      background_tasks: [{ id: "a1", type: "subagent", status: "running" }],
+    });
+    store.update(id, { idle_since: Date.now() - HOUR_MS });
+
+    await harvester.tick();
+
+    stillRunning(manager, store, id);
+  });
+
+  test("once the background work reports back, the idle timeout counts from then", async () => {
+    const { manager, store, harvester } = newManager();
+    const id = await harvestableTask(manager, store);
+    manager.applyHook(id, {
+      hook_event_name: "Stop",
+      background_tasks: [{ id: "a1", type: "subagent", status: "running" }],
+    });
+    store.update(id, { idle_since: Date.now() - HOUR_MS });
+    // What Claude Code sends when the agent finishes: its result as a new turn,
+    // then a `Stop` with nothing left running.
+    manager.applyHook(id, { hook_event_name: "UserPromptSubmit" });
+    manager.applyHook(id, { hook_event_name: "Stop", background_tasks: [] });
+
+    await harvester.tick();
+
+    expect(store.get(id)!.agent_state).toBe("idle");
+    stillRunning(manager, store, id);
+
+    store.update(id, { idle_since: Date.now() - HOUR_MS });
+    await harvester.tick();
+
+    expect(store.get(id)!.lifecycle).toBe("suspended");
+  });
+
   // Nobody ever saw this task stop working — an agent reporting no hooks, or a
   // `Stop` that never arrived. Counting from an unwritten column would suspend
   // it mid-turn.

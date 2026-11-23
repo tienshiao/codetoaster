@@ -313,6 +313,11 @@ export class TaskManager {
   // live for the seconds between the two, and a daemon that restarts across
   // that gap has killed the agent that would have sent the second half.
   private compactTriggers: Map<string, CompactTrigger> = new Map();
+  // Held across the same gap, for the same reason: a `/compact` typed while a
+  // background agent is still running (TASK-145). The compaction's far end
+  // says nothing about background work, so without this a manual compaction
+  // would come back `idle` and be harvested with the background agent mid-run.
+  private compactingFromBackground: Set<string> = new Set();
   private taskPtys: Map<string, Set<string>> = new Map();
   // Which of a task's terminals is the agent's (§3). Held apart from the set
   // above rather than inferred from it, because the set is unordered in every
@@ -1828,6 +1833,7 @@ export class TaskManager {
     const settingsPath = capabilities.hooks ? await writeTaskSettings(row.id) : undefined;
     this.hookSeen.delete(row.id);
     this.compactTriggers.delete(row.id);
+    this.compactingFromBackground.delete(row.id);
     const pty = this.ptys.spawn(
       wrapWithSetup(
         buildAgentCommand(row, {
@@ -1932,6 +1938,7 @@ export class TaskManager {
     if (this.agentPtys.get(taskId) === pty.id) this.agentPtys.delete(taskId);
     this.hookSeen.delete(taskId);
     this.compactTriggers.delete(taskId);
+    this.compactingFromBackground.delete(taskId);
     this.disarmHookGrace(taskId);
     // Same reason as the two above: the flag is about the process, and the
     // process is the one being taken back.
@@ -2405,6 +2412,8 @@ export class TaskManager {
     if (startsCompaction(payload)) {
       if (trigger) this.compactTriggers.set(taskId, trigger);
       else this.compactTriggers.delete(taskId);
+      if (this.store.get(taskId)?.agent_state === "background") this.compactingFromBackground.add(taskId);
+      else this.compactingFromBackground.delete(taskId);
     }
     const ending = endsCompaction(payload);
     const update = transitionFor(
@@ -2412,7 +2421,16 @@ export class TaskManager {
       Date.now(),
       ending ? this.compactTriggers.get(taskId) : undefined,
     );
-    if (ending) this.compactTriggers.delete(taskId);
+    // A manual compaction comes back `idle`, which is only true if nothing
+    // was left running behind the turn before it. The background work the
+    // last `Stop` reported is still going, so it comes back as that.
+    if (ending && update?.agent_state === "idle" && this.compactingFromBackground.has(taskId)) {
+      update.agent_state = "background";
+    }
+    if (ending) {
+      this.compactTriggers.delete(taskId);
+      this.compactingFromBackground.delete(taskId);
+    }
     if (!update) return false;
     // `SessionStart` claims the task is live, and for a task with a terminal it
     // is. But `codetoaster hook` outlives the agent that spawned it — killing
@@ -2436,7 +2454,9 @@ export class TaskManager {
     // Not awaited. The hook route answers a running agent, and five git
     // processes must not sit on that reply; `refreshWorktreeStatus` broadcasts
     // for itself when the answer differs from the last one.
-    if (update.agent_state === "idle") void this.refreshWorktreeStatus(taskId, { force: true });
+    if (update.agent_state === "idle" || update.agent_state === "background") {
+      void this.refreshWorktreeStatus(taskId, { force: true });
+    }
     return true;
   }
 
@@ -2841,12 +2861,14 @@ export class TaskManager {
     this.disarmHookGrace(taskId);
     this.hookSeen.delete(taskId);
     this.compactTriggers.delete(taskId);
+    this.compactingFromBackground.delete(taskId);
     this.cwdCheckedAt.delete(taskId);
     // And the claim that the process now gone was a restart, which is about
     // that process and not about the suspended task the next reopen judges.
     this.restarted.delete(taskId);
-    // Only the lifecycle. `agent_state` stays `idle`: that is what was true of
-    // the agent when it was harvested and what the card should go on saying.
+    // Only the lifecycle. `agent_state` stays `idle` (or `background`, for a
+    // task the harvester took at its cap): that is what was true of the agent
+    // when it was harvested and what the card should go on saying.
     // `reconcileOnBoot`'s `unknown` is the other case — a daemon that never
     // witnessed its agents die and cannot speak for what they were doing.
     this.store.update(taskId, { lifecycle: "suspended" });
@@ -3822,6 +3844,7 @@ export class TaskManager {
     this.disarmHookGrace(taskId);
     this.hookSeen.delete(taskId);
     this.compactTriggers.delete(taskId);
+    this.compactingFromBackground.delete(taskId);
     this.cwdCheckedAt.delete(taskId);
     this.restarted.delete(taskId);
     // Normally spent by the first hook. A task deleted before its agent ever

@@ -128,9 +128,11 @@ export type WorktreeState = "none" | "present" | "evicted" | "missing";
 // `unknown` is "we cannot tell" — no hook has ever reported for this task
 // (TASK-12). `could_not_resume` is the different, sharper thing: we tried
 // every way of reopening the conversation and none of them worked, so the card
-// has a button to offer rather than a shrug (§4.3).
+// has a button to offer rather than a shrug (§4.3). `background` is a turn
+// that ended with backgrounded work still running (TASK-145): waiting for the
+// user like `idle`, but not done, and not something to harvest.
 export type AgentState =
-  | "starting" | "busy" | "idle" | "needs_attention" | "compacting" | "exited"
+  | "starting" | "busy" | "idle" | "background" | "needs_attention" | "compacting" | "exited"
   | "unknown" | "could_not_resume";
 export type Lifecycle = "live" | "suspended" | "archived";
 
