@@ -10,9 +10,10 @@ export class InFlight {
   // The resume in flight for a task, if any. Resuming is what a client does on
   // the way to opening a task, so two of them can easily overlap — and the
   // whole ladder is awaited, so the "is it already running?" check in
-  // `resumeTask` is separated from the spawn by several awaits. Without this, two concurrent
-  // resumes both see no PTY and both start an agent on the same conversation
-  // in the same directory, one of which is unreachable and never killed.
+  // `resumeTask` is separated from the spawn by several awaits. Without this,
+  // two concurrent resumes both see no PTY and both start an agent on the same
+  // conversation in the same directory, one of which is unreachable and never
+  // killed.
   readonly resuming: Map<string, Promise<TaskRow | undefined>> = new Map();
   // The mirror of `resuming`, and it has to exist for the same reason. Suspend
   // is not synchronous either: it awaits `snapshot`, which is a multi-hundred-KB

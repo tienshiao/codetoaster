@@ -31,9 +31,9 @@ export class TaskResumption {
    * terminal on a task that was suspended — and the difference is everything
    * the user was in the middle of.
    *
-   * In memory for the same reason `hookSeen` (hooks.ts) is: it describes the process
-   * running *now*, not the task. A daemon that restarted suspended every task
-   * it had, so there is no process left for this to be true of. */
+   * In memory for the same reason `hookSeen` (hooks.ts) is: it describes the
+   * process running *now*, not the task. A daemon that restarted suspended
+   * every task it had, so there is no process left for this to be true of. */
   private restarted: Set<string> = new Set();
   /** When each task's agent was last spawned, for turning the setup wrapper's
    * stamp into a duration. Not `created_at`: a restore (TASK-39) runs setup

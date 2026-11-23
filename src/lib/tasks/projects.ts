@@ -131,7 +131,7 @@ export class ProjectRegistry {
     }
   }
 
-  /** The same answer as `repoRootFor` (manager.ts), without healing the row
+  /** The same answer as `repoRootFor` (suspend.ts), without healing the row
    * with it.
    *
    * Hard delete needs this: it removes the row first, deliberately and

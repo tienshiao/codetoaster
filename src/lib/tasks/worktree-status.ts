@@ -36,8 +36,8 @@ export class WorktreeStatusCache {
 
   /** How long a measurement stands before a backstop sweep will redo it.
    *
-   * Long, because the events in manager.ts are the real freshness mechanism and this
-   * only catches what happens outside them — a commit made in a shell tab, a
+   * Long, because the events in hooks.ts, create.ts and resume.ts are the
+   * real freshness mechanism and this only catches what happens outside them — a commit made in a shell tab, a
    * push from the user's own terminal. Short enough that a card is never wrong
    * for a whole sitting. */
   private worktreeStatusTtlMs = 5 * 60_000;
@@ -127,7 +127,8 @@ export class WorktreeStatusCache {
     }
   }
 
-  /** The backstop (§5.6): re-measure whatever the events in manager.ts have not.
+  /** The backstop (§5.6): re-measure whatever the events in hooks.ts,
+   * create.ts and resume.ts have not.
    *
    * Called from the harvester's tick, which is the only thing already running
    * on a timer. It is not the mechanism — a checkout is measured when something
