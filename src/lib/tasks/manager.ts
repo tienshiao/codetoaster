@@ -45,6 +45,7 @@ import { ClientRegistry } from "./clients";
 import { TaskTerminals } from "./terminals";
 import { TaskActivity } from "./activity";
 import { TaskHooks } from "./hooks";
+import { InFlight } from "./inflight";
 import type { ProcessRoot } from "../processes";
 import {
   applyWip,
@@ -178,6 +179,7 @@ export interface CreateTaskOptions {
 export class TaskManager implements TaskHost {
   private database?: Database;
 
+  private readonly inflight = new InFlight();
   private readonly projectRegistry = new ProjectRegistry(this);
   /** Which agents this daemon can run a task on (TASK-89). The built-ins until
    * the server replaces it at startup, so the module-level manager and every
@@ -215,59 +217,6 @@ export class TaskManager implements TaskHost {
    * a daemon that restarted in between killed that process anyway. */
   private spawnedAt: Map<string, number> = new Map();
   private startTimeoutMs = 4_000;
-  // The resume in flight for a task, if any. Resuming is what a client does on
-  // the way to opening a task, so two of them can easily overlap — and the
-  // whole ladder is awaited, so the "is it already running?" check below is
-  // separated from the spawn by several awaits. Without this, two concurrent
-  // resumes both see no PTY and both start an agent on the same conversation
-  // in the same directory, one of which is unreachable and never killed.
-  private resuming: Map<string, Promise<TaskRow | undefined>> = new Map();
-  // The mirror of `resuming`, and it has to exist for the same reason. Suspend
-  // is not synchronous either: it awaits `snapshot`, which is a multi-hundred-KB
-  // screen written to disk, and only *after* that does it kill the task's PTYs
-  // and write `suspended`. A resume arriving inside that window saw a live,
-  // unexited PTY and answered 200 with the ptyId of a terminal about to be
-  // killed — or, where the agent had already exited, spawned a fresh one that
-  // the suspend then killed along with the rest, leaving the user's close
-  // silently undone by the ladder walking on.
-  //
-  // Each side registers its entry only *after* waiting on the other's, so the
-  // two can never wait on each other — and each starts over once that wait is
-  // done rather than carrying on, since the promise it waited on may have
-  // handed straight to another one of the other kind.
-  // `conditional` is whether this attempt may still refuse: a harvest re-checks
-  // its caller's guards on the far side of the snapshot write and can walk
-  // away, a close cannot. A joiner has to know, because adopting a harvest's
-  // verdict would report a user's click as the no-op the *harvest* decided on.
-  private suspending: Map<string, { done: Promise<boolean>; conditional: boolean }> = new Map();
-  // The third of the same family, and it exists because `suspended` is not a
-  // quiet state. An eviction takes a snapshot and then runs `git worktree
-  // remove --force`, and a resume leaves the row `suspended` for its *whole*
-  // run — the ladder only writes `live` on the rung that works — so a
-  // lifecycle check alone lets the evict tier take the checkout out from under
-  // a task somebody is in the middle of reopening: the directory the restore
-  // just rebuilt and the agent was just spawned into. Registered before the
-  // first await on the evict side and waited on before the ladder starts on
-  // the resume side, so whichever gets there first is the one that runs.
-  private evicting: Map<string, Promise<boolean>> = new Map();
-  // The fourth of the family, and the one the task does not come back from
-  // (§5.6). Archive is every other operation in sequence — it suspends, it
-  // snapshots, it removes the checkout, it may delete the branch — so it needs
-  // an entry of its own rather than borrowing one: two archives of a task would
-  // both read `branchStatus` before either had destroyed anything, and the
-  // second would then be describing, and acting on, a repository the first had
-  // already emptied. Evict and resume wait on this for the reason they wait on
-  // each other, and archive waits on an eviction in flight before registering,
-  // so the two can never be waiting on one another.
-  private archiving: Map<string, Promise<ArchiveOutcome | null>> = new Map();
-  // The fifth, and archive's way back (TASK-139). It recreates a branch and
-  // then hands over to the resume ladder, and both halves need fencing: two
-  // unarchives would both see the branch missing and race to recreate it, and
-  // an archive landing between the lifecycle flip and the ladder would remove a
-  // checkout the ladder is about to rebuild. A second unarchive joins this one;
-  // an archive waits for it before registering, and this waits for an archive
-  // before registering, so the two can never be waiting on each other.
-  private unarchiving: Map<string, Promise<TaskRow | undefined | null>> = new Map();
   // What `codetoaster hook` has to POST back to (§4.2), handed over by
   // startServer. Undefined until then: a manager with no server in front of it
   // — a test — has no port to name, and an agent spawned from one simply
@@ -1020,7 +969,7 @@ export class TaskManager implements TaskHost {
     // against the row it left — which will be archived, and refused above. It
     // is removing the checkout the ladder would restore and spawn into, and it
     // does not wait for resumes: it suspends the task, which waits for them.
-    const archiveInFlight = this.archiving.get(taskId);
+    const archiveInFlight = this.inflight.archiving.get(taskId);
     if (archiveInFlight) {
       await archiveInFlight.catch(() => undefined);
       return this.resumeTask(taskId, options);
@@ -1033,7 +982,7 @@ export class TaskManager implements TaskHost {
     // then kills along with the rest — undoing the user's close, or leaving
     // them attached to a corpse. Waiting means the resume is judged against the
     // task the close produced, which is the task as it now is.
-    const suspendInFlight = this.suspending.get(taskId);
+    const suspendInFlight = this.inflight.suspending.get(taskId);
     if (suspendInFlight) {
       await suspendInFlight.done.catch(() => undefined);
       return this.resumeTask(taskId, options);
@@ -1045,7 +994,7 @@ export class TaskManager implements TaskHost {
     // which `restoreTaskWorktree` then rebuilds — rather than racing it for the
     // checkout. `evictTask` refuses in the other direction, so the two can
     // never wait on each other.
-    const evictInFlight = this.evicting.get(taskId);
+    const evictInFlight = this.inflight.evicting.get(taskId);
     if (evictInFlight) {
       await evictInFlight.catch(() => undefined);
       return this.resumeTask(taskId, options);
@@ -1066,7 +1015,7 @@ export class TaskManager implements TaskHost {
     // in flight to settle instead (two of them on one task would have two
     // agents in one directory) and then starts over, by which point the
     // ordinary "already running" arm below discards whatever that resume left.
-    const alreadyResuming = this.resuming.get(taskId);
+    const alreadyResuming = this.inflight.resuming.get(taskId);
     if (alreadyResuming) {
       if (options.fresh !== true) return alreadyResuming;
       await alreadyResuming.catch(() => undefined);
@@ -1097,9 +1046,9 @@ export class TaskManager implements TaskHost {
     if (existing) this.discardPty(existing, taskId);
 
     const attempt = this.runResumeLadder(taskId, row, options).finally(() => {
-      this.resuming.delete(taskId);
+      this.inflight.resuming.delete(taskId);
     });
-    this.resuming.set(taskId, attempt);
+    this.inflight.resuming.set(taskId, attempt);
     return attempt;
   }
 
@@ -1609,7 +1558,7 @@ export class TaskManager implements TaskHost {
     // reported success either way, so there was nothing to say it had happened.
     // Waiting means the click lands on the task the resume produced, which is
     // the task the user was looking at when they clicked.
-    const inFlight = this.resuming.get(taskId);
+    const inFlight = this.inflight.resuming.get(taskId);
     if (inFlight) {
       await inFlight.catch(() => undefined);
       // Started over rather than fallen through, because settling that resume
@@ -1628,7 +1577,7 @@ export class TaskManager implements TaskHost {
     // Registered only now, on the far side of that wait, so a resume waiting on
     // us and a suspend waiting on it can never be waiting on each other. A
     // second close joins the first rather than snapshotting the task twice.
-    const alreadySuspending = this.suspending.get(taskId);
+    const alreadySuspending = this.inflight.suspending.get(taskId);
     if (alreadySuspending) {
       // A close cannot adopt a harvest's verdict. The harvest may be about to
       // refuse on a guard the close does not have — and the commonest way for
@@ -1647,9 +1596,9 @@ export class TaskManager implements TaskHost {
       return alreadySuspending.done;
     }
     const done = this.doSuspend(taskId, stillHarvestable).finally(() => {
-      this.suspending.delete(taskId);
+      this.inflight.suspending.delete(taskId);
     });
-    this.suspending.set(taskId, { done, conditional: stillHarvestable !== undefined });
+    this.inflight.suspending.set(taskId, { done, conditional: stillHarvestable !== undefined });
     return done;
   }
 
@@ -1762,14 +1711,14 @@ export class TaskManager implements TaskHost {
     // would both be gone, which is the single way this design can lose work.
     // Refused rather than queued: the eviction finishes in a moment and clears
     // the state that made the question look outstanding.
-    if (this.evicting.has(taskId)) return null;
+    if (this.inflight.evicting.has(taskId)) return null;
     // Nor while an archive is running, which is the same window seen from the
     // other end: `doArchive` snapshots through `snapshotTaskWip` and only then
     // removes the checkout, so for the whole of that removal the row reads
     // `present` with a `wip_ref` too — and a discard landing there drops the
     // commit the archive's whole recoverability rests on, moments before the
     // directory holding the other copy goes.
-    if (this.archiving.has(taskId)) return null;
+    if (this.inflight.archiving.has(taskId)) return null;
     const row = this.store.get(taskId);
     if (!row?.wip_ref || !row.worktree_path) return null;
     if (row.worktree_state !== "present") return null;
@@ -1819,7 +1768,7 @@ export class TaskManager implements TaskHost {
     //
     // Still only for a *present* checkout: an evicted task's ref is how its
     // work is stored rather than a decision, and discarding that destroys it.
-    if (this.evicting.has(taskId)) return false;
+    if (this.inflight.evicting.has(taskId)) return false;
     // Nor mid-archive, and this is the arm that pair of guards exists for.
     // `pendingWip` withholding the question stops the *notice* being drawn, but
     // a discard is a POST that can already be in flight when the archive
@@ -1827,7 +1776,7 @@ export class TaskManager implements TaskHost {
     // dropping a ref needs only the repository. So without this it lands on the
     // one commit the archive's recoverability rests on, moments before the
     // checkout holding the other copy goes, and there is no third copy.
-    if (this.archiving.has(taskId)) return false;
+    if (this.inflight.archiving.has(taskId)) return false;
     const row = this.store.get(taskId);
     if (!row?.wip_ref || row.worktree_state !== "present") return false;
     const repoRoot = await this.repoRootFor(row);
@@ -1875,30 +1824,30 @@ export class TaskManager implements TaskHost {
    * Whether a task *should* be evicted — grace, pins — is the harvester's, the
    * same way `suspendTask` knows nothing about idle timeouts. */
   evictTask(taskId: string): Promise<boolean> {
-    if (this.resuming.has(taskId)) return Promise.resolve(false);
+    if (this.inflight.resuming.has(taskId)) return Promise.resolve(false);
     // And not against an archive either, for a sharper version of the same
     // reason: archive is already removing this checkout and is between reading
     // the branch status and acting on it. A second remover would either lose
     // the race harmlessly or win it and leave archive's `branchStatus` — taken
     // moments ago, and about to decide whether a branch is deleted — describing
     // a repository that has changed underneath it.
-    if (this.archiving.has(taskId)) return Promise.resolve(false);
+    if (this.inflight.archiving.has(taskId)) return Promise.resolve(false);
     // Nor against an unarchive, which is about to rebuild this checkout. The
     // row reads `suspended` + `evicted` from its lifecycle flip until the
     // ladder's restore, so `doEvict` would refuse anyway — this says so at the
     // door, rather than relying on which await the unarchive happens to be in.
-    if (this.unarchiving.has(taskId)) return Promise.resolve(false);
+    if (this.inflight.unarchiving.has(taskId)) return Promise.resolve(false);
     // A second caller joins the first rather than snapshotting and removing the
     // same checkout twice — the manual route and the evict tier can easily
     // arrive together.
-    const already = this.evicting.get(taskId);
+    const already = this.inflight.evicting.get(taskId);
     if (already) return already;
     // Registered before the first await, so a resume that checks this map
     // cannot slip past between the guard above and the work below.
     const attempt = this.doEvict(taskId).finally(() => {
-      this.evicting.delete(taskId);
+      this.inflight.evicting.delete(taskId);
     });
-    this.evicting.set(taskId, attempt);
+    this.inflight.evicting.set(taskId, attempt);
     return attempt;
   }
 
@@ -2058,7 +2007,7 @@ export class TaskManager implements TaskHost {
     // other. Started over rather than fallen through, because settling that
     // resume is not the same as there being no resume — a `fresh` caller
     // registers a new ladder the instant the first settles.
-    const resumeInFlight = this.resuming.get(taskId);
+    const resumeInFlight = this.inflight.resuming.get(taskId);
     if (resumeInFlight) {
       await resumeInFlight.catch(() => undefined);
       return this.archiveTask(taskId);
@@ -2069,7 +2018,7 @@ export class TaskManager implements TaskHost {
     // it would abort the archive for a reason that resolves itself in a moment.
     // Waited on *before* registering below, so the eviction side's refusal and
     // this wait can never be waiting on each other.
-    const evictInFlight = this.evicting.get(taskId);
+    const evictInFlight = this.inflight.evicting.get(taskId);
     if (evictInFlight) {
       await evictInFlight.catch(() => undefined);
       return this.archiveTask(taskId);
@@ -2081,17 +2030,17 @@ export class TaskManager implements TaskHost {
     // would then write `live` over this `archived`. Waited on before
     // registering, as `unarchiveTask` waits on this map before registering in
     // its own, so neither can be waiting on the other.
-    const unarchiveInFlight = this.unarchiving.get(taskId);
+    const unarchiveInFlight = this.inflight.unarchiving.get(taskId);
     if (unarchiveInFlight) {
       await unarchiveInFlight.catch(() => undefined);
       return this.archiveTask(taskId);
     }
-    const already = this.archiving.get(taskId);
+    const already = this.inflight.archiving.get(taskId);
     if (already) return already;
     const attempt = this.doArchive(taskId).finally(() => {
-      this.archiving.delete(taskId);
+      this.inflight.archiving.delete(taskId);
     });
-    this.archiving.set(taskId, attempt);
+    this.inflight.archiving.set(taskId, attempt);
     return attempt;
   }
 
@@ -2243,7 +2192,7 @@ export class TaskManager implements TaskHost {
         // started: it has already read this ref and planned the branch around
         // it, and dropping it now would have it recreate the branch at the
         // snapshot's parent and then restore none of the work it was for.
-        if (this.unarchiving.has(row.id)) continue;
+        if (this.inflight.unarchiving.has(row.id)) continue;
         await dropWip(repoRoot, row.id);
         if (this.store.get(row.id)) {
           // `wip_at` is kept, and it is the only record that there was ever a
@@ -2390,7 +2339,7 @@ export class TaskManager implements TaskHost {
     // the row it left — archived, which is what this is for. `archiveTask`
     // waits on this map before registering in its own, and this waits on its
     // map before registering here, so the two can never wait on each other.
-    const archiveInFlight = this.archiving.get(taskId);
+    const archiveInFlight = this.inflight.archiving.get(taskId);
     if (archiveInFlight) {
       await archiveInFlight.catch(() => undefined);
       return this.unarchiveTask(taskId, size);
@@ -2400,19 +2349,19 @@ export class TaskManager implements TaskHost {
     // below, because the first unarchive's own resume is in `resuming` — a
     // second caller waiting on that would then find the row live and answer 409
     // to a request the first one is in the middle of granting.
-    const already = this.unarchiving.get(taskId);
+    const already = this.inflight.unarchiving.get(taskId);
     if (already) return already;
     // An eviction or a resume cannot be running on an archived row — evict
     // refuses anything not suspended, resume refuses archived — so either one
     // in flight means the row is not archived, and the answer will be
     // `NotArchivedError`. Waited on all the same, so that answer is given
     // about the row they leave rather than the one they are changing.
-    const evictInFlight = this.evicting.get(taskId);
+    const evictInFlight = this.inflight.evicting.get(taskId);
     if (evictInFlight) {
       await evictInFlight.catch(() => undefined);
       return this.unarchiveTask(taskId, size);
     }
-    const resumeInFlight = this.resuming.get(taskId);
+    const resumeInFlight = this.inflight.resuming.get(taskId);
     if (resumeInFlight) {
       await resumeInFlight.catch(() => undefined);
       return this.unarchiveTask(taskId, size);
@@ -2420,9 +2369,9 @@ export class TaskManager implements TaskHost {
     // Registered before the first await, so an archive or a second unarchive
     // that checks this map cannot slip past between the guards and the work.
     const attempt = this.doUnarchive(taskId, size).finally(() => {
-      this.unarchiving.delete(taskId);
+      this.inflight.unarchiving.delete(taskId);
     });
-    this.unarchiving.set(taskId, attempt);
+    this.inflight.unarchiving.set(taskId, attempt);
     return attempt;
   }
 
@@ -2814,12 +2763,12 @@ export class TaskManager implements TaskHost {
 
   /** @internal — for the src/lib/tasks modules (TaskHost). */
   isEvicting(taskId: string): boolean {
-    return this.evicting.has(taskId);
+    return this.inflight.evicting.has(taskId);
   }
 
   /** @internal — for the src/lib/tasks modules (TaskHost). */
   isArchiving(taskId: string): boolean {
-    return this.archiving.has(taskId);
+    return this.inflight.archiving.has(taskId);
   }
 
   // --------------------------------------------------------------- projects
