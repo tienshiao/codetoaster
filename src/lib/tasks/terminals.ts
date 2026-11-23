@@ -249,6 +249,23 @@ export class TaskTerminals {
     this.agentPtys.delete(taskId);
   }
 
+  /** The ids of every terminal the task holds, as a copy: `unmapAndKill`
+   * deletes from the set as it walks the ids it was handed. */
+  taskPtyIds(taskId: string): string[] {
+    return [...(this.taskPtys.get(taskId) ?? [])];
+  }
+
+  /** Drop the task's set of terminals, once they have been killed. */
+  forgetTaskPtys(taskId: string): void {
+    this.taskPtys.delete(taskId);
+  }
+
+  /** Drop the throttle on the task's cwd check, for a task whose terminal is
+   * gone: the next check must not be suppressed by one made against it. */
+  forgetCwdCheck(taskId: string): void {
+    this.cwdCheckedAt.delete(taskId);
+  }
+
   taskIdForPty(ptyId: string): string | undefined {
     return this.ptyToTask.get(ptyId);
   }

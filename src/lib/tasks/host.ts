@@ -21,7 +21,7 @@
 import type { Database } from "bun:sqlite";
 import type { ProfileRegistry } from "../agent/profiles";
 import type { TaskRow } from "../db";
-import type { RestoredWorktree, UnclaimedWorktree } from "../worktree";
+import type { RestoredWorktree, UnclaimedWorktree, WipSnapshot } from "../worktree";
 import type { Pty } from "../xtmux/pty";
 import type { SpawnOptions } from "../xtmux/pty-manager";
 import type { ProjectInfo, ServerMessage, TaskInfo, TaskWorktreeInfo } from "../xtmux/types";
@@ -40,6 +40,7 @@ export interface TaskHost {
   ensureInProject(taskId: string): void;
   resolveProjectId(options: CreateTaskOptions): string;
   placeInProject(taskId: string, projectId: string, options: CreateTaskOptions): void;
+  resolveRepoRoot(row: TaskRow): Promise<string | null>;
 
   // Clients and broadcasting (clients.ts)
   broadcastToAll(message: object): void;
@@ -61,9 +62,6 @@ export interface TaskHost {
   // Boot reconciliation (boot.ts)
   getUnclaimedWorktrees(): UnclaimedWorktree[];
 
-  // Worktrees
-  repoRootFor(row: TaskRow): Promise<string | null>;
-
   // Where a task's processes report back to (`setPort`)
   readonly port?: number;
   readonly origin?: string;
@@ -80,6 +78,9 @@ export interface TaskHost {
   agentPtyId(taskId: string): string | undefined;
   forgetAgentPty(taskId: string): void;
   unmapAndKill(taskId: string, ptyIds: readonly string[]): void;
+  taskPtyIds(taskId: string): string[];
+  forgetTaskPtys(taskId: string): void;
+  forgetCwdCheck(taskId: string): void;
 
   // Activity, rank and degraded-mode inference (activity.ts)
   stampActivity(
@@ -111,8 +112,13 @@ export interface TaskHost {
   clearSpawnedAt(taskId: string): void;
   clearRestarted(taskId: string): void;
 
-  // Suspend, evict and WIP
+  // Suspend, evict and WIP (suspend.ts)
+  snapshot(taskId: string): Promise<boolean>;
+  suspendTask(taskId: string): Promise<boolean>;
+  evictTask(taskId: string): Promise<boolean>;
+  snapshotTaskWip(taskId: string): Promise<WipSnapshot | null>;
   restoreTaskWorktree(taskId: string): Promise<RestoredWorktree | null>;
+  repoRootFor(row: TaskRow): Promise<string | null>;
 
   // The TaskInfo projection (task-info.ts)
   taskInfo(taskId: string): TaskInfo | undefined;
