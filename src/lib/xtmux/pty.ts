@@ -59,6 +59,8 @@ export class Pty {
   private exitCode: number | null = null;
   private activityTimeout: Timer | null = null;
   private onExitCallback?: (code: number) => void;
+  // The process exited before anything listened for it (see `onExit`).
+  private exitUnheard = false;
   private onTitleChangeCallback?: () => void;
   private onActivityChangeCallback?: (ptyId: string, active: boolean) => void;
   public hasNotification = false;
@@ -244,7 +246,8 @@ export class Pty {
           this.isActive = false;
           this.onActivityChangeCallback?.(this.id, false);
         }
-        this.onExitCallback?.(this.exitCode);
+        if (this.onExitCallback) this.onExitCallback(this.exitCode);
+        else this.exitUnheard = true;
         this.broadcast({ type: "exit", ptyId: this.id, code: this.exitCode });
       },
     });
@@ -252,6 +255,22 @@ export class Pty {
 
   onExit(callback: (code: number) => void): void {
     this.onExitCallback = callback;
+    // Bun runs `onExit` synchronously inside `Bun.spawn` when the child is
+    // already gone by the time spawn finishes (TASK-151): about one `true` in
+    // three hundred. That exit lands in the constructor, before any caller
+    // could have registered here, and dropped, it left a task whose agent died
+    // at once never marked `exited` (stuck at `starting`, or `unknown` once the
+    // hook grace ran out). So an exit nobody heard is held for the first
+    // listener — on a microtask, not inline, so the caller
+    // finishes wiring the PTY first, exactly as it does for a process that
+    // exits a moment after the spawn returns. Delivered to whichever listener
+    // is current when it lands, as a live exit is: a listener replaced in that
+    // gap is not the one the exit is for.
+    if (this.exitUnheard) {
+      this.exitUnheard = false;
+      const code = this.exitCode ?? 0;
+      queueMicrotask(() => this.onExitCallback?.(code));
+    }
   }
 
   onTitleChange(callback: () => void): void {

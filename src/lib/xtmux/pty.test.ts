@@ -156,3 +156,42 @@ test("serialize is empty once the terminal is gone, rather than throwing", async
   pty.kill();
   expect(pty.serialize()).toBe("");
 });
+
+// TASK-151: Bun sometimes runs a spawn's `onExit` inside `Bun.spawn` itself,
+// before any caller can have registered. Waiting for the exit before listening
+// takes the same road deterministically: an exit that happened with nobody
+// listening still reaches the first listener, with its code.
+test("an exit that happened before anyone listened reaches the first listener", async () => {
+  const pty = new Pty("p7", ["sh", "-c", "exit 3"], 80, 24);
+  try {
+    expect(await waitFor(() => pty.exited)).toBe(true);
+    const heard: number[] = [];
+    pty.onExit((code) => heard.push(code));
+    // Not inline: the caller finishes wiring the PTY before the exit lands.
+    expect(heard).toEqual([]);
+    expect(await waitFor(() => heard.length > 0)).toBe(true);
+    expect(heard).toEqual([3]);
+
+    // Once. A second listener is not told about an exit already delivered.
+    const late: number[] = [];
+    pty.onExit((code) => late.push(code));
+    await settle(20);
+    expect(late).toEqual([]);
+    expect(heard).toEqual([3]);
+  } finally {
+    pty.kill();
+  }
+});
+
+test("a listener registered before the exit hears it exactly once", async () => {
+  const pty = new Pty("p8", ["sh", "-c", "sleep 0.1; exit 4"], 80, 24);
+  try {
+    const heard: number[] = [];
+    pty.onExit((code) => heard.push(code));
+    expect(await waitFor(() => heard.length > 0)).toBe(true);
+    await settle(20);
+    expect(heard).toEqual([4]);
+  } finally {
+    pty.kill();
+  }
+});
