@@ -2,7 +2,6 @@ import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
 import * as fs from "fs";
 import * as fsp from "fs/promises";
-import * as os from "os";
 import * as path from "path";
 import type { Pty } from "../xtmux/pty";
 import { PtyManager } from "../xtmux/pty-manager";
@@ -51,6 +50,7 @@ import { removeSnapshot, writeSnapshot } from "./snapshot";
 import { startTaskWatcher, type WatcherHandle } from "./watcher";
 import type { TaskHost } from "./host";
 import { ProjectRegistry } from "./projects";
+import { ClientRegistry } from "./clients";
 import type { ProcessRoot } from "../processes";
 import {
   applyWip,
@@ -238,7 +238,7 @@ export class TaskManager implements TaskHost {
    *
    * @internal — for the src/lib/tasks modules (TaskHost). */
   profiles = new ProfileRegistry(builtinProfiles());
-  private connectedClients: Map<string, ServerWebSocket<WebSocketData>> = new Map();
+  private readonly clients = new ClientRegistry(this);
   // One checkout watcher per live task while a client is connected (TASK-103).
   // The root is held alongside the handle because a task's checkout moves
   // under it — `refreshCwd` rewrites cwd and repo_root when the agent cd's,
@@ -774,58 +774,32 @@ export class TaskManager implements TaskHost {
   // ----------------------------------------------------------------- clients
 
   registerClient(clientId: string, ws: ServerWebSocket<WebSocketData>): void {
-    this.connectedClients.set(clientId, ws);
-    this.reconcileWatchers();
+    this.clients.registerClient(clientId, ws);
   }
 
   unregisterClient(clientId: string): void {
-    this.connectedClients.delete(clientId);
-    this.reconcileWatchers();
+    this.clients.unregisterClient(clientId);
   }
 
   broadcastToAll(message: object): void {
-    const data = JSON.stringify(message);
-    for (const ws of this.connectedClients.values()) {
-      sendFrame(ws, data);
-    }
+    this.clients.broadcastToAll(message);
   }
 
-  /** The whole list, as one message. Shared with the `list` request so a
-   * client that asks for the snapshot and one that is pushed it cannot drift. */
   tasksSnapshot(): ServerMessage {
-    return {
-      type: "tasks",
-      list: this.listTasks(),
-      projects: this.rankedProjects(),
-      home: os.homedir(),
-      // Rides the snapshot because it changes for the snapshot's reasons: the
-      // boot sweep finishes, or the user deletes one. Both of those already
-      // call `broadcastTasks`.
-      unclaimed: this.unclaimedWorktrees.map(({ path, branch, dirty }) => ({
-        path, branch, dirty,
-      })),
-    };
+    return this.clients.tasksSnapshot();
   }
 
-  /** The whole list — for a connect, or any change to which tasks exist. */
   broadcastTasks(): void {
-    this.broadcastToAll(this.tasksSnapshot());
-    this.reconcileWatchers();
+    this.clients.broadcastTasks();
   }
 
-  /** One row changed. Cheaper than a snapshot, and the reason the protocol has
-   * both: an agent transitioning state must not re-send every task. */
   broadcastTask(taskId: string): void {
-    const info = this.taskInfo(taskId);
-    if (info) this.broadcastToAll({ type: "task", task: info });
-    // The single-row reconcile, because this is a hot path: ~34 sites call it,
-    // among them `onTitleChange` — which fires per OSC sequence, undeduped and
-    // many a second under a busy agent — and a loop in `detachClient`. Whatever
-    // moved is this one row, and a row that has gone leaves a watcher only this
-    // can stop.
-    const row = this.store.get(taskId);
-    if (row) this.reconcileWatcher(row);
-    else this.stopWatcher(taskId);
+    this.clients.broadcastTask(taskId);
+  }
+
+  /** @internal — for the src/lib/tasks modules (TaskHost). */
+  clientCount(): number {
+    return this.clients.connectedClients.size;
   }
 
   // -------------------------------------------------------------- watchers
@@ -875,7 +849,7 @@ export class TaskManager implements TaskHost {
    * repository behind it, which has no route to disagree with.
    */
   private watchRootFor(row: TaskRow): string | null {
-    if (this.connectedClients.size === 0) return null;
+    if (this.clientCount() === 0) return null;
     if (row.lifecycle !== "live") return null;
     const root = row.repo_root ?? row.worktree_path ?? row.cwd;
     return fs.existsSync(root) ? root : null;
@@ -885,7 +859,8 @@ export class TaskManager implements TaskHost {
    * One row's watcher, brought into line: the O(1) path, one point lookup and
    * one `stat`, which is what makes it safe to hang off `broadcastTask`.
    */
-  private reconcileWatcher(row: TaskRow): void {
+  /** @internal — for the src/lib/tasks modules (TaskHost). */
+  reconcileWatcher(row: TaskRow): void {
     const wanted = this.watchRootFor(row);
     const entry = this.watchers.get(row.id);
     if (entry) {
@@ -931,7 +906,8 @@ export class TaskManager implements TaskHost {
     this.watchers.set(taskId, { root, handle });
   }
 
-  private stopWatcher(taskId: string): void {
+  /** @internal — for the src/lib/tasks modules (TaskHost). */
+  stopWatcher(taskId: string): void {
     const entry = this.watchers.get(taskId);
     if (!entry) return;
     this.watchers.delete(taskId);
@@ -3941,17 +3917,14 @@ export class TaskManager implements TaskHost {
   diagnosticCounts(): { ptys: number; clients: number; watchedTasks: number } {
     return {
       ptys: this.ptys.size,
-      clients: this.connectedClients.size,
+      clients: this.clientCount(),
       // A watch that died stays in the map until its retry, holding no stream.
       watchedTasks: [...this.watchers.values()].filter((entry) => entry.failedAt === undefined).length,
     };
   }
 
   getConnections(): Array<{ clientId: string; ptyIds: string[] }> {
-    return [...this.connectedClients.keys()].map((clientId) => ({
-      clientId,
-      ptyIds: this.getClientPtyIds(clientId),
-    }));
+    return this.clients.getConnections();
   }
 
   // -------------------------------------------------------------- rendering
@@ -4097,7 +4070,8 @@ export class TaskManager implements TaskHost {
     return this.projectRegistry.getProjects();
   }
 
-  private rankedProjects(): ProjectInfo[] {
+  /** @internal — for the src/lib/tasks modules (TaskHost). */
+  rankedProjects(): ProjectInfo[] {
     return this.projectRegistry.rankedProjects();
   }
 

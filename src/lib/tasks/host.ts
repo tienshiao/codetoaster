@@ -20,7 +20,9 @@
 
 import type { Database } from "bun:sqlite";
 import type { ProfileRegistry } from "../agent/profiles";
-import type { ProjectInfo } from "../xtmux/types";
+import type { TaskRow } from "../db";
+import type { UnclaimedWorktree } from "../worktree";
+import type { ProjectInfo, ServerMessage, TaskInfo } from "../xtmux/types";
 import type { TaskStore } from "./store";
 
 export interface TaskHost {
@@ -28,6 +30,29 @@ export interface TaskHost {
   readonly store: TaskStore;
   readonly profiles: ProfileRegistry;
 
+  // Projects (projects.ts)
   getProjects(): ProjectInfo[];
+  rankedProjects(): ProjectInfo[];
+
+  // Clients and broadcasting (clients.ts)
+  broadcastToAll(message: object): void;
+  tasksSnapshot(): ServerMessage;
   broadcastTasks(): void;
+  broadcastTask(taskId: string): void;
+  clientCount(): number;
+
+  // Checkout watchers
+  reconcileWatchers(): void;
+  reconcileWatcher(row: TaskRow): void;
+  stopWatcher(taskId: string): void;
+
+  // Boot reconciliation
+  getUnclaimedWorktrees(): UnclaimedWorktree[];
+
+  // Terminals
+  getClientPtyIds(clientId: string): string[];
+
+  // The TaskInfo projection
+  taskInfo(taskId: string): TaskInfo | undefined;
+  listTasks(): TaskInfo[];
 }
