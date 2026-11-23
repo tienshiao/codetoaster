@@ -6,6 +6,7 @@ import { captureCommand } from "../processes";
 import { InlineImages } from "./inline-images";
 import { isOnlyChatter } from "./query-output";
 import type { ClientInfo, ServerMessage } from "./types";
+import { sendFrame } from "./socket";
 
 // Validate a client-reported terminal size. Messages are parsed from the wire,
 // so cols/rows can be anything (null, NaN, 0, floats, absurd values) — treat
@@ -590,13 +591,13 @@ export class Pty {
   }
 
   private send(client: ClientInfo, message: ServerMessage): void {
-    client.ws.send(JSON.stringify(message));
+    sendFrame(client.ws, JSON.stringify(message));
   }
 
   private broadcast(message: ServerMessage): void {
     const data = JSON.stringify(message);
     for (const client of this.clients.values()) {
-      client.ws.send(data);
+      sendFrame(client.ws, data);
     }
   }
 }

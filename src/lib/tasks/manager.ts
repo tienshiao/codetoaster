@@ -22,6 +22,7 @@ import type {
 } from "../xtmux/types";
 import { uniqueName } from "../xtmux/naming";
 import { isUserInput } from "../xtmux/user-input";
+import { sendFrame } from "../xtmux/socket";
 import { expandTilde } from "../tilde";
 import * as db from "../db";
 import type { ProjectRow, TaskRow } from "../db";
@@ -885,7 +886,7 @@ export class TaskManager {
   broadcastToAll(message: object): void {
     const data = JSON.stringify(message);
     for (const ws of this.connectedClients.values()) {
-      ws.send(data);
+      sendFrame(ws, data);
     }
   }
 
@@ -3949,7 +3950,7 @@ export class TaskManager {
     // learning the pairing afterwards would mean dropping its own restore. The
     // task id has to come from here — a Pty has no notion of one.
     const taskId = this.ptyToTask.get(ptyId);
-    ws.send(JSON.stringify({ type: "attached", ptyId, taskId: taskId ?? ptyId }));
+    sendFrame(ws, JSON.stringify({ type: "attached", ptyId, taskId: taskId ?? ptyId }));
 
     // Opening a task's terminal is the moment before its Changes, Files and
     // History tabs get used, and it is the only such moment the browser

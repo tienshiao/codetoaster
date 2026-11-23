@@ -1,6 +1,7 @@
 import type { ServerWebSocket } from "bun";
 import type { TaskManager } from "../tasks/manager";
 import type { ClientMessage, WebSocketData } from "./types";
+import { sendFrame, type FrameSink } from "./socket";
 
 /**
  * What the server does with a frame from a client.
@@ -19,11 +20,11 @@ import type { ClientMessage, WebSocketData } from "./types";
  * particular grid because no particular grid asked for it.
  */
 export function sendError(
-  ws: { send: (data: string) => void },
+  ws: FrameSink,
   message: string,
   ptyId?: string,
 ): void {
-  ws.send(JSON.stringify({ type: "error", message, ...(ptyId ? { ptyId } : {}) }));
+  sendFrame(ws, JSON.stringify({ type: "error", message, ...(ptyId ? { ptyId } : {}) }));
 }
 
 export function handleClientMessage(
@@ -88,7 +89,7 @@ export function handleClientMessage(
     }
 
     case "list": {
-      ws.send(JSON.stringify(manager.tasksSnapshot()));
+      sendFrame(ws, JSON.stringify(manager.tasksSnapshot()));
       break;
     }
 

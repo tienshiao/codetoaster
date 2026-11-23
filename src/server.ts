@@ -4,6 +4,9 @@ import { taskManager } from "./lib/tasks/manager";
 import { Harvester } from "./lib/tasks/harvester";
 import type { WebSocketData } from "./lib/xtmux/types";
 import { handleClientMessage } from "./lib/xtmux/client-messages";
+import { terminalSocketCompression } from "./lib/xtmux/socket";
+import { compressRoute, compressRoutes } from "./api/compress";
+import { serveSpa } from "./api/spa";
 import { removePidFile } from "./cli/daemon";
 import { formatDuration } from "./cli/duration";
 import { taskRoutes } from "./api/tasks";
@@ -226,27 +229,17 @@ export function startServer(options?: ServerOptions) {
           // request the daemon made on someone else's behalf and a way to run
           // their script inside our origin. Addressed to the listener instead,
           // which is the one thing we actually know.
-          const response = await fetch(new URL(spaPath, selfOrigin()));
-          const headers = new Headers(response.headers);
-          headers.set("Cache-Control", "no-cache");
-          // This route is deliberately unguarded — a top-level navigation to
-          // the SPA carries no Origin, and serving HTML is not a mutation. But
-          // an unguarded page that can be framed hands an attacker the whole
-          // UI: every request the framed SPA makes is genuinely same-origin, so
-          // origin.ts waves it through, and a transparent overlay drives the
-          // routes that spawn agents in the user's repositories without ever
-          // making a cross-origin request. Both headers, since the CSP form is
-          // the current one and X-Frame-Options is what older browsers read.
-          headers.set("X-Frame-Options", "DENY");
-          headers.set("Content-Security-Policy", "frame-ancestors 'none'");
-          return new Response(response.body, {
-            status: response.status,
-            headers,
+          //
+          // `identity`, because the answer is compressed for the browser on
+          // the way out (serveSpa) and a loopback hop gains nothing from it.
+          const response = await fetch(new URL(spaPath, selfOrigin()), {
+            headers: { "Accept-Encoding": "identity" },
           });
+          return serveSpa(req, response);
         },
       },
 
-      "/api/tasks/:id/preview": guardRoute({
+      "/api/tasks/:id/preview": compressRoute(guardRoute({
         GET(req: Request & { params: { id: string } }) {
           const session = taskManager.primaryPty(req.params.id);
           if (!session) {
@@ -260,11 +253,13 @@ export function startServer(options?: ServerOptions) {
             headers: { "Content-Type": "text/html; charset=utf-8" },
           });
         },
-      }),
+      })),
 
       // Guarded as one table, so a route added to any of them is guarded by
-      // construction rather than by someone remembering (TASK-42).
-      ...guardApiRoutes({
+      // construction rather than by someone remembering (TASK-42). Compressed
+      // the same way and for the same reason (TASK-147), outside the guard so
+      // the origin check still runs first.
+      ...compressRoutes(guardApiRoutes({
         ...taskRoutes,
         ...uploadRoutes(uploadsRoot),
         ...profileRoutes,
@@ -297,7 +292,7 @@ export function startServer(options?: ServerOptions) {
             };
           },
         }),
-      }),
+      })),
 
       "/api/ping": guardRoute({
         GET() {
@@ -313,11 +308,11 @@ export function startServer(options?: ServerOptions) {
         },
       }),
 
-      "/api/connections": guardRoute({
+      "/api/connections": compressRoute(guardRoute({
         GET() {
           return Response.json(taskManager.getConnections());
         },
-      }),
+      })),
 
       "/api/shutdown": guardRoute({
         POST() {
@@ -354,6 +349,10 @@ export function startServer(options?: ServerOptions) {
     },
 
     websocket: {
+      // Negotiated with any client that offers it; frames are compressed only
+      // because every send asks to be (lib/xtmux/socket.ts).
+      perMessageDeflate: terminalSocketCompression,
+
       open(ws) {
         taskManager.registerClient(ws.data.clientId, ws);
       },
