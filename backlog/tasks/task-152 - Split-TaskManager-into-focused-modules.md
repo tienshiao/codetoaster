@@ -1,9 +1,11 @@
 ---
 id: TASK-152
 title: Split TaskManager into focused modules
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-11-23T13:31:00Z'
+updated_date: '2026-11-23T15:31:00Z'
 labels:
   - server
   - tasks
@@ -28,3 +30,9 @@ src/lib/tasks/manager.ts is 4,452 lines: one TaskManager class with about 130 me
 - [ ] #5 Code, fields and comments left unreferenced by the split are removed
 - [ ] #6 wiki/modules pages that describe task lifecycle point at the new module layout, and wiki/index.md and wiki/log.md are updated
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Approved by the user 2026-11-23. Shape: TaskManager stays the one entry point; every public method stays on it as a non-async one-line delegator. Each concern becomes a class in src/lib/tasks/ holding a type-only host reference; any call to a method that is public on TaskManager goes through the host (tests replace snapshot, snapshotTaskWip, restoreTaskWorktree, liveTasks, suspendedTasks, refreshStaleWorktreeStatuses on the instance); reassignable state (store, db, profiles, port, origin, the Ms knobs) is read through the host, never captured. 0. Pairing tests first on the unsplit class: resume during suspend, suspend x suspend join, evict x archive, evict x unarchive, concurrent archive x archive, unarchive x resume; commit green. 1. Leaves: projects.ts, clients.ts, checkout-watchers.ts, worktree-status.ts + boot.ts, task-info.ts. 2. terminals.ts, activity.ts, hooks.ts. 3. Lifecycle: inflight.ts (the five maps only, no shared helper), create.ts, resume.ts, suspend.ts (snapshot, putDown, evict, WIP, restore), archive.ts (archive, unarchive, expire, delete). Bodies and comments move verbatim; check with git diff color-moved. Per-process maps go to the module that writes them where possible, each clear site keeping its current subset. One commit per extraction with bun run test green. 4. Wiki module pages, index, log; review and verify.
+<!-- SECTION:PLAN:END -->
