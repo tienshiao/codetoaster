@@ -60,10 +60,33 @@ export interface TaskHost {
   // Worktrees
   repoRootFor(row: TaskRow): Promise<string | null>;
 
-  // Terminals
+  // Where a task's processes report back to (`setPort`)
+  readonly port?: number;
+  readonly origin?: string;
+
+  // Terminals (terminals.ts)
   getClientPtyIds(clientId: string): string[];
   primaryPty(taskId: string): Pty | undefined;
   shellPtys(taskId: string): Pty[];
+  taskIdForPty(ptyId: string): string | undefined;
+  refreshCwdIfStale(taskId: string, maxAgeMs?: number): Promise<string | undefined>;
+  refreshCwd(taskId: string): Promise<string | undefined>;
+
+  // Activity, rank and degraded-mode inference
+  stampActivity(
+    taskId: string,
+    ptyId: string,
+    active: boolean,
+    now: number,
+    rank: boolean,
+  ): { rankAt?: number; longGap: boolean };
+  wakeOnInput(ptyId: string, data: string): void;
+  inferState(taskId: string, active: boolean): void;
+  seedOutputEdge(ptyId: string, at: number): void;
+  forgetOutputEdge(ptyId: string): void;
+
+  // Hooks
+  hasSeenHook(taskId: string): boolean;
 
   // The TaskInfo projection (task-info.ts)
   taskInfo(taskId: string): TaskInfo | undefined;
