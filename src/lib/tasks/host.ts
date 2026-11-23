@@ -22,6 +22,7 @@ import type { Database } from "bun:sqlite";
 import type { ProfileRegistry } from "../agent/profiles";
 import type { TaskRow } from "../db";
 import type { UnclaimedWorktree } from "../worktree";
+import type { Pty } from "../xtmux/pty";
 import type { ProjectInfo, ServerMessage, TaskInfo, TaskWorktreeInfo } from "../xtmux/types";
 import type { TaskStore } from "./store";
 
@@ -61,8 +62,15 @@ export interface TaskHost {
 
   // Terminals
   getClientPtyIds(clientId: string): string[];
+  primaryPty(taskId: string): Pty | undefined;
+  shellPtys(taskId: string): Pty[];
 
-  // The TaskInfo projection
+  // The TaskInfo projection (task-info.ts)
   taskInfo(taskId: string): TaskInfo | undefined;
   listTasks(): TaskInfo[];
+
+  // Lifecycle state the projection reads
+  isRestarted(taskId: string): boolean;
+  isEvicting(taskId: string): boolean;
+  isArchiving(taskId: string): boolean;
 }
