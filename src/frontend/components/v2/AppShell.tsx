@@ -96,6 +96,13 @@ export interface AppShellProps {
    * the project, model, mode and worktree a task is decided by all live there
    * (§7.5). */
   onNewTask?: () => void;
+  /**
+   * The list has just reordered under the pointer, and is to ignore clicks for
+   * a moment (TASK-146). The caller decides when — it is the one that knows
+   * which changes were the server's and which the user's; the shell draws the
+   * list as locked and refuses the clicks.
+   */
+  taskListLocked?: boolean;
   /** Checkouts the boot sweep found and would not delete (§5.6). A band at the
    * foot of the list rather than rows in it, because these are not tasks and
    * must not be scanned as though they were — and nothing at all when there are
@@ -362,6 +369,7 @@ export function AppShell({
   showArchived = false,
   onToggleArchived,
   onNewTask,
+  taskListLocked = false,
   unclaimed = [],
   headerActions,
   onOpenSettings,
@@ -511,7 +519,33 @@ export function AppShell({
             )}
           </div>
 
-          <div className="flex flex-1 flex-col gap-px overflow-y-auto px-1 pb-1">
+          {/* Locked for a moment after a reorder (TASK-146): every click in
+              here is refused at the capture phase, so neither a row nor its
+              actions nor a group header sees it — keyboard activation too,
+              since Enter and Space on a button arrive as clicks, and the list
+              should not claim a lock it only half keeps. Only clicks whose
+              target is really in this box, though: React routes a portaled
+              dialog's events through its owner's tree, so the archive
+              confirmation opened from a row would otherwise be refused too,
+              and it does not move when the list does. */}
+          <div
+            aria-busy={taskListLocked || undefined}
+            data-locked={taskListLocked || undefined}
+            onClickCapture={
+              taskListLocked
+                ? (e) => {
+                    if (!e.currentTarget.contains(e.target as Node)) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                : undefined
+            }
+            className={cn(
+              "flex flex-1 flex-col gap-px overflow-y-auto px-1 pb-1",
+              "motion-safe:transition-opacity motion-safe:duration-[var(--duration-fast)]",
+              taskListLocked && "opacity-70 [&_*]:cursor-not-allowed!",
+            )}
+          >
             {grouped ? (
               groups.map((group) => (
                 // Its own group name, not `row`: the task rows inside declare

@@ -21,6 +21,8 @@ import {
 import { meaningfulTitle, sessionDisplayNames } from "@/lib/xtmux/naming";
 import { ago } from "@/frontend/utils/taskTimes";
 import { detailsOf } from "@/frontend/task-details";
+import { flashClass } from "@/frontend/change-pulse-store";
+import { useReorderGuard } from "@/frontend/reorder-guard";
 import type {
   ArchivePreview,
   ProjectInfo,
@@ -494,6 +496,7 @@ export type TaskSidebarProps = Pick<
   | "showArchived"
   | "onToggleArchived"
   | "onNewTask"
+  | "taskListLocked"
   | "headerActions"
   | "unclaimed"
 >;
@@ -770,14 +773,52 @@ export function useTaskSidebar({
     return ranks;
   }, [projects, tasks]);
 
-  const groups = useMemo(() => {
-    const rowById = new Map(rows.map((row) => [row.id, row]));
+  const projectGroups = useMemo(() => {
     // A project with nothing in it is still worth a header — until it has a
     // task it has no other way onto the screen — but not while a filter is
     // running: it can never match one, so it would only be a row of noise
     // between the rows that did.
     const empties = filter.trim() ? [] : projects.map((p) => p.id);
-    return groupByProject(visible, projectNames, empties, projectRanks).map((group) => ({
+    return groupByProject(visible, projectNames, empties, projectRanks);
+  }, [visible, projects, projectRanks, projectNames, filter]);
+
+  // The rows in the order the list draws them, which is what a reorder is
+  // measured on (TASK-146, `reorder-guard.ts`): a group header moving or
+  // appearing shifts everything under it, and a closed group's rows are not
+  // under any pointer. Keyed apart so a header can never collide with a row.
+  const drawn = useMemo(
+    () =>
+      grouped
+        ? projectGroups.flatMap((group) => [
+            `group:${group.id}`,
+            ...(closedGroups[group.id] ? [] : group.tasks.map((t) => t.id)),
+          ])
+        : rows.map((row) => row.id),
+    [grouped, projectGroups, closedGroups, rows],
+  );
+  // What the user changes about the list, as against what the server does:
+  // a sequence change alongside one of these, with `tasks` unchanged, is the
+  // user's own and does not lock. `archivedTasks` belongs here because it is
+  // fetched when the toggle goes on, a beat after the toggle itself.
+  const reorder = useReorderGuard(
+    drawn,
+    [grouped, filter, showArchived, closedGroups, archivedTasks],
+    tasks,
+  );
+  const cuedRows = useMemo(
+    () =>
+      reorder.cues.size === 0
+        ? rows
+        : rows.map((row) => {
+            const cue = reorder.cues.get(row.id);
+            return cue ? { ...row, className: flashClass(cue.seq) } : row;
+          }),
+    [rows, reorder.cues],
+  );
+
+  const groups = useMemo(() => {
+    const rowById = new Map(cuedRows.map((row) => [row.id, row]));
+    return projectGroups.map((group) => ({
       id: group.id,
       name: group.name,
       open: !closedGroups[group.id],
@@ -800,7 +841,7 @@ export function useTaskSidebar({
         />
       ) : undefined,
     }));
-  }, [rows, visible, projects, projectRanks, projectNames, closedGroups, filter, projectById, handleSaveProject, handleDeleteProject, onNewTask]);
+  }, [cuedRows, projectGroups, closedGroups, projectById, handleSaveProject, handleDeleteProject, onNewTask]);
 
   const headerActions: ReactNode = <NewProjectButton onCreate={createProject} />;
 
@@ -823,7 +864,8 @@ export function useTaskSidebar({
   );
 
   return {
-    tasks: rows,
+    tasks: cuedRows,
+    taskListLocked: reorder.locked,
     unclaimed: unclaimedCards,
     groups,
     grouped,

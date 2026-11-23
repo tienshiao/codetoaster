@@ -5,7 +5,7 @@ description: Each live task's TaskWatcher folds file and ref events into changed
 tags: [module, watcher, fs-watch, tasks, invalidation]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-04T08:00:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T02:00:00Z }
 sources:
   - id: watcher
     resource: ../../src/lib/tasks/watcher.ts
@@ -72,7 +72,7 @@ A repeat change restarts the fade. Two identical keyframes under two names are a
 
 # Related
 
-How ignored paths are reported and who reads them: [File listing and ignored files](/modules/file-listing.md). The pool's stream and subscription counts are in `GET /api/diagnostics`: [Diagnose daemon memory](/runbooks/diagnose-daemon-memory.md).
+How ignored paths are reported and who reads them: [File listing and ignored files](/modules/file-listing.md). The sidebar's task list runs the same flash on rows that moved in a reorder: [Task list order and the reorder lockout](/modules/task-list-order.md). The pool's stream and subscription counts are in `GET /api/diagnostics`: [Diagnose daemon memory](/runbooks/diagnose-daemon-memory.md).
 
 [^watcher]: src/lib/tasks/watcher.ts
 [^watch-pool]: src/lib/tasks/watch-pool.ts

@@ -489,7 +489,9 @@
   --selected-border: oklch(var(--ct-blue-500-ch) / 0.35);
   --selected-foreground: var(--ct-slate-900);
   /* What the agent just changed: busy's blue, since it is the agent's work,
-     and stronger than a selection so it reads on a selected row too. */
+     and stronger than a selection so it reads on a selected row too. Also a
+     task row that just moved in the sidebar (TASK-146): same "this is new"
+     reading, same flash. */
   --changed: oklch(var(--ct-blue-500-ch) / 0.24);
 
   --primary: var(--ct-blue-600);
