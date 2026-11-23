@@ -22,7 +22,7 @@ import type { Database } from "bun:sqlite";
 import type { ProfileRegistry } from "../agent/profiles";
 import type { TaskRow } from "../db";
 import type { UnclaimedWorktree } from "../worktree";
-import type { ProjectInfo, ServerMessage, TaskInfo } from "../xtmux/types";
+import type { ProjectInfo, ServerMessage, TaskInfo, TaskWorktreeInfo } from "../xtmux/types";
 import type { TaskStore } from "./store";
 
 export interface TaskHost {
@@ -41,13 +41,21 @@ export interface TaskHost {
   broadcastTask(taskId: string): void;
   clientCount(): number;
 
-  // Checkout watchers
+  // Checkout watchers (checkout-watchers.ts)
   reconcileWatchers(): void;
   reconcileWatcher(row: TaskRow): void;
   stopWatcher(taskId: string): void;
 
+  // Checkout status (worktree-status.ts)
+  refreshWorktreeStatus(taskId: string, options?: { force?: boolean }): Promise<void>;
+  refreshStaleWorktreeStatuses(): Promise<void>;
+  worktreeStatusOf(taskId: string): TaskWorktreeInfo | undefined;
+
   // Boot reconciliation
   getUnclaimedWorktrees(): UnclaimedWorktree[];
+
+  // Worktrees
+  repoRootFor(row: TaskRow): Promise<string | null>;
 
   // Terminals
   getClientPtyIds(clientId: string): string[];
