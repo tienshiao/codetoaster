@@ -15,9 +15,10 @@ import { REORDER_CUE_MS, REORDER_LOCK_MS, useReorderGuard } from "./reorder-guar
  * refuses the click. Which sequences count as a reorder, and which rows get the
  * cue, is `orderChange`'s and is tested as a function in `reorder-guard.test.ts`.
  *
- * Fake timers stand in for the clock: they fake `Date.now` and `setTimeout`
- * together, so the lock the hook dates and the timer that lifts it agree.
- * Promises are left real, for the archive dialog's preview.
+ * The clock is injected (`now`), and only `setTimeout` is faked, for the timer
+ * that lifts the lock; `advance` moves both together, so the lock the hook
+ * dates and the timer agree. Promises are left real, for the archive dialog's
+ * preview.
  */
 
 function task(id: string, title: string, over: Partial<TaskInfo> = {}): TaskInfo {
@@ -117,6 +118,7 @@ function Sidebar() {
     selectedTaskId: null,
     onSelectTask: stubs.onSelectTask,
     onNewTask: () => {},
+    now: clock.now,
   });
   return <AppShell {...sidebar} />;
 }
@@ -157,10 +159,23 @@ const cued = () =>
     .filter((el) => FLASH.test(el.className))
     .map((el) => el.textContent);
 const locked = () => document.querySelector("[data-locked]") !== null;
-const advance = (ms: number) => act(() => void vi.advanceTimersByTime(ms));
+const groupCue = (id: string) =>
+  document.querySelector(`[data-group="${id}"]`)?.className.match(FLASH)?.[0];
+/** The injected clock. One object for the file, reset per test, so the
+ * `Sidebar` component and `guard` hand the hook a stable function. */
+const clock = {
+  t: 1_000_000,
+  now: () => clock.t,
+};
+const advance = (ms: number) =>
+  act(() => {
+    clock.t += ms;
+    vi.advanceTimersByTime(ms);
+  });
 
 beforeEach(() => {
-  vi.useFakeTimers({ now: 1_000_000, toFake: ["Date", "setTimeout", "clearTimeout"] });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  clock.t = 1_000_000;
   resetSidebarState();
   localStorage.clear();
   data.tasks = [];
@@ -350,13 +365,17 @@ test("grouped, a move between groups locks and cues; closing a group does not", 
   fireEvent.click(screen.getByRole("button", { name: "Group by project" }));
   expect(locked()).toBe(false);
 
-  // The infra task wakes: its group overtakes Website's.
+  // The infra task wakes: its group overtakes Website's. The group moved as a
+  // block, so the block is what lights — once, not again on its row.
   list.update([{ ...B, projectId: "infra", rankAt: 10 }, A, C]);
   expect(locked()).toBe(true);
-  expect(cued()).toEqual([row("Rotate the certs").textContent]);
+  expect(groupCue("infra")).toBeDefined();
+  expect(groupCue("website")).toBeUndefined();
+  expect(cued()).toEqual([]);
 
   advance(REORDER_CUE_MS);
   expect(locked()).toBe(false);
+  expect(groupCue("infra")).toBeUndefined();
 
   // The user's own chevron: rows vanish from under the pointer by request.
   const chevron = screen.getByRole("button", { name: /^Infra/, expanded: true });
@@ -368,19 +387,78 @@ test("grouped, a move between groups locks and cues; closing a group does not", 
   expect(locked()).toBe(false);
 });
 
+test("grouped, a collapsed group overtaking another still shows what moved", () => {
+  // Only its header is drawn, so the header is the only key that moved — and
+  // the cue has to land somewhere, or the list locks with nothing lit.
+  const list = mount([A, { ...B, projectId: "infra" }, C]);
+  fireEvent.click(screen.getByRole("button", { name: "Group by project" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Infra/, expanded: true }));
+
+  list.update([{ ...B, projectId: "infra", rankAt: 10 }, A, C]);
+  expect(locked()).toBe(true);
+  expect(groupCue("infra")).toBeDefined();
+});
+
+test("grouped, a new empty project at the foot of the list does not lock", () => {
+  // The user's own New project: nothing that was drawn moved, and the next
+  // click is likely the new header's own New task.
+  const list = mount([A, C]);
+  fireEvent.click(screen.getByRole("button", { name: "Group by project" }));
+
+  data.projects = [...data.projects, project("docs", "Docs")];
+  list.update([A, C]);
+  expect(screen.getByRole("button", { name: /^Docs/, expanded: true })).toBeDefined();
+  expect(locked()).toBe(false);
+});
+
+test("deleting an archived task for good locks the rows that slide up", () => {
+  const OLD1 = task("o1", "Old one", { lifecycle: "archived" });
+  const OLD2 = task("o2", "Old two", { lifecycle: "archived" });
+  const OLD3 = task("o3", "Old three", { lifecycle: "archived" });
+  // The same live array throughout: only the archived list moves, which is
+  // what a delete for good resolving changes.
+  const live = [A, B];
+  const list = mount(live);
+
+  // The toggle, and the fetch it starts landing a beat later: both quiet.
+  fireEvent.click(screen.getByRole("button", { name: "Show archived" }));
+  data.archivedTasks = [OLD1, OLD2, OLD3];
+  list.update(live);
+  expect(order()).toHaveLength(5);
+  expect(locked()).toBe(false);
+
+  // The delete resolves: the rows below it move up under the pointer.
+  data.archivedTasks = [OLD2, OLD3];
+  list.update(live);
+  expect(locked()).toBe(true);
+});
+
 // ── the hook on its own, for the view/data rule ──────────────────────────────
 
-function guard(initial: { sequence: string[]; view: unknown[]; data: unknown }) {
-  return renderHook((p: typeof initial) => useReorderGuard(p.sequence, p.view, p.data), {
-    initialProps: initial,
-  });
+function guard(initial: { sequence: string[]; view: unknown[]; data: unknown[] }) {
+  return renderHook(
+    (p: typeof initial) => useReorderGuard(p.sequence, p.view, p.data, { now: clock.now }),
+    { initialProps: initial },
+  );
 }
+
+test("a cue past its window is not drawn, even before its timer has fired", () => {
+  // A background tab holds timers back; a row mounted then must not replay a
+  // fade for a reorder long gone.
+  const hook = guard({ sequence: ["a", "b"], view: [], data: [[A, B]] });
+  hook.rerender({ sequence: ["b", "a"], view: [], data: [[B, A]] });
+  expect(hook.result.current.cues.size).toBe(1);
+
+  clock.t += REORDER_CUE_MS;
+  hook.rerender({ sequence: ["b", "a"], view: [], data: [[{ ...B }, A]] });
+  expect(hook.result.current.cues.size).toBe(0);
+});
 
 test("a view change on its own moves the baseline quietly", () => {
   const tasks = [A, B, C];
-  const hook = guard({ sequence: ["a", "b", "c"], view: [""], data: tasks });
+  const hook = guard({ sequence: ["a", "b", "c"], view: [""], data: [tasks] });
 
-  hook.rerender({ sequence: ["c"], view: ["docs"], data: tasks });
+  hook.rerender({ sequence: ["c"], view: ["docs"], data: [tasks] });
   expect(hook.result.current.locked).toBe(false);
   expect(hook.result.current.cues.size).toBe(0);
 });
@@ -389,17 +467,17 @@ test("a view change landing with a data change still counts", () => {
   // The cheap side of the trade: a spurious half-second lock, rather than a
   // real reorder waved through because a fetch happened to land with it.
   const view: unknown[] = [[]];
-  const hook = guard({ sequence: ["a", "b", "c"], view, data: [A, B, C] });
+  const hook = guard({ sequence: ["a", "b", "c"], view, data: [[A, B, C]] });
 
-  hook.rerender({ sequence: ["c", "a", "b"], view: [[ARCHIVED]], data: [C, A, B] });
+  hook.rerender({ sequence: ["c", "a", "b"], view: [[ARCHIVED]], data: [[C, A, B]] });
   expect(hook.result.current.locked).toBe(true);
 });
 
 const ARCHIVED = task("z", "Old work", { lifecycle: "archived" });
 
 test("the lock the hook reports follows its clock", () => {
-  const hook = guard({ sequence: ["a", "b"], view: [], data: [A, B] });
-  hook.rerender({ sequence: ["b", "a"], view: [], data: [B, A] });
+  const hook = guard({ sequence: ["a", "b"], view: [], data: [[A, B]] });
+  hook.rerender({ sequence: ["b", "a"], view: [], data: [[B, A]] });
   expect(hook.result.current.locked).toBe(true);
 
   advance(REORDER_LOCK_MS);

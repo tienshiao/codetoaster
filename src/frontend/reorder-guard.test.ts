@@ -40,6 +40,13 @@ test("a removed row changes the order and cues nothing", () => {
   expect(orderChange(["a", "b", "c"], ["a", "c"])).toEqual({ changed: true, cued: [] });
 });
 
+test("a row added or removed at the very end moves nothing, so is no change", () => {
+  // Every row that was drawn is in the slot it was in: nothing new is under
+  // the pointer. The user's own New project appends an empty header here.
+  expect(orderChange(["a", "b"], ["a", "b", "new"])).toEqual({ changed: false, cued: [] });
+  expect(orderChange(["a", "b", "c"], ["a", "b"])).toEqual({ changed: false, cued: [] });
+});
+
 test("a removal and a move in one step cue only the move", () => {
   expect(orderChange(["a", "b", "c", "d"], ["d", "b", "c"])).toEqual({
     changed: true,

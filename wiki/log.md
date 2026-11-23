@@ -3,6 +3,7 @@
 ## 2026-11-23
 * **Creation**: [Task list order and the reorder lockout](/modules/task-list-order.md) for TASK-146: `rankAt` ordering from TASK-116, what counts as a reorder (moves, insertions and removals in the drawn sequence; not in-place updates, first load, remounts or the user's own view changes), the cue on moved rows, and the 500ms click lockout and why it spares portaled dialogs.
 * **Update**: [Change watcher and shared watch streams](/modules/change-watcher.md) links the task list's reuse of the change flash.
+* **Update**: [Task list order and the reorder lockout](/modules/task-list-order.md) after review: appending or removing at the end does not count, archived rows are data once showing, and a moved project header lights its whole group.
 
 ## 2026-11-22
 * **Update**: [The v2 design system](/conventions/v2-design-system.md) gains a section on the `Dialog`'s `subject` slot (TASK-148): a confirmation names its target there, styled apart from the sentence, rather than inside it.

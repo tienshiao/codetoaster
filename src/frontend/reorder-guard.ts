@@ -21,22 +21,28 @@ import { PULSE_MS } from "./change-pulse-store";
  *   it up. Its relative order is unchanged, which is exactly why a detector
  *   looking for "moves" would miss the case the user reported.
  *
+ * Precisely: some row drawn before is drawn in a different slot now. A row
+ * added or removed at the very end moves nothing and does not count.
+ *
  * What does not: anything that redraws a row in place — its age, its state
  * dot, its preview line, its selection — since none of those are in the
  * sequence. Nor does the first non-empty sequence (the snapshot arriving on
  * load: nothing was under the pointer), a remount (a fresh baseline), or a
  * change the user made to the view itself — the filter, the grouping, a
- * group's chevron, the archived toggle and the archived rows it fetches. Those
- * are the user's own doing, or the direct answer to it, and locking the list
- * after typing a filter would block the click on the row it found. A view
+ * group's chevron, the archived toggle and the first archived rows it fetches.
+ * Those are the user's own doing, or the direct answer to it, and locking the
+ * list after typing a filter would block the click on the row it found. A view
  * change is only taken as the cause when the data did not move in the same
  * render: if both did, it counts, because a spurious half-second lock is far
- * cheaper than a missed one.
+ * cheaper than a missed one. The archived list, once it is showing, is data:
+ * a delete for good resolving pulls the rows below it up like any removal.
  *
  * The cue goes on rows that were inserted and on rows that left the longest
  * run that kept its relative order — so one task jumping to the top lights
  * that task and not the rows it stepped over. A removal locks and lights
  * nothing: there is no row left to light, and the rows below kept their order.
+ * The keys are whatever the caller draws; the sidebar's include project
+ * headers, and a cued header lights its whole group.
  */
 
 /** How long the list ignores clicks after a reorder, extended by each later
@@ -48,11 +54,18 @@ export const REORDER_LOCK_MS = 500;
 export const REORDER_CUE_MS = PULSE_MS;
 
 export interface OrderChange {
-  /** The drawn sequence is not the one before. */
+  /** Some row that was drawn before is drawn in a different slot now — so
+   * something different sits under wherever the pointer is. A row added or
+   * removed at the very end moves nothing, and is not a change: the user's own
+   * New project appends an empty header there, and locking would refuse the
+   * click on it that comes next. */
   changed: boolean;
-  /** Keys to cue: inserted, or moved out of the order the rest kept. */
+  /** Keys to cue: inserted, or moved out of the order the rest kept. Empty
+   * when nothing changed. */
   cued: string[];
 }
+
+const NO_CHANGE: OrderChange = { changed: false, cued: [] };
 
 /**
  * How `next` differs from `prev`, as sequences of row keys.
@@ -63,17 +76,20 @@ export interface OrderChange {
  * put, and everything else had to move to get where it is.
  */
 export function orderChange(prev: readonly string[], next: readonly string[]): OrderChange {
-  if (prev.length === next.length && prev.every((key, i) => key === next[i])) {
-    return { changed: false, cued: [] };
-  }
   const before = new Map(prev.map((key, i) => [key, i]));
   const surviving: { key: string; was: number }[] = [];
   const cued: string[] = [];
-  for (const key of next) {
+  let shifted = false;
+  next.forEach((key, i) => {
     const was = before.get(key);
-    if (was === undefined) cued.push(key);
-    else surviving.push({ key, was });
-  }
+    if (was === undefined) {
+      cued.push(key);
+    } else {
+      surviving.push({ key, was });
+      if (was !== i) shifted = true;
+    }
+  });
+  if (!shifted) return NO_CHANGE;
   const kept = longestIncreasing(surviving.map((s) => s.was));
   surviving.forEach((s, i) => {
     if (!kept.has(i)) cued.push(s.key);
@@ -169,8 +185,9 @@ function liveCues(
  *
  * `view` lists what the user controls about the list (see the module comment):
  * a sequence change in a render where one of those changed and `data` did not
- * is taken as the user's own and only moves the baseline. `data` is what the
- * server moves — the live task list.
+ * is taken as the user's own and only moves the baseline. `data` is what moves
+ * without being asked — the live task list, the archived one — compared item
+ * by item.
  *
  * The comparison runs during render, not in an effect, so the frame in which
  * the rows have moved is already the locked one: an effect would commit the
@@ -180,7 +197,7 @@ function liveCues(
 export function useReorderGuard(
   sequence: readonly string[],
   view: readonly unknown[],
-  data: unknown,
+  data: readonly unknown[],
   { now = Date.now, lockMs = REORDER_LOCK_MS, cueMs = REORDER_CUE_MS }: ReorderGuardOptions = {},
 ): ReorderGuard {
   const [state, setState] = useState<GuardState>(() => ({
@@ -200,7 +217,8 @@ export function useReorderGuard(
 
   let current = state;
   if (!sameSequence(state.sequence, sequence)) {
-    const userMoved = !sameItems(committed.current.view, view) && Object.is(committed.current.data, data);
+    const userMoved =
+      !sameItems(committed.current.view, view) && sameItems(committed.current.data, data);
     const change = orderChange(state.sequence, sequence);
     if (userMoved || state.sequence.length === 0 || !change.changed) {
       current = { ...state, sequence };
@@ -235,5 +253,9 @@ export function useReorderGuard(
     return () => clearTimeout(id);
   }, [state, now, cueMs]);
 
-  return { locked: current.lockedUntil > now(), cues: current.cues };
+  // Pruned by the clock here as well as by the timer: a background tab holds
+  // timers back, and a row mounted before that one fires (a group reopened, a
+  // filter cleared) must not start a fade for a reorder from minutes ago.
+  const t = now();
+  return { locked: current.lockedUntil > t, cues: liveCues(current.cues, t, cueMs) };
 }

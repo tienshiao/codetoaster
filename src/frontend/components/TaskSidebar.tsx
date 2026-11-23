@@ -481,6 +481,9 @@ export interface TaskSidebarOptions {
    * knows about tasks, not about addresses. The group headers name their
    * project; the header at the top names none. */
   onNewTask: (options?: { projectId?: string }) => void;
+  /** The clock the reorder lockout and cues are dated by (TASK-146). A test's
+   * to set; the rows' ages still read the wall clock. */
+  now?: () => number;
 }
 
 /** Exactly the left-column half of `AppShellProps`. Spread, so adding a control
@@ -505,6 +508,7 @@ export function useTaskSidebar({
   selectedTaskId,
   onSelectTask,
   onNewTask,
+  now = Date.now,
 }: TaskSidebarOptions): TaskSidebarProps {
   const {
     tasks,
@@ -798,12 +802,20 @@ export function useTaskSidebar({
   );
   // What the user changes about the list, as against what the server does:
   // a sequence change alongside one of these, with `tasks` unchanged, is the
-  // user's own and does not lock. `archivedTasks` belongs here because it is
-  // fetched when the toggle goes on, a beat after the toggle itself.
+  // user's own and does not lock.
+  //
+  // The archived rows count as the view only while they first arrive: the
+  // toggle goes on, and its fetch lands a beat later into a section that was
+  // showing nothing. After that they are data like the live rows. A delete for
+  // good resolving, or the refetch after an archive, pulls the rows below up
+  // under a pointer that has just come back from the dialog, which is the
+  // removal case this guard exists for.
+  const archivedShown = showArchived && archivedTasks.length > 0;
   const reorder = useReorderGuard(
     drawn,
-    [grouped, filter, showArchived, closedGroups, archivedTasks],
-    tasks,
+    [grouped, filter, showArchived, closedGroups, archivedShown],
+    [tasks],
+    { now },
   );
   const cuedRows = useMemo(
     () =>
@@ -818,16 +830,25 @@ export function useTaskSidebar({
 
   const groups = useMemo(() => {
     const rowById = new Map(cuedRows.map((row) => [row.id, row]));
-    return projectGroups.map((group) => ({
+    const plainById = new Map(rows.map((row) => [row.id, row]));
+    return projectGroups.map((group) => {
+      // A header the reorder moved lights its whole group — header and rows
+      // as one block, which is what moved, and the only thing there is to
+      // light when the group is collapsed. Its rows then carry no cue of their
+      // own, or a row would be washed twice over.
+      const cue = reorder.cues.get(`group:${group.id}`);
+      const byId = cue ? plainById : rowById;
+      return {
       id: group.id,
       name: group.name,
+      className: cue ? flashClass(cue.seq) : undefined,
       open: !closedGroups[group.id],
       count: group.tasks.length,
       attention: group.tasks.some((t) => taskStateOf(t) === "attention"),
       onToggle: () => setSidebar(toggleSidebarGroup(group.id)),
       // Indented here and not in `rows`, because the same row is drawn both
       // ways and only one of them has a chevron to line up under.
-      tasks: group.tasks.map((t) => ({ ...rowById.get(t.id)!, indent: true })),
+      tasks: group.tasks.map((t) => ({ ...byId.get(t.id)!, indent: true })),
       // Only for a project that is really one. `groupByProject` also emits a
       // group for tasks whose project has gone, and there is nothing behind
       // that header to configure or delete.
@@ -840,8 +861,9 @@ export function useTaskSidebar({
           onNewTask={() => onNewTask({ projectId: group.id })}
         />
       ) : undefined,
-    }));
-  }, [cuedRows, projectGroups, closedGroups, projectById, handleSaveProject, handleDeleteProject, onNewTask]);
+      };
+    });
+  }, [rows, cuedRows, reorder.cues, projectGroups, closedGroups, projectById, handleSaveProject, handleDeleteProject, onNewTask]);
 
   const headerActions: ReactNode = <NewProjectButton onCreate={createProject} />;
 

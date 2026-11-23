@@ -50,6 +50,9 @@ export interface ShellTaskGroup {
   tasks?: ShellTask[];
   /** Header-level controls, placed the same way a row's are. */
   actions?: ReactNode;
+  /** On the block holding the header and its rows — the reorder cue, when the
+   * group as a whole moved (TASK-146). */
+  className?: string;
 }
 
 /**
@@ -551,7 +554,11 @@ export function AppShell({
                 // Its own group name, not `row`: the task rows inside declare
                 // `group/row` too, and sharing the name would surface the
                 // project's controls every time a row under it was hovered.
-                <div key={group.id} className="group/project relative flex flex-col gap-px">
+                <div
+                  key={group.id}
+                  data-group={group.id}
+                  className={cn("group/project relative flex flex-col gap-px rounded-md", group.className)}
+                >
                   <ProjectGroup
                     name={group.name}
                     open={group.open}

@@ -41,17 +41,22 @@ Hysteresis makes reorders rare, not impossible. A task that wakes moves up, a ne
 - a row inserted above it, which pushes it down;
 - a row removed above it, which pulls it up. Removal is the case the user reported, and the rows' relative order does not change, so a detector that only looked for moves would miss it.
 
+Precisely, it counts when some row that was drawn before is now drawn in a different slot.[^reorder-guard]
+
 **What does not count:**
 
 - Anything redrawn in place, such as the age column, the state dot, the preview line or the selection. None of them is in the sequence.
+- A row added or removed at the very end, which moves nothing. The user's own New project appends an empty header there, and the next click is often that header's New task.
 - The first non-empty sequence (the snapshot on load, when nothing was under the pointer), and a remount, which starts a fresh baseline.
-- Changes the user makes to the view: the filter, the grouping toggle, a group's chevron, the archived toggle, and the archived rows that toggle fetches a moment later. Locking after a filter keystroke would block the click the filter was typed for. A view change is only taken as the cause when the live task list did not change in the same render. If both changed, it counts, because a spurious half-second lock costs less than a missed one.[^sidebar]
+- Changes the user makes to the view: the filter, the grouping toggle, a group's chevron, the archived toggle, and the first archived rows that toggle fetches a moment later into an empty section. Locking after a filter keystroke would block the click the filter was typed for. A view change is only taken as the cause when the live task list did not change in the same render. If both changed, it counts, because a spurious half-second lock costs less than a missed one.[^sidebar]
+
+Once the archived rows are showing, they are data. A delete for good resolving pulls the archived rows below it up under a pointer that has just come back from the dialog, which is the same removal case.[^sidebar]
 
 The comparison runs during render rather than in an effect, so the frame that commits the moved rows is already locked.
 
 # The cue
 
-Inserted rows flash, and so do rows that fell outside the longest run of rows that kept their relative order (the complement of a longest increasing subsequence). One task jumping to the top therefore lights that task and not every row it passed. A removal lights nothing, because no row is left to light, and the dimmed list is its only cue. The flash is the change flash from [the change watcher](/modules/change-watcher.md): the `--changed` wash, the same two alternating keyframes, and a per-row count so a row that moves again mid-fade restarts it instead of stacking a second one. Cues are removed by a timer when the flash has run, so a row mounted later (a group reopened, the sidebar shown again) does not replay it. Under reduced motion the wash holds and drops in one step, and the lockout is unchanged.[^reorder-guard]
+Inserted rows flash, and so do rows that fell outside the longest run of rows that kept their relative order (the complement of a longest increasing subsequence). One task jumping to the top therefore lights that task and not every row it passed. A removal lights nothing, because no row is left to light, and the dimmed list is its only cue. When grouped, a project header that moved lights its whole group (header and rows as one block, and its rows get no cue of their own), which is also what makes a collapsed group's move visible. The flash is the change flash from [the change watcher](/modules/change-watcher.md): the `--changed` wash, the same two alternating keyframes, and a per-row count so a row that moves again mid-fade restarts it instead of stacking a second one. Cues are removed by a timer when the flash has run, and are also filtered by the clock on every render, because a background tab holds timers back. Either way, a row mounted later (a group reopened, the sidebar shown again) does not replay it. Under reduced motion the wash holds and drops in one step, and the lockout is unchanged.[^reorder-guard]
 
 # The lockout
 
