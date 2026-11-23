@@ -5,7 +5,7 @@ description: A task's processes are killed and its row marked suspended when the
 tags: [module, tasks, harvester, suspend, hooks, agent-state]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-22T17:30:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T16:59:19Z }
 sources:
   - id: harvester
     resource: ../../src/lib/tasks/harvester.ts
@@ -53,7 +53,9 @@ Every agent is launched with `--settings` pointing at a per-task file of hooks (
 
 When the background work finishes, Claude Code hands its result to the agent as a new turn: a `UserPromptSubmit` (busy) and then a `Stop` with an empty list (idle, `idle_since` restamped). The ordinary 30-minute window then counts from when the work was really done. This was observed on Claude Code 2.1.330; a version without the field reads as nothing outstanding, which is the old behaviour.
 
-A `/compact` typed while the task is `background` would otherwise come back `idle`, since nothing in the compaction's `SessionStart` mentions background work. So the manager remembers, across the compaction, that it started from `background` (`compactingFromBackground`, beside `compactTriggers`) and restores it.
+A `/compact` typed while the task is `background` would otherwise come back `idle`, since nothing in the compaction's `SessionStart` mentions background work. So the manager remembers, across the compaction, that it started from `background` (`compactingFromBackground`, beside `compactTriggers` in `src/lib/tasks/hooks.ts`) and restores it.
+
+Suspend, harvest and eviction run in `src/lib/tasks/suspend.ts`, behind `TaskManager`'s `suspendTask`, `harvestTask` and `evictTask` ([TaskManager layout](/modules/task-manager-layout.md)).
 
 The cap exists because `background` rests on one payload: a background dev server or monitor never finishes, and a completion that was never reported would otherwise pin the task live for good.
 

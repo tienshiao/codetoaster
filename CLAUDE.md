@@ -22,7 +22,9 @@ src/
   lib/git/spawn.ts      # gitSpawn/gitSpawnRaw: every git invocation goes through these
   lib/file-listing.ts   # Repository file listing (tracked, untracked, ignored), safePath, image MIME types
   lib/db.ts             # bun:sqlite (projects, tasks) with migrations
-  lib/tasks/            # TaskManager: task lifecycle, suspend/resume, archive, harvester, watchers
+  lib/tasks/            # TaskManager (manager.ts): a facade over one module per concern
+                        #   (create, resume, suspend, archive, terminals, ...); see
+                        #   wiki/modules/task-manager-layout.md
   lib/agent/            # Agent profiles, spawn command, hook state, transcripts
   lib/worktree/         # Per-task git worktrees: create, WIP snapshots, restore, evict, reconcile
   lib/xtmux/            # PTYs, terminal naming, WebSocket message types and send helpers

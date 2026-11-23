@@ -5,11 +5,11 @@ description: Archive suspends a task, snapshots its worktree to a WIP ref kept 3
 tags: [module, tasks, worktrees, archive, lifecycle]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-05T10:30:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T16:59:19Z }
 sources:
-  - id: manager
-    resource: ../../src/lib/tasks/manager.ts
-    title: src/lib/tasks/manager.ts
+  - id: archive
+    resource: ../../src/lib/tasks/archive.ts
+    title: src/lib/tasks/archive.ts
   - id: route
     resource: ../../src/api/tasks.ts
     title: src/api/tasks.ts
@@ -35,7 +35,7 @@ sources:
 
 # What archive keeps
 
-Archive is the explicit, confirmed way a task leaves the list (§6).[^architecture] `TaskManager.archiveTask` runs in this order, and the order is what makes it recoverable:[^manager]
+Archive is the explicit, confirmed way a task leaves the list (§6).[^architecture] `TaskManager.archiveTask` runs in this order, and the order is what makes it recoverable:[^archive]
 
 1. Suspend a live task through `suspendTask`.
 2. Read the branch status while the checkout is still there to read.
@@ -46,11 +46,11 @@ Archive is the explicit, confirmed way a task leaves the list (§6).[^architectu
 
 The row stays, with `lifecycle = archived`, `worktree_state = evicted` (or `none` for a task that ran in the project directory), and `worktree_path`, `branch`, `base_ref` and `wip_at` remembered. `wip_at` is restamped at archive time, because retention runs from the archive.
 
-Archiving does not move the task's project in the sidebar (TASK-141). The `rank_at` stays on the archived row, and every `tasks` snapshot carries each project's `rankAt`: `TaskStore.projectRanks`, the highest `rank_at` among all its tasks, archived ones included. `groupByProject` orders the groups by the newer of that and the project's live tasks' own ranks, which `activity` frames and `task` deltas move between snapshots. So archiving the top task leaves its project where it was, a project whose tasks are all archived keeps its place instead of falling to the never-used projects at the bottom, and a wake still lifts its project at once.[^manager]
+Archiving does not move the task's project in the sidebar (TASK-141). The `rank_at` stays on the archived row, and every `tasks` snapshot carries each project's `rankAt`: `TaskStore.projectRanks`, the highest `rank_at` among all its tasks, archived ones included. `groupByProject` orders the groups by the newer of that and the project's live tasks' own ranks, which `activity` frames and `task` deltas move between snapshots. So archiving the top task leaves its project where it was, a project whose tasks are all archived keeps its place instead of falling to the never-used projects at the bottom, and a wake still lifts its project at once.[^archive]
 
 # Retention
 
-`expireArchivedWip` runs once at boot and drops the WIP ref of every archived task whose `wip_at` is more than `WIP_RETENTION_MS` (30 days) old. It touches archived rows only: a suspended task's ref is where its work is stored, not a grace period. It clears `wip_ref` and keeps `wip_at`, which is the only record that there was a snapshot to lose. It skips a task with an unarchive in flight.[^manager]
+`expireArchivedWip` runs once at boot and drops the WIP ref of every archived task whose `wip_at` is more than `WIP_RETENTION_MS` (30 days) old. It touches archived rows only: a suspended task's ref is where its work is stored, not a grace period. It clears `wip_ref` and keeps `wip_at`, which is the only record that there was a snapshot to lose. It skips a task with an unarchive in flight.[^archive]
 
 The archive confirmation ends with "It can be unarchived, uncommitted work included, until <date>": today plus `wipRetentionDays` from the preview (`archiveSummary` takes the clock and the date formatter as parameters).
 
@@ -72,7 +72,7 @@ The snapshot is reported separately. `kept` means the ref exists, so the restore
 
 Expiry is the sweep dropping the ref, not the clock passing. If the preview called a snapshot past its date "expired" while the ref still existed, the dialog would say the work was lost and the restore would then apply it. Dropping the ref at the click to match would destroy work that could still be recovered.
 
-`unarchiveTask` then:[^manager]
+`unarchiveTask` then:[^archive]
 
 1. Recreates a deleted branch (`git branch <name> <commit>`, under the repository lock). A failure throws `branch-recreate-failed` and changes nothing.
 2. Sets `lifecycle = suspended`, keeping `worktree_state = evicted`, and stamps `rank_at` so the task returns at the top of the list even if the resume never reaches the ladder's own stamp. An archived task with a checkout is the same as an evicted one waiting to be rebuilt.
@@ -85,6 +85,8 @@ A failure after step 2 leaves the task suspended and evicted, with its branch an
 # Serialization
 
 Unarchive is the fifth of the per-task in-flight maps (`resuming`, `suspending`, `evicting`, `archiving`, `unarchiving`). A second unarchive joins the first. An archive waits for an unarchive in flight and then archives the live task it produced; an unarchive waits for an archive in flight and then starts over. Each consults the other's map before registering in its own, so neither can wait on the other. `evictTask` refuses during an unarchive.
+
+Archive, unarchive and delete live in `src/lib/tasks/archive.ts`. The five maps live together in `inflight.ts`, shared by every lifecycle module. [TaskManager layout](/modules/task-manager-layout.md) tabulates every pairing.
 
 # In the browser
 

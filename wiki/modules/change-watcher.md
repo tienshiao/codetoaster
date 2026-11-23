@@ -5,7 +5,7 @@ description: Each live task's TaskWatcher folds file and ref events into changed
 tags: [module, watcher, fs-watch, tasks, invalidation]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T02:00:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T16:59:19Z }
 sources:
   - id: watcher
     resource: ../../src/lib/tasks/watcher.ts
@@ -13,9 +13,9 @@ sources:
   - id: watch-pool
     resource: ../../src/lib/tasks/watch-pool.ts
     title: src/lib/tasks/watch-pool.ts
-  - id: manager
-    resource: ../../src/lib/tasks/manager.ts
-    title: src/lib/tasks/manager.ts
+  - id: checkout-watchers
+    resource: ../../src/lib/tasks/checkout-watchers.ts
+    title: src/lib/tasks/checkout-watchers.ts
   - id: task-103
     resource: "../../backlog/tasks/task-103 - Refresh-open-files-the-explorer-and-diffs-when-the-working-tree-or-history-changes.md"
     title: "TASK-103 — Refresh open files, the explorer and diffs when the working tree or history changes"
@@ -49,7 +49,7 @@ The streams come from a `WatchPool`, keyed by the resolved directory and its rec
 
 # When there is a watch at all
 
-`reconcileWatchers` gives a live task a watcher only while at least one browser is connected: a `changed` message has nobody to reach otherwise, and a daemon left running should not hold streams over large checkouts for the hours between sessions. The root is the task's `repo_root`, because every route a batch invalidates speaks paths relative to it.[^manager] Streams are therefore opened and closed with every browser disconnect and reconnect, which on Bun 1.3.9 leaked a descriptor each time; see [Bun 1.3.9 leaks a directory descriptor per closed fs.watch](/gotchas/bun-fs-watch-descriptor-leak.md).
+`reconcileWatchers` gives a live task a watcher only while at least one browser is connected: a `changed` message has nobody to reach otherwise, and a daemon left running should not hold streams over large checkouts for the hours between sessions. The root is the task's `repo_root`, because every route a batch invalidates speaks paths relative to it.[^checkout-watchers] Streams are therefore opened and closed with every browser disconnect and reconnect, which on Bun 1.3.9 leaked a descriptor each time; see [Bun 1.3.9 leaks a directory descriptor per closed fs.watch](/gotchas/bun-fs-watch-descriptor-leak.md).
 
 # Change highlighting
 
@@ -76,7 +76,7 @@ How ignored paths are reported and who reads them: [File listing and ignored fil
 
 [^watcher]: src/lib/tasks/watcher.ts
 [^watch-pool]: src/lib/tasks/watch-pool.ts
-[^manager]: src/lib/tasks/manager.ts
+[^checkout-watchers]: src/lib/tasks/checkout-watchers.ts
 [^task-103]: TASK-103 — Refresh open files, the explorer and diffs when the working tree or history changes
 [^task-135]: TASK-135 — Share fs.watch streams between tasks watching the same directories
 [^task-136]: TASK-136 — Changed rows highlight and fade as an agent edits files

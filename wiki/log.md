@@ -1,6 +1,10 @@
 # Wiki Update Log
 
 ## 2026-11-23
+* **Creation**: [TaskManager layout](/modules/task-manager-layout.md) for TASK-152: the facade and its fourteen modules, the `TaskHost` rules that keep the split behaviour-preserving (route public calls through the instance, never capture reassignable state, non-async delegators, one owner per piece of state), and a table of every concurrent lifecycle pairing.
+* **Update**: [Change watcher and shared watch streams](/modules/change-watcher.md) for TASK-152: the reconcile now cites `src/lib/tasks/checkout-watchers.ts`.
+* **Update**: [Archive and unarchive](/modules/archive-and-unarchive.md) for TASK-152: cites `src/lib/tasks/archive.ts`, and its Serialization section points at `inflight.ts` and the layout page.
+* **Update**: [Task suspension and the idle harvester](/modules/task-suspension.md) for TASK-152: names `hooks.ts` and `suspend.ts`.
 * **Update**: [Bun.$ deadlocks on large git output](/gotchas/bun-shell-deadlock.md) for TASK-154: `gitSpawn` / `gitSpawnRaw` moved from `src/api/utils.ts` to `src/lib/git/spawn.ts`, where the rule and its source now point.
 * **Update**: [File listing and ignored files](/modules/file-listing.md) for TASK-154: `listGitFiles`, `listIgnoredEntries`, `buildFileListing` and `safePath` moved from `src/api/utils.ts` to `src/lib/file-listing.ts`.
 * **Update**: [Worktree browsing](/modules/worktree-browsing.md) for TASK-154: root resolution, the worktree listing and `rootRoutes` moved from `src/api/utils.ts` to `src/api/roots.ts`.
