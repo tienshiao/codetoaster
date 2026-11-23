@@ -1,11 +1,11 @@
 ---
 id: TASK-148
 title: Task confirmation dialogs set the task name apart from the prose
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-23T01:42:00Z'
-updated_date: '2026-11-23T02:11:00Z'
+updated_date: '2026-11-23T03:25:00Z'
 labels:
   - frontend
 dependencies: []
@@ -23,11 +23,11 @@ The dialogs that confirm an action on a task (archive, suspend, delete for good,
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every task-scoped confirmation (archive, suspend, delete for good, unarchive) shows the task name styled apart from the surrounding text so it reads at a glance, using v2 semantic tokens rather than colour literals
-- [ ] #2 The name shown is the same display label the sidebar row shows for that task
-- [ ] #3 A long name truncates or wraps without breaking the dialog layout, and the full name is still available (e.g. on hover)
-- [ ] #4 The styling is shared by all four dialogs, so a new task-scoped confirmation gets it without restyling
-- [ ] #5 Rendering tests check that each dialog renders the task name in its distinct element
+- [x] #1 Every task-scoped confirmation (archive, suspend, delete for good, unarchive) shows the task name styled apart from the surrounding text so it reads at a glance, using v2 semantic tokens rather than colour literals
+- [x] #2 The name shown is the same display label the sidebar row shows for that task
+- [x] #3 A long name truncates or wraps without breaking the dialog layout, and the full name is still available (e.g. on hover)
+- [x] #4 The styling is shared by all four dialogs, so a new task-scoped confirmation gets it without restyling
+- [x] #5 Rendering tests check that each dialog renders the task name in its distinct element
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,3 +45,9 @@ Browser check found the padded line-clamp let the top of line three show through
 
 /code-review high v2: 5 findings. Fixed: subject span uses wrap-anywhere (break-words left the min-content width at the longest unbreakable word, widening the panel at phone width) and the wiki page's generated.at set to the real edit time. Skipped: label not frozen while open (pre-existing; the confirm acts on the task id, so a repainted title is the same task), empty subject leaving It with no referent (the API refuses blank titles), and ACs/final summary (left to the main session).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Task-scoped confirmations (archive, suspend, delete for good, unarchive) name the task in a subject box under the title instead of inside the sentence. The v2 Dialog gained a subject string prop that owns the element (bordered bg-chrome box, font-medium text-foreground, full name in title, wired into aria-describedby); the clamp sits on an inner span (line-clamp-2 wrap-anywhere) so hidden lines cannot show through the padding and an unbreakable path cannot widen the panel. Sidebar and palette both pass the sessionDisplayNames label, pinned by tests. Verified on an isolated server in Chrome: 177-char name clamps to exactly two lines in light and dark, a 120-char unbreakable path wraps inside a 384px panel. Code review medium then high: 7 findings, 4 fixed (aria-describedby, wiki wording, wrap-anywhere, wiki timestamp); skipped a live title repainting mid-dialog (confirm acts on the opened taskId) and an empty subject (blank titles are rejected). bun run test and typecheck clean apart from the pre-existing manager.test.ts exit-broadcast timeout, which fails the same on untouched v2. Follow-up idea: the unclaimed-worktree and project deletes could adopt subject too.
+<!-- SECTION:FINAL_SUMMARY:END -->
