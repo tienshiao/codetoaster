@@ -1,11 +1,11 @@
 ---
 id: TASK-147
 title: Compress HTTP responses and WebSocket traffic for remote use
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-23T01:41:00Z'
-updated_date: '2026-11-23T02:17:00Z'
+updated_date: '2026-11-23T03:26:00Z'
 labels:
   - backend
   - perf
@@ -21,13 +21,13 @@ Nothing the daemon sends is compressed. Bun.serve does not compress responses by
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The terminal WebSocket negotiates permessage-deflate with a browser that offers it, and still works with a client that does not
-- [ ] #2 API responses above a size threshold are compressed with an encoding the request's Accept-Encoding allows, carry Content-Encoding and Vary: Accept-Encoding, and go out uncompressed when the client accepts none
-- [ ] #3 Small responses, already-compressed bodies (images from the image routes, uploads) and error responses below the threshold are sent as-is
-- [ ] #4 The SPA HTML served by the catch-all route is compressed under the same rule without losing its Cache-Control, X-Frame-Options and CSP headers
-- [ ] #5 The bundled JS and CSS assets are either served compressed in production or the reason they are not is recorded in the task notes and the wiki
-- [ ] #6 Route-level tests through a real Bun.serve on port 0 cover a compressed response decoding to the same body, Accept-Encoding absent or identity giving an uncompressed one, and a small response passing through untouched
-- [ ] #7 Measured on an isolated server: bytes on the wire before and after for a large diff, a file read and a terminal restore, recorded in the task notes
+- [x] #1 The terminal WebSocket negotiates permessage-deflate with a browser that offers it, and still works with a client that does not
+- [x] #2 API responses above a size threshold are compressed with an encoding the request's Accept-Encoding allows, carry Content-Encoding and Vary: Accept-Encoding, and go out uncompressed when the client accepts none
+- [x] #3 Small responses, already-compressed bodies (images from the image routes, uploads) and error responses below the threshold are sent as-is
+- [x] #4 The SPA HTML served by the catch-all route is compressed under the same rule without losing its Cache-Control, X-Frame-Options and CSP headers
+- [x] #5 The bundled JS and CSS assets are either served compressed in production or the reason they are not is recorded in the task notes and the wiki
+- [x] #6 Route-level tests through a real Bun.serve on port 0 cover a compressed response decoding to the same body, Accept-Encoding absent or identity giving an uncompressed one, and a small response passing through untouched
+- [x] #7 Measured on an isolated server: bytes on the wire before and after for a large diff, a file read and a terminal restore, recorded in the task notes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,3 +43,9 @@ Implemented. WebSocket: src/lib/xtmux/socket.ts exports terminalSocketCompressio
 
 Review (/code-review high v2): no blocking findings. Fixed: dropped application/x-ndjson from the compression allowlist (a streaming format that would otherwise be silently buffered). Accepted and recorded in wiki modules/compression.md: synchronous per-socket frame deflate (incl. restore on attach), compressing for loopback peers too (ssh -L makes remote traffic loopback), per-socket dedicated deflate memory. Pre-existing, not fixed: SPA catch-all never answers 304 (If-None-Match not forwarded to the hidden route); serveSpa copies upstream headers such as Date. Tests: bun run typecheck clean; bun test 2225 pass / 1 fail - the failure (manager.test.ts 'an exiting terminal marks the task exited and sends the row', 4s waitFor timeout) also fails on an untouched v2 checkout in a full run (2197 pass / 1 fail) and passes in isolation, so it predates this change; test:render 600/600 pass.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The daemon now compresses what it sends. The terminal WebSocket mounts perMessageDeflate (dedicated compressor, since shared resets its window every message) and every server-side send goes through sendFrame in src/lib/xtmux/socket.ts, because Bun negotiates the extension but sends raw unless each send asks; clients without the extension get plain frames. API routes, the preview and connections routes are wrapped by compressRoutes in src/api/compress.ts outside guardApiRoutes, so the origin check runs first: text types over 1 KiB are encoded br > zstd > gzip per Accept-Encoding with q-values, Content-Length dropped, Vary appended, strong ETags weakened; HEAD, 1xx/204/304, 206, pre-encoded, no-transform, event-stream and all images pass through. The SPA catch-all fetches its HTML as identity and goes through serveSpa under the same rule, keeping Cache-Control, X-Frame-Options and CSP. The hashed JS/CSS bundles stay uncompressed: Bun serves them on its own routes ahead of ours (production JS 5.0 MB, 1.4 MB gzipped); reason in the notes and wiki/modules/compression.md, follow-up filed. Measured on an isolated server: large diff 177,068 -> 39,596-44,712 bytes, file read 1,248,424 -> 123,562-187,319, terminal restore frame 54,519 -> 17,378. Verified in Chrome: the terminal socket negotiates permessage-deflate, typing, output and restore after reload work, a 1.2 MB file read arrives br with Vary, /api/ping stays plain. Code review high: no blocking findings; NDJSON dropped from the allowlist; per-socket deflate cost and loopback compression recorded in the wiki. 25 route tests on a real Bun.serve plus 3 socket tests; typecheck clean; bun test clean apart from the pre-existing manager.test.ts exit-broadcast timeout.
+<!-- SECTION:FINAL_SUMMARY:END -->
