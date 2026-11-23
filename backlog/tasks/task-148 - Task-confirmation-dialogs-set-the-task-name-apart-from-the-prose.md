@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-23T01:42:00Z'
-updated_date: '2026-11-23T01:54:00Z'
+updated_date: '2026-11-23T01:59:00Z'
 labels:
   - frontend
 dependencies: []
@@ -40,4 +40,6 @@ The dialogs that confirm an action on a task (archive, suspend, delete for good,
 
 <!-- SECTION:NOTES:BEGIN -->
 v2 Dialog gained a subject?: string prop, drawn as its own element under the title (data-dialog-subject; font-medium text-foreground on a rounded-md border-border bg-chrome well; line-clamp-2 break-words; full name in title=) and wired with the description into aria-describedby via useId. Archive, Suspend, delete-for-good (TaskSidebar.tsx) and Unarchive (UnarchiveTaskDialog.tsx) pass label as subject; their sentences now say It / The task. Label sources checked: sidebar rows and the palette both project live tasks through sessionDisplayNames (taskDisplayNames), archived rows use the stored title in both; no change needed. Tests: TaskSidebar.render.tsx checks the subject in all four dialogs plus a long name keeping full text in title; Dialog.render.tsx covers the slot, its absence for empty, and aria-describedby; CommandPalette.render.tsx now drives taskDisplayNames from a hoisted map and pins that Suspend gets the projected label, and the palette Unarchive shows the stored title as subject. Wiki: conventions/v2-design-system.md section on the subject slot, log entry. /code-review medium --fix: two nits fixed (aria-describedby, wiki claim narrowed to task-scoped confirmations; the unclaimed-worktree delete still names its path in prose, a possible follow-up). bun run test: 2198 bun + 608 vitest pass; typecheck clean; isolated server on 4603 booted and served /. Browser check of the clamp and styling deferred to the main session.
+
+Browser check found the padded line-clamp let the top of line three show through the bottom padding; split the subject into a padded outer box (data-dialog-subject, title, id) and an unpadded inner span carrying line-clamp-2 break-words, test updated to assert the clamp is on the inner element.
 <!-- SECTION:NOTES:END -->

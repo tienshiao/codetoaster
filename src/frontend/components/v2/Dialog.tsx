@@ -197,9 +197,14 @@ export function Dialog({
               id={subjectId}
               data-dialog-subject
               title={subject}
-              className="my-1 line-clamp-2 break-words rounded-md border border-border bg-chrome px-2 py-1.5 font-medium text-foreground"
+              className="my-1 rounded-md border border-border bg-chrome px-2 py-1.5 font-medium text-foreground"
             >
-              {subject}
+              {/* The clamp on an inner span with no padding, not on the box:
+                  the clamped-away lines still lay out below the second, and
+                  `overflow: hidden` clips at the padding box, so a padded
+                  clamp showed the top of the third line through its bottom
+                  padding. */}
+              <span className="line-clamp-2 break-words">{subject}</span>
             </p>
           ) : null}
           {description ? (

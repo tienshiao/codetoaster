@@ -130,8 +130,15 @@ test("a long task name is clamped in the dialog and kept whole on hover", () => 
   const subject = subjectOf(screen.getByRole("dialog", { name: "Suspend this task?" }));
   expect(subject.textContent).toBe(long);
   expect(subject.getAttribute("title")).toBe(long);
-  expect(subject.classList.contains("line-clamp-2")).toBe(true);
-  expect(subject.classList.contains("break-words")).toBe(true);
+  // The clamp sits on an inner element with no vertical padding. On the padded
+  // box itself, `overflow: hidden` clips at the padding edge and the top of the
+  // third line showed through the bottom padding.
+  expect(subject.classList.contains("line-clamp-2")).toBe(false);
+  const clamped = subject.querySelector<HTMLElement>(".line-clamp-2");
+  expect(clamped).not.toBeNull();
+  expect(clamped!.classList.contains("break-words")).toBe(true);
+  expect(clamped!.textContent).toBe(long);
+  expect([...clamped!.classList].some((c) => /^(p|py|pt|pb)-/.test(c))).toBe(false);
 });
 
 test("rename is seeded with the label on screen and trims what it sends", () => {
