@@ -6,7 +6,8 @@
 //
 // One function, `compressResponse`, decides for one response; `compressRoutes`
 // applies it to a route table the way `guardApiRoutes` applies the origin
-// check, so a route added to the table is compressed by construction.
+// check, so a route added to the table is compressed by construction. The
+// frontend bundles reuse its negotiation and encoders (bundles.ts, TASK-150).
 
 import { promisify } from "node:util";
 import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
@@ -126,7 +127,7 @@ function eligible(req: Request, res: Response): boolean {
 }
 
 /** `Vary: Accept-Encoding`, added to whatever Vary already says. */
-function appendVary(headers: Headers): void {
+export function appendVary(headers: Headers): void {
   const existing = headers.get("vary");
   if (!existing) {
     headers.set("Vary", "Accept-Encoding");
@@ -144,7 +145,7 @@ const brotliAsync = promisify(brotliCompress);
  * rather than a CDN encoding once: zstd 3 and gzip 6 are their libraries'
  * defaults, and brotli's default of 11 is tens of times slower than 5 for a
  * few percent. */
-async function encode(encoding: Encoding, body: Uint8Array): Promise<Uint8Array> {
+export async function encode(encoding: Encoding, body: Uint8Array): Promise<Uint8Array> {
   switch (encoding) {
     case "zstd":
       return Bun.zstdCompress(body, { level: 3 });

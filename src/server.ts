@@ -6,7 +6,7 @@ import type { WebSocketData } from "./lib/xtmux/types";
 import { handleClientMessage } from "./lib/xtmux/client-messages";
 import { terminalSocketCompression } from "./lib/xtmux/socket";
 import { compressRoute, compressRoutes } from "./api/compress";
-import { serveSpa } from "./api/spa";
+import { spaRoutes } from "./api/spa";
 import { removePidFile } from "./cli/daemon";
 import { formatDuration } from "./cli/duration";
 import { taskRoutes } from "./api/tasks";
@@ -40,11 +40,6 @@ import {
 let clientIdCounter = 0;
 const startTime = Date.now();
 const spaPath = `/${crypto.randomUUID()}`;
-
-// Asset extensions that should never be served as HTML.
-// If a browser requests one of these and it doesn't match a real static file,
-// it's a stale cached reference — return 404 instead of the SPA.
-const assetExtRe = /\.(js|css|mjs|woff2?|ttf|otf|eot|map|png|jpe?g|gif|svg|ico|webp|avif)$/;
 
 function generateClientId(): string {
   return `client-${++clientIdCounter}-${Date.now()}`;
@@ -205,39 +200,18 @@ export function startServer(options?: ServerOptions) {
   // Read lazily, not computed here: `--port 0` means the real port does not
   // exist until `serve()` has returned.
   const selfOrigin = (): string => reachableOrigin(HOSTNAME, server.port ?? PORT);
+  // One condition for both: Bun's dev server (HMR) and the bundle rewrite are
+  // mutually exclusive, since dev assets live under `/_bun/` and rehash on
+  // every edit.
+  const production = process.env.NODE_ENV === "production";
 
   const server = serve<WebSocketData>({
     port: PORT,
     hostname: HOSTNAME,
     routes: {
-      // Mount the SPA on a hidden UUID path so Bun handles bundling/hashing.
-      // The wildcard route below proxies to it with proper cache headers.
-      [spaPath]: index,
-
-      "/*": {
-        async GET(req: Request) {
-          const url = new URL(req.url);
-          // Stale asset request from an old cached index.html — return 404
-          if (assetExtRe.test(url.pathname)) {
-            return new Response("Not found", { status: 404 });
-          }
-          // The Host header is not a place to look up our own address. Bun
-          // builds `req.url` from it, so `new URL(spaPath, url.origin)` sent
-          // the daemon to fetch whatever host the caller named and then served
-          // that body as its own HTML: `curl -H "Host: attacker.example" /`
-          // returned the attacker's page from this origin, which is both a
-          // request the daemon made on someone else's behalf and a way to run
-          // their script inside our origin. Addressed to the listener instead,
-          // which is the one thing we actually know.
-          //
-          // `identity`, because the answer is compressed for the browser on
-          // the way out (serveSpa) and a loopback hop gains nothing from it.
-          const response = await fetch(new URL(spaPath, selfOrigin()), {
-            headers: { "Accept-Encoding": "identity" },
-          });
-          return serveSpa(req, response);
-        },
-      },
+      // The hidden HTML import, the catch-all serving its page, and in
+      // production the compressed JS and CSS bundles (TASK-150).
+      ...spaRoutes({ index, spaPath, selfOrigin, production }),
 
       "/api/tasks/:id/preview": compressRoute(guardRoute({
         GET(req: Request & { params: { id: string } }) {
@@ -386,7 +360,7 @@ export function startServer(options?: ServerOptions) {
       return new Response("Not found", { status: 404 });
     },
 
-    development: process.env.NODE_ENV !== "production" && {
+    development: !production && {
       hmr: true,
       console: true,
     },

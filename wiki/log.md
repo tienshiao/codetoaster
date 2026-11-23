@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-11-23
+* **Update**: [Response and socket compression](/modules/compression.md) for TASK-150: its "stay uncompressed" section is replaced by Bundled JS and CSS. It covers why Bun's bundle routes cannot be shadowed, the page rewrite to `/_bundle/`, the fetch-once and encode-once-per-coding cache bounded by the page's names, lazy encoding and its timings, why fonts and nothing inside the bundles need rewriting, dev mode left alone, and the bundle sizes on the wire.
 * **Creation**: [Task list order and the reorder lockout](/modules/task-list-order.md) for TASK-146: `rankAt` ordering from TASK-116, what counts as a reorder (moves, insertions and removals in the drawn sequence; not in-place updates, first load, remounts or the user's own view changes), the cue on moved rows, and the 500ms click lockout and why it spares portaled dialogs.
 * **Update**: [Change watcher and shared watch streams](/modules/change-watcher.md) links the task list's reuse of the change flash.
 * **Update**: [Task list order and the reorder lockout](/modules/task-list-order.md) after review: appending or removing at the end does not count, archived rows are data once showing, and a moved project header lights its whole group.

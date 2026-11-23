@@ -1,9 +1,11 @@
 ---
 id: TASK-150
 title: Serve the frontend JS and CSS bundles compressed
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-11-23T03:30:00Z'
+updated_date: '2026-11-23T03:59:00Z'
 labels:
   - backend
   - perf
@@ -30,3 +32,19 @@ TASK-147 compressed API responses, the SPA HTML and terminal frames, but not the
 - [ ] #6 The standalone binary built by bun run build:server serves the bundles compressed too
 - [ ] #7 Route-level tests through a real Bun.serve cover a compressed bundle decoding to the same body and the uncompressed fallback; the wiki compression page is updated; bytes on the wire before and after are recorded in the task notes
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Probes (Bun 1.4.4): (1) HTMLBundle has no manifest when run from source (Object.keys(index) is empty); a --compile build does expose index.files with /$bunfs paths, so one code path that reads the HTML covers both. (2) Shadowing Bun's /chunk-* static route does not stick: a route declared at serve() loses to the bundle's, and one added by server.reload wins only until the next request to the HTML route re-registers the bundle's routes; every / navigation fetches that route, so no. (3) Production bundle is one JS + one CSS, no code splitting (0 dynamic import()), no source maps, no wasm/worker URLs; the CSS refers to its fonts absolutely (url(/Name-hash.woff2)), so rewriting only the HTML catches everything and fonts stay on Bun's routes (woff2 is already brotli inside). Binary: same chunk-<hash> names, but Bun sends no Cache-Control there and an unquoted ETag. Plan: new src/api/bundles.ts with BundleCache: serveSpa (prod only, explicit flag from server.ts) rewrites src/href="/chunk-<hash>.(js|css)" to /_bundle/chunk-<hash>.ext and teaches the cache that exact set (replacing it and evicting dropped entries). GET/HEAD /_bundle/:name serves only names in that set, fetched from Bun's own route via the listener (Accept-Encoding identity), accepting only a 200 JS/CSS; per name one shared identity promise and per encoding one shared encode promise, deleted on failure. Negotiation, encoders and Vary from compress.ts. Lazy per encoding (measured 5 MB JS: br5 85ms, gzip6 56ms, zstd3 16ms) rather than eager at startup, which would force Bun's lazy bundle build at boot and encode codings nobody asks for. Unknown set after restart: one shared HTML refetch before deciding. Route composition moves to spaRoutes() in spa.ts so tests mount it with a fixture HTML import. Tests, wiki, verify on 4604 and the binary on 4605.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Approach: rewrite, not shadow (probe 2 fails) and not ahead-of-time build. src/api/bundles.ts BundleCache + spaRoutes() in spa.ts (route composition moved out of server.ts so tests mount it over a fixture HTML import). serveSpa in production rewrites src/href="/chunk-<hash>.(js|css)" to /_bundle/<name> and teaches the cache that exact set; /_bundle/:name (GET/HEAD) serves only those names, fetched once from Bun's own route through the listener, encoded lazily once per coding with one shared promise per name and per coding; failures (non-200, non-JS/CSS type, thrown fetch, encoder error) are not kept. Cache-Control immutable is always sent (name pattern is content-hashed); the binary's Bun route sends none, so this adds it there. Bare ETag from the binary is quoted, weakened when encoded. Dev: rewrite gated on NODE_ENV=production (same as HMR); /_bundle/* answers 404 there; dev HTML still references /_bun/client and /_bun/asset (checked on an isolated dev server on 4606, client script 200).
+
+Measured, isolated production server (NODE_ENV=production bun src/index.ts, port 4604), bytes on the wire. JS chunk-8tyy23w4.js: before 5,033,255 raw from Bun's route even with Accept-Encoding gzip, br; after br 1,238,107 (first request 88ms), gzip 1,431,890 (115ms), zstd 1,386,991 (26ms), repeat br 2ms from cache; none/identity 5,033,255. CSS chunk-1wjx46qn.css: before 168,188; after br 62,002, gzip 65,115, zstd 64,958. Every encoded body decoded byte-identical to the identity response and to Bun's original; headers Content-Encoding, Vary: Accept-Encoding, Content-Type kept, Cache-Control public, max-age=31536000, immutable, ETag W/ when encoded, Content-Length the encoded one; HEAD gives headers only. /chunk-deadbeef.js, /_bundle/chunk-deadbeef.js and /_bundle/..%2Fapi%2Fping all 404. Binary (bun run build:server, foreground --port 4605): JS 5,062,139 -> br 1,245,976 / gzip 1,438,233 / zstd 1,391,666, CSS 166,784 -> br 61,887; all decode equal; Cache-Control immutable now present (Bun's binary route sends none). Encoder timings on the 5 MB JS (standalone): br5 85ms 1,238,107; br9 278ms 1,195,482; br11 7.4s 1,079,542; gzip6 56ms; zstd3 16ms; zstd19 995ms. Kept compress.ts levels: lazy first-load cost stays under ~120ms.
+
+Probe findings recorded in the plan. Not covered: no 304 for If-None-Match on /_bundle (immutable caching makes revalidation rare; the HTML catch-all never answered 304 either). Bun's original /chunk-* paths still answer uncompressed for anything that asks for them directly. If Bun ever emits code-split chunks referenced relatively from inside a bundle, or relative CSS url()s, those would resolve under /_bundle/ and 404; today there are none.
+<!-- SECTION:NOTES:END -->
