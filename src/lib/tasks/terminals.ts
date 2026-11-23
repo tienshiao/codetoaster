@@ -238,6 +238,17 @@ export class TaskTerminals {
     if (agentWasActive) this.host.broadcastToAll({ type: "activity", taskId, active: false });
   }
 
+  /** The id in the task's agent slot, whether or not the PtyManager still
+   * holds that terminal — `primaryPty` answers only for one it does. */
+  agentPtyId(taskId: string): string | undefined {
+    return this.agentPtys.get(taskId);
+  }
+
+  /** Empty the task's agent slot, which `unmapAndKill` leaves to its caller. */
+  forgetAgentPty(taskId: string): void {
+    this.agentPtys.delete(taskId);
+  }
+
   taskIdForPty(ptyId: string): string | undefined {
     return this.ptyToTask.get(ptyId);
   }

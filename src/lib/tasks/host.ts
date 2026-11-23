@@ -21,7 +21,7 @@
 import type { Database } from "bun:sqlite";
 import type { ProfileRegistry } from "../agent/profiles";
 import type { TaskRow } from "../db";
-import type { UnclaimedWorktree } from "../worktree";
+import type { RestoredWorktree, UnclaimedWorktree } from "../worktree";
 import type { Pty } from "../xtmux/pty";
 import type { SpawnOptions } from "../xtmux/pty-manager";
 import type { ProjectInfo, ServerMessage, TaskInfo, TaskWorktreeInfo } from "../xtmux/types";
@@ -77,6 +77,9 @@ export interface TaskHost {
   refreshCwd(taskId: string): Promise<string | undefined>;
   spawnPty(command: string[], options: SpawnOptions): Pty;
   adopt(pty: Pty, taskId: string): void;
+  agentPtyId(taskId: string): string | undefined;
+  forgetAgentPty(taskId: string): void;
+  unmapAndKill(taskId: string, ptyIds: readonly string[]): void;
 
   // Activity, rank and degraded-mode inference (activity.ts)
   stampActivity(
@@ -96,13 +99,20 @@ export interface TaskHost {
 
   // Hooks (hooks.ts)
   hasSeenHook(taskId: string): boolean;
+  forgetAgentProcess(taskId: string): void;
 
-  // Lifecycle state the create path writes
+  // Resume (resume.ts)
+  resumeTask(
+    taskId: string,
+    options?: { fresh?: boolean; cols?: number; rows?: number },
+  ): Promise<TaskRow | undefined>;
+  recordSetupOutcome(taskId: string): Promise<void>;
   setSpawnedAt(taskId: string, at: number): void;
+  clearSpawnedAt(taskId: string): void;
   clearRestarted(taskId: string): void;
 
-  // Lifecycle state the hook path reads
-  recordSetupOutcome(taskId: string): Promise<void>;
+  // Suspend, evict and WIP
+  restoreTaskWorktree(taskId: string): Promise<RestoredWorktree | null>;
 
   // The TaskInfo projection (task-info.ts)
   taskInfo(taskId: string): TaskInfo | undefined;
