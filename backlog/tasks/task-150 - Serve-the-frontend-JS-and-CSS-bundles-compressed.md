@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-23T03:30:00Z'
-updated_date: '2026-11-23T04:06:00Z'
+updated_date: '2026-11-23T04:08:00Z'
 labels:
   - backend
   - perf
@@ -49,4 +49,6 @@ Measured, isolated production server (NODE_ENV=production bun src/index.ts, port
 Probe findings recorded in the plan. Not covered: no 304 for If-None-Match on /_bundle (immutable caching makes revalidation rare; the HTML catch-all never answered 304 either). Bun's original /chunk-* paths still answer uncompressed for anything that asks for them directly. If Bun ever emits code-split chunks referenced relatively from inside a bundle, or relative CSS url()s, those would resolve under /_bundle/ and 404; today there are none.
 
 Review (/code-review high v2 on 54b7487): no blocking bugs; four nits, all fixed. (1) /_bundle answered 200 to a revalidation where Bun's route gave 304: now weak If-None-Match comparison returns 304 with ETag, Cache-Control, Vary. (2) knownNames could wedge if fetchHtml threw synchronously (finally ran before ??= assigned): now started a tick late and cleared from the stored promise; test added. (3) Wiki wrongly said no dynamic import(: the frontend's import("mermaid") exists and Bun inlines it; wiki corrected, and the fixture now has a dynamic import with a test that fails if Bun starts splitting it (a relatively loaded split chunk would 404 under /_bundle/). (4) The rewritten page kept Bun's strong ETag for the unrewritten bytes: now suffixed -bundled. Reviewer also confirmed the compiled binary defines NODE_ENV=production and HEAD keeps the set Content-Length. Tests: typecheck clean; test:unit 2258 pass, 1 fail = the known TASK-151 flake (manager.test.ts 'an exiting terminal marks the task exited and sends the row'); test:render 629/629.
+
+Correction to earlier notes: the 'no 304' caveat and the plan's '0 dynamic import()' are superseded. /_bundle now answers 304 to a matching If-None-Match, and the frontend does have one dynamic import (import("mermaid")), which Bun inlines into the main bundle (the minified output has no import( left). Re-verified at f4cbc8e on 4604 (source, production) and 4605 (rebuilt binary): same sizes as above, all codings decode equal, 304 on revalidation, stale hashes 404. The page ETag is now "<bun tag>-bundled" from source; the binary's bare tag is dropped. The binary CSS also references its fonts absolutely (url(/Name-hash.woff2)); one fetched 200 font/woff2.
 <!-- SECTION:NOTES:END -->

@@ -5,7 +5,7 @@ description: API responses and the SPA's HTML above 1 KiB are compressed with br
 tags: [api, websocket, perf, remote, bun]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T03:58:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T04:10:00Z }
 sources:
   - id: compress
     resource: ../../src/api/compress.ts
@@ -78,7 +78,7 @@ So in production `serveSpa` rewrites the page instead. It points each `src` or `
 - **Fetch once.** Bun's own route is fetched once, through the listener with `Accept-Encoding: identity`, and kept only if it is a 200 with a JS or CSS type. A 404, an error or an HTML fallback is answered as 404 and dropped, so the next request asks again.
 - **Encode once per coding.** Each coding is encoded once, on the first request that asks for it. One shared promise per name and per coding means concurrent first loads fetch and encode once.
 - **Negotiation and encoders.** These are `compress.ts`'s: the same q-value rules and levels, the same 1 KiB threshold, `Vary: Accept-Encoding`, and identity when the encoder fails or the result is no smaller.
-- **Headers.** `Content-Type` and `ETag` are Bun's. The ETag is quoted when Bun sends a bare token, as the compiled binary does, and weakened when encoded. `Cache-Control: public, max-age=31536000, immutable` is always sent, because the name pattern is content-hashed by construction. The compiled binary's own route sends no `Cache-Control` at all.
+- **Headers.** `Content-Type` and `ETag` are Bun's. The ETag is quoted when Bun sends a bare token, as the compiled binary does, and weakened when encoded. `Cache-Control: public, max-age=31536000, immutable` is always sent, because the name pattern is content-hashed by construction. The compiled binary's own route sends no `Cache-Control` at all. An `If-None-Match` that matches the tag by weak comparison gets a 304, as it did from Bun's route. The rewritten page itself no longer carries Bun's tag, which describes the unrewritten bytes: a quoted tag gains a `-bundled` suffix and a bare one is dropped.
 - **GET and HEAD only.** It sits outside `guardApiRoutes` like the page itself, since a `<script>` load carries no Origin. Anything that is not a single `chunk-<hash>.(js|css)` segment the page named is a 404 that never reaches the self-fetch. Bun's original paths keep answering, uncompressed, and an unknown hash under either path is a 404, so a stale page still fails fast.
 
 The names are learned from the page, so the cache is bounded by it. Each read of the HTML replaces the set and evicts what it no longer names. In production the set is fixed for the life of the process: one JS and one CSS file, as identity bytes plus each coding asked for. A browser that kept the page across a daemon restart asks for a bundle before this process has served any HTML. The first such request reads the HTML once, shared, before deciding. An error page never teaches the set.[^bundles]
