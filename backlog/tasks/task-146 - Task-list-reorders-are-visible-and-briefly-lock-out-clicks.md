@@ -1,11 +1,11 @@
 ---
 id: TASK-146
 title: Task list reorders are visible and briefly lock out clicks
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-23T01:34:00Z'
-updated_date: '2026-11-23T02:19:00Z'
+updated_date: '2026-11-23T03:26:00Z'
 labels:
   - frontend
 dependencies: []
@@ -20,13 +20,13 @@ The sidebar task list re-sorts in place when a task reranks (rank_at moves after
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 When the list order changes, the rows that moved get a visual cue (an animated move, a highlight that fades, or both) so the reorder is noticeable at a glance
-- [ ] #2 For a short window after a reorder (well under a second, with the value in one named constant), clicks on rows and row actions such as archive and suspend do nothing, and the list shows that it is briefly locked
-- [ ] #3 A refresh or snapshot that leaves the order unchanged causes no cue and no lockout, and neither happens on first load, remount or tab switch
-- [ ] #4 A row whose age column or state dot updates without changing position causes no lockout
-- [ ] #5 Several reorders in quick succession extend the lockout from the latest one instead of stacking cues
-- [ ] #6 The cue colour comes from a v2 semantic token, and under prefers-reduced-motion the movement animation is skipped while the lockout still applies
-- [ ] #7 Rendering tests cover a reorder cueing and locking, a click inside the window being ignored and one after it going through, and an unchanged refresh doing neither
+- [x] #1 When the list order changes, the rows that moved get a visual cue (an animated move, a highlight that fades, or both) so the reorder is noticeable at a glance
+- [x] #2 For a short window after a reorder (well under a second, with the value in one named constant), clicks on rows and row actions such as archive and suspend do nothing, and the list shows that it is briefly locked
+- [x] #3 A refresh or snapshot that leaves the order unchanged causes no cue and no lockout, and neither happens on first load, remount or tab switch
+- [x] #4 A row whose age column or state dot updates without changing position causes no lockout
+- [x] #5 Several reorders in quick succession extend the lockout from the latest one instead of stacking cues
+- [x] #6 The cue colour comes from a v2 semantic token, and under prefers-reduced-motion the movement animation is skipped while the lockout still applies
+- [x] #7 Rendering tests cover a reorder cueing and locking, a click inside the window being ignored and one after it going through, and an unchanged refresh doing neither
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,3 +44,9 @@ Code review (medium, with fix): 2 findings. Fixed: a repeat cue took its parity 
 
 Code review (high, v2...HEAD): 6 findings; fixed 4 in a fix commit (grouped header-only cue now lights the whole group, archived rows are data once showing so a delete for good locks, appending/removing at the end no longer locks, cues pruned by the clock per render, plus useTaskSidebar now takes an injected now for the guard), skipped 1 (browser verification and final summary are the main session's, and it has done the check); bun test 2205 pass / 1 known manager.test.ts exit-broadcast flake, vitest 621 pass, typecheck clean.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The sidebar task list now marks reorders and locks out clicks for REORDER_LOCK_MS (500ms) after the latest one, so a row that slides under the pointer cannot take a click or an archive meant for another task. A reorder is any change in the drawn row sequence where a row that was drawn before sits in a different slot: rank moves, group moves, insertions, and removals that shift rows (the reported case); age, state dot and selection updates, first load, remount and view-only changes (filter, grouping, archived toggle) are quiet. Inserted and out-of-order rows (LIS) flash with TASK-136's change-flash keyframes and --changed token; a moved collapsed group flashes as one block. While locked the list sets aria-busy, dims to 0.7 and shows a not-allowed cursor; clicks are dropped in the capture phase only when their DOM target is inside the list, so portaled dialogs opened from a row still work. Verified on an isolated server in Chrome: insertion locks and flashes only the new row, a click at ~100ms is ignored and one at ~950ms navigates; archiving a middle task locks and swallows a click on a shifted row; removing the last row neither locks nor blocks a click. Reduced motion was not emulated: the cue falls back to the existing steps(1) rule from TASK-136 and the lockout has no motion branch. Code review medium then high: 8 findings, 6 fixed (group-move cue, delete-for-good lock, tail changes not locking, expired-cue replay, injected clock, repeat-cue parity). Known edge: grouped list, deleting the last archived row for good does not lock. No FLIP slide animation, only the fade. bun run test:render and typecheck clean; bun test clean apart from the pre-existing manager.test.ts exit-broadcast timeout.
+<!-- SECTION:FINAL_SUMMARY:END -->
