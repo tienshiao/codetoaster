@@ -5,7 +5,7 @@ description: One daemon-wide sampler reads machine CPU from os.cpus() deltas and
 tags: [frontend, backend, websocket, v2, perf, remote]
 level: project
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T03:57:32Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-11-23T04:12:21Z }
 sources:
   - id: sampler
     resource: ../../src/lib/system-load.ts
