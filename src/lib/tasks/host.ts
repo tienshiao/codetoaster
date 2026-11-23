@@ -23,8 +23,10 @@ import type { ProfileRegistry } from "../agent/profiles";
 import type { TaskRow } from "../db";
 import type { UnclaimedWorktree } from "../worktree";
 import type { Pty } from "../xtmux/pty";
+import type { SpawnOptions } from "../xtmux/pty-manager";
 import type { ProjectInfo, ServerMessage, TaskInfo, TaskWorktreeInfo } from "../xtmux/types";
-import type { TaskStore } from "./store";
+import type { CreateTaskOptions } from "./manager";
+import type { TaskStore, TaskUpdate } from "./store";
 
 export interface TaskHost {
   readonly db: Database;
@@ -36,6 +38,8 @@ export interface TaskHost {
   getProjects(): ProjectInfo[];
   rankedProjects(): ProjectInfo[];
   ensureInProject(taskId: string): void;
+  resolveProjectId(options: CreateTaskOptions): string;
+  placeInProject(taskId: string, projectId: string, options: CreateTaskOptions): void;
 
   // Clients and broadcasting (clients.ts)
   broadcastToAll(message: object): void;
@@ -71,6 +75,8 @@ export interface TaskHost {
   taskIdForPty(ptyId: string): string | undefined;
   refreshCwdIfStale(taskId: string, maxAgeMs?: number): Promise<string | undefined>;
   refreshCwd(taskId: string): Promise<string | undefined>;
+  spawnPty(command: string[], options: SpawnOptions): Pty;
+  adopt(pty: Pty, taskId: string): void;
 
   // Activity, rank and degraded-mode inference (activity.ts)
   stampActivity(
@@ -84,10 +90,16 @@ export interface TaskHost {
   inferState(taskId: string, active: boolean): void;
   seedOutputEdge(ptyId: string, at: number): void;
   forgetOutputEdge(ptyId: string): void;
+  stampRank(taskId: string, at: number, extra?: TaskUpdate): TaskRow | undefined;
+  armHookGrace(taskId: string): void;
   disarmHookGrace(taskId: string): void;
 
   // Hooks (hooks.ts)
   hasSeenHook(taskId: string): boolean;
+
+  // Lifecycle state the create path writes
+  setSpawnedAt(taskId: string, at: number): void;
+  clearRestarted(taskId: string): void;
 
   // Lifecycle state the hook path reads
   recordSetupOutcome(taskId: string): Promise<void>;
@@ -95,6 +107,7 @@ export interface TaskHost {
   // The TaskInfo projection (task-info.ts)
   taskInfo(taskId: string): TaskInfo | undefined;
   listTasks(): TaskInfo[];
+  taskTitles(): string[];
 
   // Lifecycle state the projection reads
   isRestarted(taskId: string): boolean;
