@@ -6,6 +6,11 @@ import { SearchAddon } from "@xterm/addon-search";
 import { ImageAddon } from "@xterm/addon-image";
 import { Upload } from "lucide-react";
 import { IMAGE_ADDON_OPTIONS, silenceTerminalQueries } from "./utils/terminal-queries";
+import {
+  handleOsc52Clipboard,
+  optionClickOptions,
+  writeBrowserClipboard,
+} from "./utils/terminal-clipboard";
 import { useTerminalTheme } from "./hooks/use-terminal-theme";
 import { playBellSound } from "./hooks/use-notification-sound";
 import {
@@ -415,7 +420,33 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
       // queries for every viewer; this copy must not answer them too, or the
       // program reads a second reply as keystrokes.
       const querySilencer = silenceTerminalQueries(term);
+      // A program's own copy (OSC 52) onto this browser's clipboard; reads are
+      // refused (terminal-clipboard.ts). Only while this terminal is on screen
+      // in a focused window: a hidden tab still receives output. Not gated on
+      // the grid having focus, because a /copy sent from the composer is the
+      // user's own copy too.
+      const clipboardHandler = handleOsc52Clipboard(
+        term,
+        writeBrowserClipboard,
+        () => document.hasFocus() && container.clientWidth > 0 && container.clientHeight > 0,
+      );
       term.open(container);
+
+      // While the program has mouse reporting on, a drag is the program's, and
+      // on a Mac the way to force a local selection (and so to ⌘C anything
+      // Claude Code printed) is Option-drag. The options are set per press
+      // from the live tracking mode, in the capture phase so they are in place
+      // before xterm's own mousedown reads them (terminal-clipboard.ts).
+      const syncOptionClick = () => {
+        const next = optionClickOptions(term.modes.mouseTrackingMode);
+        if (term.options.macOptionClickForcesSelection !== next.macOptionClickForcesSelection) {
+          term.options.macOptionClickForcesSelection = next.macOptionClickForcesSelection;
+        }
+        if (term.options.altClickMovesCursor !== next.altClickMovesCursor) {
+          term.options.altClickMovesCursor = next.altClickMovesCursor;
+        }
+      };
+      container.addEventListener("mousedown", syncOptionClick, true);
 
       termRef.current = term;
       fitAddonRef.current = fitAddon;
@@ -614,6 +645,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         bellDisposable.dispose();
         dataDisposable.dispose();
         querySilencer.dispose();
+        clipboardHandler.dispose();
         resizeObserver.disconnect();
         if (resizeHudTimeoutRef.current) clearTimeout(resizeHudTimeoutRef.current);
         if (restoreTimerRef.current) clearTimeout(restoreTimerRef.current);
@@ -622,6 +654,7 @@ export const XTerminal = forwardRef<TerminalHandle, XTerminalProps>(
         screenEl?.removeEventListener("touchend", handleTouchEnd);
         screenEl?.removeEventListener("touchcancel", handleTouchEnd);
         container.removeEventListener("paste", handlePaste, true);
+        container.removeEventListener("mousedown", syncOptionClick, true);
         setReady(false);
         term.dispose();
         termRef.current = null;
