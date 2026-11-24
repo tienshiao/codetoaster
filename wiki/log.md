@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-11-24
+* **Creation**: [Copying out of a terminal](/modules/terminal-copy.md) for TASK-155: `macOptionClickForcesSelection` for Option-drag on a Mac, the write-only OSC 52 handler and why it is not `@xterm/addon-clipboard`, the secure-context, focus and user-gesture limits on the clipboard write, Option-click options set per press from the mouse tracking mode, and OSC 52 writes taken only by a terminal on screen in a focused window.
+
 ## 2026-11-23
 * **Creation**: [TaskManager layout](/modules/task-manager-layout.md) for TASK-152: the facade and its fourteen modules, the `TaskHost` rules that keep the split behaviour-preserving (route public calls through the instance, never capture reassignable state, non-async delegators, one owner per piece of state), and a table of every concurrent lifecycle pairing.
 * **Update**: [Change watcher and shared watch streams](/modules/change-watcher.md) for TASK-152: the reconcile now cites `src/lib/tasks/checkout-watchers.ts`.
