@@ -11,6 +11,7 @@
     "typecheck": "bun check",
     "build:server": "bun run build-single.ts",
     "build:server:all": "bun run build-all.ts",
+    "install:server": "scripts/install-server.sh",
     "start": "NODE_ENV=production bun src/index.ts foreground"
   },
   "dependencies": {
