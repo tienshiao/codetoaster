@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-11-24
+* **Creation**: [Install a server binary and restart the daemon](/runbooks/install-server-binary.md) for TASK-156: `scripts/install-server.sh`, the old binary moved aside before cp and restored if the new one does not run, the start waiting for the old daemon to exit in its old directory, flags carried over from the running daemon, and the detached restart that survives being run from a CodeToaster terminal.
 * **Creation**: [Copying out of a terminal](/modules/terminal-copy.md) for TASK-155: `macOptionClickForcesSelection` for Option-drag on a Mac, the write-only OSC 52 handler and why it is not `@xterm/addon-clipboard`, the secure-context, focus and user-gesture limits on the clipboard write, Option-click options set per press from the mouse tracking mode, and OSC 52 writes taken only by a terminal on screen in a focused window.
 
 ## 2026-11-23

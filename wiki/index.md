@@ -46,4 +46,5 @@ okf_version: "0.2"
 # Runbooks
 
 * [Diagnose daemon memory](runbooks/diagnose-daemon-memory.md) - Read the daemon's real footprint, its peak and when it was reached, its descriptors and what it is holding from codetoaster status or GET /api/diagnostics, and find threshold crossings in its log.
+* [Install a server binary and restart the daemon](runbooks/install-server-binary.md) - Build the standalone binary, install it as a new file (the old one moved aside, then cp), and restart the daemon on it with its own flags, from anywhere including a CodeToaster terminal, with scripts/install-server.sh.
 * [Verify on an isolated server](runbooks/verify-on-isolated-server.md) - Check a change at runtime from a second server on its own port and database, driving tasks with the shell profile so no real agent starts.
